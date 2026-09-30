@@ -10,7 +10,7 @@
 - **Nenhuma plataforma expõe marketplace/catálogo de afiliação de infoprodutos por API** (Hotmart, Kiwify, Eduzz, Monetizze). O objetivo "descoberta de oportunidades" para produtos digitais não é atendível por integração oficial hoje; só Shopee e Amazon têm catálogo consultável.
 - **Cliques** praticamente não existem via API em lugar nenhum. Vão depender de encurtador próprio ou import de relatório.
 - **Nenhuma plataforma tem "status de comissão" nativo** (pendente/aprovada/paga/estornada). O status precisa ser derivado do status da transação + regras de garantia/liberação de cada uma. Isso é responsabilidade do adapter.
-- **Consequência arquitetural:** o import de arquivo (CSV/XLSX) não é um "plano B", é um modo de ingestão de primeira classe. 5 das 8 plataformas dependem dele para receita.
+- **Consequência arquitetural:** o import de arquivo (CSV/XLSX) não é um "plano B", é um modo de ingestão de primeira classe. Amazon, Mercado Livre e Magalu dependem dele (ou de lançamento manual) para receita, e Kiwify/Eduzz podem depender até a validação com conta de afiliado.
 
 ## Matriz resumida
 
@@ -23,7 +23,7 @@
 | **Shopee** | **Sim** [T] (GraphQL, acesso sob aprovação) | AppID + SHA256(AppId+ts+payload+secret) | Não publicado (erro 10030) | Sim, `conversionReport` e `validatedReport` [T] | `orderStatus`/`fraudStatus` [T] | Não (só `clickTime` por conversão) | **Sim**, `productOfferV2`/`shopOfferV2` [T] | **Sim**, `generateShortLink` [T] | Não | Não (polling) | CSV [I] |
 | **Amazon BR** | Só catálogo [C] (Creators API) | OAuth2 client credentials (LWA) | 1 TPS / 8.640 TPD iniciais, escala com receita, teto 10 TPS [C] | Não (só relatório) | Relatório | Relatório | **Sim** [C] (exige 10 vendas/30 dias) | Tag na URL [C] | Relatório | Não | xlsx/CSV/XML [C] |
 | **Mercado Livre** | **Não** [T] | n/a | n/a | Só painel | Só painel | Só painel | Busca pública bloqueada/instável em 2026 [T] | Só painel | Só painel (Mercado Pago) | Não | Não confirmado |
-| **Magalu** | **Não** [C/I] | n/a | n/a | Só painel | Só painel | Só painel (15 dias) | Não | Só painel | Só painel | Não | Não documentado |
+| **Magalu** | **Não** [I] | n/a | n/a | Só painel | Só painel | Só painel (15 dias) | Não | Só painel | Só painel | Não | Não documentado |
 
 ## Detalhe por plataforma
 
@@ -35,7 +35,7 @@
 - **Status de transação:** APPROVED, COMPLETE, CANCELLED, REFUNDED, PARTIALLY_REFUNDED, CHARGEBACK, BLOCKED, WAITING_PAYMENT e outros. **Sem filtro, a API retorna só APPROVED e COMPLETE**; o sync precisa pedir os demais explicitamente para capturar estornos [C].
 - **Webhook 2.0:** PURCHASE_APPROVED/COMPLETE/CANCELED/REFUNDED/CHARGEBACK/etc., payload com `commissions[]` e `affiliates[]`, validação por header `X-HOTMART-HOTTOK` [C]. Se o afiliado cadastra webhook próprio para todos os eventos não está claro [I]. [purchase webhook](https://developers.hotmart.com/docs/pt-BR/2.0.0/webhook/purchase-webhook/)
 - **Fora da API:** Mercado de Afiliação e "temperatura", HotLinks, cliques (Hotmart Analytics), saldo e saques.
-- **Termos:** proíbem robôs/scripts/spiders sobre a plataforma (3.5(m)) [C]. Scraping do marketplace está fora. [termos](https://hotmart.com/pt-br/legal/termos-de-uso)
+- **Termos:** proíbem robôs/scripts/spiders sobre a plataforma (3.5(m)) [C]. Crawler do Mercado de Afiliação: construído e desativado por flag (ver regra na seção 6 de commerce-integrations.md). [termos](https://hotmart.com/pt-br/legal/termos-de-uso)
 - **Validar:** conta só de afiliado consegue gerar credencial? Webhook de afiliado recebe quais eventos?
 
 ### Kiwify
@@ -96,7 +96,7 @@
 
 ### Magalu (Influenciador Magalu, ex-Parceiro Magalu / Magazine Você)
 
-- **Sem API de afiliados** [C/I]. `developers.magalu.com` cobre só sellers.
+- **Sem API de afiliados** [I]; a API existente é só de seller [C]. `developers.magalu.com` cobre só sellers.
 - Painel mostra vendas, comissões (aparecem perto da data de pagamento), acessos dos últimos 15 dias. Pagamento dias 4 e 19, mínimo R$ 50, retenção de INSS 11% e IR [C, central de ajuda].
 - Exportação CSV não documentada; possivelmente só digitação manual.
 
@@ -116,37 +116,39 @@
 
 Critério: maximizar dado real ingerido com o menor número de adapters, e exercitar cada modo de ingestão uma vez para validar o núcleo agnóstico antes de escalar.
 
-### Opção A (recomendada): Hotmart + Shopee + Amazon via import
+### Recorte A (histórico): Hotmart + Shopee + Amazon via import
 
 | Plataforma | Por quê | Modo |
 |---|---|---|
 | **Hotmart** | Maior player de infoproduto; API confirmada para afiliado, rate limit folgado, webhook com hottok | Polling (`sales/history` + `commissions`), webhook depois |
-| **Shopee** | Única plataforma de físico com API real de conversões, catálogo e geração de link; cobre os objetivos 1 e 2 | Polling GraphQL |
+| **Shopee** | Única plataforma de físico com API real de conversões, catálogo e geração de link; cobre descoberta e gestão de afiliações | Polling GraphQL |
 | **Amazon** | Maior marketplace; ganhos só por arquivo, então valida o pipeline de import que servirá depois para ML, Magalu e lacunas das outras | Import de CSV/XLSX; Creators API (catálogo) só se houver elegibilidade |
 
 - **Prós:** exercita API REST, API GraphQL com assinatura e import de arquivo; cobre digital e físico; cobre descoberta (Shopee) e gestão (as três).
 - **Contras:** Shopee depende de aprovação de acesso (atrasos relatados); Amazon Creators API exige 10 vendas/30 dias, então o catálogo Amazon pode ficar de fora no início.
 
-### Opção B: Hotmart + Monetizze + Kiwify
+### Recorte B (histórico): Hotmart + Monetizze + Kiwify
 
 - **Prós:** as três entregam dados de afiliado por API e/ou webhook; foco em infoproduto, domínio mais homogêneo; mais rápido de ter dashboard financeiro.
 - **Contras:** não valida import de arquivo nem produto físico; nenhuma entrega catálogo, então o objetivo de descoberta fica sem dado; Kiwify ainda precisa de teste com conta de afiliado.
 
-### Opção C: priorizar onde já existe receita
+### Recorte C (histórico): priorizar onde já existe receita
 
 - Se a operação atual está concentrada em 2–3 plataformas específicas, começar por elas vale mais que o critério técnico. Plataformas sem API (ML, Magalu) entram só com import/digitação.
 
-**Recomendação:** Opção A, desde que Hotmart, Shopee e Amazon façam parte da operação real. Se a receita estiver toda em infoproduto, Opção B.
+**Recomendação na época:** recorte A. Substituída pelo plano por fases.
 
-## Validações antes de codar
+## Validações com conta real, por fase
 
-Todas com conta real de afiliado, baratas e que podem mudar a escolha:
+**Fase 1**
+1. **Shopee Affiliate:** solicitar acesso à Open API já (aprovação pode levar semanas). Confirmar rate limit e schema de `productOfferV2` na doc do painel.
+2. **Mercado Livre seller:** criar o app, testar OAuth com refresh token rotativo, `/highlights` e `/products/search` com token.
 
-1. **Hotmart:** conta de afiliado gera credencial em Ferramentas > Credenciais? `sales/history?commission_as=AFFILIATE` retorna as vendas esperadas?
-2. **Shopee:** solicitar acesso à Open API já (aprovação pode levar semanas). Confirmar rate limit e schema na doc do painel.
-3. **Amazon:** exportar um relatório de ganhos e um de pedidos (CSV e XLSX) para desenhar o parser e a chave natural.
-4. **Kiwify / Eduzz** (se Opção B): testar `/sales` e `/finance` com token de conta afiliada.
-5. **Monetizze** (se Opção B): confirmar fluxo de token e formato atual do webhook.
+**Fase 2**
+3. **Hotmart:** conta de afiliado gera credencial em Ferramentas > Credenciais? `sales/history?commission_as=AFFILIATE` retorna as vendas esperadas?
+4. **Kiwify / Eduzz:** testar `/sales` e `/finance` com token de conta afiliada.
+5. **Monetizze:** confirmar fluxo de token e formato atual do webhook.
+6. **Amazon, ML, Magalu:** exportar (ou confirmar que não há) relatórios de ganhos para desenhar parser e chave natural.
 
 ## Fontes principais
 
