@@ -8,17 +8,17 @@
 - **APIs de vendedor são muito melhores que as de afiliado.** Mercado Livre, Shopee, Amazon (SP-API) e Magalu têm API oficial completa para anúncios, pedidos, envios e financeiro.
 - **Shopee → Mercado Livre em dropshipping puro não fecha na prática.** O Mercado Envios exige a etiqueta do ML no pacote, e o vendedor da Shopee não vai colar a sua etiqueta. O caminho viável é **comprar na Shopee, receber no seu espaço e despachar pelo ML**, ou seja, estoque local (mesmo que curto). O espaço desocupado resolve exatamente isso.
 - **Não existe API de compra como comprador** em Shopee, ML ou Amazon. A compra no fornecedor será manual (o app registra e acompanha). Compra automatizada só com AliExpress Dropshipping API ou fornecedores nacionais com API (Dropify e similares).
-- **Crawling é tecnicamente possível, mas é o pior caminho** para os seus alvos: a Shopee proíbe robôs nos termos (cláusula 3.1 e 6.2(k)) e assina as requisições do site com headers anti-bot; a busca pública do ML via API está bloqueada desde o fim de 2025. A via sancionada para achar produtos bons na Shopee é a **própria Affiliate Open API** (`productOfferV2`, com vendas, preço e comissão).
-- **Fiscal é um bloqueio real para revenda.** Vender com regularidade no ML exige CNPJ e NF-e de saída; comprar como pessoa física na Shopee não gera nota de entrada adequada para revenda. Vale conversar com um contador antes de operar em volume [I].
+- **Crawling entra como fonte complementar**, não como base: o site da Shopee assina as requisições com headers anti-bot que mudam com frequência, e a busca do ML via API está bloqueada desde o fim de 2025. A fonte principal para achar produtos bons na Shopee é a **própria Affiliate Open API** (`productOfferV2`, com vendas, preço e comissão), que é estável e grátis.
+- **Aspectos fiscais e jurídicos não bloqueiam nada no projeto.** Ficam como lembretes marcados com ⚠️ (seção 6). Tudo é construído completo; a decisão de regularizar é do negócio, quando as vendas se mostrarem viáveis.
 
 ## 1. Crawling: dá para fazer?
 
-**Resposta curta:** dá, mas não recomendo como base do produto. Recomendo como adapter opcional, isolado e desligável, só para dados públicos de produto.
+**Resposta curta:** dá, e entra como mais uma fonte de dados (adapter de crawler), desligável por plataforma. Os riscos abaixo são sobretudo **operacionais** (quebra frequente, bloqueio de IP, suspensão de conta); os jurídicos ficam como lembrete ⚠️.
 
 | Alvo | Barreira técnica | Termos | Risco principal |
 |---|---|---|---|
 | Shopee (site) | API web exige headers assinados de curta duração (`x-sap-ri`, `x-sap-sec`, `af-ac-enc-dat`), fingerprinting e login [T] | Proíbe robôs para "monitorar ou copiar conteúdo" (3.1) e acesso por bots à conta (6.2(k)) [C] | Bloqueio e quebra frequente; burlar assinatura agrava (6.2(n)) |
-| Mercado Livre (site) | Anti-bot não verificado [I]; busca via API retorna 403 mesmo com token [T] | Termos não puderam ser lidos (robots.txt); historicamente proíbem interferir no sistema [I] | Contratual e bloqueio |
+| Mercado Livre (site) | Anti-bot não verificado [I]; busca via API retorna 403 mesmo com token [T] | Termos não puderam ser lidos (robots.txt); historicamente proíbem interferir no sistema [I] | Bloqueio (⚠️ termos) |
 | Amazon (site) | Bloqueio agressivo de tráfego automatizado [T] | Condições de Uso proíbem mineração de dados e robôs [I] | Perda da conta de Associados/vendedor |
 | Painel logado (qualquer plataforma) | Cookies, captcha, 2FA | Hotmart 3.5(m) e Shopee 6.2(k) proíbem expressamente [C] | **Suspensão da sua própria conta**, e o app guardando credenciais de sessão vira passivo de segurança |
 
@@ -36,7 +36,7 @@ Situação jurídica no Brasil [T/I]: não há lei específica. O risco vem de v
 | JoomPulse | Analytics de Shopee BR (vendas mensais, faturamento, preço) [C] | Sob consulta |
 | Google Trends API | Tendência de demanda | Alfa com acesso restrito [T] |
 
-**Recomendação:** Shopee Affiliate API + ML highlights/catálogo no MVP (grátis e oficiais). Se faltar sinal de demanda no ML, assinar Metrify, que tem API, antes de escrever qualquer crawler.
+**Recomendação técnica:** APIs oficiais primeiro (Shopee Affiliate API, ML highlights/catálogo), porque são estáveis e baratas de manter. Crawler de páginas públicas entra como fonte complementar onde a API não cobre, atrás da mesma interface de `ProductSource`, com rate limit baixo, cache e circuit breaker. **Não** recomendo automatizar o painel logado das suas próprias contas: o risco é perder a conta de vendedor/afiliado, que é o ativo do negócio. Se o crawler da Shopee virar manutenção demais (headers assinados mudam), Metrify/JoomPulse são o plano B pago.
 
 ## 2. APIs de vendedor
 
@@ -60,7 +60,7 @@ Pontos que afetam implementação:
 | Modelo | Fluxo | Integrações | Risco principal |
 |---|---|---|---|
 | **Afiliado** | Divulga link, recebe comissão | APIs de afiliado (ver doc anterior) | Baixo |
-| **Revenda com estoque local** | Compra (Shopee, atacado, fornecedor) → recebe no espaço → anuncia no ML → despacha com etiqueta ML (ou Flex) | ML seller API; compra registrada manualmente | Capital parado em estoque; fiscal |
+| **Revenda com estoque local** | Compra (Shopee, atacado, fornecedor) → recebe no espaço → anuncia no ML → despacha com etiqueta ML (ou Flex) | ML seller API; compra registrada manualmente | Capital parado em estoque (⚠️ fiscal, ver seção 6) |
 | **Dropshipping nacional** | Anuncia → vende → compra no fornecedor → fornecedor envia | ML seller API + fornecedor com API (Dropify etc.) | Reputação (atraso/cancelamento); ruptura do fornecedor |
 | **"Dropshipping" Shopee → ML** | Anuncia no ML → vende → compra na Shopee → recebe no espaço → reenvia | ML seller API; Shopee só como fonte de dados | Prazo (dois fretes), margem espremida; vira na prática revenda com estoque sob demanda |
 
@@ -84,7 +84,7 @@ Você achou Hotmart + Shopee + Amazon pouco. Com o novo escopo, proponho organiz
 | **3. Afiliação** | Hotmart, Shopee e Kiwify por API/webhook; Amazon, ML e Magalu por import de arquivo | Vendas, comissões e status consolidados |
 
 - **Prós:** atende a ideia que você trouxe (Shopee → ML) de ponta a ponta com integrações oficiais; o espaço físico entra no fluxo; Shopee rende duas coisas com uma credencial (catálogo e comissão).
-- **Contras:** é bem maior que o MVP anterior; depende da aprovação da Shopee Open API; a parte fiscal precisa estar resolvida para vender em volume.
+- **Contras:** é bem maior que o MVP anterior; depende da aprovação da Shopee Open API (o crawler cobre enquanto ela não sai).
 
 ### Opção B: venda primeiro, afiliação depois
 
@@ -99,12 +99,40 @@ Você achou Hotmart + Shopee + Amazon pouco. Com o novo escopo, proponho organiz
 
 **Recomendação:** Opção A, entregue na ordem 2 → 1 → 3. A fatia de venda e estoque é a que define o núcleo do modelo de dados; descoberta e afiliação se apoiam nela. Magalu e Amazon como vendedor ficam fora do MVP: a Amazon proíbe expressamente comprar em outro varejista para enviar direto, e ambos exigem conta profissional e SLA mais rígido.
 
-## 5. Decisões e pré-requisitos
+## 5. Arquitetura: um app ou vários?
+
+Afiliação e venda própria compartilham muito: catálogo de produtos, descoberta de oportunidades, credenciais de plataforma (a mesma credencial da Shopee serve à descoberta e à afiliação), dinheiro com moeda e o dashboard consolidado. Mas têm ciclos de vida diferentes: afiliação é só leitura e reconciliação; venda própria tem escrita (anúncios, estoque, pedidos) e estado físico.
+
+| Opção | Prós | Contras |
+|---|---|---|
+| **A. Apps separados** (afiliação e comércio) | Isolamento total; deploy e falha independentes | Duplica catálogo, descoberta, credenciais, auth e dashboard; o painel consolidado vira integração entre apps; custo operacional dobrado para um usuário só |
+| **B. Um app sem fronteiras internas** | Mais rápido no início | Afiliação e estoque se acoplam pelo banco; mudar um quebra o outro; difícil extrair depois |
+| **C. Monólito modular** (recomendado) | Um deploy, um banco, um login; módulos com fronteira explícita; dá para extrair um módulo depois se precisar | Exige disciplina nas fronteiras (resolvida com testes de arquitetura) |
+
+**Recomendação: C.** Módulos propostos:
+
+- **Catalog & Discovery:** produto canônico, ofertas por fonte (API ou crawler), ranking de oportunidades. Usado pelos dois lados.
+- **Affiliate:** programas, links, conversões, comissões, repasses.
+- **Commerce:** anúncios por canal, pedidos, compras ao fornecedor, envios. Suporta modos `own_stock` e `dropship` na mesma estrutura (o modo muda de onde sai o item, não o modelo).
+- **Inventory:** ledger de movimentos e locais de estoque (o espaço físico é um `StockLocation`). Separado de Commerce porque o estoque é compartilhado entre canais.
+- **Integrations:** adapters por plataforma (API, webhook, import, crawler) e credenciais. Cada adapter publica eventos normalizados para os módulos acima.
+- **Finance & Reporting:** consolida receita, comissões, tarifas e margem; dashboard e alertas.
+
+Regras: cada módulo com schema próprio no banco; comunicação só por interface pública ou evento interno; nenhum módulo lê tabela de outro. Isso mantém a porta aberta para separar em apps no futuro sem pagar o custo agora.
+
+## 6. Lembretes jurídicos e fiscais ⚠️ (não bloqueiam)
+
+- ⚠️ **Revenda sem CNPJ/NF-e:** vender com regularidade no ML e Shopee como pessoa física pode gerar questionamento fiscal e os marketplaces podem exigir NF em algumas modalidades (Full, Flex). Revisar quando o volume justificar.
+- ⚠️ **Crawling:** Shopee proíbe robôs nos termos (3.1, 6.2(k)); Amazon e provavelmente ML também. Risco jurídico baixo para dados de produto; o risco real é bloqueio e perda de conta.
+- ⚠️ **LGPD:** dados de compradores vindos das APIs de vendedor (nome, endereço, telefone) são dados pessoais. Guardar só o necessário para despacho e suporte já reduz a exposição.
+- ⚠️ **Amazon:** a política proíbe comprar em outro varejista para enviar direto ao cliente, e a violação suspende a conta. Relevante só se a Amazon entrar como canal de venda.
+
+## 7. Decisões e pré-requisitos
 
 1. **Escopo do MVP:** A, B ou C.
-2. **CNPJ e NF-e:** vocês já têm CNPJ apto a vender no ML e emitir NF-e? Sem isso, a fatia 2 não opera em volume. Conversar com contador sobre regime e nota de entrada das compras na Shopee [I].
-3. **Pedir acesso à Shopee Affiliate Open API** já, porque a aprovação tem relatos de semanas.
-4. **Crawling:** confirmar que fica fora do MVP. Se um dia entrar, como adapter isolado, só com dados públicos de produto, em baixo volume e sem burlar barreiras.
+2. **Arquitetura:** monólito modular (recomendado), apps separados ou app sem fronteiras. Ver seção 5.
+3. **Crawling:** entra como fonte complementar de descoberta (páginas públicas), atrás da interface comum. Automação de painel logado fica fora por risco de conta.
+4. **Pedir acesso à Shopee Affiliate Open API** já, porque a aprovação tem relatos de semanas.
 
 ## Fontes principais
 
