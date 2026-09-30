@@ -110,7 +110,9 @@
 6. **Cliques via encurtador próprio.** Como nenhuma plataforma entrega cliques por API (Shopee só `clickTime` por conversão), um redirecionador próprio com UTM/subId é a única forma de ter cliques por canal de forma uniforme. Fora do MVP, mas o modelo de `link` deve prever isso.
 7. **Webhooks exigem endpoint público.** Hotmart, Kiwify e Monetizze entregam melhor via webhook. Isso influencia hosting (precisa de URL HTTPS pública e fila para retry), mas não força stack. Alternativa no MVP: só polling, e webhooks depois.
 
-## Proposta de MVP
+## Proposta de MVP (só afiliação)
+
+> **Substituída.** O escopo passou a incluir venda própria (estoque local e dropshipping). A proposta vigente está em [commerce-integrations.md](commerce-integrations.md#4-mvp-revisado). A análise abaixo continua válida para a fatia de afiliação.
 
 Critério: maximizar dado real ingerido com o menor número de adapters, e exercitar cada modo de ingestão uma vez para validar o núcleo agnóstico antes de escalar.
 
