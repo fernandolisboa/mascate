@@ -1,0 +1,25 @@
+[package]
+name = "mascate-kernel"
+description = "Shared building blocks for every module: money, record identity and time."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Deterministic clock and id generator for other crates' tests.
+test-support = []
+
+[dependencies]
+chrono.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+mascate-kernel = { path = ".", features = ["test-support"] }
+proptest.workspace = true
+
+[lints]
+workspace = true

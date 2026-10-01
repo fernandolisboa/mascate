@@ -1,0 +1,35 @@
+[package]
+name = "mascate"
+description = "Mascate desktop app: window, tray and the composition of every module."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+futures.workspace = true
+gpui-kit.workspace = true
+mascate-kernel.workspace = true
+mascate-platform.workspace = true
+tray-icon.workspace = true
+
+[lints]
+workspace = true
+
+# Installers built by `cargo packager --release` (CI does it on every version tag).
+[package.metadata.packager]
+product-name = "Mascate"
+identifier = "app.mascate.desktop"
+category = "Business"
+description = "Garimpo, venda com estoque próprio e afiliação, num app local."
+before-packaging-command = "cargo build --release -p mascate"
+icons = ["assets/icon.png"]
+formats = ["nsis", "appimage", "pacman"]
+
+[package.metadata.packager.nsis]
+# Per-user install: no admin prompt, and updates can replace the files later.
+installer-mode = "currentUser"
+
+[package.metadata.packager.pacman]
+depends = ["fontconfig", "libxkbcommon", "libxkbcommon-x11", "vulkan-icd-loader", "wayland"]

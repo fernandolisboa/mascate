@@ -1,0 +1,13 @@
+[package]
+name = "mascate-inventory"
+description = "Inventory: Stock Locations and the append-only ledger of Stock Movements."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
