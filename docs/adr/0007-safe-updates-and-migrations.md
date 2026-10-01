@@ -1,0 +1,3 @@
+# Atualizações seguras e migrações com rollback
+
+O app é distribuído por GitHub Releases, com atualização por um clique e uma opção de atualização silenciosa (desligada por padrão) aplicada ao reiniciar. Cada versão declara se traz uma migração de risco ao banco; nesse caso a atualização silenciosa não roda e o app pede confirmação, mesmo com a opção ligada. Toda migração é precedida de um Backup automático; se falhar, o app restaura o Backup e volta para a versão anterior. A perda do banco local é o pior cenário possível num app sem servidor, por isso a atualização nunca é totalmente automática quando mexe nele.
