@@ -1,0 +1,52 @@
+name: Release packages
+
+# A version tag builds the Windows installer and the Linux packages as workflow
+# artifacts. Publishing them to GitHub Releases comes with the update slice (#8).
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            formats: nsis
+            artifact: mascate-windows
+          - os: ubuntu-24.04
+            formats: appimage,pacman
+            artifact: mascate-linux
+    runs-on: ${{ matrix.os }}
+    env:
+      # linuxdeploy is itself an AppImage; runners have no FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GPUI system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libvulkan-dev libfontconfig-dev
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version =0.11.8 --locked
+      - name: Package
+        working-directory: crates/app
+        run: cargo packager --release --formats ${{ matrix.formats }} --out-dir ${{ github.workspace }}/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.tar.gz
+            dist/PKGBUILD
+          if-no-files-found: error

@@ -1,0 +1,23 @@
+[package]
+name = "mascate-platform"
+description = "App platform module: local database, migrations and app data location."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+directories.workspace = true
+libsql.workspace = true
+mascate-kernel.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+futures.workspace = true
+mascate-kernel = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "mascate-commerce"
+description = "Commerce: Listings, Orders, Purchase Orders and shipping on each Sales Channel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
