@@ -54,7 +54,6 @@ pub struct Tokens {
 
 impl Tokens {
     fn new(p: &Palette) -> Self {
-        let radius = f32::from(p.radius);
         Self {
             app: color(p.app),
             surface: color(p.surface),
@@ -72,9 +71,8 @@ impl Tokens {
             accent_edge: color(p.accent_edge),
             success: color(p.success),
             danger: color(p.danger),
-            radius: px(radius),
-            // Cards round a little more than controls; square stays square.
-            radius_lg: px(if radius == 0. { 0. } else { radius + 2. }),
+            radius: px(f32::from(p.radius)),
+            radius_lg: px(f32::from(p.radius_lg())),
             border_width: px(f32::from(p.border_width)),
         }
     }
@@ -167,7 +165,6 @@ fn config(theme: UiTheme, system_font: SharedString, system_mono: SharedString) 
         UiFont::JetBrainsMono => (MONO_FAMILY.into(), MONO_FAMILY.into()),
         UiFont::System => (system_font, system_mono),
     };
-    let radius = usize::from(p.radius);
     ThemeConfig {
         is_default: false,
         name: SharedString::new_static(theme.code()),
@@ -179,8 +176,8 @@ fn config(theme: UiTheme, system_font: SharedString, system_mono: SharedString) 
         font_family: Some(font),
         mono_font_family: Some(mono),
         mono_font_size: None,
-        radius: Some(radius),
-        radius_lg: Some(if radius == 0 { 0 } else { radius + 2 }),
+        radius: Some(usize::from(p.radius)),
+        radius_lg: Some(usize::from(p.radius_lg())),
         // Soft shadows only lift light base cards; terminal and dark themes
         // separate surfaces by tone and frame alone.
         shadow: Some(!terminal && theme.mode() == ThemeMode::Light),

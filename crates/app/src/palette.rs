@@ -67,6 +67,14 @@ pub struct Palette {
     pub font: UiFont,
 }
 
+impl Palette {
+    /// Corner radius of cards and panels, in px: a little rounder than
+    /// controls, while square themes stay square.
+    pub fn radius_lg(&self) -> u8 {
+        if self.radius == 0 { 0 } else { self.radius + 2 }
+    }
+}
+
 /// The tokens of `theme`.
 pub fn palette(theme: UiTheme) -> &'static Palette {
     match theme {

@@ -89,9 +89,13 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 }
 
 pub struct SettingsScreen {
-    /// The light and dark slots of "follow the system".
+    /// The light and dark slots of "follow the system", kept while a fixed
+    /// theme is on so following again restores them.
+    follow_pair: (UiTheme, UiTheme),
     light_theme: ThemeSelect,
     dark_theme: ThemeSelect,
+    /// Numbers the appearance saves, so only the newest one's outcome shows.
+    saves: u64,
     /// Why the last appearance change was not saved.
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -99,47 +103,43 @@ pub struct SettingsScreen {
 
 impl SettingsScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (light, dark) = preferences::appearance(cx).theme.follow_pair();
+        let follow_pair = preferences::appearance(cx).theme.follow_pair();
+        let (light, dark) = follow_pair;
         let mut select = |mode, theme: UiTheme| {
             let at = UiTheme::of_mode(mode).position(|t| t == theme).unwrap_or(0);
             cx.new(|cx| SelectState::new(theme_choices(mode), Some(IndexPath::new(at)), window, cx))
         };
         let light_theme = select(ThemeMode::Light, light);
         let dark_theme = select(ThemeMode::Dark, dark);
-        let subscriptions = [
-            (&light_theme, ThemeMode::Light),
-            (&dark_theme, ThemeMode::Dark),
-        ]
-        .map(|(select, mode)| {
-            cx.subscribe_in(
-                select,
-                window,
-                move |this, _, event: &SelectEvent<SearchableVec<ThemeChoice>>, window, cx| {
-                    let SelectEvent::Confirm(Some(theme)) = event else {
-                        return;
-                    };
-                    let (light, dark) = preferences::appearance(cx).theme.follow_pair();
-                    let preference = match mode {
-                        ThemeMode::Light => UiThemePreference::FollowSystem {
-                            light: *theme,
-                            dark,
-                        },
-                        ThemeMode::Dark => UiThemePreference::FollowSystem {
-                            light,
-                            dark: *theme,
-                        },
-                    };
-                    this.set_theme(preference, window, cx);
-                },
-            )
-        })
-        .into();
+        let subscriptions = [&light_theme, &dark_theme]
+            .map(|select| {
+                cx.subscribe_in(
+                    select,
+                    window,
+                    move |this, _, event: &SelectEvent<SearchableVec<ThemeChoice>>, window, cx| {
+                        let SelectEvent::Confirm(Some(theme)) = event else {
+                            return;
+                        };
+                        let (light, dark) = this.following().follow_pair_with(*theme);
+                        this.set_theme(UiThemePreference::FollowSystem { light, dark }, window, cx);
+                    },
+                )
+            })
+            .into();
         Self {
+            follow_pair,
             light_theme,
             dark_theme,
+            saves: 0,
             error: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// "Follow the system" with the pair this screen keeps.
+    fn following(&self) -> UiThemePreference {
+        let (light, dark) = self.follow_pair;
+        UiThemePreference::FollowSystem { light, dark }
     }
 
     fn set_theme(
@@ -161,7 +161,11 @@ impl SettingsScreen {
         );
         appearance::follow(preference, appearance::system_mode(window), cx);
         // The pickers show the pair "follow the system" would use now.
-        let (light, dark) = preference.follow_pair();
+        self.follow_pair = match preference {
+            UiThemePreference::FollowSystem { light, dark } => (light, dark),
+            UiThemePreference::Fixed(theme) => self.following().follow_pair_with(theme),
+        };
+        let (light, dark) = self.follow_pair;
         for (select, theme) in [
             (self.light_theme.clone(), light),
             (self.dark_theme.clone(), dark),
@@ -183,12 +187,16 @@ impl SettingsScreen {
 
     fn save(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
         self.error = None;
+        self.saves += 1;
+        let save = self.saves;
         let saving = preferences::set_appearance(appearance, cx);
         cx.spawn(async move |this, cx| {
             let error = saving.await.err();
             let _ = this.update(cx, |this, cx| {
-                this.error = error.map(SharedString::from);
-                cx.notify();
+                if this.saves == save {
+                    this.error = error.map(SharedString::from);
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -242,11 +250,7 @@ impl SettingsScreen {
             "Muda entre um tema claro e um escuro junto com o Windows ou o Linux.",
         )
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            let preference = preferences::appearance(cx).theme;
-            if let UiThemePreference::Fixed(_) = preference {
-                let (light, dark) = preference.follow_pair();
-                this.set_theme(UiThemePreference::FollowSystem { light, dark }, window, cx);
-            }
+            this.set_theme(this.following(), window, cx);
         }))
         .child(
             h_flex()
@@ -276,13 +280,8 @@ impl SettingsScreen {
             "Escolha um dos temas abaixo.",
         )
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            if matches!(
-                preferences::appearance(cx).theme,
-                UiThemePreference::FollowSystem { .. }
-            ) {
-                let current = look(cx).theme;
-                this.set_theme(UiThemePreference::Fixed(current), window, cx);
-            }
+            let current = look(cx).theme;
+            this.set_theme(UiThemePreference::Fixed(current), window, cx);
         }));
 
         v_flex()

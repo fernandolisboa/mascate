@@ -151,3 +151,13 @@ _Avoid_: export (quando o objetivo é guarda)
 **Merge Import**:
 Importação de outro banco do Mascate combinando registros linha a linha, em vez de substituir o banco atual.
 _Avoid_: restore, sync
+
+## Interface
+
+**Interface Theme**:
+Conjunto de cores, cantos e fonte da interface do app (Papel, Grafite, Ouro Negro…). O Fernando escolhe um tema fixo ou segue o claro/escuro do sistema com um par de temas. Só muda a aparência, nunca a posição das coisas.
+_Avoid_: tema (sozinho, quando houver dúvida com tema de anúncio), skin, modo escuro
+
+**Layout**:
+Arranjo que posiciona as partes de cada tela (navegação, título, ações, conteúdo): Workspace (barra lateral) ou Studio (abas no topo e barra de status). Nunca muda o que as partes fazem.
+_Avoid_: tela, visual, template

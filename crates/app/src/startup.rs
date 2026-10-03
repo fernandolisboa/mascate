@@ -28,7 +28,11 @@ pub fn prepare() -> Outcome {
     block_on(async {
         let database = Database::open(&path).await?;
         migrate(&database, &SystemClock, MODULE_MIGRATIONS).await?;
-        let appearance = load_appearance(&database).await?;
+        let appearance = load_appearance(&database).await.unwrap_or_else(|error| {
+            // A look that cannot be read is no reason to give up the database.
+            eprintln!("could not read the saved appearance: {error}");
+            Appearance::default()
+        });
         Ok::<_, Box<dyn std::error::Error>>(Started {
             database: Arc::new(database),
             appearance,

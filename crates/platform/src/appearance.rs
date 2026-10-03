@@ -1,6 +1,5 @@
-//! How the app's own interface looks (CONTEXT.md, "Interface Theme" and
-//! "Layout"): the theme and how the owner picks it, the layout that places
-//! every screen, and where both are kept.
+//! How the app's own interface looks: the Interface Theme and how the owner
+//! picks it, the Layout that places every screen, and where both are kept.
 
 use std::fmt;
 use std::str::FromStr;
@@ -163,13 +162,19 @@ impl UiThemePreference {
     /// or the default pair with a fixed theme in its own slot, so switching
     /// back to following keeps what was on screen.
     pub fn follow_pair(self) -> (UiTheme, UiTheme) {
-        let (light, dark) = (UiTheme::Paper, UiTheme::Graphite);
         match self {
             UiThemePreference::FollowSystem { light, dark } => (light, dark),
-            UiThemePreference::Fixed(theme) => match theme.mode() {
-                ThemeMode::Light => (theme, dark),
-                ThemeMode::Dark => (light, theme),
-            },
+            UiThemePreference::Fixed(theme) => UiThemePreference::default().follow_pair_with(theme),
+        }
+    }
+
+    /// The pair "follow the system" uses with `theme` in its own slot and
+    /// this preference's pair in the other.
+    pub fn follow_pair_with(self, theme: UiTheme) -> (UiTheme, UiTheme) {
+        let (light, dark) = self.follow_pair();
+        match theme.mode() {
+            ThemeMode::Light => (theme, dark),
+            ThemeMode::Dark => (light, theme),
         }
     }
 
@@ -305,7 +310,9 @@ pub async fn load_appearance(database: &Database) -> Result<Appearance, libsql::
     })
 }
 
-/// Saves `appearance` over the one already saved, if any.
+/// Saves `appearance` over the one already saved, if any. Each statement is
+/// atomic on its own, so two saves racing on a new database still leave one
+/// live choice.
 pub async fn save_appearance(
     database: &Database,
     clock: &dyn Clock,
@@ -313,41 +320,40 @@ pub async fn save_appearance(
     appearance: Appearance,
 ) -> Result<(), libsql::Error> {
     let connection = database.connection();
-    let mut rows = connection
-        .query(
-            "SELECT id FROM platform_appearance
-             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
-            (),
-        )
-        .await?;
     let theme = appearance.theme.code();
     let layout = appearance.layout.code();
-    if let Some(row) = rows.next().await? {
-        let id: String = row.get(0)?;
-        connection
+    loop {
+        let updated = connection
             .execute(
                 "UPDATE platform_appearance SET theme = ?1, layout = ?2, updated_at = ?3
-                 WHERE id = ?4",
-                params![theme, layout, clock.now().to_rfc3339(), id],
+                 WHERE id = (SELECT id FROM platform_appearance
+                             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1)",
+                params![theme.as_str(), layout, clock.now().to_rfc3339()],
             )
             .await?;
-    } else {
+        if updated > 0 {
+            return Ok(());
+        }
         let record = Record::new(ids, clock);
-        connection
+        let inserted = connection
             .execute(
                 "INSERT INTO platform_appearance (id, theme, layout, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 SELECT ?1, ?2, ?3, ?4, ?5
+                 WHERE NOT EXISTS (SELECT 1 FROM platform_appearance WHERE deleted_at IS NULL)",
                 params![
                     record.id.to_string(),
-                    theme,
+                    theme.as_str(),
                     layout,
                     record.created_at.to_rfc3339(),
                     record.updated_at.to_rfc3339()
                 ],
             )
             .await?;
+        if inserted > 0 {
+            return Ok(());
+        }
+        // Another save inserted the first choice in between: update it.
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -406,6 +412,22 @@ mod tests {
             dark: UiTheme::Slate,
         };
         assert_eq!(saved.follow_pair(), (UiTheme::Sand, UiTheme::Slate));
+    }
+
+    #[test]
+    fn a_new_theme_in_one_slot_keeps_the_other_slot() {
+        let saved = UiThemePreference::FollowSystem {
+            light: UiTheme::Sand,
+            dark: UiTheme::Slate,
+        };
+        assert_eq!(
+            saved.follow_pair_with(UiTheme::Brass),
+            (UiTheme::Brass, UiTheme::Slate)
+        );
+        assert_eq!(
+            saved.follow_pair_with(UiTheme::BlackGold),
+            (UiTheme::Sand, UiTheme::BlackGold)
+        );
     }
 
     #[test]
