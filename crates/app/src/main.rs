@@ -1,51 +1,70 @@
 // Release builds on Windows run without a console window behind the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appearance;
 mod home;
+mod kit;
+mod layout;
+mod palette;
+mod parts;
+mod preferences;
+mod settings;
+mod shell;
 mod startup;
 mod tray;
 
 use futures::StreamExt;
 use gpui_kit::*;
 
-use crate::home::Home;
+use crate::preferences::Preferences;
+use crate::shell::Shell;
 use crate::tray::TrayCommand;
 
 fn main() {
-    let startup = startup::prepare_database();
+    let startup = startup::prepare();
+    let (database, saved, problem) = match startup {
+        Ok(started) => (Some(started.database), started.appearance, None),
+        Err(problem) => (None, Default::default(), Some(SharedString::from(problem))),
+    };
 
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
+    // gpui-kit's default icon set; without it icons draw nothing.
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            cx.set_global(Preferences::new(database, saved));
+            appearance::init(saved.theme, cx);
+            layout::show(saved.layout, cx);
 
-        match tray::start() {
-            Ok((tray, mut commands)) => {
-                // Closing the window only hides the app; "Sair" in the tray quits.
-                cx.set_quit_mode(QuitMode::Explicit);
-                cx.set_global(tray);
-                let startup = startup.clone();
-                cx.spawn(async move |cx| {
-                    while let Some(command) = commands.next().await {
-                        cx.update(|cx| match command {
-                            TrayCommand::Open => show_home(startup.clone(), cx),
-                            TrayCommand::Quit => cx.quit(),
-                        });
-                    }
-                })
-                .detach();
+            match tray::start() {
+                Ok((tray, mut commands)) => {
+                    // Closing the window only hides the app; "Sair" in the tray quits.
+                    cx.set_quit_mode(QuitMode::Explicit);
+                    cx.set_global(tray);
+                    let problem = problem.clone();
+                    cx.spawn(async move |cx| {
+                        while let Some(command) = commands.next().await {
+                            cx.update(|cx| match command {
+                                TrayCommand::Open => show_home(problem.clone(), cx),
+                                TrayCommand::Quit => cx.quit(),
+                            });
+                        }
+                    })
+                    .detach();
+                }
+                // Without a tray there would be no way back to a closed window.
+                Err(error) => {
+                    eprintln!("tray unavailable, closing the window will quit: {error}");
+                    cx.set_quit_mode(QuitMode::LastWindowClosed);
+                }
             }
-            // Without a tray there would be no way back to a closed window.
-            Err(error) => {
-                eprintln!("tray unavailable, closing the window will quit: {error}");
-                cx.set_quit_mode(QuitMode::LastWindowClosed);
-            }
-        }
 
-        show_home(startup, cx);
-    });
+            show_home(problem, cx);
+        });
 }
 
 /// Brings the home window to the front, opening it if it was closed.
-fn show_home(startup: startup::Outcome, cx: &mut App) {
+fn show_home(problem: Option<SharedString>, cx: &mut App) {
     if let Some(window) = cx.windows().into_iter().next() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
         cx.activate(true);
@@ -60,7 +79,9 @@ fn show_home(startup: startup::Outcome, cx: &mut App) {
         app_id: Some("mascate".into()),
         ..Default::default()
     };
-    if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| Home::new(startup))) {
+    if let Err(error) = gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| Shell::new(problem, window, cx))
+    }) {
         eprintln!("could not open the window: {error}");
         cx.quit();
     }
