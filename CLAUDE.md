@@ -23,6 +23,7 @@ Local desktop app (Rust + GPUI) for a solo online-selling business: product disc
 - Slices hang off PRD #3 as sub-issues. Label `ready-for-agent` + `afk` when an agent can finish it alone, `hitl` when it needs the owner.
 - Every GitHub label has its own distinct color; pick an unused one when creating a label.
 - Legal and fiscal matters (CNPJ, NF-e, LGPD) are never a blocker: model them as a flag, a warning or a Reminder and keep going. Issue and PR status reflects technical state only.
+- Checks that need a real account, a paid call or a real desktop go as a comment on the phase's regression-pass issue (#37 for phase 1), as checkboxes after a line on what was already checked in the cloud. The slice never waits for them: it closes when CI is green.
 
 ## Architecture rules
 
@@ -46,6 +47,10 @@ Local desktop app (Rust + GPUI) for a solo online-selling business: product disc
 
 Windows 11 first. Linux (Wayland, Arch/Hyprland) second, tested regularly. macOS much later; keep the core portable.
 
+## Current documentation
+
+Before writing code against a library (GPUI, gpui-kit, libSQL) or a Platform API, read its current docs through Context7, falling back to the official site. Training data lags these APIs.
+
 ## Code style
 
 - SOLID, YAGNI, KISS. One source of truth per rule: extract shared logic the second time it appears.
@@ -57,7 +62,7 @@ Robust tests ship with every change; they are the owner's main review signal.
 
 - Test through a module's public interface with a real temp database, an injected clock and an injected ID generator (PRD "Testing Decisions", issue #4). Assert domain behaviour, never private functions or table shapes.
 - Money, commission, fee and margin math: example tests plus property tests.
-- Platform adapters: run against a fake HTTP server serving recorded fixtures, including 401/403/429, token refresh races and duplicate deliveries.
+- Platform adapters: run against a fake HTTP server serving recorded fixtures, including 401/403/429, token refresh races and duplicate deliveries. Without a real account, fixtures follow the Platform's current documentation and their folder's README says so; the regression pass re-records them.
 - Migrations: migrate a sample database from each released version to the current one.
 
 ## Commands
