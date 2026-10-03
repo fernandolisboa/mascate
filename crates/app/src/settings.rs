@@ -1,5 +1,5 @@
-//! Settings screen. Its Appearance section picks the layout (#41) and the
-//! interface theme (#39); Connections (#5) and later settings join it.
+//! Settings screen: Connections (#5), then Appearance, which picks the
+//! layout (#41) and the interface theme (#39). Later settings join it.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
@@ -12,6 +12,7 @@ use gpui_kit::{
 use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, UiThemePreference};
 
 use crate::appearance::{self, color, look};
+use crate::connections::ConnectionsSection;
 use crate::kit;
 use crate::layout;
 use crate::palette::palette;
@@ -89,6 +90,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 }
 
 pub struct SettingsScreen {
+    connections: Entity<ConnectionsSection>,
     /// The light and dark slots of "follow the system", kept while a fixed
     /// theme is on so following again restores them.
     follow_pair: (UiTheme, UiTheme),
@@ -127,6 +129,7 @@ impl SettingsScreen {
             })
             .into();
         Self {
+            connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             follow_pair,
             light_theme,
             dark_theme,
@@ -513,6 +516,13 @@ impl Render for SettingsScreen {
             self.error
                 .clone()
                 .map(|error| kit::error_notice(error, cx).into_any_element()),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Conexões"))
+                .child(self.connections.clone())
+                .into_any_element(),
         );
         parts.content.push(
             v_flex()
