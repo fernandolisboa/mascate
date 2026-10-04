@@ -1,0 +1,296 @@
+{
+  "offset": 0,
+  "limit": 150,
+  "total": 2,
+  "results": [
+    {
+      "order_id": 2000009876543210,
+      "payment_info": [
+        {
+          "payment_id": 91000000001,
+          "date_approved": "2026-10-04T09:15:05",
+          "date_created": "2026-10-04T09:15:02",
+          "money_release_date": "2026-11-03T09:15:05",
+          "money_release_days": 30,
+          "money_release_status": "pending",
+          "payer_id": 1650000001,
+          "payment_method_id": "pix",
+          "payment_type_id": "bank_transfer",
+          "status": "approved",
+          "status_details": null,
+          "tax_details": []
+        }
+      ],
+      "sale_fee": {
+        "gross": 25.18,
+        "net": 25.18,
+        "rebate": 0,
+        "discount": 0,
+        "discount_reason": null
+      },
+      "details": [
+        {
+          "charge_info": {
+            "legal_document_number": null,
+            "legal_document_status": "PROCESSING",
+            "legal_document_status_description": "Em processamento",
+            "creation_date_time": "2026-10-04T12:00:00",
+            "detail_id": 7001000001,
+            "transaction_detail": "Tarifa de venda",
+            "debited_from_operation": "YES",
+            "debited_from_operation_description": "Sim",
+            "status": null,
+            "status_description": null,
+            "charge_bonified_id": null,
+            "detail_amount": 25.18,
+            "detail_type": "CHARGE",
+            "detail_sub_type": "CV"
+          },
+          "discount_info": {
+            "charge_amount_without_discount": 25.18,
+            "discount_amount": 0,
+            "discount_reason": null,
+            "rebate": null
+          },
+          "sales_info": [
+            {
+              "order_id": 2000009876543210,
+              "operation_id": 9876543210,
+              "sale_date_time": "2026-10-04T09:15:02",
+              "sales_channel": "Mercado Livre",
+              "payer_nickname": "COMPRADOR",
+              "state_name": null,
+              "transaction_amount": 179.8
+            }
+          ],
+          "shipping_info": {
+            "shipping_id": "44100000001",
+            "pack_id": null,
+            "receiver_shipping_cost": null
+          },
+          "items_info": [
+            {
+              "item_id": "MLB4100000001",
+              "item_title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+              "item_type": "gold_special",
+              "item_category": "Eletrônicos",
+              "inventory_id": null,
+              "item_amount": 2,
+              "item_price": 89.9,
+              "order_id": 2000009876543210,
+              "fees_added_in_publication": "No"
+            }
+          ],
+          "document_info": {
+            "document_id": 3454540850
+          },
+          "marketplace_info": {
+            "marketplace": "CORE"
+          },
+          "currency_info": {
+            "currency_id": "BRL"
+          }
+        },
+        {
+          "charge_info": {
+            "legal_document_number": null,
+            "legal_document_status": "PROCESSING",
+            "legal_document_status_description": "Em processamento",
+            "creation_date_time": "2026-10-04T12:00:00",
+            "detail_id": 7001000002,
+            "transaction_detail": "Tarifa de envio do Mercado Envios",
+            "debited_from_operation": "YES",
+            "debited_from_operation_description": "Sim",
+            "status": null,
+            "status_description": null,
+            "charge_bonified_id": null,
+            "detail_amount": 4.6,
+            "detail_type": "CHARGE",
+            "detail_sub_type": "CXD"
+          },
+          "discount_info": {
+            "charge_amount_without_discount": 4.6,
+            "discount_amount": 0,
+            "discount_reason": null,
+            "rebate": null
+          },
+          "sales_info": [
+            {
+              "order_id": 2000009876543210,
+              "operation_id": 9876543210,
+              "sale_date_time": "2026-10-04T09:15:02",
+              "sales_channel": "Mercado Livre",
+              "payer_nickname": "COMPRADOR",
+              "state_name": null,
+              "transaction_amount": 179.8
+            }
+          ],
+          "shipping_info": {
+            "shipping_id": "44100000001",
+            "pack_id": null,
+            "receiver_shipping_cost": null
+          },
+          "items_info": [
+            {
+              "item_id": "MLB4100000001",
+              "item_title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+              "item_type": "gold_special",
+              "item_category": "Eletrônicos",
+              "inventory_id": null,
+              "item_amount": 2,
+              "item_price": 89.9,
+              "order_id": 2000009876543210,
+              "fees_added_in_publication": "No"
+            }
+          ],
+          "document_info": {
+            "document_id": 3454540850
+          },
+          "marketplace_info": {
+            "marketplace": "SHIPPING"
+          },
+          "currency_info": {
+            "currency_id": "BRL"
+          }
+        }
+      ]
+    },
+    {
+      "order_id": 2000009876543500,
+      "payment_info": [],
+      "sale_fee": {
+        "gross": 25.44,
+        "net": 25.44,
+        "rebate": 0,
+        "discount": 0,
+        "discount_reason": null
+      },
+      "details": [
+        {
+          "charge_info": {
+            "legal_document_number": null,
+            "legal_document_status": "PROCESSING",
+            "legal_document_status_description": "Em processamento",
+            "creation_date_time": "2026-10-04T12:00:00",
+            "detail_id": 7001000003,
+            "transaction_detail": "Tarifa de venda",
+            "debited_from_operation": "YES",
+            "debited_from_operation_description": "Sim",
+            "status": null,
+            "status_description": null,
+            "charge_bonified_id": null,
+            "detail_amount": 25.44,
+            "detail_type": "CHARGE",
+            "detail_sub_type": "CV"
+          },
+          "discount_info": {
+            "charge_amount_without_discount": 25.44,
+            "discount_amount": 0,
+            "discount_reason": null,
+            "rebate": null
+          },
+          "sales_info": [
+            {
+              "order_id": 2000009876543500,
+              "operation_id": 9876543500,
+              "sale_date_time": "2026-10-04T09:15:02",
+              "sales_channel": "Mercado Livre",
+              "payer_nickname": "COMPRADOR",
+              "state_name": null,
+              "transaction_amount": 149.7
+            }
+          ],
+          "shipping_info": {
+            "shipping_id": "44100000005",
+            "pack_id": null,
+            "receiver_shipping_cost": null
+          },
+          "items_info": [
+            {
+              "item_id": "MLB4100000003",
+              "item_title": "Camiseta Básica Algodão",
+              "item_type": "gold_special",
+              "item_category": "Eletrônicos",
+              "inventory_id": null,
+              "item_amount": 3,
+              "item_price": 49.9,
+              "order_id": 2000009876543500,
+              "fees_added_in_publication": "No"
+            }
+          ],
+          "document_info": {
+            "document_id": 3454540850
+          },
+          "marketplace_info": {
+            "marketplace": "CORE"
+          },
+          "currency_info": {
+            "currency_id": "BRL"
+          }
+        },
+        {
+          "charge_info": {
+            "legal_document_number": null,
+            "legal_document_status": "PROCESSING",
+            "legal_document_status_description": "Em processamento",
+            "creation_date_time": "2026-10-04T12:00:00",
+            "detail_id": 7001000004,
+            "transaction_detail": "Bonificação da tarifa de venda pela devolução",
+            "debited_from_operation": "YES",
+            "debited_from_operation_description": "Sim",
+            "status": null,
+            "status_description": null,
+            "charge_bonified_id": null,
+            "detail_amount": 8.48,
+            "detail_type": "BONUS",
+            "detail_sub_type": "BV"
+          },
+          "discount_info": {
+            "charge_amount_without_discount": 8.48,
+            "discount_amount": 0,
+            "discount_reason": null,
+            "rebate": null
+          },
+          "sales_info": [
+            {
+              "order_id": 2000009876543500,
+              "operation_id": 9876543500,
+              "sale_date_time": "2026-10-04T09:15:02",
+              "sales_channel": "Mercado Livre",
+              "payer_nickname": "COMPRADOR",
+              "state_name": null,
+              "transaction_amount": 149.7
+            }
+          ],
+          "shipping_info": {
+            "shipping_id": "44100000005",
+            "pack_id": null,
+            "receiver_shipping_cost": null
+          },
+          "items_info": [
+            {
+              "item_id": "MLB4100000003",
+              "item_title": "Camiseta Básica Algodão",
+              "item_type": "gold_special",
+              "item_category": "Eletrônicos",
+              "inventory_id": null,
+              "item_amount": 3,
+              "item_price": 49.9,
+              "order_id": 2000009876543500,
+              "fees_added_in_publication": "No"
+            }
+          ],
+          "document_info": {
+            "document_id": 3454540850
+          },
+          "marketplace_info": {
+            "marketplace": "CORE"
+          },
+          "currency_info": {
+            "currency_id": "BRL"
+          }
+        }
+      ]
+    }
+  ]
+}

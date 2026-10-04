@@ -21,6 +21,7 @@ pub enum Place {
     Products,
     Listings,
     Orders,
+    Sales,
     Purchases,
     Stock,
     Settings,
@@ -28,13 +29,14 @@ pub enum Place {
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 8] = [
+    pub const MAIN: [Place; 9] = [
         Place::Today,
         Place::Opportunities,
         Place::Offers,
         Place::Products,
         Place::Listings,
         Place::Orders,
+        Place::Sales,
         Place::Purchases,
         Place::Stock,
     ];
@@ -50,6 +52,7 @@ impl Place {
             Place::Products => "Produtos",
             Place::Listings => "Anúncios",
             Place::Orders => "Pedidos",
+            Place::Sales => "Vendas",
             Place::Purchases => "Compras",
             Place::Stock => "Estoque",
             Place::Settings => "Configurações",
@@ -64,6 +67,7 @@ impl Place {
             Place::Products => IconName::Inbox,
             Place::Listings => IconName::Building2,
             Place::Orders => IconName::Bell,
+            Place::Sales => IconName::ChartPie,
             Place::Purchases => IconName::FileText,
             Place::Stock => IconName::GalleryVerticalEnd,
             Place::Settings => IconName::Settings,
@@ -104,6 +108,26 @@ impl ScreenParts {
             actions: Vec::new(),
             notices: Vec::new(),
             content: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::AssetSource;
+    use gpui_kit::assets::Assets;
+
+    use super::*;
+
+    /// The app ships only gpui-kit's default icons: any other draws nothing.
+    #[test]
+    fn every_place_has_an_icon_the_app_ships() {
+        for place in Place::MAIN.into_iter().chain(Place::PINNED) {
+            assert!(
+                matches!(Assets.load(&place.icon().path()), Ok(Some(_))),
+                "{} has no shipped icon",
+                place.name()
+            );
         }
     }
 }

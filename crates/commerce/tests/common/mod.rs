@@ -9,10 +9,11 @@ use std::str::FromStr;
 use std::sync::Mutex;
 
 use mascate_commerce::{
-    AttributeValue, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
-    ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelStock,
-    ListingPublisher, ListingStatus, ListingToPublish, OrderStatus, PublishedListing, Receiver,
-    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
+    AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
+    ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
+    ChannelOrders, ChannelStock, ListingPublisher, ListingStatus, ListingToPublish, OrderStatus,
+    PublishedListing, Receiver, Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus,
+    ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, Timestamp,
@@ -92,6 +93,10 @@ pub struct Channel {
     pub labels_asked: Mutex<Vec<String>>,
     /// What a label comes as, when not a small PDF.
     pub label_answer: Mutex<Option<Vec<u8>>>,
+    /// What the billing has billed so far, by Order.
+    pub billed: Mutex<Vec<BilledOrder>>,
+    /// The Orders each read of the billing asked about, in order.
+    pub billing_asked: Mutex<Vec<Vec<String>>>,
 }
 
 impl Default for Channel {
@@ -119,6 +124,8 @@ impl Default for Channel {
             orders_asked: Mutex::default(),
             labels_asked: Mutex::default(),
             label_answer: Mutex::default(),
+            billed: Mutex::default(),
+            billing_asked: Mutex::default(),
         }
     }
 }
@@ -323,6 +330,21 @@ impl ChannelOrders for Channel {
     }
 }
 
+impl ChannelBilling for Channel {
+    fn billed_fees(&self, orders: &[String]) -> Result<Vec<BilledOrder>, PlatformError> {
+        self.check()?;
+        self.billing_asked.lock().unwrap().push(orders.to_vec());
+        Ok(self
+            .billed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|billed| orders.contains(&billed.order))
+            .cloned()
+            .collect())
+    }
+}
+
 impl ShippingLabels for Channel {
     fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError> {
         self.check()?;
@@ -355,6 +377,7 @@ pub fn order(id: &str, at: Timestamp, lines: Vec<ChannelOrderLine>) -> ChannelOr
         total,
         paid: Some(total.checked_add(brl("19.90")).unwrap()),
         shipping_paid: Some(brl("19.90")),
+        refunded: Some(brl("0")),
         buyer: Some(Buyer {
             nickname: Some("ANA.COMPRA".into()),
             receiver: Some(Receiver {
@@ -369,6 +392,7 @@ pub fn order(id: &str, at: Timestamp, lines: Vec<ChannelOrderLine>) -> ChannelOr
             id: format!("4{id}"),
             status: ShipmentStatus::ReadyToShip,
             dispatch_by: Some(at + chrono::TimeDelta::days(1)),
+            seller_cost: Some(brl("21.45")),
         }),
         returns: Vec::new(),
     }

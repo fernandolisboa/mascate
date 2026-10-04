@@ -124,3 +124,25 @@ proptest! {
         })?;
     }
 }
+
+#[test]
+fn a_sale_reads_back_with_the_cost_it_left_with() {
+    block_on(async {
+        let f = Fixture::new().await;
+        f.enter(&[entry(FONE, 4, "20")]).await.unwrap();
+        let first = f.sell(FONE, 1).await.unwrap();
+        let second = f.sell(FONE, 2).await.unwrap();
+        // Dearer units after the sales move the Average Cost, not them.
+        f.enter(&[entry(FONE, 2, "50")]).await.unwrap();
+
+        let found = f
+            .inventory
+            .movements(&[second.movement.id, id(SALE), first.movement.id])
+            .await
+            .unwrap();
+
+        assert_eq!(found, [first.movement, second.movement]);
+        assert_eq!(found[1].cost, brl("-10"));
+        assert!(f.inventory.movements(&[]).await.unwrap().is_empty());
+    });
+}

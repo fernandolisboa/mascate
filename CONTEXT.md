@@ -105,7 +105,7 @@ Margem prevista de uma Opportunity ou Listing antes de vender.
 _Avoid_: lucro, margem (sozinho)
 
 **Realized Margin**:
-Margem de um Order já vendido: preço menos Fees menos custo médio do estoque.
+Margem de um Order já vendido: o que o comprador pagou e não recebeu de volta, menos as Fees, o imposto e o custo com que as unidades saíram do estoque (as que voltaram à prateleira saem do custo). Enquanto o Sales Channel não fatura o Order, é provisória: as Fees são as que o Order informa.
 _Avoid_: lucro, margem (sozinho)
 
 ## Estoque

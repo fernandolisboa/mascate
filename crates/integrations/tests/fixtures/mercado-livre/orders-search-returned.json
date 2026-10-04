@@ -43,6 +43,7 @@
           "status": "approved",
           "transaction_amount": 149.7,
           "shipping_cost": 0,
+          "transaction_amount_refunded": 99.8,
           "total_paid_amount": 149.7,
           "currency_id": "BRL"
         }

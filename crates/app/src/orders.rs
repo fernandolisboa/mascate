@@ -4,10 +4,12 @@
 //! its units leave the stock; the stock of the listings follows right after.
 //! Each Order waiting for dispatch prints its label and shows when it is
 //! late or close; units on their way back wait for the owner to say they
-//! arrived (ADR 0019). Settings › Pedidos sets how often, how long the
-//! buyer's data stays and how early the warning comes. The rules live in
-//! Commerce.
+//! arrived (ADR 0019). After each Sync the app asks Mercado Livre's billing
+//! for the Orders' Fees, and each Order shows its Realized Margin (ADR
+//! 0020). Settings › Pedidos sets how often, how long the buyer's data stays
+//! and how early the warning comes. The rules live in Commerce.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,7 +24,7 @@ use gpui_kit::{
 use mascate_catalog::Product;
 use mascate_commerce::{
     DispatchDue, LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync,
-    Orders, ReturnReceipt, ShipmentStatus, ShippingLabel, StockShort,
+    Orders, RealizedMargin, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel, StockShort,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{RecordId, Timestamp};
@@ -37,7 +39,9 @@ use crate::layout;
 use crate::low_stock;
 use crate::mercado_livre;
 use crate::parts::ScreenParts;
+use crate::pricing;
 use crate::purchases::units_text;
+use crate::sales;
 use crate::stock::product_label;
 use crate::stock_mirror;
 
@@ -141,6 +145,9 @@ pub fn sync_now(cx: &mut App) -> Option<Task<Result<Option<Round>, String>>> {
             .sync(channel.as_ref())
             .await
             .map_err(|e| failure(&e))?;
+        if let Err(error) = orders.import_fees(channel.as_ref()).await {
+            eprintln!("could not read the Orders' Fees: {error}");
+        }
         if let Err(error) = mirror.send(channel.as_ref()).await {
             eprintln!("could not send the listings' stock: {error}");
         }
@@ -305,7 +312,7 @@ fn items_text(count: usize) -> String {
 
 /// Everything the screen shows, read in one go off the UI thread.
 struct Snapshot {
-    orders: Vec<Order>,
+    sales: Vec<Sale>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     settings: OrderSettings,
@@ -314,6 +321,8 @@ struct Snapshot {
 
 pub struct OrdersScreen {
     orders: Vec<Order>,
+    /// Each Order's Realized Margin, by the Order.
+    margins: BTreeMap<RecordId, RealizedMargin>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     settings: OrderSettings,
@@ -333,6 +342,7 @@ impl OrdersScreen {
         let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
         let mut screen = Self {
             orders: Vec::new(),
+            margins: BTreeMap::new(),
             products: Vec::new(),
             last_sync: None,
             settings: OrderSettings::default(),
@@ -349,15 +359,24 @@ impl OrdersScreen {
 
     /// Reads the Orders again, as when the screen comes into view.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let (Some(orders), Some(catalog)) = (orders(cx), catalog::catalog(cx)) else {
+        let (Some(orders), Some(catalog), Some(taxes)) =
+            (orders(cx), catalog::catalog(cx), pricing::taxes(cx))
+        else {
             return;
         };
         let connections = cx.global::<AppConnections>().0.clone();
         self.reads += 1;
         let read = self.reads;
         let reading = cx.background_executor().spawn(async move {
+            let tax = taxes
+                .rate()
+                .await
+                .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
             Ok::<_, String>(Snapshot {
-                orders: orders.orders().await.map_err(|e| failure(&e))?,
+                sales: orders
+                    .sales(tax, sales::ever())
+                    .await
+                    .map_err(|e| failure(&e))?,
                 products: catalog.products().await.map_err(|e| catalog::failure(&e))?,
                 last_sync: orders.last_sync().await.map_err(|e| failure(&e))?,
                 settings: orders.settings().await.map_err(|e| failure(&e))?,
@@ -372,7 +391,12 @@ impl OrdersScreen {
                 }
                 match read_back {
                     Ok(snapshot) => {
-                        this.orders = snapshot.orders;
+                        this.margins = snapshot
+                            .sales
+                            .iter()
+                            .map(|sale| (sale.order.id, sale.margin.clone()))
+                            .collect();
+                        this.orders = snapshot.sales.into_iter().map(|sale| sale.order).collect();
                         this.products = snapshot.products;
                         this.last_sync = snapshot.last_sync;
                         this.settings = snapshot.settings;
@@ -587,6 +611,11 @@ impl OrdersScreen {
             .child(div().text_xs().text_color(t.text2).child(facts.join(" · ")))
             .child(div().text_sm().child(buyer))
             .children(lines)
+            .children(
+                self.margins
+                    .get(&order.id)
+                    .map(|margin| sales::margin_detail(margin, cx)),
+            )
             .children(actions)
             .into_any_element()
     }

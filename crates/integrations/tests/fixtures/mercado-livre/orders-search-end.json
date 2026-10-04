@@ -41,6 +41,7 @@
           "status_detail": "cc_rejected_insufficient_amount",
           "transaction_amount": 89.9,
           "shipping_cost": 19.9,
+          "transaction_amount_refunded": 0,
           "total_paid_amount": 0,
           "currency_id": "BRL"
         }
