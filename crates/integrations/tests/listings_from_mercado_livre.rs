@@ -9,8 +9,8 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ListingError, ListingStatus, ListingSync, Listings, SaleFee, SalesChannel,
-    Variation,
+    ChannelListing, ChannelStock, ListingError, ListingStatus, ListingSync, Listings, SaleFee,
+    SalesChannel, Variation,
 };
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -562,6 +562,208 @@ fn an_approved_price_reaches_mercado_livre_and_the_listing_keeps_it() {
         assert_eq!(
             listings.listing(shirt.id).await.unwrap().listed.price,
             brl("59.9")
+        );
+    });
+}
+
+impl Fake {
+    /// The bodies of the PUTs Mercado Livre received, in order.
+    fn puts(&self) -> Vec<(String, String)> {
+        self.server
+            .received()
+            .into_iter()
+            .filter(|request| request.method == "PUT")
+            .map(|request| (request.path, request.body))
+            .collect()
+    }
+}
+
+fn stock(variation: Option<&str>, available_quantity: u32) -> ChannelStock {
+    ChannelStock {
+        variation: variation.map(String::from),
+        available_quantity,
+    }
+}
+
+#[test]
+fn the_stock_of_a_listing_without_variations_is_its_available_quantity() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000001", "item-MLB4100000001.json");
+
+    fake.adapter
+        .set_stock("MLB4100000001", &[stock(None, 7)])
+        .unwrap();
+
+    assert_eq!(
+        fake.puts(),
+        [(
+            "/items/MLB4100000001".to_owned(),
+            r#"{"available_quantity":7}"#.to_owned()
+        )]
+    );
+}
+
+#[test]
+fn the_stock_goes_to_the_variations_named_and_every_other_one_is_kept() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+
+    fake.adapter
+        .set_stock(
+            "MLB4100000003",
+            &[
+                stock(Some("175000000032"), 0),
+                stock(Some("175000000031"), 9),
+            ],
+        )
+        .unwrap();
+
+    // Left out, the third variation would be deleted.
+    assert_eq!(
+        fake.puts(),
+        [(
+            "/items/MLB4100000003".to_owned(),
+            r#"{"variations":[{"id":175000000031,"available_quantity":9},{"id":175000000032,"available_quantity":0},{"id":175000000033}]}"#
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_stock_for_a_variation_mercado_livre_no_longer_has_is_never_sent() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+    fake.serve("/items/MLB4100000001", "item-MLB4100000001.json");
+
+    let gone = fake
+        .adapter
+        .set_stock("MLB4100000003", &[stock(Some("175000000099"), 2)]);
+    let whole_on_variations = fake.adapter.set_stock("MLB4100000003", &[stock(None, 2)]);
+    let variation_on_whole = fake
+        .adapter
+        .set_stock("MLB4100000001", &[stock(Some("175000000031"), 2)]);
+
+    assert_eq!(gone, Err(PlatformError::NotFound));
+    assert_eq!(whole_on_variations, Err(PlatformError::NotFound));
+    assert_eq!(variation_on_whole, Err(PlatformError::NotFound));
+    assert!(fake.puts().is_empty());
+}
+
+#[test]
+fn pausing_and_reactivating_put_the_listings_status() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+
+    fake.adapter.pause("MLB4100000003").unwrap();
+    fake.adapter.activate("MLB4100000003").unwrap();
+
+    assert_eq!(
+        fake.puts(),
+        [
+            (
+                "/items/MLB4100000003".to_owned(),
+                r#"{"status":"paused"}"#.to_owned()
+            ),
+            (
+                "/items/MLB4100000003".to_owned(),
+                r#"{"status":"active"}"#.to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn stock_and_status_never_reach_a_path_that_is_not_a_listings() {
+    let fake = Fake::connected();
+
+    assert_eq!(
+        fake.adapter.set_stock("../users/me", &[stock(None, 1)]),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(
+        fake.adapter.pause("MLB1/../x"),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(fake.adapter.activate(""), Err(PlatformError::NotFound));
+    assert!(
+        fake.server
+            .requests()
+            .iter()
+            .all(|path| !path.starts_with("/items"))
+    );
+}
+
+#[test]
+fn a_stock_mercado_livre_refuses_says_why() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000001", "item-MLB4100000001.json");
+    fake.server.serve_method(
+        "PUT",
+        "/items/MLB4100000001",
+        400,
+        fixture("error-400-stock.json"),
+    );
+
+    let refused = fake.adapter.set_stock("MLB4100000001", &[stock(None, 3)]);
+
+    assert_eq!(
+        refused,
+        Err(PlatformError::Refused(
+            "The item is closed and its stock cannot change".into()
+        ))
+    );
+}
+
+#[test]
+fn a_listing_paused_from_the_app_is_paused_in_mercado_livre_and_on_screen() {
+    block_on(async {
+        let fake = Fake::connected();
+        let dir = tempfile::tempdir().unwrap();
+        let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
+        migrate(
+            &database,
+            fake.clock.as_ref(),
+            &[mascate_commerce::MIGRATIONS],
+        )
+        .await
+        .unwrap();
+        let listings = Listings::new(
+            database,
+            fake.clock.clone(),
+            Arc::new(SequentialIds::default()),
+        );
+        listings.sync(&fake.adapter).await.unwrap();
+        fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+        let shirt = listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.listed.id == "MLB4100000003")
+            .unwrap();
+
+        let paused = listings.pause(shirt.id, &fake.adapter).await.unwrap();
+
+        assert_eq!(paused.len(), 2);
+        assert!(
+            paused
+                .iter()
+                .all(|listing| listing.listed.status == ListingStatus::Paused)
+        );
+        fake.server.serve_method(
+            "PUT",
+            "/items/MLB4100000003",
+            403,
+            fixture("error-403.json"),
+        );
+        let refused = listings.reactivate(shirt.id, &fake.adapter).await;
+        assert!(matches!(
+            refused,
+            Err(ListingError::Platform(PlatformError::Refused(_)))
+        ));
+        assert_eq!(
+            listings.listing(shirt.id).await.unwrap().listed.status,
+            ListingStatus::Paused
         );
     });
 }

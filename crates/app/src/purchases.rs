@@ -26,6 +26,7 @@ use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::stock::inventory_failure;
+use crate::stock_mirror;
 
 /// The app's Purchase Orders; absent when the database did not open.
 pub struct AppPurchaseOrders(pub Arc<PurchaseOrders>);
@@ -442,8 +443,9 @@ impl PurchasesScreen {
                     .await
                     .map(Some)
             },
-            |this, order: PurchaseOrder, _, _| {
+            |this, order: PurchaseOrder, _, cx| {
                 this.step = None;
+                stock_mirror::send_after_movement(cx);
                 let units: u32 = order
                     .receipts
                     .last()

@@ -34,6 +34,7 @@ conta de vendedor do Fernando.
 | `item-created.json` | `POST /items` (201) | Publicação de produtos |
 | `item-description.json`, `error-400-description.json` | `POST /items/{id}/description` (201) e a descrição que já existe (400) | Descrição de produtos |
 | `users-me-user-products.json` | `GET /users/me` de um vendedor com a tag `user_product_seller` | Preço por variação; User products |
+| `error-400-stock.json` | `PUT /items/{id}` com `available_quantity` recusado (400, com `cause`) | Sincronização de publicações / erros |
 | `user-items-by-sku.json`, `items-states.json` | `GET /users/{id}/items/search?seller_sku=...` e o multiget com `attributes=id,status,permalink` | Itens e buscas |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
@@ -65,3 +66,10 @@ recursos vizinhos (conferir no regression pass):
   o nome ou exige o `value_id`. O texto dos erros de `validate-errors.json` e
   `error-400-description.json` é inventado no formato de erro da API; o `type` `warning` vem do
   exemplo de descrição. O app sobe as fotos antes de validar, porque o validador lê as fotos.
+- Estoque, pausa e reativação (#18): `PUT /items/{id}` com `available_quantity` (anúncio sem
+  variações) ou `variations[]` com o id de cada variação e `available_quantity` só nas que mudam
+  (página Variações, "Exemplo de atualização correta de variante"); `{"status":"paused"}` e
+  `{"status":"active"}` (Atualiza tuas publicações). A página de sincronização diz que estoque zero
+  pausa o anúncio com `sub_status` `out_of_stock` e que repor reativa, exceto o pausado pelo
+  vendedor. O app lê as variações com `GET /items/{id}` (os mesmos `item-*.json`) antes do envio.
+  O texto de `error-400-stock.json` é inventado no formato de erro da API.

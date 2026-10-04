@@ -27,6 +27,7 @@ use crate::layout;
 use crate::low_stock;
 use crate::parts::ScreenParts;
 use crate::purchases::{self, units_text};
+use crate::stock_mirror;
 
 /// The app's Inventory; absent when the database did not open.
 pub struct AppInventory(pub Arc<Inventory>);
@@ -256,6 +257,9 @@ impl StockScreen {
                     field.update(cx, |field, cx| field.set_value("", window, cx));
                 }
                 this.outcome = Some(Outcome::Done(adjusted_text(&adjusted).into()));
+                if adjusted.movement.is_some() {
+                    stock_mirror::send_after_movement(cx);
+                }
                 if let (Some(low), Some(shown)) = (adjusted.reached_reorder_point, &this.shown) {
                     low_stock::notify(low, &shown.products, cx);
                 }

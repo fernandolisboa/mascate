@@ -1,0 +1,17 @@
+{
+  "message": "Validation error",
+  "error": "validation_error",
+  "status": 400,
+  "cause": [
+    {
+      "department": "items",
+      "cause_id": 0,
+      "type": "error",
+      "code": "item.available_quantity.invalid",
+      "references": [
+        "item.available_quantity"
+      ],
+      "message": "The item is closed and its stock cannot change"
+    }
+  ]
+}

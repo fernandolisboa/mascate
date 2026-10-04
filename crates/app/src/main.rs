@@ -28,6 +28,7 @@ mod settings;
 mod shell;
 mod startup;
 mod stock;
+mod stock_mirror;
 mod tray;
 mod updates;
 
@@ -54,6 +55,7 @@ use crate::reminders::AppReminders;
 use crate::restricted::AppFlags;
 use crate::shell::Shell;
 use crate::stock::AppInventory;
+use crate::stock_mirror::AppStockMirror;
 use crate::tray::TrayCommand;
 
 fn main() {
@@ -126,6 +128,7 @@ fn main() {
                 cx.set_global(AppInventory(started.inventory.clone()));
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
                 cx.set_global(AppListings(started.listings.clone()));
+                cx.set_global(AppStockMirror(started.stock_mirror.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),
