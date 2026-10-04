@@ -13,7 +13,7 @@ use futures::executor::block_on;
 use mascate_commerce::{
     ChannelIssue, ChannelListing, Check, ChecklistItem, Condition, DraftAttribute, DraftEdit,
     DraftPicture, DraftStart, ListingDraft, ListingError, ListingStatus, Listings,
-    MAX_PICTURE_BYTES, Requirement, is_blocked, is_picture,
+    MAX_PICTURE_BYTES, PublishedListing, Requirement, is_blocked, is_picture,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, ListingType, PlatformError};
@@ -696,6 +696,62 @@ fn a_lost_attempt_a_sync_brought_in_meanwhile_becomes_the_drafts_listing() {
         let report = fx.listings.sync(&fx.channel).await.unwrap();
         assert_eq!(report.new, 0);
         assert_eq!(fx.listings.listings().await.unwrap()[0].id, draft.id);
+    });
+}
+
+#[test]
+fn a_lost_attempt_already_linked_to_the_drafts_product_still_becomes_its_listing() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let draft = fx.ready().await;
+        fx.publisher.publishes(Publishing::CreatesUnanswered);
+        fx.publish(&draft).await.unwrap_err();
+        fx.channel.has(vec![ChannelListing {
+            seller_sku: Some("FON-TWS-001".into()),
+            ..listing("MLB9000", "Fone de Ouvido Bluetooth TWS Lenovo LP40")
+        }]);
+        fx.listings.sync(&fx.channel).await.unwrap();
+        let synced = fx.listings.to_link(&[]).await.unwrap()[0].listing.id;
+        fx.listings.link(synced, draft.product).await.unwrap();
+
+        fx.publisher.publishes(Publishing::Creates);
+        let listing = fx.publish(&draft).await.unwrap();
+
+        assert_eq!(fx.publisher.publish_calls(), 1);
+        assert_eq!(listing.id, draft.id);
+        assert_eq!(fx.listings.listings().await.unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn a_listing_synced_before_the_attempt_is_not_taken_for_a_lost_one() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![ChannelListing {
+            seller_sku: Some("FON-TWS-001".into()),
+            ..listing("MLB7000", "Fone antigo com o mesmo SKU")
+        }]);
+        fx.listings.sync(&fx.channel).await.unwrap();
+        let draft = fx.ready().await;
+        fx.publisher.publishes(Publishing::CreatesUnanswered);
+        fx.publish(&draft).await.unwrap_err();
+        // The lost attempt never reached the channel; the old one did.
+        fx.publisher.listings.lock().unwrap().clear();
+        fx.publisher.listings.lock().unwrap().push((
+            "FON-TWS-001".into(),
+            PublishedListing {
+                id: "MLB7000".into(),
+                status: ListingStatus::Active,
+                link: None,
+            },
+        ));
+        fx.publisher.publishes(Publishing::Creates);
+
+        let listing = fx.publish(&draft).await.unwrap();
+
+        assert_eq!(fx.publisher.publish_calls(), 2);
+        assert_ne!(listing.listed.id, "MLB7000");
+        assert_eq!(fx.listings.listings().await.unwrap().len(), 2);
     });
 }
 

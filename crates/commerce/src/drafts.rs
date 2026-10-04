@@ -747,8 +747,8 @@ impl Listings {
         if is_blocked(&checklist) {
             return Err(ListingError::Blocked(checklist));
         }
-        if self.publishing_since(id).await?.is_some()
-            && let Some((found, synced)) = self.lost_publication(&draft, publisher).await?
+        if let Some(since) = self.publishing_since(id).await?
+            && let Some((found, synced)) = self.lost_publication(&draft, since, publisher).await?
         {
             self.keep_published(&draft, &found, synced).await?;
             return self.draft(id).await;
@@ -784,11 +784,13 @@ impl Listings {
 
     /// The listing an earlier attempt created without the app hearing
     /// back: the one with the draft's seller SKU that no Listing in the app
-    /// holds, or that a Sync brought in since without a Product. Also
-    /// returns that synced Listing, which the draft replaces.
+    /// holds, or that a Sync first brought in after the attempt began,
+    /// unlinked or already linked to the draft's Product. Also returns that
+    /// synced Listing, which the draft replaces.
     async fn lost_publication(
         &self,
         draft: &ListingDraft,
+        since: Timestamp,
         publisher: &dyn ListingPublisher,
     ) -> Result<Option<(PublishedListing, Option<RecordId>)>, ListingError> {
         for found in publisher.find_by_seller_sku(&draft.seller_sku)? {
@@ -796,7 +798,7 @@ impl Listings {
                 .database
                 .connection()
                 .query(
-                    "SELECT l.id, l.product_id, d.id FROM commerce_listings l
+                    "SELECT l.id, l.product_id, d.id, l.created_at FROM commerce_listings l
                      LEFT JOIN commerce_listing_drafts d
                          ON d.listing_id = l.id AND d.deleted_at IS NULL
                      WHERE l.ml_item_id = ?1 AND l.deleted_at IS NULL",
@@ -809,11 +811,17 @@ impl Listings {
                     row.id_at(0)?,
                     row.optional_id_at(1)?,
                     row.get::<Option<String>>(2)?,
+                    row.time_at(3)?,
                 ));
             }
             match holders[..] {
                 [] => return Ok(Some((found, None))),
-                [(synced, None, None)] => return Ok(Some((found, Some(synced)))),
+                [(synced, product, None, synced_at)]
+                    if synced_at >= since
+                        && product.is_none_or(|product| product == draft.product) =>
+                {
+                    return Ok(Some((found, Some(synced))));
+                }
                 _ => {}
             }
         }
@@ -1071,13 +1079,12 @@ fn draft_attributes(
                 .find(|value| value.id == attribute.id && !value.value.trim().is_empty())
                 .map(|value| value.value.trim().to_owned())
                 .unwrap_or_default();
-            (attribute.requirement != Requirement::Optional || !value.is_empty()).then(|| {
-                DraftAttribute {
-                    id: attribute.id,
-                    name: attribute.name,
-                    requirement: attribute.requirement,
-                    value,
-                }
+            let kept = attribute.requirement != Requirement::Optional || !value.is_empty();
+            kept.then_some(DraftAttribute {
+                id: attribute.id,
+                name: attribute.name,
+                requirement: attribute.requirement,
+                value,
             })
         })
         .collect()

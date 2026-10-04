@@ -10,7 +10,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Entity, ExternalPaths, SharedString, Subscription, Window, div, px};
+use gpui_kit::{
+    AnyElement, Entity, EventEmitter, ExternalPaths, SharedString, Subscription, Window, div, px,
+};
 use mascate_catalog::{
     AddedFiles, Catalog, CatalogError, NotCopied, OfferHistory, Product, ProductFile,
 };
@@ -19,6 +21,7 @@ use mascate_kernel::RecordId;
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day, failure};
+use crate::drafts::StartDraft;
 use crate::forms::{Outcome, notice, percent_text};
 use crate::kit;
 use crate::layout;
@@ -48,6 +51,8 @@ pub struct ProductsScreen {
     outcome: Option<Outcome>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<StartDraft> for ProductsScreen {}
 
 impl ProductsScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -634,6 +639,18 @@ impl Render for ProductsScreen {
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
+        if let Some(sheet) = &self.sheet {
+            let product = sheet.product.id;
+            parts.actions.push(
+                Button::new("start-draft")
+                    .label("Criar anúncio")
+                    .icon(IconName::Plus)
+                    .outline()
+                    .small()
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(StartDraft(product))))
+                    .into_any_element(),
+            );
+        }
         if self.open.is_some() {
             parts.actions.push(
                 Button::new("back-to-products")

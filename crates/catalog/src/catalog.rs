@@ -381,6 +381,23 @@ impl Catalog {
         .await
     }
 
+    /// What a unit of the Product costs delivered today from its cheapest
+    /// Supplier: the lowest total among the latest offer at each of its
+    /// links, in the currency of the first. `None` without offers.
+    pub async fn cheapest_offer(&self, product: RecordId) -> Result<Option<Money>, CatalogError> {
+        let latest: Vec<Money> = self
+            .product_offers(product)
+            .await?
+            .iter()
+            .map(|history| history.latest.total())
+            .collect();
+        let currency = latest.first().map(Money::currency);
+        Ok(latest
+            .into_iter()
+            .filter(|total| Some(total.currency()) == currency)
+            .min_by_key(Money::amount))
+    }
+
     async fn histories(
         &self,
         query: String,
