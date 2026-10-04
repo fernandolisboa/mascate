@@ -4,10 +4,10 @@
 use std::fmt;
 use std::str::FromStr;
 
-use libsql::params;
-use mascate_kernel::{Clock, IdGenerator, Record};
+use libsql::Value;
+use mascate_kernel::{Clock, IdGenerator};
 
-use crate::{Database, Migration};
+use crate::{Database, Migration, single_row};
 
 /// One of the interface themes Mascate ships. A theme is colors, corner
 /// radius, border width and font; it never moves anything on screen.
@@ -278,6 +278,9 @@ pub struct Appearance {
     pub layout: LayoutId,
 }
 
+const TABLE: &str = "platform_appearance";
+const COLUMNS: &[&str] = &["theme", "layout"];
+
 pub(crate) const CREATE_APPEARANCE: Migration = Migration {
     version: 1,
     name: "create appearance",
@@ -293,15 +296,7 @@ pub(crate) const CREATE_APPEARANCE: Migration = Migration {
 
 /// The saved appearance, or the default before anything was saved.
 pub async fn load_appearance(database: &Database) -> Result<Appearance, libsql::Error> {
-    let mut rows = database
-        .connection()
-        .query(
-            "SELECT theme, layout FROM platform_appearance
-             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
-            (),
-        )
-        .await?;
-    let Some(row) = rows.next().await? else {
+    let Some(row) = single_row::load(database.connection(), TABLE, COLUMNS).await? else {
         return Ok(Appearance::default());
     };
     Ok(Appearance {
@@ -310,50 +305,25 @@ pub async fn load_appearance(database: &Database) -> Result<Appearance, libsql::
     })
 }
 
-/// Saves `appearance` over the one already saved, if any. Each statement is
-/// atomic on its own, so two saves racing on a new database still leave one
-/// live choice.
+/// Saves `appearance` over the one already saved, if any.
 pub async fn save_appearance(
     database: &Database,
     clock: &dyn Clock,
     ids: &dyn IdGenerator,
     appearance: Appearance,
 ) -> Result<(), libsql::Error> {
-    let connection = database.connection();
-    let theme = appearance.theme.code();
-    let layout = appearance.layout.code();
-    loop {
-        let updated = connection
-            .execute(
-                "UPDATE platform_appearance SET theme = ?1, layout = ?2, updated_at = ?3
-                 WHERE id = (SELECT id FROM platform_appearance
-                             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1)",
-                params![theme.as_str(), layout, clock.now().to_rfc3339()],
-            )
-            .await?;
-        if updated > 0 {
-            return Ok(());
-        }
-        let record = Record::new(ids, clock);
-        let inserted = connection
-            .execute(
-                "INSERT INTO platform_appearance (id, theme, layout, created_at, updated_at)
-                 SELECT ?1, ?2, ?3, ?4, ?5
-                 WHERE NOT EXISTS (SELECT 1 FROM platform_appearance WHERE deleted_at IS NULL)",
-                params![
-                    record.id.to_string(),
-                    theme.as_str(),
-                    layout,
-                    record.created_at.to_rfc3339(),
-                    record.updated_at.to_rfc3339()
-                ],
-            )
-            .await?;
-        if inserted > 0 {
-            return Ok(());
-        }
-        // Another save inserted the first choice in between: update it.
-    }
+    single_row::save(
+        database.connection(),
+        clock,
+        ids,
+        TABLE,
+        COLUMNS,
+        vec![
+            Value::Text(appearance.theme.code()),
+            Value::Text(appearance.layout.code().into()),
+        ],
+    )
+    .await
 }
 
 #[cfg(test)]

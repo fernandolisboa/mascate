@@ -3,6 +3,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Entity, SharedString, Window, div};
 
 use crate::appearance::look;
+use crate::backups;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::reminders::RemindersArea;
@@ -35,6 +36,7 @@ impl Render for Home {
             Some(problem) => ("O app não conseguiu iniciar".into(), problem.clone()),
         };
         let mut parts = ScreenParts::new("Hoje");
+        parts.notices.extend(backups::restore_notice(cx));
         parts.content.push(
             v_flex()
                 .flex_1()

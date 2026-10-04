@@ -1,6 +1,6 @@
 [package]
 name = "mascate-platform"
-description = "App platform module: local database, migrations, app data location, the secret store, flags and Reminders."
+description = "App platform module: local database, migrations, Backups, app data location, the secret store, flags and Reminders."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -15,8 +15,8 @@ pub enum DatabaseError {
 
 /// The local database file (ADR 0003), opened once and shared by every module.
 pub struct Database {
-    // Keeps the underlying database alive for as long as the connection.
-    _database: libsql::Database,
+    path: PathBuf,
+    database: libsql::Database,
     connection: libsql::Connection,
 }
 
@@ -37,13 +37,23 @@ impl Database {
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
             .await?;
         Ok(Self {
-            _database: database,
+            path: path.to_path_buf(),
+            database,
             connection,
         })
     }
 
     pub fn connection(&self) -> &libsql::Connection {
         &self.connection
+    }
+
+    /// A connection of its own to the same file.
+    pub(crate) fn connect(&self) -> Result<libsql::Connection, libsql::Error> {
+        self.database.connect()
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 

@@ -1,14 +1,16 @@
 //! The app platform module: where the data lives, how its schema evolves,
-//! where secrets are kept, how the app's own interface looks, and the flags
+//! how it is backed up and restored, where secrets are kept, how the app's own interface looks, and the flags
 //! and Reminders every module declares.
 
 mod appearance;
+mod backups;
 mod database;
 mod flags;
 mod migrations;
 mod registry;
 mod reminders;
 mod secrets;
+mod single_row;
 mod stored_time;
 mod system_secrets;
 
@@ -18,6 +20,10 @@ pub mod testing;
 pub use appearance::{
     Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, UiThemePreference, UnknownLayout,
     UnknownUiTheme, UnknownUiThemePreference, load_appearance, save_appearance,
+};
+pub use backups::{
+    Backup, BackupError, BackupSettings, Backups, DEFAULT_KEEP, MAX_KEEP, RestoreError,
+    apply_staged_restore, default_backup_folder, undo_applied_restore,
 };
 pub use database::{Database, DatabaseError, default_database_path};
 pub use flags::{
@@ -40,5 +46,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         appearance::CREATE_APPEARANCE,
         flags::CREATE_FLAG_CHANGES,
         reminders::CREATE_REMINDER_DISMISSALS,
+        backups::CREATE_BACKUP_SETTINGS,
     ],
 };

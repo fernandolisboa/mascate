@@ -12,7 +12,11 @@ mascate-platform.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
+futures.workspace = true
+mascate-kernel = { workspace = true, features = ["test-support"] }
 mascate-platform = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

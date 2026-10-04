@@ -18,7 +18,15 @@ pub fn section_heading(text: impl Into<SharedString>) -> Div {
 
 /// Something that went wrong: icon and text in the danger ink.
 pub fn error_notice(text: impl Into<SharedString>, cx: &App) -> Div {
-    let ink = look(cx).tokens.danger;
+    notice(IconName::CircleX, look(cx).tokens.danger, text.into())
+}
+
+/// Something that went well: icon and text in the success ink.
+pub fn success_notice(text: impl Into<SharedString>, cx: &App) -> Div {
+    notice(IconName::CircleCheck, look(cx).tokens.success, text.into())
+}
+
+fn notice(icon: IconName, ink: Hsla, text: SharedString) -> Div {
     h_flex()
         .min_w_0()
         .gap_1p5()
@@ -29,9 +37,9 @@ pub fn error_notice(text: impl Into<SharedString>, cx: &App) -> Div {
             div()
                 .flex_none()
                 .pt(px(2.))
-                .child(Icon::new(IconName::CircleX).size(px(14.)).text_color(ink)),
+                .child(Icon::new(icon).size(px(14.)).text_color(ink)),
         )
-        .child(div().min_w_0().child(text.into()))
+        .child(div().min_w_0().child(text))
 }
 
 /// A radio mark, filled when `on`.
