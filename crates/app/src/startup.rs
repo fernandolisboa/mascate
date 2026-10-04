@@ -292,9 +292,12 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
-    use mascate_commerce::{NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus, Receiving};
+    use mascate_commerce::{
+        ChannelListing, ListingStatus, NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus,
+        Receiving, SalesChannel,
+    };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
-    use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId};
+    use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
@@ -311,6 +314,34 @@ mod tests {
             listing_type: ListingType::Premium,
             estimated_fee: Percentage::new(17.into()).unwrap(),
             estimated_shipping: Money::new(25.into(), Currency::Brl),
+        }
+    }
+
+    fn sample_listing() -> ChannelListing {
+        ChannelListing {
+            id: "MLB4100000001".into(),
+            variation: None,
+            title: "Produto de exemplo".into(),
+            price: Money::new(59.into(), Currency::Brl),
+            available_quantity: 1,
+            status: ListingStatus::Paused,
+            link: Some("https://produto.mercadolivre.com.br/MLB-4100000001-exemplo-_JM".into()),
+            listing_type: Some(ListingType::Classic),
+            category: Some("MLB1000".into()),
+            seller_sku: Some(SAMPLE_SKU.into()),
+        }
+    }
+
+    /// A Sales Channel with the sample listing only.
+    struct SampleChannel;
+
+    impl SalesChannel for SampleChannel {
+        fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
+            Ok(vec![sample_listing().id])
+        }
+
+        fn listings(&self, _: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
+            Ok(vec![sample_listing()])
         }
     }
 
@@ -444,6 +475,10 @@ mod tests {
                 .save_rate(Percentage::new(SAMPLE_TAX_PERCENT.into()).unwrap())
                 .await
                 .unwrap();
+            let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
+            listings.sync(&SampleChannel).await.unwrap();
+            let listing = listings.listings().await.unwrap().remove(0);
+            listings.link(listing.id, product.id).await.unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -571,6 +606,23 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
+                let listings = Listings::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                // Listings arrived in 0.2.0, like the catalog.
+                if Version::parse(released) >= Version::parse("0.2.0") {
+                    let listing = listings.listings().await.unwrap().remove(0);
+                    assert_eq!(listing.listed, sample_listing(), "{name}");
+                    let product = products
+                        .iter()
+                        .find(|product| product.sku.as_str() == SAMPLE_SKU)
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(listing.product, Some(product.id), "{name}");
+                }
+                listings.sync(&SampleChannel).await.unwrap();
+                assert_eq!(listings.listings().await.unwrap().len(), 1, "{name}");
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.
