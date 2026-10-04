@@ -1,0 +1,13 @@
+{
+  "query_data": {
+    "highlight_type": "BEST_SELLER",
+    "criteria": "CATEGORY",
+    "id": "MLB1000"
+  },
+  "content": [
+    {"id": "MLB19615318", "position": 1, "type": "PRODUCT"},
+    {"id": "MLBU3013800008", "position": 2, "type": "USER_PRODUCT"},
+    {"id": "MLB6868664726", "position": 3, "type": "ITEM"},
+    {"id": "MLB24162817", "position": 4, "type": "PRODUCT"}
+  ]
+}

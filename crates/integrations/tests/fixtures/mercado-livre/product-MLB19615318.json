@@ -1,0 +1,18 @@
+{
+  "id": "MLB19615318",
+  "status": "active",
+  "domain_id": "MLB-HEADPHONES",
+  "name": "Fone de Ouvido Bluetooth TWS Pro",
+  "family_name": "Fone de Ouvido Bluetooth TWS",
+  "permalink": "https://www.mercadolivre.com.br/p/MLB19615318",
+  "pictures": [],
+  "buy_box_winner": {
+    "item_id": "MLB4012345678",
+    "category_id": "MLB3697",
+    "seller_id": 98765432,
+    "price": 99.9,
+    "currency_id": "BRL",
+    "listing_type_id": "gold_special",
+    "condition": "new"
+  }
+}

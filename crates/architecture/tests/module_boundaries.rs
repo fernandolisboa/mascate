@@ -24,7 +24,11 @@ fn allowed() -> BTreeMap<&'static str, Option<&'static [&'static str]>> {
         ("mascate-inventory", Some(SHARED)),
         ("mascate-affiliate", Some(SHARED)),
         ("mascate-marketing", Some(SHARED)),
-        ("mascate-integrations", Some(SHARED)),
+        // Adapters implement the ports the modules define (ADR 0013).
+        (
+            "mascate-integrations",
+            Some(&["mascate-kernel", "mascate-platform", "mascate-catalog"][..]),
+        ),
         ("mascate-finance", Some(SHARED)),
     ])
 }

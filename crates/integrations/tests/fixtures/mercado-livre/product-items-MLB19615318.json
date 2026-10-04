@@ -1,0 +1,38 @@
+{
+  "paging": {"total": 7, "offset": 0, "limit": 50},
+  "results": [
+    {
+      "item_id": "MLB4012345678",
+      "category_id": "MLB3697",
+      "price": 89.9,
+      "currency_id": "BRL",
+      "seller_id": 98765432,
+      "official_store_id": null,
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "shipping": {"free_shipping": true, "logistic_type": "fulfillment"}
+    },
+    {
+      "item_id": "MLB4012345679",
+      "category_id": "MLB3697",
+      "price": 99.9,
+      "currency_id": "BRL",
+      "seller_id": 12345678,
+      "official_store_id": null,
+      "listing_type_id": "gold_pro",
+      "condition": "new",
+      "shipping": {"free_shipping": true, "logistic_type": "cross_docking"}
+    },
+    {
+      "item_id": "MLB4012345680",
+      "category_id": "MLB3697",
+      "price": 119.9,
+      "currency_id": "BRL",
+      "seller_id": 23456789,
+      "official_store_id": 2210,
+      "listing_type_id": "gold_pro",
+      "condition": "new",
+      "shipping": {"free_shipping": true, "logistic_type": "drop_off"}
+    }
+  ]
+}
