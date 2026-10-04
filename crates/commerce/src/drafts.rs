@@ -816,8 +816,8 @@ impl Listings {
             }
             match holders[..] {
                 [] => return Ok(Some((found, None))),
-                [(synced, product, None, synced_at)]
-                    if synced_at >= since
+                [(synced, product, None, first_seen)]
+                    if first_seen >= since
                         && product.is_none_or(|product| product == draft.product) =>
                 {
                     return Ok(Some((found, Some(synced))));

@@ -994,6 +994,8 @@ impl DraftsSection {
                                     h_flex()
                                         .gap_1()
                                         .items_center()
+                                        // Same height with or without a tag.
+                                        .min_h(px(26.))
                                         .child(
                                             div()
                                                 .text_xs()
