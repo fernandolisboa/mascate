@@ -27,6 +27,14 @@ conta de vendedor do Fernando.
 | `user-items-active.json`, `user-items-active-end.json`, `user-items-paused.json` | `GET /users/{id}/items/search` com `status` e `search_type=scan` (página com `scroll_id` e a última, vazia) | Itens e buscas |
 | `items-seller.json` | `GET /items?ids=...&include_attributes=all` dos anúncios do vendedor: simples, com variações e pausado | Itens e buscas; Variações |
 | `items-seller-gone.json` | o mesmo multiget depois: um anúncio encerrado e outro apagado (`code` 404) | Itens e buscas |
+| `domain-discovery.json` | `GET /sites/MLB/domain_discovery/search` (preditor de categorias) | Primeiros passos; Categorias e atributos |
+| `category-attributes-MLB196208.json` | `GET /categories/{id}/attributes`, com as tags `required`, `catalog_required`, `conditional_required`, `new_required` e `read_only` | Atributos; Identificadores de produtos (GTIN) |
+| `picture-upload.json` | `POST /pictures/items/upload` (multipart, campo `file`) | Trabalhar com imagens |
+| `validate-errors.json` | `POST /items/validate` com um erro e um aviso (400); sem problemas a resposta é 204 sem corpo | Validador de publicações |
+| `item-created.json` | `POST /items` (201) | Publicação de produtos |
+| `item-description.json`, `error-400-description.json` | `POST /items/{id}/description` (201) e a descrição que já existe (400) | Descrição de produtos |
+| `users-me-user-products.json` | `GET /users/me` de um vendedor com a tag `user_product_seller` | Preço por variação; User products |
+| `user-items-by-sku.json`, `items-states.json` | `GET /users/{id}/items/search?seller_sku=...` e o multiget com `attributes=id,status,permalink` | Itens e buscas |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -49,3 +57,11 @@ recursos vizinhos (conferir no regression pass):
   no multiget segue o formato de erro da API.
 - `user-items-*.json`: a busca por `scan` devolve `scroll_id` até a última página, que vem sem
   resultados; o valor do `scroll_id` aqui é inventado.
+- Publicação (#16): o preditor e os atributos da categoria seguem os exemplos da documentação,
+  com valores de uma categoria de fones inventados. Um vendedor com a tag `user_product_seller`
+  manda `family_name` em vez de `title` (a página de preço por variação diz que o título é gerado
+  pelo Mercado Livre). A garantia vai em `sale_terms` com `WARRANTY_TYPE` "Garantia do vendedor"
+  e `WARRANTY_TIME` pelo nome do valor; conferir no regression pass se o Mercado Livre aceita só
+  o nome ou exige o `value_id`. O texto dos erros de `validate-errors.json` e
+  `error-400-description.json` é inventado no formato de erro da API; o `type` `warning` vem do
+  exemplo de descrição. O app sobe as fotos antes de validar, porque o validador lê as fotos.

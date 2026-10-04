@@ -1,0 +1,18 @@
+{
+  "seller_id": "1234567",
+  "query": "FON-TWS-001",
+  "paging": {
+    "limit": 50,
+    "offset": 0,
+    "total": 1
+  },
+  "results": [
+    "MLB4200000001"
+  ],
+  "orders": [
+    {
+      "id": "stop_time_asc",
+      "name": "Order by stop time asc"
+    }
+  ]
+}

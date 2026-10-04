@@ -1,0 +1,106 @@
+[
+  {
+    "id": "BRAND",
+    "name": "Marca",
+    "tags": {
+      "required": true,
+      "catalog_required": true
+    },
+    "value_type": "string",
+    "value_max_length": 255,
+    "values": [
+      {
+        "id": "2503",
+        "name": "Lenovo"
+      }
+    ],
+    "attribute_group_id": "MAIN",
+    "attribute_group_name": "Principais"
+  },
+  {
+    "id": "MODEL",
+    "name": "Modelo",
+    "tags": {
+      "catalog_required": true
+    },
+    "value_type": "string",
+    "value_max_length": 255,
+    "attribute_group_id": "MAIN",
+    "attribute_group_name": "Principais"
+  },
+  {
+    "id": "LINE",
+    "name": "Linha",
+    "tags": {},
+    "value_type": "string",
+    "value_max_length": 255,
+    "attribute_group_id": "MAIN",
+    "attribute_group_name": "Principais"
+  },
+  {
+    "id": "GTIN",
+    "name": "Código universal de produto",
+    "tags": {
+      "conditional_required": true,
+      "multivalued": true,
+      "variation_attribute": true
+    },
+    "value_type": "string",
+    "value_max_length": 255,
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "COLOR",
+    "name": "Cor",
+    "tags": {
+      "allow_variations": true,
+      "hidden": true
+    },
+    "type": "color",
+    "value_type": "list",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "IS_WIRELESS",
+    "name": "É sem fio",
+    "tags": {
+      "new_required": true
+    },
+    "value_type": "boolean",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "SELLER_SKU",
+    "name": "SKU",
+    "tags": {
+      "variation_attribute": true
+    },
+    "value_type": "string",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "ITEM_CONDITION",
+    "name": "Condição do item",
+    "tags": {
+      "required": true
+    },
+    "value_type": "list",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "PRODUCT_DATA_SOURCE",
+    "name": "Fonte de dados do produto",
+    "tags": {
+      "read_only": true,
+      "hidden": true
+    },
+    "value_type": "string",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  }
+]

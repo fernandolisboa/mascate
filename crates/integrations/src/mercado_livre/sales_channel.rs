@@ -134,10 +134,7 @@ impl SalesChannel for MercadoLivre {
     /// variations are read from Mercado Livre right before, never from the
     /// last Sync.
     fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError> {
-        // The id goes into the path: only Mercado Livre's own letters and digits.
-        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(PlatformError::NotFound);
-        }
+        let id = path_id(id)?;
         let price = price.rounded().amount();
         let item: ItemVariationIds = self.get(&format!("/items/{id}"), &[])?;
         let body = if item.variations.is_empty() {
@@ -151,6 +148,16 @@ impl SalesChannel for MercadoLivre {
             format!(r#"{{"variations":[{}]}}"#, variations.join(","))
         };
         self.put(&format!("/items/{id}"), &body)
+    }
+}
+
+/// `id` as it goes into a path: only Mercado Livre's own letters and
+/// digits, so no other path is ever reached.
+pub(super) fn path_id(id: &str) -> Result<&str, PlatformError> {
+    if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Ok(id)
+    } else {
+        Err(PlatformError::NotFound)
     }
 }
 
@@ -219,7 +226,7 @@ fn variation_name(combinations: &[Attribute]) -> String {
         .join(" · ")
 }
 
-fn status(code: &str) -> ListingStatus {
+pub(super) fn status(code: &str) -> ListingStatus {
     match code {
         "active" => ListingStatus::Active,
         "paused" => ListingStatus::Paused,
@@ -238,6 +245,6 @@ fn listing_type(id: &str) -> Option<ListingType> {
 
 /// The app opens a listing's link in the browser, so it takes only a web
 /// address.
-fn is_web_link(link: &str) -> bool {
+pub(super) fn is_web_link(link: &str) -> bool {
     link.starts_with("https://") || link.starts_with("http://")
 }

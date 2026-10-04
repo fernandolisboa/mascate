@@ -45,6 +45,9 @@ pub(super) struct ErrorAnswer {
 #[derive(Deserialize)]
 pub(super) struct ErrorCause {
     pub message: Option<String>,
+    /// `error` or `warning`.
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +221,8 @@ pub(super) struct VariationId {
 #[derive(Deserialize)]
 pub(super) struct UserAnswer {
     pub id: u64,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// A page of `/users/{id}/items/search` with `search_type=scan`.
@@ -265,4 +270,47 @@ pub(super) struct Attribute {
     pub id: Option<String>,
     pub name: Option<String>,
     pub value_name: Option<String>,
+}
+
+/// One category `/sites/{site}/domain_discovery/search` predicts.
+#[derive(Deserialize)]
+pub(super) struct DomainPrediction {
+    pub category_id: String,
+    pub category_name: String,
+    /// Attribute values it read in the title.
+    #[serde(default)]
+    pub attributes: Vec<Attribute>,
+}
+
+/// One attribute of `/categories/{id}/attributes`.
+#[derive(Deserialize)]
+pub(super) struct AttributeDefinition {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub tags: AttributeTags,
+}
+
+/// The tags that say how much a category wants an attribute.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(super) struct AttributeTags {
+    pub required: bool,
+    pub catalog_required: bool,
+    pub conditional_required: bool,
+    pub new_required: bool,
+    pub read_only: bool,
+}
+
+#[derive(Deserialize)]
+pub(super) struct PictureAnswer {
+    pub id: String,
+}
+
+/// A listing as `POST /items` and the `/items` multiget report its state.
+#[derive(Deserialize)]
+pub(super) struct ItemState {
+    pub id: String,
+    pub status: Option<String>,
+    pub permalink: Option<String>,
 }

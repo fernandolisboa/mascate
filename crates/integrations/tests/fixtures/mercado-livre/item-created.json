@@ -1,0 +1,25 @@
+{
+  "id": "MLB4200000001",
+  "site_id": "MLB",
+  "title": "Fone De Ouvido Bluetooth Tws Lenovo Lp40",
+  "seller_id": 1234567,
+  "category_id": "MLB196208",
+  "price": 89.9,
+  "base_price": 89.9,
+  "currency_id": "BRL",
+  "initial_quantity": 4,
+  "available_quantity": 4,
+  "sold_quantity": 0,
+  "buying_mode": "buy_it_now",
+  "listing_type_id": "gold_special",
+  "condition": "new",
+  "permalink": "https://produto.mercadolivre.com.br/MLB-4200000001-fone-de-ouvido-bluetooth-tws-lenovo-lp40-_JM",
+  "pictures": [
+    {
+      "id": "123-MLB456_102026",
+      "secure_url": "https://http2.mlstatic.com/D_NQ_NP_123-MLB456_102026-O.jpg"
+    }
+  ],
+  "status": "active",
+  "warnings": []
+}
