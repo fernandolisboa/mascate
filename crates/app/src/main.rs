@@ -38,6 +38,11 @@ use crate::shell::Shell;
 use crate::tray::TrayCommand;
 
 fn main() {
+    // The release workflow reads this to write the update manifest.
+    if std::env::args().nth(1).as_deref() == Some("--risky-migrations") {
+        println!("{}", startup::risky_migrations_json());
+        return;
+    }
     let updater = startup::updater().map(Arc::new);
     // A silent update left for this start: its installer runs once the app
     // has exited, and opens the new version.

@@ -57,6 +57,22 @@ impl Problem {
     }
 }
 
+/// Every risky migration this app brings, as JSON for the update manifest
+/// the release workflow publishes (ADR 0010).
+pub fn risky_migrations_json() -> String {
+    let listed: Vec<String> = MODULE_MIGRATIONS
+        .iter()
+        .flat_map(ModuleMigrations::risky)
+        .map(|risky| {
+            format!(
+                r#"{{"module": {:?}, "version": {}}}"#,
+                risky.module, risky.version
+            )
+        })
+        .collect();
+    format!("[{}]", listed.join(", "))
+}
+
 /// This app's version, as its Releases are tagged.
 pub fn this_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("the app version is major.minor.patch")
@@ -373,6 +389,34 @@ mod tests {
                     "{name}"
                 );
             });
+        }
+    }
+
+    #[test]
+    fn the_risky_migrations_list_is_json_of_every_risky_one() {
+        let expected: Vec<String> = MODULE_MIGRATIONS
+            .iter()
+            .flat_map(|module| {
+                module
+                    .migrations
+                    .iter()
+                    .filter(|migration| migration.risky)
+                    .map(|migration| format!("{}:{}", module.module, migration.version))
+            })
+            .collect();
+        let json = risky_migrations_json();
+        assert!(json.starts_with('[') && json.ends_with(']'), "{json}");
+        for risky in &expected {
+            let (module, version) = risky.split_once(':').unwrap();
+            assert!(
+                json.contains(&format!(
+                    r#"{{"module": "{module}", "version": {version}}}"#
+                )),
+                "{json}"
+            );
+        }
+        if expected.is_empty() {
+            assert_eq!(json, "[]");
         }
     }
 

@@ -1,7 +1,10 @@
-name: Release packages
+name: Release
 
-# A version tag builds the Windows installer and the Linux packages as workflow
-# artifacts. Publishing them to GitHub Releases comes with the update slice (#8).
+# A version tag (`v1.2.3`, the version in the workspace Cargo.toml) builds the
+# Windows installer and the Linux packages and publishes them as a GitHub
+# Release, with its changelog and the update manifest the app reads (#8,
+# ADR 0010). Before tagging, commit that version's sample database:
+# `cargo test -p mascate -- --ignored write_this_versions_sample_database`.
 on:
   push:
     tags: ["v*"]
@@ -41,6 +44,9 @@ jobs:
       - name: Package
         working-directory: crates/app
         run: cargo packager --release --formats ${{ matrix.formats }} --out-dir ${{ github.workspace }}/dist
+      - name: List the risky migrations for the update manifest
+        if: runner.os == 'Linux'
+        run: target/release/mascate --risky-migrations > dist/risky-migrations.json
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -49,4 +55,70 @@ jobs:
             dist/*.AppImage
             dist/*.tar.gz
             dist/PKGBUILD
+            dist/risky-migrations.json
           if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag against the app version and its sample database
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          crate=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [ "$version" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $crate"
+            exit 1
+          fi
+          if [ ! -f "crates/app/tests/released-databases/$version.db" ]; then
+            echo "::error::commit crates/app/tests/released-databases/$version.db before tagging"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write the update manifest
+        working-directory: dist
+        run: |
+          one() {
+            set -- $1
+            if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+              echo "::error::expected exactly one installer, found: $*" >&2
+              exit 1
+            fi
+            echo "$1"
+          }
+          windows=$(one "*.exe")
+          appimage=$(one "*.AppImage")
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson risky "$(cat risky-migrations.json)" \
+            --arg windows "$windows" \
+            --arg windows_sha256 "$(sha256sum "$windows" | cut -d' ' -f1)" \
+            --arg appimage "$appimage" \
+            --arg appimage_sha256 "$(sha256sum "$appimage" | cut -d' ' -f1)" \
+            '{
+              version: $version,
+              risky_migrations: $risky,
+              installers: {
+                "windows-x86_64": {file: $windows, sha256: $windows_sha256},
+                "linux-x86_64-appimage": {file: $appimage, sha256: $appimage_sha256}
+              }
+            }' > mascate-update.json
+          cat mascate-update.json
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            *.exe *.AppImage *.tar.gz PKGBUILD mascate-update.json
