@@ -630,6 +630,28 @@ impl Inventory {
         Ok(replay(self.connection(), product).await?.basis)
     }
 
+    /// The Stock Movements with these ids, in the order they were recorded;
+    /// an id the ledger does not have is left out.
+    pub async fn movements(&self, ids: &[RecordId]) -> Result<Vec<StockMovement>, InventoryError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: Vec<String> = (1..=ids.len()).map(|at| format!("?{at}")).collect();
+        let values: Vec<libsql::Value> = ids
+            .iter()
+            .map(|id| libsql::Value::Text(id.to_string()))
+            .collect();
+        movements(
+            self.connection(),
+            &format!(
+                "SELECT {MOVEMENT_COLUMNS} AND id IN ({}) {IN_LEDGER_ORDER}",
+                wanted.join(", ")
+            ),
+            values,
+        )
+        .await
+    }
+
     /// Every Product's stock, replayed from the ledger.
     pub async fn stock(&self) -> Result<Stock, InventoryError> {
         let movements = movements(

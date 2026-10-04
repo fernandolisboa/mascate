@@ -156,7 +156,7 @@ impl OrderStatus {
         OrderStatus::Cancelled,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             OrderStatus::AwaitingPayment => "awaiting_payment",
             OrderStatus::Paid => "paid",
@@ -228,12 +228,12 @@ impl ShipmentStatus {
         }
     }
 
-    fn from_code(code: &str) -> Option<Self> {
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.code() == code)
     }
 
     /// Whether the units already left the owner's hands.
-    fn left_the_owner(self) -> bool {
+    pub(crate) fn left_the_owner(self) -> bool {
         matches!(
             self,
             ShipmentStatus::Shipped | ShipmentStatus::Delivered | ShipmentStatus::NotDelivered
@@ -249,6 +249,9 @@ pub struct Shipment {
     pub status: ShipmentStatus,
     /// When the owner has to dispatch it by.
     pub dispatch_by: Option<Timestamp>,
+    /// What the channel charges the owner to ship it; `None` until it says.
+    /// An Order bought in a cart shares it with the others.
+    pub seller_cost: Option<Money>,
 }
 
 /// Who the Order ships to: what shipping and support need, and nothing
@@ -356,6 +359,8 @@ pub struct ChannelOrder {
     pub paid: Option<Money>,
     /// What the buyer paid for shipping.
     pub shipping_paid: Option<Money>,
+    /// What the channel gave back to the buyer of the items' price.
+    pub refunded: Option<Money>,
     /// `None` once its time to be kept is over.
     pub buyer: Option<Buyer>,
     pub shipment: Option<Shipment>,
@@ -663,7 +668,8 @@ impl From<StoredValueError> for OrderError {
 const ORDER_COLUMNS: &str = "id, ml_order_id, ml_pack_id, status, fulfillment_mode, ordered_at,
      channel_updated_at, total, currency, paid, shipping_paid, ml_shipment_id, shipment_status,
      dispatch_by, buyer_nickname, receiver_name, receiver_address, receiver_city,
-     receiver_state, receiver_zip_code, buyer_data_erased_at, synced_at
+     receiver_state, receiver_zip_code, buyer_data_erased_at, synced_at, refunded,
+     shipment_seller_cost
      FROM commerce_orders WHERE deleted_at IS NULL";
 
 const LINE_COLUMNS: &str = "order_id, ml_item_id, ml_variation_id, title, variation_name,
@@ -683,10 +689,10 @@ struct SyncState {
 
 /// The owner's Orders in the Sales Channel.
 pub struct Orders {
-    database: Arc<Database>,
-    inventory: Arc<Inventory>,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
+    pub(crate) database: Arc<Database>,
+    pub(crate) inventory: Arc<Inventory>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) ids: Arc<dyn IdGenerator>,
 }
 
 impl Orders {
@@ -1353,13 +1359,15 @@ fn same_as_kept(kept: &Order, reported: &ChannelOrder) -> bool {
         && kept.sold.total == reported.total
         && kept.sold.paid == reported.paid
         && kept.sold.shipping_paid == reported.shipping_paid
+        && kept.sold.refunded == reported.refunded
         && kept.sold.shipment == reported.shipment
         && kept.sold.returns == reported.returns
         && (kept.sold.buyer == reported.buyer || kept.buyer_data_erased_at.is_some())
 }
 
 /// The values of an Order's own columns, in `ORDER_COLUMNS` order from the
-/// channel's id on, up to the buyer's data.
+/// channel's id on, up to the buyer's data, then the refund and what the
+/// shipment costs the owner.
 fn order_values(order: &ChannelOrder) -> Vec<Value> {
     let text = |value: Option<String>| value.map_or(Value::Null, Value::Text);
     let amount = |money: Option<Money>| text(money.map(|money| money.amount().to_string()));
@@ -1402,6 +1410,13 @@ fn order_values(order: &ChannelOrder) -> Vec<Value> {
         text(receiver.and_then(|receiver| receiver.city.clone())),
         text(receiver.and_then(|receiver| receiver.state.clone())),
         text(receiver.and_then(|receiver| receiver.zip_code.clone())),
+        amount(order.refunded),
+        amount(
+            order
+                .shipment
+                .as_ref()
+                .and_then(|shipment| shipment.seller_cost),
+        ),
     ]
 }
 
@@ -1422,9 +1437,10 @@ async fn insert_order(
              (id, ml_order_id, ml_pack_id, status, ordered_at, channel_updated_at, total,
               currency, paid, shipping_paid, ml_shipment_id, shipment_status, dispatch_by,
               buyer_nickname, receiver_name, receiver_address, receiver_city, receiver_state,
-              receiver_zip_code, fulfillment_mode, synced_at, created_at, updated_at)
+              receiver_zip_code, refunded, shipment_seller_cost, fulfillment_mode, synced_at,
+              created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?21, ?21)",
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?23, ?23)",
         values,
     )
     .await?;
@@ -1432,7 +1448,8 @@ async fn insert_order(
 }
 
 /// Writes what the channel reports over an Order. Buyer data once erased
-/// stays erased.
+/// stays erased. A changed Order has its Fees asked for again, since a
+/// cancellation or a refund brings the channel's reversals.
 async fn write_order(
     on: &Connection,
     id: RecordId,
@@ -1452,8 +1469,9 @@ async fn write_order(
              receiver_city = CASE WHEN buyer_data_erased_at IS NULL THEN ?16 END,
              receiver_state = CASE WHEN buyer_data_erased_at IS NULL THEN ?17 END,
              receiver_zip_code = CASE WHEN buyer_data_erased_at IS NULL THEN ?18 END,
-             synced_at = ?19, updated_at = ?19
-         WHERE id = ?20",
+             refunded = ?19, shipment_seller_cost = ?20, fees_checked_at = NULL,
+             synced_at = ?21, updated_at = ?21
+         WHERE id = ?22",
         values,
     )
     .await?;
@@ -1514,6 +1532,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
                 id,
                 status: ShipmentStatus::from_code(&status).ok_or(OrderError::Unreadable(status))?,
                 dispatch_by: row.optional_time_at(13)?,
+                seller_cost: amount(23)?,
             })
         }
         None => None,
@@ -1546,6 +1565,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
             total: Money::new(row.decimal_at(7)?, currency),
             paid: amount(9)?,
             shipping_paid: amount(10)?,
+            refunded: amount(22)?,
             buyer,
             shipment,
             returns: Vec::new(),

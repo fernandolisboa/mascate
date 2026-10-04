@@ -393,6 +393,63 @@ pub(super) struct OrderItem {
 pub(super) struct PaymentAnswer {
     pub status: Option<String>,
     pub shipping_cost: Option<Number>,
+    /// What went back to the buyer of the payment, shipping aside.
+    pub transaction_amount_refunded: Option<Number>,
+}
+
+/// `/shipments/{id}/costs`: what the buyer and each seller pay.
+#[derive(Deserialize)]
+pub(super) struct ShipmentCostsAnswer {
+    #[serde(default)]
+    pub senders: Vec<SenderCost>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SenderCost {
+    pub cost: Option<Number>,
+}
+
+/// `/billing/integration/group/ML/order/details`: the charges billed on
+/// each Order asked for.
+#[derive(Deserialize)]
+pub(super) struct BillingAnswer {
+    #[serde(default)]
+    pub results: Vec<BilledOrderAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct BilledOrderAnswer {
+    pub order_id: Number,
+    #[serde(default)]
+    pub details: Vec<BillingDetail>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct BillingDetail {
+    pub charge_info: ChargeInfo,
+    pub marketplace_info: Option<MarketplaceInfo>,
+    pub currency_info: Option<CurrencyInfo>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ChargeInfo {
+    pub detail_id: Number,
+    pub transaction_detail: Option<String>,
+    pub detail_amount: Option<Number>,
+    /// `CHARGE`, or `BONUS` for a charge given back.
+    pub detail_type: Option<String>,
+    /// Such as `CV` (the sale fee) or `CXD` (shipping); `B…` gives one back.
+    pub detail_sub_type: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct MarketplaceInfo {
+    pub marketplace: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct CurrencyInfo {
+    pub currency_id: Option<String>,
 }
 
 #[derive(Deserialize)]

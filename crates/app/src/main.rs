@@ -26,6 +26,7 @@ mod products;
 mod purchases;
 mod reminders;
 mod restricted;
+mod sales;
 mod settings;
 mod shell;
 mod startup;

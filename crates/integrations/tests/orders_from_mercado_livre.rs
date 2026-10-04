@@ -26,6 +26,7 @@ const SEARCH_NEXT: &str = "/orders/search?seller=1234567\
                            &order.date_last_updated.from=2026-10-04T11%3A50%3A00.000-00%3A00\
                            &sort=date_asc&offset=2&limit=50";
 const SHIPMENT: &str = "/shipments/44100000001";
+const SHIPMENT_COSTS: &str = "/shipments/44100000001/costs";
 /// Mercado Livre has not made this shipment yet: it answers 404.
 const SHIPMENT_NOT_YET: &str = "/shipments/44100000002";
 const LABEL: &str = "/shipment_labels?shipment_ids=44100000001&response_type=pdf";
@@ -82,6 +83,7 @@ impl Fake {
         fake.serve(SEARCH, "orders-search.json");
         fake.serve(SEARCH_NEXT, "orders-search-end.json");
         fake.serve(SHIPMENT, "shipment-44100000001.json");
+        fake.serve(SHIPMENT_COSTS, "shipment-44100000001-costs.json");
         fake
     }
 
@@ -114,6 +116,7 @@ fn fone_order() -> ChannelOrder {
         total: brl("179.8"),
         paid: Some(brl("199.7")),
         shipping_paid: Some(brl("19.9")),
+        refunded: Some(brl("0")),
         buyer: Some(Buyer {
             nickname: Some("ANASOUZA2026".into()),
             receiver: Some(Receiver {
@@ -128,6 +131,8 @@ fn fone_order() -> ChannelOrder {
             id: "44100000001".into(),
             status: ShipmentStatus::ReadyToShip,
             dispatch_by: Some(at("2026-10-06T23:59:59-03:00")),
+            // The seller's part, from the shipment's costs.
+            seller_cost: Some(brl("4.6")),
         }),
         returns: Vec::new(),
     }
@@ -176,6 +181,7 @@ fn orders_come_page_by_page_with_their_items_buyer_and_shipment() {
                 total: brl("139.72"),
                 paid: Some(brl("139.72")),
                 shipping_paid: Some(brl("0")),
+                refunded: Some(brl("0")),
                 // No shipment yet, so no receiver: only the nickname.
                 buyer: Some(Buyer {
                     nickname: Some("BRUNO.LIMA".into()),
@@ -198,6 +204,7 @@ fn orders_come_page_by_page_with_their_items_buyer_and_shipment() {
                 paid: Some(brl("0")),
                 // The only payment was turned down.
                 shipping_paid: None,
+                refunded: Some(brl("0")),
                 buyer: Some(Buyer {
                     nickname: Some("CARLA_M".into()),
                     receiver: None,
@@ -221,7 +228,16 @@ fn the_search_is_by_last_change_and_shipments_ask_for_the_new_format() {
         .map(|request| request.path.as_str())
         .filter(|path| !path.starts_with("/oauth") && *path != "/users/me")
         .collect();
-    assert_eq!(paths, [SEARCH, SHIPMENT, SHIPMENT_NOT_YET, SEARCH_NEXT]);
+    assert_eq!(
+        paths,
+        [
+            SEARCH,
+            SHIPMENT,
+            SHIPMENT_COSTS,
+            SHIPMENT_NOT_YET,
+            SEARCH_NEXT
+        ]
+    );
     let shipment = received
         .iter()
         .find(|request| request.path == SHIPMENT)
@@ -292,6 +308,16 @@ fn a_claim_with_a_return_comes_with_the_items_of_the_order_it_sends_back() {
     assert_eq!(orders.len(), 1);
     let returned = &orders[0];
     assert_eq!(returned.id, "2000009876543500");
+    // Two of the three units went back to the buyer's money too.
+    assert_eq!(returned.refunded, Some(brl("99.8")));
+    // No costs for this shipment yet: Mercado Livre answers 404.
+    assert_eq!(
+        returned
+            .shipment
+            .as_ref()
+            .and_then(|shipment| shipment.seller_cost),
+        None
+    );
     assert_eq!(
         returned.shipment.as_ref().map(|shipment| shipment.status),
         Some(ShipmentStatus::Delivered)

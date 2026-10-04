@@ -5,6 +5,7 @@
 //! its status, a draft) and the stock that follows the app's (ADR 0017).
 
 mod answers;
+mod billing;
 mod orders;
 mod publisher;
 mod sales_channel;
@@ -81,21 +82,44 @@ impl MercadoLivre {
         query: &[(&str, &str)],
         headers: &[(&str, &str)],
     ) -> Result<T, PlatformError> {
-        let response = self.signed(path, |bearer| {
-            let mut request = self
-                .agent
-                .get(format!("{}{path}", self.api))
-                .header("Accept", "application/json")
-                .header("Authorization", bearer);
-            for (name, value) in headers {
-                request = request.header(*name, *value);
-            }
-            for (key, value) in query {
-                request = request.query(key, value);
-            }
-            request.call()
-        })?;
+        let response = self.signed(path, |bearer| self.getting(path, query, headers, bearer))?;
         read_json(response)
+    }
+
+    /// The JSON answer to `GET path` with `query`; `None` while Mercado
+    /// Livre answers 206, its data not complete yet.
+    fn get_complete<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<Option<T>, PlatformError> {
+        let response = self.answered(|bearer| self.getting(path, query, &[], bearer))?;
+        match response.status().as_u16() {
+            200 => read_json(response).map(Some),
+            206 => Ok(None),
+            _ => Err(failed(response, path)),
+        }
+    }
+
+    fn getting(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        headers: &[(&str, &str)],
+        bearer: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        let mut request = self
+            .agent
+            .get(format!("{}{path}", self.api))
+            .header("Accept", "application/json")
+            .header("Authorization", bearer);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        for (key, value) in query {
+            request = request.query(key, value);
+        }
+        request.call()
     }
 
     /// The document Mercado Livre answers to `GET path` with `query`, in

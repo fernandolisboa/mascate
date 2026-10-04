@@ -40,6 +40,8 @@ conta de vendedor do Fernando.
 | `shipment-44100000001.json` | `GET /shipments/{id}` com `x-format-new: true` | Gerenciamento de envios |
 | `orders-search-returned.json`, `shipment-44100000005.json` | a busca de Orders com um pedido entregue que tem duas reclamações em `mediations`, e o seu envio entregue | Gerenciamento de vendas; Gerenciamento de envios |
 | `claim-5298178312-returns.json` | `GET /post-purchase/v2/claims/{id}/returns` de uma devolução parcial a caminho do vendedor | Gerenciar devoluções |
+| `shipment-44100000001-costs.json` | `GET /shipments/{id}/costs` (o que o comprador e o vendedor pagam do envio) | Gerenciamento de envios; Custos e cotações |
+| `billing-order-details.json` | `GET /billing/integration/group/ML/order/details?order_ids=...` com dois Orders faturados (o terceiro pedido ainda não foi faturado e fica de fora) | Provisões (Relatórios de faturamento por Orders e Packs); Boas práticas dos relatórios de faturamento |
 | `shipment-label-44100000001.pdf` | `GET /shipment_labels?shipment_ids=...&response_type=pdf` | Mercado Envios 2 (Imprimir etiquetas) |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
@@ -101,3 +103,15 @@ recursos vizinhos (conferir no regression pass):
   entregue, `cancelled` e `expired` como desistência e qualquer outro como a caminho; conferir no
   regression pass. Também fica para o regression pass se o `last_updated` do Order muda quando a
   reclamação ou a devolução muda (a busca de Orders depende disso).
+- Tarifas e margem realizada (#22): as cobranças de cada Order vêm do faturamento por Order
+  (`details[]` com `charge_info.detail_id`, `detail_amount`, `detail_type` `CHARGE` ou `BONUS` e
+  `detail_sub_type`, mais `marketplace_info` e `currency_info`), no formato do exemplo da página
+  Provisões; os valores, ids e o texto de `transaction_detail` são inventados. A página lista `CV`,
+  `BV`, `CXD` e `BXD` nos exemplos de filtro, mas não a lista inteira de subtipos: o app trata `CV`
+  e `BV` como tarifa de venda, o marketplace `SHIPPING` e os subtipos `CX…`/`BX…` como frete e o
+  resto como outra tarifa, e uma bonificação como cobrança devolvida (valor negativo); conferir no
+  regression pass. A resposta 206 (dados incompletos) vem do guia de boas práticas. Os pedidos
+  ganharam `transaction_amount_refunded` nos pagamentos (campo do exemplo da página de vendas); o
+  pedido com devolução de duas unidades traz 99,8 reembolsado. O custo do envio para o vendedor vem
+  de `senders[].cost` de `/shipments/{id}/costs`, no formato do exemplo da página de envios; um
+  envio sem custos responde 404 (o envio do pedido devolvido não tem o arquivo servido).

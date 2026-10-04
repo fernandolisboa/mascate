@@ -1,6 +1,7 @@
 //! Commerce: Listings and their drafts, Orders, Purchase Orders and shipping on each Sales Channel.
 
 mod drafts;
+mod fees;
 mod freight;
 mod listings;
 mod orders;
@@ -13,6 +14,10 @@ pub use drafts::{
     ChecklistItem, Condition, DraftAttribute, DraftEdit, DraftPicture, DraftStart, ListingDraft,
     ListingPublisher, ListingToPublish, MAX_PICTURE_BYTES, MIN_PICTURES, PublishedListing,
     Requirement, is_blocked, is_picture,
+};
+pub use fees::{
+    BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, RealizedMargin, Sale,
+    SalesSummary,
 };
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
@@ -61,5 +66,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         stock_mirror::ADD_STOCK_SENT,
         orders::CREATE_ORDERS,
         orders::ADD_RETURNS,
+        fees::ADD_FEES,
     ],
 };

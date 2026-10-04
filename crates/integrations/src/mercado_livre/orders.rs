@@ -19,8 +19,8 @@ use serde_json::{Number, Value};
 
 use super::MercadoLivre;
 use super::answers::{
-    Attribute, OrderAnswer, OrderItemAnswer, OrderSearch, ReturnAnswer, ShipmentAnswer, UserAnswer,
-    decimal, money,
+    Attribute, OrderAnswer, OrderItemAnswer, OrderSearch, ReturnAnswer, ShipmentAnswer,
+    ShipmentCostsAnswer, UserAnswer, decimal, money,
 };
 use super::sales_channel::{listing_type, path_id};
 
@@ -118,6 +118,13 @@ impl MercadoLivre {
                 currency,
             ))
         };
+        let refunds: Vec<_> = answer
+            .payments
+            .iter()
+            .filter_map(|payment| decimal(&payment.transaction_amount_refunded))
+            .collect();
+        let refunded =
+            (!refunds.is_empty()).then(|| Money::new(refunds.into_iter().sum(), currency));
         let shipment = match answer.shipping.and_then(|shipping| shipping.id) {
             Some(shipment) => self.shipment(&whole_id(&shipment))?,
             None => None,
@@ -141,6 +148,7 @@ impl MercadoLivre {
             total,
             paid: amount(&answer.paid_amount, currency),
             shipping_paid,
+            refunded,
             buyer,
             shipment: shipment.map(|(shipment, _)| shipment),
             returns,
@@ -219,12 +227,29 @@ impl MercadoLivre {
         });
         Ok(Some((
             Shipment {
+                seller_cost: self.seller_cost(id)?,
                 id: whole_id(&found.id),
                 status: shipment_status(&found.status),
                 dispatch_by,
             },
             receiver,
         )))
+    }
+
+    /// What Mercado Livre charges the seller to ship `shipment`; `None`
+    /// before it has the costs.
+    fn seller_cost(&self, shipment: &str) -> Result<Option<Money>, PlatformError> {
+        let costs: ShipmentCostsAnswer =
+            match self.get(&format!("/shipments/{}/costs", path_id(shipment)?), &[]) {
+                Err(PlatformError::NotFound) => return Ok(None),
+                other => other?,
+            };
+        let senders: Vec<Decimal> = costs
+            .senders
+            .iter()
+            .filter_map(|sender| decimal(&sender.cost))
+            .collect();
+        Ok((!senders.is_empty()).then(|| Money::new(senders.into_iter().sum(), Currency::Brl)))
     }
 }
 
@@ -266,7 +291,7 @@ fn variation_name(attributes: &[Attribute]) -> Option<String> {
 }
 
 /// An id Mercado Livre sends as a JSON number, as text.
-fn whole_id(number: &Number) -> String {
+pub(super) fn whole_id(number: &Number) -> String {
     number.to_string()
 }
 
