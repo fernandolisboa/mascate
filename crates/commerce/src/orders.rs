@@ -830,6 +830,25 @@ impl Orders {
         load_orders(self.database.connection(), None, first_synced_at).await
     }
 
+    /// Units sold of each listing (the channel's id, every variation
+    /// together) in the Orders bought since `since`, cancelled ones left
+    /// out.
+    pub async fn units_sold_since(
+        &self,
+        since: Timestamp,
+    ) -> Result<BTreeMap<String, u32>, OrderError> {
+        let mut sold = BTreeMap::new();
+        for order in self.orders().await? {
+            if order.sold.status == OrderStatus::Cancelled || order.sold.ordered_at < since {
+                continue;
+            }
+            for line in &order.lines {
+                *sold.entry(line.sold.item.clone()).or_default() += line.sold.quantity;
+            }
+        }
+        Ok(sold)
+    }
+
     /// The Orders waiting for the owner to dispatch them that are late or
     /// within the warning the owner chose, the closest to their time first.
     pub async fn dispatch_alerts(&self) -> Result<Vec<DispatchAlert>, OrderError> {

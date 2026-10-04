@@ -16,6 +16,7 @@ use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
 use crate::products::ProductsScreen;
 use crate::purchases::PurchasesScreen;
+use crate::quality::QualityScreen;
 use crate::sales::SalesScreen;
 use crate::settings::SettingsScreen;
 use crate::stock::StockScreen;
@@ -30,6 +31,7 @@ pub struct Shell {
     offers: Entity<OffersScreen>,
     products: Entity<ProductsScreen>,
     listings: Entity<ListingsScreen>,
+    quality: Entity<QualityScreen>,
     orders: Entity<OrdersScreen>,
     sales: Entity<SalesScreen>,
     purchases: Entity<PurchasesScreen>,
@@ -50,6 +52,7 @@ impl Shell {
         let offers = cx.new(|cx| OffersScreen::new(window, cx));
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
         let listings = cx.new(|cx| ListingsScreen::new(window, cx));
+        let quality = cx.new(|cx| QualityScreen::new(window, cx));
         let orders = cx.new(|cx| OrdersScreen::new(window, cx));
         let sales = cx.new(|cx| SalesScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
@@ -130,6 +133,7 @@ impl Shell {
             offers,
             products,
             listings,
+            quality,
             orders,
             sales,
             purchases,
@@ -169,6 +173,7 @@ impl Shell {
                         Place::Listings => shell
                             .listings
                             .update(cx, |listings, cx| listings.refresh(window, cx)),
+                        Place::Quality => shell.quality.update(cx, QualityScreen::refresh),
                         Place::Orders => shell.orders.update(cx, OrdersScreen::refresh),
                         Place::Sales => shell.sales.update(cx, SalesScreen::refresh),
                         Place::Purchases => shell
@@ -196,6 +201,7 @@ impl Render for Shell {
             Place::Offers => self.offers.clone().into_any_element(),
             Place::Products => self.products.clone().into_any_element(),
             Place::Listings => self.listings.clone().into_any_element(),
+            Place::Quality => self.quality.clone().into_any_element(),
             Place::Orders => self.orders.clone().into_any_element(),
             Place::Sales => self.sales.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),

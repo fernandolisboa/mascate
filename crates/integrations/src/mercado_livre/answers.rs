@@ -499,3 +499,50 @@ pub(super) struct ShippingAddress {
 pub(super) struct NamedPlace {
     pub name: Option<String>,
 }
+
+/// `/item/{id}/performance`: the listing's quality, its groups of goals
+/// (`buckets`), each goal (`variables`) and what reaches it (`rules`).
+#[derive(Deserialize)]
+pub(super) struct PerformanceAnswer {
+    pub score: Option<Number>,
+    pub level: Option<String>,
+    pub level_wording: Option<String>,
+    #[serde(default)]
+    pub buckets: Vec<PerformanceBucket>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct PerformanceBucket {
+    #[serde(default)]
+    pub variables: Vec<PerformanceVariable>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct PerformanceVariable {
+    pub title: Option<String>,
+    #[serde(default)]
+    pub rules: Vec<PerformanceRule>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct PerformanceRule {
+    pub key: String,
+    /// `PENDING` or `COMPLETED`.
+    pub status: Option<String>,
+    /// `WARNING` lowers the score until fixed; `OPPORTUNITY` raises it.
+    pub mode: Option<String>,
+    pub wordings: Option<RuleWordings>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct RuleWordings {
+    pub title: Option<String>,
+    pub label: Option<String>,
+    pub link: Option<String>,
+}
+
+/// `/items/{id}/visits/time_window`: the listing's visits in the window.
+#[derive(Deserialize)]
+pub(super) struct VisitsAnswer {
+    pub total_visits: u32,
+}

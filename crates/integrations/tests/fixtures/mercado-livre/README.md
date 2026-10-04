@@ -43,6 +43,8 @@ conta de vendedor do Fernando.
 | `shipment-44100000001-costs.json` | `GET /shipments/{id}/costs` (o que o comprador e o vendedor pagam do envio) | Gerenciamento de envios; Custos e cotações |
 | `billing-order-details.json` | `GET /billing/integration/group/ML/order/details?order_ids=...` com dois Orders faturados (o terceiro pedido ainda não foi faturado e fica de fora) | Provisões (Relatórios de faturamento por Orders e Packs); Boas práticas dos relatórios de faturamento |
 | `shipment-label-44100000001.pdf` | `GET /shipment_labels?shipment_ids=...&response_type=pdf` | Mercado Envios 2 (Imprimir etiquetas) |
+| `item-MLB4100000001-performance.json`, `error-404-performance.json` | `GET /item/{id}/performance` com regras pendentes e concluídas, e o item ainda sem qualidade calculada (404) | Qualidade das publicações |
+| `item-MLB4100000001-visits.json` | `GET /items/{id}/visits/time_window?last=30&unit=day` | Visitas |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -115,3 +117,17 @@ recursos vizinhos (conferir no regression pass):
   pedido com devolução de duas unidades traz 99,8 reembolsado. O custo do envio para o vendedor vem
   de `senders[].cost` de `/shipments/{id}/costs`, no formato do exemplo da página de envios; um
   envio sem custos responde 404 (o envio do pedido devolvido não tem o arquivo servido).
+- Qualidade do anúncio (#23): `item-*-performance.json` é o exemplo da página (um item `MLA` de
+  nível "Profesional") traduzido para o pt-BR, com o id e os links trocados para um anúncio
+  `MLB`: o texto das regras (`wordings`) do MLB não aparece na documentação e foi escrito no
+  mesmo sentido do original. O app mostra `wordings.title`, `label` e `link` de cada regra
+  `PENDING`, trata `mode` `WARNING` como problema que derruba a nota e `OPPORTUNITY` como
+  sugestão, e só abre links `https` do Mercado Livre. A página mostra `level` "Good" com
+  `level_wording` por site (Básica, Satisfatória, Profissional no MLB); os outros valores de
+  `level` não aparecem, então o app lê o nível pelo nome e, sem um nome conhecido, pela faixa de
+  pontuação de `/sites/MLB/health_levels` (abaixo de 50 básica, de 66 profissional). O corpo do
+  404 segue o formato de erro da API com a mensagem da tabela de erros da página. Conferir no
+  regression pass: os textos e os valores de `level` reais, se o 401 "Caller must be the seller
+  of the item" acontece com anúncios próprios, e se a janela de visitas sem `ending` termina hoje.
+  `item-*-visits.json` segue o exemplo da página de Visitas, sem o detalhe por dia, que o app não
+  lê.

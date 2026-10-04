@@ -24,6 +24,7 @@ mod preferences;
 mod pricing;
 mod products;
 mod purchases;
+mod quality;
 mod reminders;
 mod restricted;
 mod sales;
@@ -55,6 +56,7 @@ use crate::orders::AppOrders;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
 use crate::purchases::AppPurchaseOrders;
+use crate::quality::AppQuality;
 use crate::reminders::AppReminders;
 use crate::restricted::AppFlags;
 use crate::shell::Shell;
@@ -134,6 +136,7 @@ fn main() {
                 cx.set_global(AppListings(started.listings.clone()));
                 cx.set_global(AppStockMirror(started.stock_mirror.clone()));
                 cx.set_global(AppOrders(started.orders.clone()));
+                cx.set_global(AppQuality(started.quality.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

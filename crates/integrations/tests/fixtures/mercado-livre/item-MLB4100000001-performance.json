@@ -1,0 +1,189 @@
+{
+  "entity_type": "ITEM",
+  "entity_id": "MLB4100000001",
+  "score": 69,
+  "level": "Good",
+  "level_wording": "Profissional",
+  "calculated_at": "2026-10-03T14:56:58Z",
+  "buckets": [
+    {
+      "key": "CHARACTERISTICS",
+      "type": "",
+      "status": "PENDING",
+      "score": 74.337616,
+      "title": "Dados do produto",
+      "calculated_at": "2026-10-03T14:56:58Z",
+      "variables": [
+        {
+          "key": "GTIN",
+          "status": "COMPLETED",
+          "score": 100,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Informe o código universal do seu produto para não perder exposição",
+          "rules": [
+            {
+              "key": "HAS_GTIN",
+              "status": "COMPLETED",
+              "progress": 1,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Complete o código que pertence a este produto para aparecer mais acima nos resultados de busca.",
+                "label": "Completar código universal",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=universal_code_no_variations&itemId=MLB4100000001"
+              }
+            }
+          ]
+        },
+        {
+          "key": "PICTURES",
+          "status": "PENDING",
+          "score": 33.333336,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Melhore as fotos para ter mais visitas",
+          "rules": [
+            {
+              "key": "PICTURES_QUANTITY_MIN",
+              "status": "PENDING",
+              "progress": 0.33333334,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Adicione mais fotos para mostrar seu produto de diferentes ângulos, envie no mínimo 3.",
+                "label": "Adicionar fotos",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=picture_uploader_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        },
+        {
+          "key": "TITLE",
+          "status": "COMPLETED",
+          "score": 100,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Corrija o título para que encontrem seu produto mais fácil",
+          "rules": [
+            {
+              "key": "TITLE_LENGTH_MIN",
+              "status": "COMPLETED",
+              "progress": 1,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Some mais detalhes, o título deve ter pelo menos 3 palavras.",
+                "label": "Melhorar título",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=title_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        },
+        {
+          "key": "TECHNICAL_SPECIFICATIONS_MAIN",
+          "status": "PENDING",
+          "score": 47.499996,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Corrija a ficha técnica para receber menos perguntas e devoluções",
+          "rules": [
+            {
+              "key": "TS_MAIN_QUANTITY",
+              "status": "PENDING",
+              "progress": 0.67499995,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Complete as características principais.",
+                "label": "Completar ficha técnica",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=technical_specifications_task&itemId=MLB4100000001"
+              }
+            },
+            {
+              "key": "TS_MAIN_QUALITY_INCOMPLETE_REQUIRED",
+              "status": "PENDING",
+              "progress": 1,
+              "mode": "WARNING",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Complete os dados marcados como “obrigatórios”.",
+                "label": "Completar ficha técnica",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=technical_specifications_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "OFFER",
+      "type": "",
+      "status": "PENDING",
+      "score": 61.111107,
+      "title": "Condições de venda",
+      "calculated_at": "2026-10-03T14:56:58Z",
+      "variables": [
+        {
+          "key": "FREE_SHIPPING",
+          "status": "COMPLETED",
+          "score": 100,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Ofereça frete grátis para que seu anúncio seja mais competitivo",
+          "rules": [
+            {
+              "key": "HAS_FREE_SHIPPING",
+              "status": "COMPLETED",
+              "progress": 1,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Ofereça frete grátis para que seu anúncio seja mais competitivo",
+                "label": "Modificar envio",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=shipping_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        },
+        {
+          "key": "FINANCING",
+          "status": "PENDING",
+          "score": 0,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Ofereça parcelamento pelo mesmo preço que você anunciou para que seu anúncio seja mais competitivo",
+          "rules": [
+            {
+              "key": "BEST_FINANCING",
+              "status": "PENDING",
+              "progress": 0,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Ofereça parcelamento pelo mesmo preço que você anunciou para que seu anúncio seja mais competitivo",
+                "label": "Adicionar parcelamento",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=listing_types_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        },
+        {
+          "key": "STOCK_DEPOSITO",
+          "status": "COMPLETED",
+          "score": 100,
+          "calculated_at": "2026-10-03T14:56:58Z",
+          "title": "Adicione mais estoque e evite perder vendas",
+          "rules": [
+            {
+              "key": "HAS_STOCK_DEPOSITO",
+              "status": "COMPLETED",
+              "progress": 1,
+              "mode": "OPPORTUNITY",
+              "calculated_at": "2026-10-03T14:56:58Z",
+              "wordings": {
+                "title": "Garanta que seu anúncio tenha 2 ou mais unidades disponíveis.",
+                "label": "Adicionar unidades",
+                "link": "https://www.mercadolivre.com.br/syi/core/modify?taskId=stock_sku_task&itemId=MLB4100000001"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

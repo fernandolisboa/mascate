@@ -7,6 +7,7 @@ use mascate_commerce::{Listings, Orders, Pricing, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
+use mascate_marketing::ListingQuality;
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
@@ -21,6 +22,7 @@ pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
     mascate_catalog::MIGRATIONS,
     mascate_inventory::MIGRATIONS,
     mascate_commerce::MIGRATIONS,
+    mascate_marketing::MIGRATIONS,
     mascate_finance::MIGRATIONS,
 ];
 
@@ -48,6 +50,7 @@ pub struct Started {
     pub pricing: Arc<Pricing>,
     pub stock_mirror: Arc<StockMirror>,
     pub orders: Arc<Orders>,
+    pub quality: Arc<ListingQuality>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -228,6 +231,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let quality = ListingQuality::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -248,6 +256,7 @@ pub fn prepare() -> Outcome {
                 pricing: Arc::new(pricing),
                 stock_mirror: Arc::new(stock_mirror),
                 orders: Arc::new(orders),
+                quality: Arc::new(quality),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
@@ -322,6 +331,7 @@ mod tests {
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
+    use mascate_marketing::{ChannelQuality, ListedItem, QualityLevel, QualitySource, Rating};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
@@ -386,6 +396,27 @@ mod tests {
 
         fn activate(&self, _: &str) -> Result<(), PlatformError> {
             Err(PlatformError::NotFound)
+        }
+    }
+
+    fn sample_quality() -> ChannelQuality {
+        ChannelQuality {
+            score: 48,
+            level: QualityLevel::Basic,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Rates every listing like the sample.
+    struct SampleQuality;
+
+    impl QualitySource for SampleQuality {
+        fn quality(&self, _: &str) -> Result<Option<ChannelQuality>, PlatformError> {
+            Ok(Some(sample_quality()))
+        }
+
+        fn visits(&self, _: &str, _: u32) -> Result<u32, PlatformError> {
+            Ok(7)
         }
     }
 
@@ -523,6 +554,10 @@ mod tests {
             listings.sync(&SampleChannel).await.unwrap();
             let listing = listings.listings().await.unwrap().remove(0);
             listings.link(listing.id, product.id).await.unwrap();
+            ListingQuality::new(database.clone(), clock.clone(), ids.clone())
+                .sync(&SampleQuality, &[sample_listing().id])
+                .await
+                .unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -756,6 +791,27 @@ mod tests {
                     .follow_categories(&[sample_category()])
                     .await
                     .unwrap();
+                // Listing Quality arrived after 0.2.0: older samples start
+                // without it, and it is read in the next Sync.
+                let quality = ListingQuality::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                quality
+                    .sync(&SampleQuality, &[sample_listing().id])
+                    .await
+                    .unwrap();
+                let panel = quality
+                    .panel(&[ListedItem {
+                        listing: sample_listing().id,
+                        title: sample_listing().title,
+                        link: None,
+                        units_sold: 0,
+                    }])
+                    .await
+                    .unwrap();
+                assert_eq!(panel[0].rating, Rating::Rated(sample_quality()), "{name}");
             });
         }
     }
