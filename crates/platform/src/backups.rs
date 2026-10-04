@@ -9,11 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{NaiveDateTime, TimeDelta};
-use directories::{ProjectDirs, UserDirs};
 use libsql::{Connection, OpenFlags, Value};
 use mascate_kernel::{Clock, IdGenerator, Timestamp};
 
-use crate::{Database, Migration, ModuleMigrations, single_row};
+use crate::{Database, Migration, ModuleMigrations, default_owner_folder, single_row};
 
 pub const DEFAULT_KEEP: u16 = 14;
 pub const MAX_KEEP: u16 = 365;
@@ -95,14 +94,7 @@ pub(crate) const CREATE_BACKUP_SETTINGS: Migration = Migration {
 /// a synced Documents folder carries it off the machine; the data folder
 /// when the OS reports no Documents.
 pub fn default_backup_folder() -> Option<PathBuf> {
-    UserDirs::new()
-        .and_then(|dirs| {
-            dirs.document_dir()
-                .map(|documents| documents.join("Mascate").join("Backups"))
-        })
-        .or_else(|| {
-            ProjectDirs::from("", "", "Mascate").map(|dirs| dirs.data_dir().join("backups"))
-        })
+    default_owner_folder("Backups")
 }
 
 /// Takes, lists and prunes Backups of one database, and stages restores

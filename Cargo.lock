@@ -4225,6 +4225,7 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "mascate-catalog",
  "mascate-commerce",
  "mascate-finance",
  "mascate-integrations",
@@ -4249,6 +4250,18 @@ dependencies = [
 [[package]]
 name = "mascate-catalog"
 version = "0.2.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-kernel",
+ "mascate-platform",
+ "proptest",
+ "rust_decimal",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
+]
 
 [[package]]
 name = "mascate-commerce"

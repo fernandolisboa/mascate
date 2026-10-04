@@ -30,7 +30,7 @@ pub use backups::{
     apply_staged_restore, default_backup_folder, stage_restore_without_backup,
     undo_applied_restore,
 };
-pub use database::{Database, DatabaseError, default_database_path};
+pub use database::{Database, DatabaseError, default_database_path, default_owner_folder};
 pub use flags::{
     ConfirmedTurnOn, Flag, FlagChange, FlagError, FlagKind, FlagStatus, Flags, Phase,
     TurnOnRequest, system_user,
@@ -48,6 +48,7 @@ pub use secrets::{
     Build, Environment, Secret, SecretStore, SecretStoreError, process_environment,
     secret_store_for,
 };
+pub use stored_time::{read_stored, stored};
 pub use system_secrets::SystemSecretStore;
 pub use updates::{
     Finish, Installation, UpdateError, UpdateSettings, Updater, load_update_settings,

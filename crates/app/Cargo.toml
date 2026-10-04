@@ -11,6 +11,7 @@ publish.workspace = true
 chrono.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
+mascate-catalog.workspace = true
 mascate-commerce.workspace = true
 mascate-finance.workspace = true
 mascate-integrations.workspace = true

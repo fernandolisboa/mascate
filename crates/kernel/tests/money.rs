@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use mascate_kernel::{Currency, CurrencyMismatch, Money};
+use mascate_kernel::{Currency, CurrencyMismatch, Money, parse_amount};
 use rust_decimal::Decimal;
 
 fn brl(amount: &str) -> Money {
@@ -127,5 +127,50 @@ mod properties {
                 .fold(Money::zero(Currency::Brl), |acc, m| acc.checked_add(*m).unwrap());
             prop_assert_eq!(Money::sum(Currency::Brl, items).unwrap(), expected);
         }
+
+        #[test]
+        fn what_is_shown_reads_back_as_the_same_cents(a in any_brl()) {
+            let shown = a.to_pt_br();
+            prop_assert_eq!(parse_amount(&shown), Some(a.rounded().amount()), "{}", shown);
+        }
+
+        #[test]
+        fn amounts_with_a_decimal_dot_read_back_exactly(cents in 0i64..10_000_000_000) {
+            let typed = Decimal::new(cents, 2);
+            prop_assert_eq!(parse_amount(&format!("{typed:.2}")), Some(typed));
+        }
+    }
+}
+
+#[test]
+fn shows_amounts_as_brazilians_write_them() {
+    assert_eq!(brl("1234.5").to_pt_br(), "R$ 1.234,50");
+    assert_eq!(brl("0.005").to_pt_br(), "R$ 0,01");
+    assert_eq!(brl("1234567.891").to_pt_br(), "R$ 1.234.567,89");
+    assert_eq!(brl("-19.9").to_pt_br(), "-R$ 19,90");
+    assert_eq!(brl("-0.004").to_pt_br(), "R$ 0,00");
+    assert_eq!(usd("999").to_pt_br(), "US$ 999,00");
+}
+
+#[test]
+fn reads_amounts_typed_the_brazilian_way_or_with_a_decimal_dot() {
+    let read = |text: &str| parse_amount(text).map(|amount| amount.to_string());
+    assert_eq!(read("29,90").as_deref(), Some("29.90"));
+    assert_eq!(read("29.90").as_deref(), Some("29.90"));
+    assert_eq!(read("R$ 1.234,56").as_deref(), Some("1234.56"));
+    assert_eq!(read("R$1.234").as_deref(), Some("1234"));
+    assert_eq!(read("1,234.56").as_deref(), Some("1234.56"));
+    assert_eq!(read("US$ 7").as_deref(), Some("7"));
+    assert_eq!(read(" 0.500 ").as_deref(), Some("0.500"));
+    assert_eq!(read("1.234.567").as_deref(), Some("1234567"));
+    assert_eq!(read("-5,5").as_deref(), Some("-5.5"));
+}
+
+#[test]
+fn refuses_text_that_is_not_an_amount() {
+    for text in [
+        "", "R$", "abc", "12a", "1,2,3", "12.34.5", "1.23,4.5", ",5", "1 000", "1e5",
+    ] {
+        assert_eq!(parse_amount(text), None, "{text:?}");
     }
 }
