@@ -13,7 +13,7 @@ use mascate_kernel::{
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
-use crate::SaleFee;
+use crate::{ChecklistItem, SaleFee};
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,7 +38,7 @@ impl ListingStatus {
         ListingStatus::Inactive,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             ListingStatus::Active => "active",
             ListingStatus::Paused => "paused",
@@ -162,6 +162,14 @@ pub struct ListingSync {
 pub enum ListingError {
     #[error("no Listing {0}")]
     UnknownListing(RecordId),
+    #[error("no draft {0}")]
+    UnknownDraft(RecordId),
+    #[error("draft {0} is published and no longer changes")]
+    Published(RecordId),
+    #[error("the draft still lacks what its checklist blocks on")]
+    Blocked(Vec<ChecklistItem>),
+    #[error("draft {0} is published, but its description was not sent: {1}")]
+    DescriptionNotSent(RecordId, PlatformError),
     #[error("a price is more than zero, in the Listing's currency")]
     InvalidPrice,
     #[error(transparent)]
@@ -220,9 +228,9 @@ const LISTING_COLUMNS: &str = "id, ml_item_id, ml_variation_id, variation_name, 
 
 /// The owner's Listings in the Sales Channel.
 pub struct Listings {
-    database: Arc<Database>,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
+    pub(crate) database: Arc<Database>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) ids: Arc<dyn IdGenerator>,
 }
 
 impl Listings {
