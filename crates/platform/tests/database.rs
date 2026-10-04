@@ -12,16 +12,19 @@ fn clock() -> ManualClock {
 const CATALOG_V1: Migration = Migration {
     version: 1,
     name: "create products",
+    risky: false,
     sql: "CREATE TABLE catalog_products (id TEXT PRIMARY KEY, sku TEXT NOT NULL);",
 };
 const CATALOG_V2: Migration = Migration {
     version: 2,
     name: "add product title",
+    risky: false,
     sql: "ALTER TABLE catalog_products ADD COLUMN title TEXT;",
 };
 const BROKEN_V3: Migration = Migration {
     version: 3,
     name: "half applied",
+    risky: false,
     sql: "CREATE TABLE catalog_half (id TEXT); THIS IS NOT SQL;",
 };
 
@@ -199,6 +202,7 @@ fn versions_are_counted_per_module() {
         const INVENTORY_V1: Migration = Migration {
             version: 1,
             name: "create locations",
+            risky: false,
             sql: "CREATE TABLE inventory_locations (id TEXT PRIMARY KEY);",
         };
 

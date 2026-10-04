@@ -9,6 +9,9 @@ use crate::Database;
 pub struct Migration {
     pub version: u32,
     pub name: &'static str,
+    /// Rewrites or drops data the owner has, rather than only adding to the
+    /// schema. A silent update never brings one in (ADR 0007).
+    pub risky: bool,
     pub sql: &'static str,
 }
 
@@ -25,6 +28,25 @@ impl ModuleMigrations {
     pub fn latest_version(&self) -> u32 {
         self.migrations.last().map_or(0, |m| m.version)
     }
+
+    /// The risky migrations among this module's.
+    pub fn risky(&self) -> impl Iterator<Item = MigrationId> + '_ {
+        self.migrations
+            .iter()
+            .filter(|migration| migration.risky)
+            .map(|migration| MigrationId {
+                module: self.module.to_owned(),
+                version: migration.version,
+            })
+    }
+}
+
+/// Names one migration across app versions, as a Release declares the risky
+/// ones it brings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MigrationId {
+    pub module: String,
+    pub version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +122,36 @@ pub async fn migrate(
         }
     }
     Ok(applied)
+}
+
+/// Whether the database already holds data at older versions of some
+/// module's tables: false for a new database and for one that is up to date.
+pub(crate) async fn has_pending(
+    database: &Database,
+    modules: &[ModuleMigrations],
+) -> Result<bool, MigrationError> {
+    let connection = database.connection();
+    let mut tables = connection
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+            (),
+        )
+        .await?;
+    if tables.next().await?.is_none() {
+        return Ok(false);
+    }
+    let mut applied = connection
+        .query("SELECT 1 FROM schema_migrations LIMIT 1", ())
+        .await?;
+    if applied.next().await?.is_none() {
+        return Ok(false);
+    }
+    for module in modules {
+        if current_version(connection, module.module).await? < module.latest_version() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn check_order(module: &ModuleMigrations) -> Result<(), MigrationError> {

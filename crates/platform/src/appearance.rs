@@ -284,6 +284,7 @@ const COLUMNS: &[&str] = &["theme", "layout"];
 pub(crate) const CREATE_APPEARANCE: Migration = Migration {
     version: 1,
     name: "create appearance",
+    risky: false,
     sql: "CREATE TABLE platform_appearance (
         id         TEXT PRIMARY KEY,
         theme      TEXT NOT NULL,

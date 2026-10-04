@@ -47,6 +47,7 @@ pub enum ReminderError {
 pub(crate) const CREATE_REMINDER_DISMISSALS: Migration = Migration {
     version: 3,
     name: "create reminder dismissals",
+    risky: false,
     sql: "CREATE TABLE platform_reminder_dismissals (
         id         TEXT PRIMARY KEY,
         reminder   TEXT NOT NULL,

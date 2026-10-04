@@ -80,6 +80,7 @@ const COLUMNS: &[&str] = &["folder", "keep"];
 pub(crate) const CREATE_BACKUP_SETTINGS: Migration = Migration {
     version: 4,
     name: "create backup settings",
+    risky: false,
     sql: "CREATE TABLE platform_backup_settings (
         id         TEXT PRIMARY KEY,
         folder     TEXT NOT NULL,
@@ -235,99 +236,13 @@ impl Backups {
     /// Backup of the current database. Returns that Backup. Nothing changes
     /// when the check fails.
     pub async fn stage_restore(&self, file: &Path) -> Result<Backup, RestoreError> {
-        let staged = staged_restore_path(self.database.path());
-        {
-            // Copied before the Backup below, whose pruning may remove `file`
-            // when it is the oldest Backup in the folder.
-            let candidate = self.check_restore(file).await?;
-            copy_database(
-                &candidate.connection,
-                &staged,
-                &self.temporary_beside(&staged),
-            )
-            .await?;
-        }
+        // Staged before the Backup below, whose pruning may remove `file`
+        // when it is the oldest Backup in the folder.
+        stage_restore_without_backup(self.database.path(), self.modules, file).await?;
         self.back_up_now().await.map_err(|error| {
             // No restore without a Backup of what it replaces.
-            let _ = std::fs::remove_file(&staged);
+            let _ = std::fs::remove_file(staged_restore_path(self.database.path()));
             error.into()
-        })
-    }
-
-    async fn check_restore(&self, file: &Path) -> Result<ReadOnlyFile, RestoreError> {
-        let not_mascate = || RestoreError::NotMascate(file.to_path_buf());
-        if !file.is_file() {
-            return Err(not_mascate());
-        }
-        let database = libsql::Builder::new_local(file)
-            .flags(OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .build()
-            .await
-            .map_err(|_| not_mascate())?;
-        let connection = database.connect().map_err(|_| not_mascate())?;
-        // The file is input: its views and triggers run no SQL functions here.
-        connection
-            .execute("PRAGMA trusted_schema = OFF", ())
-            .await
-            .map_err(|_| not_mascate())?;
-
-        let integrity = first_text(&connection, "PRAGMA integrity_check")
-            .await
-            .map_err(|error| match error {
-                libsql::Error::SqliteFailure(SQLITE_CORRUPT, detail) => RestoreError::Damaged {
-                    path: file.to_path_buf(),
-                    detail,
-                },
-                _ => not_mascate(),
-            })?;
-        if integrity.as_deref() != Some("ok") {
-            return Err(RestoreError::Damaged {
-                path: file.to_path_buf(),
-                detail: integrity.unwrap_or_default(),
-            });
-        }
-
-        let has_versions = first_text(
-            &connection,
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
-        )
-        .await
-        .map_err(BackupError::from)?;
-        if has_versions.is_none() {
-            return Err(not_mascate());
-        }
-        let mut rows = connection
-            .query(
-                "SELECT module, MAX(version) FROM schema_migrations GROUP BY module",
-                (),
-            )
-            .await
-            .map_err(BackupError::from)?;
-        let mut has_platform = false;
-        while let Some(row) = rows.next().await.map_err(BackupError::from)? {
-            let module = row.get::<String>(0).map_err(BackupError::from)?;
-            let found = row.get::<u32>(1).map_err(BackupError::from)?;
-            let known = self
-                .modules
-                .iter()
-                .find(|known| known.module == module)
-                .map_or(0, ModuleMigrations::latest_version);
-            if found > known {
-                return Err(RestoreError::NewerThanApp {
-                    path: file.to_path_buf(),
-                    module,
-                    found,
-                    known,
-                });
-            }
-            has_platform |= module == crate::MIGRATIONS.module;
-        }
-        if !has_platform {
-            return Err(not_mascate());
-        }
-        Ok(ReadOnlyFile {
-            _database: database,
-            connection,
         })
     }
 
@@ -343,6 +258,106 @@ impl Backups {
     fn temporary_beside(&self, path: &Path) -> PathBuf {
         path.with_file_name(format!(".mascate-{}.tmp", self.ids.next_id()))
     }
+}
+
+/// Checks that `file` is a Mascate database this app can open and stages a
+/// copy of it to replace the database at `database_path` on the next start,
+/// without a Backup first: for a database that does not open, which
+/// [`apply_staged_restore`] keeps beside the restored one instead. Nothing
+/// changes when the check fails.
+pub async fn stage_restore_without_backup(
+    database_path: &Path,
+    modules: &[ModuleMigrations],
+    file: &Path,
+) -> Result<(), RestoreError> {
+    let staged = staged_restore_path(database_path);
+    let candidate = check_restore(modules, file).await?;
+    copy_database(
+        &candidate.connection,
+        &staged,
+        &with_suffix(&staged, ".tmp"),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn check_restore(
+    modules: &[ModuleMigrations],
+    file: &Path,
+) -> Result<ReadOnlyFile, RestoreError> {
+    let not_mascate = || RestoreError::NotMascate(file.to_path_buf());
+    if !file.is_file() {
+        return Err(not_mascate());
+    }
+    let database = libsql::Builder::new_local(file)
+        .flags(OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .build()
+        .await
+        .map_err(|_| not_mascate())?;
+    let connection = database.connect().map_err(|_| not_mascate())?;
+    // The file is input: its views and triggers run no SQL functions here.
+    connection
+        .execute("PRAGMA trusted_schema = OFF", ())
+        .await
+        .map_err(|_| not_mascate())?;
+
+    let integrity = first_text(&connection, "PRAGMA integrity_check")
+        .await
+        .map_err(|error| match error {
+            libsql::Error::SqliteFailure(SQLITE_CORRUPT, detail) => RestoreError::Damaged {
+                path: file.to_path_buf(),
+                detail,
+            },
+            _ => not_mascate(),
+        })?;
+    if integrity.as_deref() != Some("ok") {
+        return Err(RestoreError::Damaged {
+            path: file.to_path_buf(),
+            detail: integrity.unwrap_or_default(),
+        });
+    }
+
+    let has_versions = first_text(
+        &connection,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+    )
+    .await
+    .map_err(BackupError::from)?;
+    if has_versions.is_none() {
+        return Err(not_mascate());
+    }
+    let mut rows = connection
+        .query(
+            "SELECT module, MAX(version) FROM schema_migrations GROUP BY module",
+            (),
+        )
+        .await
+        .map_err(BackupError::from)?;
+    let mut has_platform = false;
+    while let Some(row) = rows.next().await.map_err(BackupError::from)? {
+        let module = row.get::<String>(0).map_err(BackupError::from)?;
+        let found = row.get::<u32>(1).map_err(BackupError::from)?;
+        let known = modules
+            .iter()
+            .find(|known| known.module == module)
+            .map_or(0, ModuleMigrations::latest_version);
+        if found > known {
+            return Err(RestoreError::NewerThanApp {
+                path: file.to_path_buf(),
+                module,
+                found,
+                known,
+            });
+        }
+        has_platform |= module == crate::MIGRATIONS.module;
+    }
+    if !has_platform {
+        return Err(not_mascate());
+    }
+    Ok(ReadOnlyFile {
+        _database: database,
+        connection,
+    })
 }
 
 /// Swaps a restore staged by [`Backups::stage_restore`] into place. Runs at
@@ -388,6 +403,21 @@ pub fn undo_applied_restore(database_path: &Path) -> Result<(), BackupError> {
     }
     remove_database(database_path)?;
     move_database(&replaced, database_path)
+}
+
+/// Replaces the closed database at `database_path`, journal files and all,
+/// with a copy of `backup`, which stays where it is.
+pub(crate) fn put_back(backup: &Path, database_path: &Path) -> Result<(), BackupError> {
+    let copy = with_suffix(database_path, ".putback");
+    std::fs::copy(backup, &copy).map_err(|source| BackupError::File {
+        path: copy.clone(),
+        source,
+    })?;
+    remove_database(database_path)
+        .and_then(|()| rename(&copy, database_path))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&copy);
+        })
 }
 
 const SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];

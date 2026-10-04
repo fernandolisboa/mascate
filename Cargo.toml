@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 license = "UNLICENSED"
@@ -26,9 +26,15 @@ keyring-core = "1"
 libsql = { version = "0.9", default-features = false, features = ["core"] }
 proptest = "1"
 rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+# The app's HTTP client: small, blocking, rustls with the OS trust store; runs on
+# background threads (ADR 0010).
+ureq = { version = "3", features = ["platform-verifier"] }
 uuid = { version = "1", features = ["v7"] }
 windows-native-keyring-store = { version = "1", default-features = false }
 # Pure Rust D-Bus and crypto: the Linux packages need no libdbus or OpenSSL.

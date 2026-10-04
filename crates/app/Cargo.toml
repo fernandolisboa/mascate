@@ -19,6 +19,9 @@ mascate-marketing.workspace = true
 mascate-platform.workspace = true
 tray-icon.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 

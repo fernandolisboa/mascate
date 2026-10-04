@@ -77,6 +77,8 @@ cargo test --workspace
 
 All three are green before a PR is ready for review.
 
+Releases (ADR 0010): a migration that rewrites or drops existing data is `risky: true`. Before tagging `vX.Y.Z`, commit that version's sample database with `cargo test -p mascate -- --ignored write_this_versions_sample_database`; the release workflow refuses a tag without it.
+
 ## Done means reviewed
 
 Before calling work done, review the diff through five lenses and fix what each finds:

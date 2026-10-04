@@ -148,6 +148,14 @@ _Avoid_: bloqueio, alerta legal
 Cópia consistente do banco local guardada numa pasta escolhida pelo Fernando.
 _Avoid_: export (quando o objetivo é guarda)
 
+**Release**:
+Versão do app publicada nas GitHub Releases, com changelog, instaladores e um manifesto que diz se ela traz Risky Migration.
+_Avoid_: build, pacote (quando se fala da versão)
+
+**Risky Migration**:
+Migração do banco que reescreve ou apaga dados que já existem, em vez de só acrescentar. Uma Release com Risky Migration nunca se instala sozinha.
+_Avoid_: migração destrutiva, migração grande
+
 **Merge Import**:
 Importação de outro banco do Mascate combinando registros linha a linha, em vez de substituir o banco atual.
 _Avoid_: restore, sync
