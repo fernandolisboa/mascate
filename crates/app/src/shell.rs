@@ -4,6 +4,7 @@ use gpui_kit::{Entity, SharedString, Subscription, Window};
 use crate::appearance;
 use crate::home::Home;
 use crate::layout;
+use crate::low_stock::OpenStock;
 use crate::offers::{OffersScreen, OpenProduct};
 use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
@@ -58,6 +59,17 @@ impl Shell {
                     cx.notify();
                 },
             ),
+            cx.subscribe_in(
+                &home.read(cx).low_stock.clone(),
+                window,
+                |shell, _, open: &OpenStock, window, cx| {
+                    shell
+                        .stock
+                        .update(cx, |stock, cx| stock.open(Some(open.0), window, cx));
+                    shell.place = Place::Stock;
+                    cx.notify();
+                },
+            ),
             // "Seguir o sistema" switches with the system's light/dark setting.
             cx.observe_window_appearance(window, |_, window, cx| {
                 let preference = preferences::appearance(cx).theme;
@@ -100,7 +112,8 @@ impl Shell {
                         Place::Stock => shell
                             .stock
                             .update(cx, |stock, cx| stock.refresh(window, cx)),
-                        Place::Today | Place::Settings => {}
+                        Place::Today => shell.home.update(cx, Home::refresh),
+                        Place::Settings => {}
                     }
                     cx.notify();
                 });

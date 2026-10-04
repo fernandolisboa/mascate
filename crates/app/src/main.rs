@@ -9,6 +9,7 @@ mod forms;
 mod home;
 mod kit;
 mod layout;
+mod low_stock;
 mod offers;
 mod ordered_saves;
 mod palette;
@@ -88,6 +89,9 @@ fn main() {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
+            // Windows shows system notifications only for an app with an
+            // identity; the installer's identifier is that identity.
+            cx.set_app_identity("app.mascate.desktop", "Mascate");
             gpui_kit::init(cx);
             cx.set_global(Preferences::new(
                 started.as_ref().map(|started| started.database.clone()),
@@ -161,6 +165,10 @@ fn main() {
                     cx.set_quit_mode(QuitMode::LastWindowClosed);
                 }
             }
+
+            // Clicking a notification (low stock) brings the window back.
+            let problem = problem_text.clone();
+            cx.on_system_notification_response(move |_, cx| show_home(problem.clone(), cx));
 
             show_home(problem_text, cx);
         });
