@@ -1175,3 +1175,33 @@ proptest! {
         })?;
     }
 }
+
+#[test]
+fn units_sold_count_each_listing_with_its_variations_since_a_time_without_cancellations() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let before = fx.later(1);
+        fx.channel
+            .sells(order("2000020", before, vec![sold("MLB1", None, 5)]));
+        let since = fx.later(10);
+        let at = fx.later(1);
+        fx.channel.sells(order(
+            "2000021",
+            at,
+            vec![sold("MLB1", None, 1), sold("MLB2", Some("71"), 1)],
+        ));
+        fx.channel
+            .sells(order("2000022", at, vec![sold("MLB2", Some("72"), 2)]));
+        let mut cancelled = order("2000023", at, vec![sold("MLB1", None, 3)]);
+        cancelled.status = OrderStatus::Cancelled;
+        fx.channel.sells(cancelled);
+        fx.sync().await;
+
+        let sold = fx.orders.units_sold_since(since).await.unwrap();
+
+        assert_eq!(
+            sold.into_iter().collect::<Vec<_>>(),
+            [("MLB1".to_owned(), 1), ("MLB2".to_owned(), 3)]
+        );
+    });
+}

@@ -4304,6 +4304,7 @@ dependencies = [
  "mascate-catalog",
  "mascate-commerce",
  "mascate-kernel",
+ "mascate-marketing",
  "mascate-platform",
  "rust_decimal",
  "serde",
@@ -4345,7 +4346,13 @@ dependencies = [
 name = "mascate-marketing"
 version = "0.2.0"
 dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-kernel",
  "mascate-platform",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ chrono.workspace = true
 mascate-catalog.workspace = true
 mascate-commerce.workspace = true
 mascate-kernel.workspace = true
+mascate-marketing.workspace = true
 mascate-platform.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true

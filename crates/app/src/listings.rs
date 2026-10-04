@@ -26,6 +26,7 @@ use mascate_commerce::{
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Money, Percentage, RecordId, Timestamp, parse_amount};
+use mascate_marketing::QualitySync;
 use rust_decimal::Decimal;
 
 use crate::appearance::{Tokens, look};
@@ -39,6 +40,7 @@ use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
 use crate::pricing;
+use crate::quality;
 use crate::stock_mirror;
 
 /// The app's Listings; absent when the database did not open.
@@ -357,10 +359,14 @@ impl ListingsScreen {
         self.products.iter().find(|product| product.id == id)
     }
 
-    /// Reads the listings, then sends the stock still to send.
+    /// Reads the listings, sends the stock still to send, then reads the
+    /// quality of each listing (#23).
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(mirror)) = (mercado_livre::adapter(cx), stock_mirror::mirror(cx))
-        else {
+        let (Some(channel), Some(mirror), Some(rated)) = (
+            mercado_livre::adapter(cx),
+            stock_mirror::mirror(cx),
+            quality::quality(cx),
+        ) else {
             return;
         };
         self.outcome = None;
@@ -379,12 +385,29 @@ impl ListingsScreen {
                     .send(channel.as_ref())
                     .await
                     .map_err(|e| failure(&e))?;
-                Ok(Some((report, sent)))
+                let rated = quality::sync(&listings, &rated, channel.as_ref()).await;
+                Ok(Some((report, sent, rated)))
             },
-            |this, (report, sent): (ListingSync, StockSend), _, _| {
+            |this,
+             (report, sent, rated): (ListingSync, StockSend, Result<QualitySync, String>),
+             _,
+             _| {
                 let mut text = synced(&report);
                 text.push_str(&stock_sent(&sent));
-                this.outcome = Some(Outcome::Done(text.trim_end().to_owned().into()));
+                this.outcome = Some(match rated {
+                    Ok(rated) => {
+                        text.push(' ');
+                        text.push_str(&quality::synced(&rated));
+                        if rated.pending > 0 {
+                            text.push_str(" Veja em Qualidade.");
+                        }
+                        Outcome::Done(text.into())
+                    }
+                    Err(error) => {
+                        text.push_str(&format!(" Não li a qualidade dos anúncios: {error}"));
+                        Outcome::Failed(text.into())
+                    }
+                });
             },
         );
     }

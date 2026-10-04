@@ -170,6 +170,10 @@ _Avoid_: post, copy (sozinho), anúncio
 Título e descrição de um Listing gerados como rascunho para o Fernando editar.
 _Avoid_: copy (sozinho), descrição
 
+**Listing Quality**:
+Nota de 0 a 100 e nível (Básica, Satisfatória, Profissional) que o Sales Channel dá a um Listing publicado, com as ações que ele diz faltar, cada uma com o link para corrigir no canal. As que derrubam a nota são problemas; as outras, sugestões. O painel põe primeiro os Listings com algo pendente que mais venderam e receberam visitas nos últimos 30 dias. Variações do mesmo anúncio dividem a mesma nota.
+_Avoid_: saúde do anúncio, health, score (sozinho), Checklist (é do rascunho)
+
 **Promotion**:
 Desconto, campanha ou cupom do vendedor num Sales Channel.
 _Avoid_: campanha (sozinho), oferta
