@@ -32,7 +32,9 @@ pub use backups::{
     apply_staged_restore, default_backup_folder, stage_restore_without_backup,
     undo_applied_restore,
 };
-pub use database::{Database, DatabaseError, default_database_path, default_owner_folder};
+pub use database::{
+    Connection, Database, DatabaseError, default_database_path, default_owner_folder,
+};
 pub use flags::{
     ConfirmedTurnOn, Flag, FlagChange, FlagError, FlagKind, FlagStatus, Flags, Phase,
     TurnOnRequest, system_user,

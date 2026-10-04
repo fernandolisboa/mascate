@@ -295,7 +295,7 @@ impl PurchaseOrders {
     /// A connection of its own for a transaction. Each one starts
     /// immediate, taking the write lock first, so what it checks still holds
     /// when it writes.
-    async fn writer(&self) -> Result<Connection, PurchaseOrderError> {
+    async fn writer(&self) -> Result<mascate_platform::Connection, PurchaseOrderError> {
         Ok(self.database.connect_for_transaction().await?)
     }
 

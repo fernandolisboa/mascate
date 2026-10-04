@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use directories::{ProjectDirs, UserDirs};
@@ -17,7 +18,37 @@ pub enum DatabaseError {
 pub struct Database {
     path: PathBuf,
     database: libsql::Database,
+    connection: Connection,
+}
+
+/// A libSQL connection that closes its file handle exactly once.
+///
+/// libsql 0.9.30 closes a local connection twice when its last handle drops:
+/// `LibsqlConnection::drop` closes it, then the inner connection's own drop
+/// closes the freed handle again, which crashes the process on Windows at
+/// random. A statement prepared on the connection outlives both drops, and
+/// the handle closes once, when that statement drops after them.
+pub struct Connection {
     connection: libsql::Connection,
+    _closes_once: libsql::Statement,
+}
+
+impl Connection {
+    pub(crate) async fn new(connection: libsql::Connection) -> Result<Self, libsql::Error> {
+        let closes_once = connection.prepare("SELECT 1").await?;
+        Ok(Self {
+            connection,
+            _closes_once: closes_once,
+        })
+    }
+}
+
+impl Deref for Connection {
+    type Target = libsql::Connection;
+
+    fn deref(&self) -> &libsql::Connection {
+        &self.connection
+    }
 }
 
 impl Database {
@@ -30,7 +61,7 @@ impl Database {
             })?;
         }
         let database = libsql::Builder::new_local(path).build().await?;
-        let connection = database.connect()?;
+        let connection = Connection::new(database.connect()?).await?;
         // WAL lets the UI read while a Sync writes.
         connection.query("PRAGMA journal_mode = WAL", ()).await?;
         configure(&connection).await?;
@@ -46,15 +77,15 @@ impl Database {
     }
 
     /// A connection of its own to the same file.
-    pub(crate) fn connect(&self) -> Result<libsql::Connection, libsql::Error> {
-        self.database.connect()
+    pub(crate) async fn connect(&self) -> Result<Connection, libsql::Error> {
+        Connection::new(self.database.connect()?).await
     }
 
     /// A connection of its own, set up like the shared one, for a
     /// transaction: on the shared connection another task's statements
     /// would run inside it.
-    pub async fn connect_for_transaction(&self) -> Result<libsql::Connection, libsql::Error> {
-        let connection = self.connect()?;
+    pub async fn connect_for_transaction(&self) -> Result<Connection, libsql::Error> {
+        let connection = self.connect().await?;
         configure(&connection).await?;
         Ok(connection)
     }
