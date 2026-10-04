@@ -217,6 +217,22 @@ pub struct PriceSuggestion {
     pub current: PriceScenario,
 }
 
+/// Where the unit cost of a draft's price came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CostSource {
+    AverageCost,
+    /// The Product never came into stock; the caller's Supplier Offer.
+    SupplierOffer,
+}
+
+/// The price the app suggests for a draft, and the sale at that price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DraftPrice {
+    pub suggested: PriceScenario,
+    pub target: TargetMargin,
+    pub cost_from: CostSource,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PricingError {
     #[error(transparent)]
@@ -400,35 +416,66 @@ impl Pricing {
 
         let today = asked.listed.price;
         let today_fee = channel.sale_fee(&category, today, listing_type)?;
-        let (mut probe, mut fee) = (today, today_fee);
-        for _ in 0..MAX_FEE_LOOKUPS {
-            let mut highest: Option<(Money, RecordId, Money, TargetMargin)> = None;
-            for (_, product, cost, target) in &products {
-                let price = sale(probe, fee, *cost, assumptions)
-                    .lowest_price_for(target.margin)?
-                    .ok_or(PricingError::Unreachable)?;
-                if highest.is_none_or(|(most, ..)| price.amount() > most.amount()) {
-                    highest = Some((price, *product, *cost, *target));
-                }
-            }
-            let (price, product, cost, target) = highest.ok_or(PricingError::Unreachable)?;
-            let fee_there = channel.sale_fee(&category, price, listing_type)?;
-            let suggested = sale(price, fee, cost, assumptions);
-            if fee_there == fee
-                && suggested.shipping == sale(probe, fee, cost, assumptions).shipping
-            {
-                return Ok(PriceSuggestion {
-                    listings: products.iter().map(|(id, ..)| *id).collect(),
-                    price,
-                    product,
-                    target,
-                    suggested,
-                    current: sale(today, today_fee, cost, assumptions),
-                });
-            }
-            (probe, fee) = (price, fee_there);
-        }
-        Err(PricingError::Unsettled)
+        let costs: Vec<(RecordId, Money, TargetMargin)> = products
+            .iter()
+            .map(|(_, product, cost, target)| (*product, *cost, *target))
+            .collect();
+        let settled = settle(
+            channel,
+            (&category, listing_type),
+            (today, today_fee),
+            &costs,
+            assumptions,
+        )?;
+        let (product, cost, target) = costs[settled.highest];
+        Ok(PriceSuggestion {
+            listings: products.iter().map(|(id, ..)| *id).collect(),
+            price: settled.price,
+            product,
+            target,
+            suggested: sale(settled.price, settled.fee, cost, assumptions),
+            current: sale(today, today_fee, cost, assumptions),
+        })
+    }
+
+    /// The first price of a draft: the lowest, in cents, at which its
+    /// Product reaches its target margin in the draft's category and
+    /// Listing Type, with the unit's Average Cost or, before the Product
+    /// ever came into stock, `offer_cost` (what a Supplier Offer charges).
+    /// Nothing is sent to the channel.
+    pub async fn draft_price(
+        &self,
+        draft: RecordId,
+        channel: &dyn SalesChannel,
+        assumptions: PriceAssumptions,
+        offer_cost: Option<Money>,
+    ) -> Result<DraftPrice, PricingError> {
+        let draft = self.listings.draft(draft).await?;
+        let category = draft.category.ok_or(PricingError::NoFeeBasis)?.id;
+        let (cost, cost_from) = match self.inventory.average_cost(draft.product).await? {
+            Some(cost) => (cost, CostSource::AverageCost),
+            None => (
+                offer_cost.ok_or(PricingError::NoCost(draft.product))?,
+                CostSource::SupplierOffer,
+            ),
+        };
+        let target = self.target_margin(draft.product).await?;
+        // Any price tells the channel's fee band to start from; the cost is
+        // a near one.
+        let probe = Money::new(cost.amount().max(CENT), cost.currency());
+        let fee = channel.sale_fee(&category, probe, draft.listing_type)?;
+        let settled = settle(
+            channel,
+            (&category, draft.listing_type),
+            (probe, fee),
+            &[(draft.product, cost, target)],
+            assumptions,
+        )?;
+        Ok(DraftPrice {
+            suggested: sale(settled.price, settled.fee, cost, assumptions),
+            target,
+            cost_from,
+        })
     }
 
     /// The sale of one unit of the Product `listing` sells at today's price,
@@ -482,6 +529,54 @@ fn fee_basis(listing: &Listing) -> Result<(String, ListingType), PricingError> {
         (Some(category), Some(listing_type)) => Ok((category.clone(), listing_type)),
         _ => Err(PricingError::NoFeeBasis),
     }
+}
+
+/// Where the search for a price ended: the price, the one of the costs
+/// that needs it highest, and the channel's fee there.
+struct Settled {
+    price: Money,
+    highest: usize,
+    fee: SaleFee,
+}
+
+/// The lowest price at which each of `costs` (a Product, its unit cost and
+/// target margin) reaches its target, starting from the channel's fee at
+/// `start`. The channel is asked for its fee at each new price, until the
+/// fee and shipping solved with are the ones that apply there.
+fn settle(
+    channel: &dyn SalesChannel,
+    (category, listing_type): (&str, ListingType),
+    start: (Money, SaleFee),
+    costs: &[(RecordId, Money, TargetMargin)],
+    assumptions: PriceAssumptions,
+) -> Result<Settled, PricingError> {
+    let (mut probe, mut fee) = start;
+    for _ in 0..MAX_FEE_LOOKUPS {
+        let mut highest: Option<(Money, usize)> = None;
+        for (index, (_, cost, target)) in costs.iter().enumerate() {
+            let price = sale(probe, fee, *cost, assumptions)
+                .lowest_price_for(target.margin)?
+                .ok_or(PricingError::Unreachable)?;
+            if highest.is_none_or(|(most, _)| price.amount() > most.amount()) {
+                highest = Some((price, index));
+            }
+        }
+        let (price, index) = highest.ok_or(PricingError::Unreachable)?;
+        let cost = costs[index].1;
+        let fee_there = channel.sale_fee(category, price, listing_type)?;
+        if fee_there == fee
+            && sale(price, fee, cost, assumptions).shipping
+                == sale(probe, fee, cost, assumptions).shipping
+        {
+            return Ok(Settled {
+                price,
+                highest: index,
+                fee,
+            });
+        }
+        (probe, fee) = (price, fee_there);
+    }
+    Err(PricingError::Unsettled)
 }
 
 /// One unit sold at `price` with no discount and no Ads: shipping once free

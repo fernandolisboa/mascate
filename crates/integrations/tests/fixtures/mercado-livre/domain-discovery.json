@@ -1,0 +1,29 @@
+[
+  {
+    "domain_id": "MLB-HEADPHONES",
+    "domain_name": "Fones de ouvido",
+    "category_id": "MLB196208",
+    "category_name": "Fones de Ouvido",
+    "attributes": [
+      {
+        "id": "BRAND",
+        "name": "Marca",
+        "value_id": "2503",
+        "value_name": "Lenovo"
+      },
+      {
+        "id": "LINE",
+        "name": "Linha",
+        "value_id": null,
+        "value_name": "LivePods"
+      }
+    ]
+  },
+  {
+    "domain_id": "MLB-HEADPHONE_CASES",
+    "domain_name": "Estojos para fones",
+    "category_id": "MLB432841",
+    "category_name": "Estojos para Fones",
+    "attributes": []
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "id": 1234567,
+  "nickname": "MASCATE_TESTE",
+  "registration_date": "2026-09-01T10:00:00.000-03:00",
+  "country_id": "BR",
+  "site_id": "MLB",
+  "user_type": "normal",
+  "tags": [
+    "normal",
+    "user_product_seller"
+  ],
+  "seller_reputation": {
+    "level_id": null,
+    "power_seller_status": null
+  }
+}

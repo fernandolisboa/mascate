@@ -531,3 +531,47 @@ fn a_folder_already_named_after_a_typed_sku_is_adopted_with_its_files() {
         assert_eq!(files[0].name, "foto.jpg");
     });
 }
+
+#[test]
+fn a_products_cheapest_offer_is_the_lowest_of_each_suppliers_latest_price() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shopee = f.supplier("Loja Shopee").await;
+        let wholesale = f.supplier("Atacado SP").await;
+        let first = f.offer(&shopee, SHOPEE_FONE, "39.90").await;
+        let product = f
+            .catalog
+            .create_product(first.id, "Fone TWS", "FONE-TWS")
+            .await
+            .unwrap();
+        assert_eq!(
+            f.catalog.cheapest_offer(product.id).await.unwrap(),
+            Some(first.total())
+        );
+
+        f.a_day_later();
+        let cheaper = f
+            .offer(&wholesale, "https://atacadosp.example/fone-tws", "20.00")
+            .await;
+        f.catalog.link_offer(cheaper.id, product.id).await.unwrap();
+        f.a_day_later();
+        // The wholesaler raised the price since: today's price counts, not
+        // the lowest ever.
+        let raised = f
+            .offer(&wholesale, "https://atacadosp.example/fone-tws", "45.00")
+            .await;
+
+        assert_eq!(
+            f.catalog.cheapest_offer(product.id).await.unwrap(),
+            Some(first.total())
+        );
+        assert!(raised.total().amount() > first.total().amount());
+
+        let alone = f
+            .catalog
+            .add_product("Cabo USB-C", "CABO-USBC")
+            .await
+            .unwrap();
+        assert_eq!(f.catalog.cheapest_offer(alone.id).await.unwrap(), None);
+    });
+}

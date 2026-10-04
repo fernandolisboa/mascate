@@ -10,8 +10,9 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, Listing, ListingStatus, Listings, PriceAssumptions, PriceScenario,
-    PriceSuggestion, Pricing, PricingError, SaleFee, TargetMargin,
+    CatalogProduct, ChannelListing, CostSource, DraftEdit, DraftStart, Listing, ListingDraft,
+    ListingStatus, Listings, PriceAssumptions, PriceScenario, PriceSuggestion, Pricing,
+    PricingError, SaleFee, TargetMargin,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, MovementReason, NewEntry};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -20,7 +21,7 @@ use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 
-use common::{Channel, brl, listing, percent, variation};
+use common::{Channel, Publisher, brl, listing, percent, variation};
 
 fn fee(rate: &str, fixed: &str) -> SaleFee {
     SaleFee {
@@ -688,4 +689,140 @@ proptest! {
             assert_eq!(at.sale_fee, fee_there);
         });
     }
+}
+
+impl Fixture {
+    /// A draft of Product `n`, in the channel's predicted category.
+    async fn draft(&self, n: u128, publisher: &Publisher) -> ListingDraft {
+        let product = CatalogProduct {
+            id: product(n),
+            sku: format!("SKU-{n}"),
+            name: "Fone Bluetooth TWS".into(),
+        };
+        let start = DraftStart {
+            available_quantity: 1,
+            pictures: Vec::new(),
+        };
+        self.listings
+            .create_draft(&product, start, publisher)
+            .await
+            .unwrap()
+    }
+
+    async fn draft_price(
+        &self,
+        draft: &ListingDraft,
+        offer_cost: Option<&str>,
+    ) -> Result<mascate_commerce::DraftPrice, PricingError> {
+        self.pricing
+            .draft_price(draft.id, &self.channel, assumptions(), offer_cost.map(brl))
+            .await
+    }
+}
+
+#[test]
+fn a_draft_is_priced_for_its_target_margin_from_the_average_cost() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let draft = fx.draft(1, &Publisher::default()).await;
+        fx.stock(1, 1, "60").await;
+
+        let priced = fx.draft_price(&draft, Some("10")).await.unwrap();
+
+        // R$ 60 / (1 − 14% − 6% − 20%) = R$ 100 needs free shipping, so
+        // (R$ 60 + R$ 20) / 0,6 = R$ 133,33…
+        assert_eq!(priced.suggested.price, brl("133.34"));
+        assert_eq!(priced.suggested.cost, brl("60"));
+        assert_eq!(priced.suggested.shipping, brl("20"));
+        assert_eq!(priced.cost_from, CostSource::AverageCost);
+        assert_eq!(priced.target.margin, percent("20"));
+        assert!(priced.suggested.reaches(percent("20")).unwrap());
+        assert_eq!(fx.listings.draft(draft.id).await.unwrap().price, brl("0"));
+    });
+}
+
+#[test]
+fn a_cheap_draft_stays_below_the_free_shipping_price() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let draft = fx.draft(1, &Publisher::default()).await;
+        fx.stock(1, 2, "70").await;
+
+        let priced = fx.draft_price(&draft, None).await.unwrap();
+
+        // R$ 35 / 0,6 = R$ 58,33…, where the buyer pays shipping.
+        assert_eq!(priced.suggested.price, brl("58.34"));
+        assert_eq!(priced.suggested.shipping, brl("0"));
+    });
+}
+
+#[test]
+fn before_any_stock_a_draft_is_priced_from_the_supplier_offer() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        // Below R$ 79 the channel adds R$ 6,25 to each sale.
+        *fx.channel.fee_bands.lock().unwrap() = vec![(brl("0"), fee("14", "6.25"))];
+        fx.channel.charges_from("79", fee("14", "0"));
+        fx.pricing
+            .set_target_margin(product(1), Some(percent("30")))
+            .await
+            .unwrap();
+        let draft = fx.draft(1, &Publisher::default()).await;
+
+        let priced = fx.draft_price(&draft, Some("12")).await.unwrap();
+
+        // (R$ 12 + R$ 6,25) / (1 − 14% − 6% − 30%) = R$ 36,50.
+        assert_eq!(priced.suggested.price, brl("36.50"));
+        assert_eq!(priced.suggested.sale_fee, fee("14", "6.25"));
+        assert_eq!(priced.cost_from, CostSource::SupplierOffer);
+        assert_eq!(priced.target.margin, percent("30"));
+        assert!(priced.target.own);
+
+        assert!(matches!(
+            fx.draft_price(&draft, None).await,
+            Err(PricingError::NoCost(id)) if id == product(1)
+        ));
+    });
+}
+
+#[test]
+fn a_draft_without_a_category_has_no_price_yet() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let publisher = Publisher::default();
+        publisher.predictions.lock().unwrap().clear();
+        let draft = fx.draft(1, &publisher).await;
+
+        assert!(matches!(
+            fx.draft_price(&draft, Some("10")).await,
+            Err(PricingError::NoFeeBasis)
+        ));
+    });
+}
+
+#[test]
+fn a_premium_draft_is_priced_with_the_premium_fee() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let draft = fx.draft(1, &Publisher::default()).await;
+        let premium = DraftEdit {
+            title: draft.title.clone(),
+            description: String::new(),
+            listing_type: mascate_kernel::ListingType::Premium,
+            condition: draft.condition,
+            price: draft.price,
+            available_quantity: 1,
+            warranty: String::new(),
+            attributes: Vec::new(),
+            pictures: Vec::new(),
+        };
+        fx.listings.save_draft(draft.id, premium).await.unwrap();
+
+        fx.draft_price(&draft, Some("10")).await.unwrap();
+
+        assert_eq!(
+            *fx.channel.fee_types.lock().unwrap(),
+            [mascate_kernel::ListingType::Premium; 2]
+        );
+    });
 }

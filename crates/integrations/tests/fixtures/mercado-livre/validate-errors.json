@@ -1,0 +1,27 @@
+{
+  "message": "Validation error",
+  "error": "validation_error",
+  "status": 400,
+  "cause": [
+    {
+      "department": "items",
+      "cause_id": 147,
+      "type": "error",
+      "code": "item.attributes.missing_required",
+      "references": [
+        "item.attributes"
+      ],
+      "message": "The attributes [MODEL] are required for category MLB196208. Check the attribute is present in the attributes list or in all variation's attributes_combination or attributes."
+    },
+    {
+      "department": "items",
+      "cause_id": 3701,
+      "type": "warning",
+      "code": "item.attributes.missing_conditional_required",
+      "references": [
+        "item.attributes"
+      ],
+      "message": "The attribute GTIN is recommended for category MLB196208."
+    }
+  ]
+}

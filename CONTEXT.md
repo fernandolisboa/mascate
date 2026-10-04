@@ -52,6 +52,14 @@ _Avoid_: canal (sozinho), marketplace, loja
 Anúncio de um Product num Sales Channel. Nasce como rascunho no app e passa a publicado quando sobe para o canal; os que já existem no canal chegam por Sync. Um anúncio com variações vira um Listing por variação, porque cada uma vende um Product.
 _Avoid_: anúncio de afiliado, publicação, item do ML
 
+**Listing Draft**:
+Listing ainda não publicado, montado a partir de um Product: título, descrição, categoria e atributos do Sales Channel, fotos da pasta do Product, Listing Type, preço e estoque. Só sobe para o canal quando o Fernando clica em publicar.
+_Avoid_: pré-anúncio, rascunho de produto
+
+**Checklist**:
+O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (título, categoria, preço, atributos obrigatórios, mínimo de 3 fotos, erros do validador do canal) impedem a publicação; os avisos (GTIN e atributos recomendados, descrição vazia, estoque zero, avisos do validador) não.
+_Avoid_: pendências, validação (sozinho)
+
 **Order**:
 Venda recebida num Sales Channel, com um ou mais itens e seu envio.
 _Avoid_: venda (sozinho), pedido de compra

@@ -1,13 +1,17 @@
 //! What the tests of Listings and prices share: an in-memory Sales Channel
-//! and listings to fill it with.
+//! and listings to fill it with, and an in-memory channel to publish drafts
+//! to.
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Mutex;
 
 use mascate_commerce::{
-    CatalogProduct, ChannelListing, ListingStatus, SaleFee, SalesChannel, Variation,
+    AttributeValue, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
+    ChannelIssue, ChannelListing, ListingPublisher, ListingStatus, ListingToPublish,
+    PublishedListing, Requirement, SaleFee, SalesChannel, Variation,
 };
 use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
 use rust_decimal::Decimal;
@@ -65,6 +69,8 @@ pub struct Channel {
     pub fee_bands: Mutex<Vec<(Money, SaleFee)>>,
     /// The prices it was asked the fee at, in order.
     pub fee_asked: Mutex<Vec<Money>>,
+    /// The Listing Types it was asked the fee for, in order.
+    pub fee_types: Mutex<Vec<ListingType>>,
     /// Each listing id and price it was told to set, in order.
     pub prices_set: Mutex<Vec<(String, Money)>>,
 }
@@ -84,6 +90,7 @@ impl Default for Channel {
                 },
             )]),
             fee_asked: Mutex::default(),
+            fee_types: Mutex::default(),
             prices_set: Mutex::default(),
         }
     }
@@ -169,10 +176,11 @@ impl SalesChannel for Channel {
         &self,
         _category: &str,
         price: Money,
-        _listing_type: ListingType,
+        listing_type: ListingType,
     ) -> Result<SaleFee, PlatformError> {
         self.check()?;
         self.fee_asked.lock().unwrap().push(price);
+        self.fee_types.lock().unwrap().push(listing_type);
         let bands = self.fee_bands.lock().unwrap();
         Ok(bands
             .iter()
@@ -187,5 +195,199 @@ impl SalesChannel for Channel {
         self.prices_set.lock().unwrap().push((id.to_owned(), price));
         self.change(id, |listing| listing.price = price);
         Ok(())
+    }
+}
+
+pub fn category(id: &str, name: &str) -> ChannelCategory {
+    ChannelCategory {
+        id: id.into(),
+        name: name.into(),
+    }
+}
+
+pub fn attribute(id: &str, name: &str, requirement: Requirement) -> CategoryAttribute {
+    CategoryAttribute {
+        id: id.into(),
+        name: name.into(),
+        requirement,
+    }
+}
+
+pub fn value(id: &str, value: &str) -> AttributeValue {
+    AttributeValue {
+        id: id.into(),
+        value: value.into(),
+    }
+}
+
+/// What a publish call does.
+#[derive(Clone)]
+pub enum Publishing {
+    Creates,
+    /// Creates the listing, but the answer never arrives.
+    CreatesUnanswered,
+    Fails(PlatformError),
+}
+
+/// A channel to publish to, answering from memory: its category
+/// predictions and attributes, its validator's issues, the listings it has
+/// by seller SKU, and what it was asked.
+pub struct Publisher {
+    pub predictions: Mutex<Vec<CategoryPrediction>>,
+    pub attributes: Mutex<HashMap<String, Vec<CategoryAttribute>>>,
+    pub issues: Mutex<Vec<ChannelIssue>>,
+    pub publishing: Mutex<Publishing>,
+    pub describing: Mutex<Option<PlatformError>>,
+    /// Fails every call while set.
+    pub failure: Mutex<Option<PlatformError>>,
+    /// Each picture's file name and bytes.
+    pub uploaded: Mutex<Vec<(String, Vec<u8>)>>,
+    pub validated: Mutex<Vec<ListingToPublish>>,
+    pub published: Mutex<Vec<ListingToPublish>>,
+    pub described: Mutex<Vec<(String, String)>>,
+    pub searched: Mutex<Vec<String>>,
+    /// The listings it has, with their seller SKU.
+    pub listings: Mutex<Vec<(String, PublishedListing)>>,
+}
+
+impl Default for Publisher {
+    /// Predicts "Fones de Ouvido", which requires a brand and a model,
+    /// recommends a GTIN and has an optional colour.
+    fn default() -> Self {
+        Self {
+            predictions: Mutex::new(vec![CategoryPrediction {
+                category: category("MLB196208", "Fones de Ouvido"),
+                attributes: vec![value("BRAND", "Lenovo"), value("COLOR", "Preto")],
+            }]),
+            attributes: Mutex::new(HashMap::from([(
+                "MLB196208".to_owned(),
+                vec![
+                    attribute("BRAND", "Marca", Requirement::Required),
+                    attribute("MODEL", "Modelo", Requirement::Required),
+                    attribute(
+                        "GTIN",
+                        "Código universal de produto",
+                        Requirement::Recommended,
+                    ),
+                    attribute("COLOR", "Cor", Requirement::Optional),
+                    attribute("WEIGHT", "Peso", Requirement::Optional),
+                ],
+            )])),
+            issues: Mutex::default(),
+            publishing: Mutex::new(Publishing::Creates),
+            describing: Mutex::default(),
+            failure: Mutex::default(),
+            uploaded: Mutex::default(),
+            validated: Mutex::default(),
+            published: Mutex::default(),
+            described: Mutex::default(),
+            searched: Mutex::default(),
+            listings: Mutex::default(),
+        }
+    }
+}
+
+impl Publisher {
+    fn check(&self) -> Result<(), PlatformError> {
+        match self.failure.lock().unwrap().clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    pub fn publishes(&self, publishing: Publishing) {
+        *self.publishing.lock().unwrap() = publishing;
+    }
+
+    pub fn publish_calls(&self) -> usize {
+        self.published.lock().unwrap().len()
+    }
+}
+
+impl ListingPublisher for Publisher {
+    fn currency(&self) -> Currency {
+        Currency::Brl
+    }
+
+    fn predict_categories(&self, _title: &str) -> Result<Vec<CategoryPrediction>, PlatformError> {
+        self.check()?;
+        Ok(self.predictions.lock().unwrap().clone())
+    }
+
+    fn category_attributes(&self, category: &str) -> Result<Vec<CategoryAttribute>, PlatformError> {
+        self.check()?;
+        self.attributes
+            .lock()
+            .unwrap()
+            .get(category)
+            .cloned()
+            .ok_or(PlatformError::NotFound)
+    }
+
+    fn upload_picture(&self, file_name: &str, bytes: &[u8]) -> Result<String, PlatformError> {
+        self.check()?;
+        let mut uploaded = self.uploaded.lock().unwrap();
+        uploaded.push((file_name.to_owned(), bytes.to_vec()));
+        Ok(format!("PIC-{}", uploaded.len()))
+    }
+
+    fn validate(&self, listing: &ListingToPublish) -> Result<Vec<ChannelIssue>, PlatformError> {
+        self.check()?;
+        self.validated.lock().unwrap().push(listing.clone());
+        Ok(self.issues.lock().unwrap().clone())
+    }
+
+    fn publish(&self, listing: &ListingToPublish) -> Result<PublishedListing, PlatformError> {
+        self.check()?;
+        self.published.lock().unwrap().push(listing.clone());
+        let mut listings = self.listings.lock().unwrap();
+        let created = PublishedListing {
+            id: format!("MLB{}", 9_000 + listings.len()),
+            status: if listing.available_quantity == 0 {
+                ListingStatus::Paused
+            } else {
+                ListingStatus::Active
+            },
+            link: Some(format!(
+                "https://produto.mercadolivre.com.br/MLB{}",
+                9_000 + listings.len()
+            )),
+        };
+        match self.publishing.lock().unwrap().clone() {
+            Publishing::Creates => {
+                listings.push((listing.seller_sku.clone(), created.clone()));
+                Ok(created)
+            }
+            Publishing::CreatesUnanswered => {
+                listings.push((listing.seller_sku.clone(), created));
+                Err(PlatformError::Failed("the connection dropped".into()))
+            }
+            Publishing::Fails(error) => Err(error),
+        }
+    }
+
+    fn describe(&self, id: &str, description: &str) -> Result<(), PlatformError> {
+        self.check()?;
+        if let Some(error) = self.describing.lock().unwrap().clone() {
+            return Err(error);
+        }
+        self.described
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), description.to_owned()));
+        Ok(())
+    }
+
+    fn find_by_seller_sku(&self, seller_sku: &str) -> Result<Vec<PublishedListing>, PlatformError> {
+        self.check()?;
+        self.searched.lock().unwrap().push(seller_sku.to_owned());
+        Ok(self
+            .listings
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(sku, _)| sku == seller_sku)
+            .map(|(_, listing)| listing.clone())
+            .collect())
     }
 }

@@ -1,9 +1,10 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
 //! login, reports demand to the catalog and the owner's listings to
-//! commerce (ADR 0013). Only official endpoints; the one write is a
-//! listing's price, when the owner approves it.
+//! commerce, and publishes drafts (ADR 0013). Only official endpoints; it
+//! writes only on the owner's click: a listing's price, or a draft.
 
 mod answers;
+mod publisher;
 mod sales_channel;
 mod tokens;
 
@@ -92,13 +93,47 @@ impl MercadoLivre {
         Ok(())
     }
 
+    /// The JSON answer to `POST path` with the JSON `body`.
+    fn post<T: DeserializeOwned>(&self, path: &str, body: &str) -> Result<T, PlatformError> {
+        let response = self.signed(path, |bearer| self.posting(path, bearer, body))?;
+        read_json(response)
+    }
+
+    fn posting(
+        &self,
+        path: &str,
+        bearer: &str,
+        body: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        self.agent
+            .post(format!("{}{path}", self.api))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("Authorization", bearer)
+            .send(body)
+    }
+
     /// A successful answer to the request `send` makes with the
-    /// Connection's access token as its `Authorization` header. A token
-    /// Mercado Livre turns down is renewed once before the login counts as
-    /// expired; a request it refuses (400 or 403) carries its reason.
+    /// Connection's access token; a request Mercado Livre refuses (400 or
+    /// 403) carries its reason.
     fn signed(
         &self,
         path: &str,
+        send: impl Fn(&str) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<ureq::http::Response<ureq::Body>, PlatformError> {
+        let response = self.answered(send)?;
+        match response.status().as_u16() {
+            200 | 201 | 204 => Ok(response),
+            _ => Err(failed(response, path)),
+        }
+    }
+
+    /// The answer to the request `send` makes with the Connection's access
+    /// token as its `Authorization` header, whatever its status. A token
+    /// Mercado Livre turns down is renewed once before the login counts as
+    /// expired.
+    fn answered(
+        &self,
         send: impl Fn(&str) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<ureq::http::Response<ureq::Body>, PlatformError> {
         let mut renewed = false;
@@ -107,20 +142,12 @@ impl MercadoLivre {
             let response = send(&format!("Bearer {}", token.expose()))
                 .map_err(|error| PlatformError::Failed(error.to_string()))?;
             match response.status().as_u16() {
-                200 | 201 => return Ok(response),
                 401 if !renewed => {
                     self.tokens.forget(&token);
                     renewed = true;
                 }
                 401 => return Err(PlatformError::Expired),
-                400 | 403 => return Err(PlatformError::Refused(refusal(response))),
-                404 => return Err(PlatformError::NotFound),
-                429 => return Err(PlatformError::RateLimited),
-                status => {
-                    return Err(PlatformError::Failed(format!(
-                        "Mercado Livre answered {status} for {path}"
-                    )));
-                }
+                _ => return Ok(response),
             }
         }
     }
@@ -341,6 +368,16 @@ fn read_json<T: DeserializeOwned>(
             "Mercado Livre answered something unexpected: {error}"
         ))
     })
+}
+
+/// What an unsuccessful answer to a request for `path` means.
+fn failed(response: ureq::http::Response<ureq::Body>, path: &str) -> PlatformError {
+    match response.status().as_u16() {
+        400 | 403 => PlatformError::Refused(refusal(response)),
+        404 => PlatformError::NotFound,
+        429 => PlatformError::RateLimited,
+        status => PlatformError::Failed(format!("Mercado Livre answered {status} for {path}")),
+    }
 }
 
 /// Mercado Livre's own word for a refusal, when it gives one: the causes

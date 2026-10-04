@@ -3,6 +3,7 @@ use gpui_kit::{Entity, SharedString, Subscription, Window};
 use mascate_kernel::RecordId;
 
 use crate::appearance;
+use crate::drafts::StartDraft;
 use crate::home::Home;
 use crate::layout;
 use crate::listings::ListingsScreen;
@@ -74,6 +75,18 @@ impl Shell {
                 window,
                 |shell, _, open: &OpenProduct, window, cx| {
                     shell.open_product(open.0, window, cx);
+                },
+            ),
+            cx.subscribe_in(
+                &products,
+                window,
+                |shell, _, start: &StartDraft, window, cx| {
+                    shell.listings.update(cx, |listings, cx| {
+                        listings.refresh(window, cx);
+                        listings.start_draft(start.0, window, cx);
+                    });
+                    shell.place = Place::Listings;
+                    cx.notify();
                 },
             ),
             cx.subscribe_in(

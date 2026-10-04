@@ -5,6 +5,7 @@ mod appearance;
 mod backups;
 mod catalog;
 mod connections;
+mod drafts;
 mod forms;
 mod home;
 mod kit;

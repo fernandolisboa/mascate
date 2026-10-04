@@ -1,0 +1,15 @@
+{
+  "id": "123-MLB456_102026",
+  "variations": [
+    {
+      "size": "1200x1200",
+      "url": "http://http2.mlstatic.com/D_NQ_NP_123-MLB456_102026-F.jpg",
+      "secure_url": "https://http2.mlstatic.com/D_NQ_NP_123-MLB456_102026-F.jpg"
+    },
+    {
+      "size": "500x500",
+      "url": "http://http2.mlstatic.com/D_NQ_NP_123-MLB456_102026-O.jpg",
+      "secure_url": "https://http2.mlstatic.com/D_NQ_NP_123-MLB456_102026-O.jpg"
+    }
+  ]
+}

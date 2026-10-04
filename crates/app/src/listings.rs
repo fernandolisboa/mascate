@@ -29,6 +29,7 @@ use rust_decimal::Decimal;
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE, product_choice};
 use crate::connections::AppConnections;
+use crate::drafts::{self, DraftPublished, DraftsSection};
 use crate::forms::{Outcome, Picker, amount_text, input, notice, percent_text, picker, refill};
 use crate::kit;
 use crate::layout;
@@ -42,7 +43,7 @@ pub struct AppListings(pub Arc<Listings>);
 
 impl Global for AppListings {}
 
-fn listings(cx: &App) -> Option<Arc<Listings>> {
+pub(crate) fn listings(cx: &App) -> Option<Arc<Listings>> {
     cx.try_global::<AppListings>().map(|app| app.0.clone())
 }
 
@@ -173,6 +174,7 @@ pub struct ListingsScreen {
     row_outcome: Option<Outcome>,
     price: Option<PricePanel>,
     simulator: Simulator,
+    drafts: Entity<DraftsSection>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -182,7 +184,8 @@ impl ListingsScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let simulator = Simulator::new(window, cx);
         // The simulator's margin follows every keystroke.
-        let subscriptions = simulator
+        let drafts = cx.new(|cx| DraftsSection::new(window, cx));
+        let mut subscriptions: Vec<Subscription> = simulator
             .fields()
             .into_iter()
             .map(|field| {
@@ -193,6 +196,12 @@ impl ListingsScreen {
                 })
             })
             .collect();
+        // A published draft is one more listing.
+        subscriptions.push(cx.subscribe_in(
+            &drafts,
+            window,
+            |this, _, _: &DraftPublished, window, cx| this.refresh(window, cx),
+        ));
         let mut screen = Self {
             listings: Vec::new(),
             to_link: Vec::new(),
@@ -210,6 +219,7 @@ impl ListingsScreen {
             row_outcome: None,
             price: None,
             simulator,
+            drafts,
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
@@ -218,7 +228,15 @@ impl ListingsScreen {
 
     /// Reads everything again, as when the screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.drafts
+            .update(cx, |drafts, cx| drafts.refresh(window, cx));
         self.run(window, cx, |_, _| async { Ok(None) }, |_, _: (), _, _| {});
+    }
+
+    /// Starts a draft of `product`, asked from its sheet in Produtos.
+    pub fn start_draft(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        self.drafts
+            .update(cx, |drafts, cx| drafts.start(product, window, cx));
     }
 
     /// Runs `change` off the UI thread, then reads the screen's data again
@@ -1247,6 +1265,8 @@ impl Render for ListingsScreen {
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         }
 
+        parts.content.push(self.drafts.clone().into_any_element());
+
         if !self.to_link.is_empty() {
             parts.content.push(
                 v_flex()
@@ -1341,7 +1361,7 @@ fn synced(report: &ListingSync) -> String {
     text
 }
 
-fn failure(error: &ListingError) -> String {
+pub(crate) fn failure(error: &ListingError) -> String {
     match error {
         ListingError::UnknownListing(_) => {
             "Esse anúncio não existe mais; a lista foi atualizada.".into()
@@ -1351,6 +1371,11 @@ fn failure(error: &ListingError) -> String {
         ListingError::Unreadable(_) | ListingError::Sql(_) => {
             format!("Não consegui ler ou gravar no banco: {error}")
         }
+        ListingError::UnknownDraft(_)
+        | ListingError::Published(_)
+        | ListingError::Blocked(_)
+        | ListingError::Picture { .. }
+        | ListingError::DescriptionNotSent(..) => drafts::failure(error),
     }
 }
 
