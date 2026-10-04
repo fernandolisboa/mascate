@@ -328,11 +328,10 @@ fn a_return_mercado_livre_reports_delivered_or_cancelled_says_so() {
         ("expired", ReturnStatus::Cancelled),
         ("label_generated", ReturnStatus::OnTheWay),
     ] {
-        let answer = fixture("claim-5298178312-returns.json").replace(
-            "\"status\": \"shipped\",\n  \"related",
-            &format!("\"status\": \"{status}\",\n  \"related"),
-        );
-        fake.server.serve(CLAIM_RETURN, 200, answer);
+        let mut answer: serde_json::Value =
+            serde_json::from_str(&fixture("claim-5298178312-returns.json")).unwrap();
+        answer["status"] = status.into();
+        fake.server.serve(CLAIM_RETURN, 200, answer.to_string());
 
         let orders = fake.adapter.orders_changed_since(fake.since()).unwrap();
 
