@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use libsql::{Connection, Row, TransactionBehavior, params};
+use mascate_inventory::InventoryError;
 use mascate_kernel::{
     Clock, IdGenerator, ListingType, Money, PlatformError, RecordId, Timestamp, fold, folded_words,
 };
@@ -49,7 +50,7 @@ impl ListingStatus {
         }
     }
 
-    fn from_code(code: &str) -> Option<Self> {
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.code() == code)
     }
 }
@@ -83,6 +84,15 @@ pub struct ChannelListing {
     pub seller_sku: Option<String>,
 }
 
+/// Units for a listing, or for one variation of it, to have available in the
+/// Sales Channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelStock {
+    /// The channel's id of the variation; `None` for a listing without them.
+    pub variation: Option<String>,
+    pub available_quantity: u32,
+}
+
 /// The Sales Channel the owner sells in, as a Platform's adapter reports it.
 /// Calls block on the network, so they run off the UI thread.
 pub trait SalesChannel: Send + Sync {
@@ -105,6 +115,17 @@ pub trait SalesChannel: Send + Sync {
     /// Changes the price of the listing `id`, every variation of it
     /// included, to `price` in whole cents.
     fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError>;
+
+    /// Sets the units available of the listing `id` or, when it has
+    /// variations, of each variation named in `stock`; the other variations
+    /// keep theirs.
+    fn set_stock(&self, id: &str, stock: &[ChannelStock]) -> Result<(), PlatformError>;
+
+    /// Takes the listing `id` off sale, every variation of it included.
+    fn pause(&self, id: &str) -> Result<(), PlatformError>;
+
+    /// Puts the paused listing `id` back on sale.
+    fn activate(&self, id: &str) -> Result<(), PlatformError>;
 }
 
 /// A listing of the owner's, as last synced, with the Product it sells.
@@ -175,6 +196,14 @@ pub enum ListingError {
     DescriptionNotSent(RecordId, PlatformError),
     #[error("a price is more than zero, in the Listing's currency")]
     InvalidPrice,
+    #[error("only an active listing can be paused")]
+    NotActive,
+    #[error("only a paused listing can be reactivated")]
+    NotPaused,
+    #[error("the listing has no units available to sell")]
+    NoStockToSell,
+    #[error(transparent)]
+    Stock(#[from] InventoryError),
     #[error(transparent)]
     Platform(#[from] PlatformError),
     #[error("the Listings hold a value this app cannot read: {0}")]
@@ -447,6 +476,87 @@ impl Listings {
         self.sharing_price(&listed.id).await
     }
 
+    /// Pauses the channel listing of an active Listing, every variation of
+    /// it included, and returns its Listings. Only the owner's own action
+    /// calls this.
+    pub async fn pause(
+        &self,
+        listing: RecordId,
+        channel: &dyn SalesChannel,
+    ) -> Result<Vec<Listing>, ListingError> {
+        let listed = self.listing(listing).await?.listed;
+        if listed.status != ListingStatus::Active {
+            return Err(ListingError::NotActive);
+        }
+        channel.pause(&listed.id)?;
+        self.set_status(&listed.id, ListingStatus::Paused).await
+    }
+
+    /// Puts the channel listing of a paused Listing back on sale, every
+    /// variation of it included, and returns its Listings. The channel sells
+    /// only units it has, so a listing without any stays paused.
+    pub async fn reactivate(
+        &self,
+        listing: RecordId,
+        channel: &dyn SalesChannel,
+    ) -> Result<Vec<Listing>, ListingError> {
+        let listed = self.listing(listing).await?.listed;
+        if listed.status != ListingStatus::Paused {
+            return Err(ListingError::NotPaused);
+        }
+        if self
+            .sharing_price(&listed.id)
+            .await?
+            .iter()
+            .all(|listing| listing.listed.available_quantity == 0)
+        {
+            return Err(ListingError::NoStockToSell);
+        }
+        channel.activate(&listed.id)?;
+        self.set_status(&listed.id, ListingStatus::Active).await
+    }
+
+    async fn set_status(
+        &self,
+        id: &str,
+        status: ListingStatus,
+    ) -> Result<Vec<Listing>, ListingError> {
+        self.database
+            .connection()
+            .execute(
+                "UPDATE commerce_listings SET status = ?1, updated_at = ?2
+                 WHERE ml_item_id = ?3 AND deleted_at IS NULL",
+                params![status.code(), stored(self.clock.now()), id.to_owned()],
+            )
+            .await?;
+        self.sharing_price(id).await
+    }
+
+    /// Writes what the channel reports now over the Listings it matches, as
+    /// a Sync would, leaving every other Listing as it is.
+    pub(crate) async fn take_reported(
+        &self,
+        reported: Vec<ChannelListing>,
+    ) -> Result<(), ListingError> {
+        let now = self.clock.now();
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let known = read(&transaction, "", ()).await?;
+        for reported in reported {
+            if let Some(listing) = known
+                .iter()
+                .find(|listing| key_of(&listing.listed) == key_of(&reported))
+                && listing.listed != reported
+            {
+                write_reported(&transaction, listing.id, &reported, now).await?;
+            }
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     /// The Listings of the channel listing `id`: one, or one per variation.
     pub(crate) async fn sharing_price(&self, id: &str) -> Result<Vec<Listing>, ListingError> {
         read(
@@ -462,15 +572,18 @@ impl Listings {
         listing: RecordId,
         product: Option<RecordId>,
     ) -> Result<Listing, ListingError> {
-        let changed = self
-            .database
-            .connection()
+        let now = stored(self.clock.now());
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let changed = transaction
             .execute(
                 "UPDATE commerce_listings SET product_id = ?1, updated_at = ?2
                  WHERE id = ?3 AND deleted_at IS NULL",
                 params![
                     product.map(|id| id.to_string()),
-                    stored(self.clock.now()),
+                    now.clone(),
                     listing.to_string()
                 ],
             )
@@ -478,6 +591,17 @@ impl Listings {
         if changed == 0 {
             return Err(ListingError::UnknownListing(listing));
         }
+        // Stock sent for another Product says nothing about this one.
+        transaction
+            .execute(
+                "UPDATE commerce_listing_stock SET stock_sent = NULL, stock_sent_at = NULL,
+                     stock_failure = NULL, stock_failure_detail = NULL,
+                     stock_failed_at = NULL, updated_at = ?1
+                 WHERE listing_id = ?2",
+                params![now, listing.to_string()],
+            )
+            .await?;
+        transaction.commit().await?;
         self.listing(listing).await
     }
 

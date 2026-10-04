@@ -3,7 +3,9 @@
 //! pick another, or make a Product from the listing. Each linked listing
 //! opens its price (#19): the Price Suggestion from the target margin and
 //! the price simulator. A price reaches Mercado Livre only when the owner
-//! sends it.
+//! sends it. The stock of each linked listing follows the app's (#18): the
+//! queue shows what is still to send and why it did not go, and each
+//! listing can be paused and reactivated.
 
 use std::sync::Arc;
 
@@ -19,8 +21,8 @@ use gpui_kit::{
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
-    PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
-    SuggestedBy,
+    MirroredStock, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError,
+    SaleFee, StockSend, SuggestedBy,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Money, Percentage, RecordId, Timestamp, parse_amount};
@@ -37,6 +39,7 @@ use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
 use crate::pricing;
+use crate::stock_mirror;
 
 /// The app's Listings; absent when the database did not open.
 pub struct AppListings(pub Arc<Listings>);
@@ -147,6 +150,7 @@ impl Simulator {
 /// Everything the screen shows, read in one go off the UI thread.
 struct Snapshot {
     listings: Vec<Listing>,
+    mirrored: Vec<MirroredStock>,
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
@@ -155,6 +159,8 @@ struct Snapshot {
 
 pub struct ListingsScreen {
     listings: Vec<Listing>,
+    /// How each listing's stock follows the app's, by listing.
+    mirrored: Vec<MirroredStock>,
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
@@ -204,6 +210,7 @@ impl ListingsScreen {
         ));
         let mut screen = Self {
             listings: Vec::new(),
+            mirrored: Vec::new(),
             to_link: Vec::new(),
             products: Vec::new(),
             last_sync: None,
@@ -252,7 +259,9 @@ impl ListingsScreen {
         F: FnOnce(Arc<Listings>, Arc<Catalog>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Option<T>, String>> + Send,
     {
-        let (Some(listings), Some(catalog)) = (listings(cx), catalog::catalog(cx)) else {
+        let (Some(listings), Some(catalog), Some(mirror)) =
+            (listings(cx), catalog::catalog(cx), stock_mirror::mirror(cx))
+        else {
             return;
         };
         let connections = cx.global::<AppConnections>().0.clone();
@@ -266,6 +275,7 @@ impl ListingsScreen {
                 let known: Vec<CatalogProduct> = products.iter().map(catalog_product).collect();
                 Ok::<_, String>(Snapshot {
                     listings: listings.listings().await.map_err(|e| failure(&e))?,
+                    mirrored: mirror.mirrored().await.map_err(|e| failure(&e))?,
                     to_link: listings.to_link(&known).await.map_err(|e| failure(&e))?,
                     last_sync: listings.last_sync().await.map_err(|e| failure(&e))?,
                     connection: connections.state(Connection::MercadoLivre),
@@ -332,6 +342,7 @@ impl ListingsScreen {
             self.price = None;
         }
         self.listings = snapshot.listings;
+        self.mirrored = snapshot.mirrored;
         self.to_link = snapshot.to_link;
         self.products = snapshot.products;
         self.last_sync = snapshot.last_sync;
@@ -346,8 +357,10 @@ impl ListingsScreen {
         self.products.iter().find(|product| product.id == id)
     }
 
+    /// Reads the listings, then sends the stock still to send.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let (Some(channel), Some(mirror)) = (mercado_livre::adapter(cx), stock_mirror::mirror(cx))
+        else {
             return;
         };
         self.outcome = None;
@@ -358,14 +371,87 @@ impl ListingsScreen {
             window,
             cx,
             move |listings, _| async move {
-                listings
+                let report = listings
                     .sync(channel.as_ref())
+                    .await
+                    .map_err(|e| failure(&e))?;
+                let sent = mirror
+                    .send(channel.as_ref())
+                    .await
+                    .map_err(|e| failure(&e))?;
+                Ok(Some((report, sent)))
+            },
+            |this, (report, sent): (ListingSync, StockSend), _, _| {
+                let mut text = synced(&report);
+                text.push_str(&stock_sent(&sent));
+                this.outcome = Some(Outcome::Done(text.trim_end().to_owned().into()));
+            },
+        );
+    }
+
+    /// Sends the stock in the queue now.
+    fn send_stock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(channel), Some(mirror)) = (mercado_livre::adapter(cx), stock_mirror::mirror(cx))
+        else {
+            return;
+        };
+        self.outcome = None;
+        self.run(
+            window,
+            cx,
+            move |_, _| async move {
+                mirror
+                    .send(channel.as_ref())
                     .await
                     .map(Some)
                     .map_err(|e| failure(&e))
             },
-            |this, report: ListingSync, _, _| {
-                this.outcome = Some(Outcome::Done(synced(&report).into()));
+            |this, sent: StockSend, _, _| {
+                this.outcome = Some(match sent.failed {
+                    0 => Outcome::Done(stock_sent(&sent).trim().to_owned().into()),
+                    _ => Outcome::Failed(stock_sent(&sent).trim().to_owned().into()),
+                });
+            },
+        );
+    }
+
+    /// Pauses or reactivates the listing in Mercado Livre, every variation
+    /// of it included: only ever on the owner's click.
+    fn change_status(
+        &mut self,
+        listing: RecordId,
+        pause: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(channel) = mercado_livre::adapter(cx) else {
+            return;
+        };
+        self.outcome = None;
+        self.step = None;
+        self.price = None;
+        self.run(
+            window,
+            cx,
+            move |listings, _| async move {
+                let changed = if pause {
+                    listings.pause(listing, channel.as_ref()).await
+                } else {
+                    listings.reactivate(listing, channel.as_ref()).await
+                };
+                changed.map(Some).map_err(|e| failure(&e))
+            },
+            move |this, changed: Vec<Listing>, _, _| {
+                let what = if pause { "pausado" } else { "reativado" };
+                this.outcome = Some(Outcome::Done(
+                    match changed.len() {
+                        0 | 1 => format!("Anúncio {what} no Mercado Livre."),
+                        count => format!(
+                            "Anúncio {what} no Mercado Livre, com as {count} variações dele."
+                        ),
+                    }
+                    .into(),
+                ));
             },
         );
     }
@@ -906,6 +992,117 @@ impl ListingsScreen {
             .into_any_element()
     }
 
+    fn stock_of(&self, listing: RecordId) -> Option<&MirroredStock> {
+        self.mirrored.iter().find(|stock| stock.listing == listing)
+    }
+
+    /// The stock still to send, why it did not go yet, and when the last
+    /// one did.
+    fn render_stock(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = look(cx).tokens;
+        if self.mirrored.iter().all(|stock| stock.on_hand.is_none()) {
+            return None;
+        }
+        let queue: Vec<(&Listing, &MirroredStock)> = self
+            .listings
+            .iter()
+            .filter_map(|listing| Some((listing, self.stock_of(listing.id)?)))
+            .filter(|(_, stock)| stock.to_send.is_some())
+            .collect();
+        let last_sent = self
+            .mirrored
+            .iter()
+            .filter_map(|stock| stock.last_sent)
+            .map(|sent| sent.at)
+            .max();
+        let heading = h_flex()
+            .gap_2()
+            .items_baseline()
+            .child(kit::section_heading(match queue.len() {
+                0 => "Estoque em dia".to_owned(),
+                count => format!("Estoque a enviar ({count})"),
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(t.text2)
+                    .child(match (queue.is_empty(), last_sent) {
+                        (false, _) => "o saldo destes produtos mudou no app; vai ao Mercado Livre \
+                                       agora ou no próximo Sync, e o que falhar fica aqui"
+                            .to_owned(),
+                        (true, Some(at)) => format!(
+                            "o estoque de cada anúncio vinculado segue o saldo do app · último \
+                             envio: {}",
+                            catalog::day_and_time(at)
+                        ),
+                        (true, None) => {
+                            "o estoque de cada anúncio vinculado segue o saldo do app".to_owned()
+                        }
+                    }),
+            );
+        let mut section = v_flex().gap_2().child(
+            h_flex()
+                .gap_3()
+                .items_center()
+                .justify_between()
+                .child(heading)
+                .when(!queue.is_empty(), |row| {
+                    row.child(
+                        Button::new("send-stock")
+                            .label("Enviar agora")
+                            .icon(IconName::ArrowUp)
+                            .outline()
+                            .small()
+                            .disabled(self.busy || !self.connected())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.send_stock(window, cx)),
+                            ),
+                    )
+                }),
+        );
+        for (listing, stock) in queue {
+            let listed = &listing.listed;
+            let title = match &listed.variation {
+                Some(variation) => format!("{} · {}", listed.title, variation.name),
+                None => listed.title.clone(),
+            };
+            let change = format!(
+                "no ML: {} → no app: {}",
+                listed.available_quantity,
+                stock.to_send.unwrap_or_default()
+            );
+            section = section.child(
+                v_flex()
+                    .gap_0p5()
+                    .px_3()
+                    .py_2()
+                    .rounded(t.radius_lg)
+                    .border(t.border_width)
+                    .border_color(if stock.last_failure.is_some() {
+                        t.danger
+                    } else {
+                        t.frame
+                    })
+                    .bg(t.surface)
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .justify_between()
+                            .child(div().min_w_0().truncate().text_sm().child(title))
+                            .child(div().flex_none().text_sm().font_medium().child(change)),
+                    )
+                    .children(stock.last_failure.as_ref().map(|failed| {
+                        div().text_xs().text_color(t.danger).child(format!(
+                            "Não foi em {}: {}",
+                            catalog::day_and_time(failed.at),
+                            mercado_livre::failure(&failed.error)
+                        ))
+                    })),
+            );
+        }
+        Some(section.into_any_element())
+    }
+
     fn render_sync(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let when = match self.last_sync {
@@ -1213,6 +1410,27 @@ impl ListingsScreen {
                     }),
                 None => row.child(kit::tag("sem produto", t.text2, cx)),
             });
+        let status = match listing.listed.status {
+            ListingStatus::Active => Some(("Pausar", true)),
+            ListingStatus::Paused => Some(("Reativar", false)),
+            _ => None,
+        };
+        let status_button =
+            status.map(|(label, pause)| {
+                Button::new(("status", index))
+                    .label(label)
+                    .outline()
+                    .small()
+                    .disabled(self.busy || !self.connected())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.change_status(id, pause, window, cx)
+                    }))
+            });
+        let stock_line = listing
+            .product
+            .filter(|_| status.is_some())
+            .map(|_| stock_line(self.stock_of(id)))
+            .map(|text| div().text_xs().text_color(t.text2).child(text));
         let panel = self
             .price
             .as_ref()
@@ -1234,8 +1452,10 @@ impl ListingsScreen {
                     .gap_3()
                     .items_center()
                     .child(self.summary(&format!("listing-{index}"), listing, cx))
-                    .child(linked),
+                    .child(linked)
+                    .children(status_button),
             )
+            .children(stock_line)
             .children(panel)
             .into_any_element()
     }
@@ -1266,6 +1486,7 @@ impl Render for ListingsScreen {
         }
 
         parts.content.push(self.drafts.clone().into_any_element());
+        parts.content.extend(self.render_stock(cx));
 
         if !self.to_link.is_empty() {
             parts.content.push(
@@ -1346,6 +1567,55 @@ fn stock_text(units: u32) -> String {
     }
 }
 
+/// How a listing's stock follows the app's, in one line.
+fn stock_line(stock: Option<&MirroredStock>) -> String {
+    let Some((stock, on_hand)) = stock.and_then(|stock| Some((stock, stock.on_hand?))) else {
+        return "O estoque deste anúncio ainda não segue o app: o produto nunca entrou no \
+                estoque. Ele passa a seguir no primeiro recebimento em Compras."
+            .into();
+    };
+    match (stock.to_send, stock.last_sent) {
+        (Some(_), _) => format!(
+            "Segue o app: {} no app, na fila para enviar.",
+            units(on_hand)
+        ),
+        (None, Some(sent)) => format!(
+            "Segue o app: estoque de {} enviado ao Mercado Livre em {}.",
+            units(on_hand),
+            catalog::day_and_time(sent.at)
+        ),
+        (None, None) => format!("Segue o app: {}, igual ao Mercado Livre.", units(on_hand)),
+    }
+}
+
+fn units(count: u32) -> String {
+    match count {
+        1 => "1 unidade".into(),
+        count => format!("{count} unidades"),
+    }
+}
+
+/// What a send of stock did, as a sentence to follow another, or nothing.
+fn stock_sent(sent: &StockSend) -> String {
+    let mut text = String::new();
+    match sent.sent {
+        0 => {}
+        1 => text.push_str(" Estoque enviado a 1 anúncio."),
+        count => text.push_str(&format!(" Estoque enviado a {count} anúncios.")),
+    }
+    match sent.failed {
+        0 => {}
+        1 => text.push_str(" 1 anúncio não recebeu o estoque e ficou na fila."),
+        count => text.push_str(&format!(
+            " {count} anúncios não receberam o estoque e ficaram na fila."
+        )),
+    }
+    if text.is_empty() {
+        text.push_str(" Nenhum estoque a enviar.");
+    }
+    text
+}
+
 /// What the Sync did, in one line.
 fn synced(report: &ListingSync) -> String {
     let mut text = format!(
@@ -1367,6 +1637,17 @@ pub(crate) fn failure(error: &ListingError) -> String {
             "Esse anúncio não existe mais; a lista foi atualizada.".into()
         }
         ListingError::InvalidPrice => "O preço precisa ser maior que zero, em reais.".into(),
+        ListingError::NotActive => "Só um anúncio ativo pode ser pausado; sincronize para ver o \
+             status de agora."
+            .into(),
+        ListingError::NotPaused => "Só um anúncio pausado pode ser reativado; sincronize para ver \
+             o status de agora."
+            .into(),
+        ListingError::NoStockToSell => "O anúncio está sem estoque no Mercado Livre e \
+             continuaria pausado. Dê entrada no estoque em Compras: quando o estoque chega ao \
+             anúncio, o Mercado Livre reativa sozinho o que pausou por falta de estoque."
+            .into(),
+        ListingError::Stock(_) => format!("Não consegui ler o estoque: {error}"),
         ListingError::Platform(error) => mercado_livre::failure(error),
         ListingError::Unreadable(_) | ListingError::Sql(_) => {
             format!("Não consegui ler ou gravar no banco: {error}")

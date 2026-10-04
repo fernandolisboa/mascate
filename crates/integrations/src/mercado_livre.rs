@@ -1,7 +1,8 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
 //! login, reports demand to the catalog and the owner's listings to
 //! commerce, and publishes drafts (ADR 0013). Only official endpoints; it
-//! writes only on the owner's click: a listing's price, or a draft.
+//! writes on the owner's click (a listing's price, its status, a draft) and
+//! the stock that follows the app's (ADR 0017).
 
 mod answers;
 mod publisher;

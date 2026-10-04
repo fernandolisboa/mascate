@@ -4,13 +4,13 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Mutex;
 
 use mascate_commerce::{
     AttributeValue, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
-    ChannelIssue, ChannelListing, ListingPublisher, ListingStatus, ListingToPublish,
+    ChannelIssue, ChannelListing, ChannelStock, ListingPublisher, ListingStatus, ListingToPublish,
     PublishedListing, Requirement, SaleFee, SalesChannel, Variation,
 };
 use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
@@ -73,6 +73,14 @@ pub struct Channel {
     pub fee_types: Mutex<Vec<ListingType>>,
     /// Each listing id and price it was told to set, in order.
     pub prices_set: Mutex<Vec<(String, Money)>>,
+    /// Each listing id and the stock it was told to set, in order.
+    pub stocks_set: Mutex<Vec<(String, Vec<ChannelStock>)>>,
+    /// Fails only stock calls while set.
+    pub stock_failure: Mutex<Option<PlatformError>>,
+    /// Each listing id paused or activated, in order: `true` for paused.
+    pub statuses_set: Mutex<Vec<(String, bool)>>,
+    /// Listings the owner paused, which units coming back do not reactivate.
+    pub paused_by_seller: Mutex<HashSet<String>>,
 }
 
 impl Default for Channel {
@@ -92,6 +100,10 @@ impl Default for Channel {
             fee_asked: Mutex::default(),
             fee_types: Mutex::default(),
             prices_set: Mutex::default(),
+            stocks_set: Mutex::default(),
+            stock_failure: Mutex::default(),
+            statuses_set: Mutex::default(),
+            paused_by_seller: Mutex::default(),
         }
     }
 }
@@ -194,6 +206,65 @@ impl SalesChannel for Channel {
         self.check()?;
         self.prices_set.lock().unwrap().push((id.to_owned(), price));
         self.change(id, |listing| listing.price = price);
+        Ok(())
+    }
+
+    /// Like Mercado Livre, pauses a listing left with no units and puts it
+    /// back on sale when units return, unless the owner paused it.
+    fn set_stock(&self, id: &str, stock: &[ChannelStock]) -> Result<(), PlatformError> {
+        self.check()?;
+        if let Some(error) = self.stock_failure.lock().unwrap().clone() {
+            return Err(error);
+        }
+        self.stocks_set
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), stock.to_vec()));
+        for wanted in stock {
+            self.change(id, |listing| {
+                if listing.variation.as_ref().map(|v| v.id.clone()) == wanted.variation {
+                    listing.available_quantity = wanted.available_quantity;
+                }
+            });
+        }
+        let total: u32 = self
+            .listings
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|listing| listing.id == id)
+            .map(|listing| listing.available_quantity)
+            .sum();
+        let by_seller = self.paused_by_seller.lock().unwrap().contains(id);
+        self.change(id, |listing| {
+            listing.status = match (listing.status, total) {
+                (ListingStatus::Active, 0) => ListingStatus::Paused,
+                (ListingStatus::Paused, 1..) if !by_seller => ListingStatus::Active,
+                (status, _) => status,
+            }
+        });
+        Ok(())
+    }
+
+    fn pause(&self, id: &str) -> Result<(), PlatformError> {
+        self.check()?;
+        self.statuses_set
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), true));
+        self.paused_by_seller.lock().unwrap().insert(id.to_owned());
+        self.change(id, |listing| listing.status = ListingStatus::Paused);
+        Ok(())
+    }
+
+    fn activate(&self, id: &str) -> Result<(), PlatformError> {
+        self.check()?;
+        self.statuses_set
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), false));
+        self.paused_by_seller.lock().unwrap().remove(id);
+        self.change(id, |listing| listing.status = ListingStatus::Active);
         Ok(())
     }
 }

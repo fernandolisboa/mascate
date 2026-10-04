@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{NaiveDateTime, TimeDelta};
-use libsql::{Connection, OpenFlags, Value};
+use libsql::{OpenFlags, Value};
 use mascate_kernel::{Clock, IdGenerator, Timestamp};
 
-use crate::{Database, Migration, ModuleMigrations, default_owner_folder, single_row};
+use crate::{Connection, Database, Migration, ModuleMigrations, default_owner_folder, single_row};
 
 pub const DEFAULT_KEEP: u16 = 14;
 pub const MAX_KEEP: u16 = 365;
@@ -241,7 +241,7 @@ impl Backups {
     /// Copies through a connection of its own: `VACUUM INTO` fails inside
     /// a transaction another task left open on the shared one.
     async fn copy_to(&self, path: &Path) -> Result<(), BackupError> {
-        let connection = self.database.connect()?;
+        let connection = self.database.connect().await?;
         copy_database(&connection, path, &self.temporary_beside(path)).await
     }
 
@@ -286,7 +286,9 @@ async fn check_restore(
         .build()
         .await
         .map_err(|_| not_mascate())?;
-    let connection = database.connect().map_err(|_| not_mascate())?;
+    let connection = Connection::new(database.connect().map_err(|_| not_mascate())?)
+        .await
+        .map_err(|_| not_mascate())?;
     // The file is input: its views and triggers run no SQL functions here.
     connection
         .execute("PRAGMA trusted_schema = OFF", ())
@@ -547,7 +549,7 @@ fn text(path: &Path) -> Result<&str, BackupError> {
 /// through `temporary` in the same folder. `VACUUM INTO` reads one snapshot,
 /// so writes made meanwhile are either all in the copy or not at all.
 async fn copy_database(
-    connection: &Connection,
+    connection: &libsql::Connection,
     to: &Path,
     temporary: &Path,
 ) -> Result<(), BackupError> {
@@ -567,7 +569,10 @@ async fn copy_database(
     })
 }
 
-async fn first_text(connection: &Connection, sql: &str) -> Result<Option<String>, libsql::Error> {
+async fn first_text(
+    connection: &libsql::Connection,
+    sql: &str,
+) -> Result<Option<String>, libsql::Error> {
     let mut rows = connection.query(sql, ()).await?;
     match rows.next().await? {
         Some(row) => Ok(Some(row.get::<String>(0)?)),

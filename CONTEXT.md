@@ -56,6 +56,10 @@ _Avoid_: anúncio de afiliado, publicação, item do ML
 Listing ainda não publicado, montado a partir de um Product: título, descrição, categoria e atributos do Sales Channel, fotos da pasta do Product, Listing Type, preço e estoque. Só sobe para o canal quando o Fernando clica em publicar.
 _Avoid_: pré-anúncio, rascunho de produto
 
+**Stock Mirror**:
+Regra pela qual o estoque de cada Listing publicado e ligado a um Product segue o saldo dele no app. Depois de cada Stock Movement e de cada Sync, o app envia ao Sales Channel o saldo que mudou desde o último envio; o que não foi fica na fila de reenvio, com o motivo. Um Product que nunca entrou no estoque ainda não é espelhado.
+_Avoid_: sincronização de estoque (Sync é leitura), estoque automático
+
 **Checklist**:
 O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (título, categoria, preço, atributos obrigatórios, mínimo de 3 fotos, erros do validador do canal) impedem a publicação; os avisos (GTIN e atributos recomendados, descrição vazia, estoque zero, avisos do validador) não.
 _Avoid_: pendências, validação (sozinho)

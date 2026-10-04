@@ -1,7 +1,10 @@
 //! The owner's listings, for commerce's Sales Channel port: read them, the
-//! sale fee at a price, and a new price once the owner approves it.
+//! sale fee at a price, a new price once the owner approves it, the stock
+//! that follows the app's, and pausing and reactivating.
 
-use mascate_commerce::{ChannelListing, ListingStatus, SaleFee, SalesChannel, Variation};
+use mascate_commerce::{
+    ChannelListing, ChannelStock, ListingStatus, SaleFee, SalesChannel, Variation,
+};
 use mascate_kernel::{ListingType, Money, Percentage, PlatformError};
 use rust_decimal::Decimal;
 
@@ -148,6 +151,66 @@ impl SalesChannel for MercadoLivre {
             format!(r#"{{"variations":[{}]}}"#, variations.join(","))
         };
         self.put(&format!("/items/{id}"), &body)
+    }
+
+    /// Like the price, a listing with variations names every one of them,
+    /// read right before, and a stock only on the ones in `stock`. Zero
+    /// units make Mercado Livre pause the listing until some return.
+    fn set_stock(&self, id: &str, stock: &[ChannelStock]) -> Result<(), PlatformError> {
+        let id = path_id(id)?;
+        let item: ItemVariationIds = self.get(&format!("/items/{id}"), &[])?;
+        let body = if item.variations.is_empty() {
+            match stock {
+                [
+                    ChannelStock {
+                        variation: None,
+                        available_quantity,
+                    },
+                ] => format!(r#"{{"available_quantity":{available_quantity}}}"#),
+                _ => return Err(PlatformError::NotFound),
+            }
+        } else {
+            let known = |variation: &ChannelStock| {
+                item.variations.iter().any(|known| {
+                    variation.variation.as_deref() == Some(known.id.to_string().as_str())
+                })
+            };
+            if !stock.iter().all(known) {
+                return Err(PlatformError::NotFound);
+            }
+            let variations: Vec<String> = item
+                .variations
+                .iter()
+                .map(|variation| {
+                    let wanted = stock.iter().find(|wanted| {
+                        wanted.variation.as_deref() == Some(variation.id.to_string().as_str())
+                    });
+                    match wanted {
+                        Some(wanted) => format!(
+                            r#"{{"id":{},"available_quantity":{}}}"#,
+                            variation.id, wanted.available_quantity
+                        ),
+                        None => format!(r#"{{"id":{}}}"#, variation.id),
+                    }
+                })
+                .collect();
+            format!(r#"{{"variations":[{}]}}"#, variations.join(","))
+        };
+        self.put(&format!("/items/{id}"), &body)
+    }
+
+    fn pause(&self, id: &str) -> Result<(), PlatformError> {
+        self.put(
+            &format!("/items/{}", path_id(id)?),
+            r#"{"status":"paused"}"#,
+        )
+    }
+
+    fn activate(&self, id: &str) -> Result<(), PlatformError> {
+        self.put(
+            &format!("/items/{}", path_id(id)?),
+            r#"{"status":"active"}"#,
+        )
     }
 }
 

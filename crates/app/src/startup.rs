@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, Pricing, PurchaseOrders};
+use mascate_commerce::{Listings, Pricing, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -46,6 +46,7 @@ pub struct Started {
     pub purchase_orders: Arc<PurchaseOrders>,
     pub listings: Arc<Listings>,
     pub pricing: Arc<Pricing>,
+    pub stock_mirror: Arc<StockMirror>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -214,6 +215,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let stock_mirror = StockMirror::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -232,6 +239,7 @@ pub fn prepare() -> Outcome {
                 purchase_orders: Arc::new(purchase_orders),
                 listings: Arc::new(listings),
                 pricing: Arc::new(pricing),
+                stock_mirror: Arc::new(stock_mirror),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
@@ -301,8 +309,8 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
-        ChannelListing, ListingStatus, NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus,
-        Receiving, SaleFee, SalesChannel,
+        ChannelListing, ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder,
+        PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
@@ -357,6 +365,18 @@ mod tests {
         }
 
         fn set_price(&self, _: &str, _: Money) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn set_stock(&self, _: &str, _: &[ChannelStock]) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn pause(&self, _: &str) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn activate(&self, _: &str) -> Result<(), PlatformError> {
             Err(PlatformError::NotFound)
         }
     }

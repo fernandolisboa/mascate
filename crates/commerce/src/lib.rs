@@ -5,6 +5,7 @@ mod freight;
 mod listings;
 mod pricing;
 mod purchase_orders;
+mod stock_mirror;
 
 pub use drafts::{
     AttributeValue, CategoryAttribute, CategoryPrediction, ChannelCategory, ChannelIssue, Check,
@@ -14,8 +15,8 @@ pub use drafts::{
 };
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
-    CatalogProduct, ChannelListing, LinkSuggestion, Listing, ListingError, ListingStatus,
-    ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
+    CatalogProduct, ChannelListing, ChannelStock, LinkSuggestion, Listing, ListingError,
+    ListingStatus, ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
 };
 pub use pricing::{
     CostSource, DraftPrice, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion,
@@ -25,6 +26,7 @@ pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
     PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
 };
+pub use stock_mirror::{MirroredStock, StockMirror, StockNotSent, StockSend, StockSent};
 
 use mascate_platform::{ModuleMigrations, Reminder, ReminderTopic};
 
@@ -48,5 +50,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         listings::CREATE_LISTINGS,
         pricing::CREATE_TARGET_MARGINS,
         drafts::CREATE_DRAFTS,
+        stock_mirror::ADD_STOCK_SENT,
     ],
 };
