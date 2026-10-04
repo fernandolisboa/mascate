@@ -6,3 +6,4 @@ Os dados ficam num banco local SQLite-compatível da família Turso (crate `turs
 
 - O motor da Turso deixa a réplica gerenciada (primeira opção de sincronização entre máquinas, ADR 0004) ser configuração, não reescrita.
 - Segredos nunca ficam no banco: tokens e chaves vão para o cofre do sistema (Windows Credential Manager, Secret Service no Linux, Keychain no macOS). Variáveis de ambiente servem só para desenvolvimento.
+- A #20 lê os Orders pela data da última mudança e não usa `/missed_feeds`, que só serve a quem recebe webhooks (ADR 0018).

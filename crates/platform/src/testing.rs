@@ -75,6 +75,8 @@ pub struct Request {
     /// The path with its query.
     pub path: String,
     pub authorization: Option<String>,
+    /// Every header, names in lower case.
+    pub headers: Vec<(String, String)>,
     pub body: String,
 }
 
@@ -196,10 +198,12 @@ fn answer(
     }
     let mut length = 0;
     let mut authorization = None;
+    let mut headers = Vec::new();
     let mut header = String::new();
     while reader.read_line(&mut header).is_ok_and(|read| read > 2) {
         if let Some((name, value)) = header.split_once(':') {
             let value = value.trim().to_owned();
+            headers.push((name.trim().to_ascii_lowercase(), value.clone()));
             if name.eq_ignore_ascii_case("content-length") {
                 length = value.parse().unwrap_or(0);
             } else if name.eq_ignore_ascii_case("authorization") {
@@ -222,6 +226,7 @@ fn answer(
             method: method.clone(),
             path: path.clone(),
             authorization,
+            headers,
             body: String::from_utf8_lossy(&body).into_owned(),
         });
     let canned = {

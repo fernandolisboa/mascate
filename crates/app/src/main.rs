@@ -16,6 +16,7 @@ mod mercado_livre;
 mod offers;
 mod opportunities;
 mod ordered_saves;
+mod orders;
 mod palette;
 mod parts;
 mod preferences;
@@ -48,6 +49,7 @@ use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
 use crate::listings::AppListings;
 use crate::mercado_livre::AppMercadoLivre;
+use crate::orders::AppOrders;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
 use crate::purchases::AppPurchaseOrders;
@@ -129,6 +131,7 @@ fn main() {
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
                 cx.set_global(AppListings(started.listings.clone()));
                 cx.set_global(AppStockMirror(started.stock_mirror.clone()));
+                cx.set_global(AppOrders(started.orders.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),
@@ -136,6 +139,7 @@ fn main() {
                     daily_failure: Default::default(),
                 });
                 backups::start_daily(cx);
+                orders::start_polling(cx);
             } else if let Some(path) = problem
                 .as_ref()
                 .and_then(|problem| problem.database_path.clone())
@@ -188,7 +192,7 @@ fn main() {
                 }
             }
 
-            // Clicking a notification (low stock) brings the window back.
+            // Clicking a notification (a new Order, low stock) brings the window back.
             let problem = problem_text.clone();
             cx.on_system_notification_response(move |_, cx| show_home(problem.clone(), cx));
 

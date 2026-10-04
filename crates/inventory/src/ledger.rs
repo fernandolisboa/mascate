@@ -32,6 +32,8 @@ pub enum MovementReason {
     PurchaseReceipt { purchase_order: RecordId },
     /// A Stock Adjustment: units the owner corrected by hand.
     Adjustment(AdjustmentKind),
+    /// Units sold in an Order of a Sales Channel.
+    Sale { order: RecordId },
 }
 
 /// Why the owner corrected the stock.
@@ -52,6 +54,7 @@ impl MovementReason {
             MovementReason::Adjustment(AdjustmentKind::Loss) => "adjustment_loss",
             MovementReason::Adjustment(AdjustmentKind::Damage) => "adjustment_damage",
             MovementReason::Adjustment(AdjustmentKind::Count) => "adjustment_count",
+            MovementReason::Sale { .. } => "sale",
         }
     }
 
@@ -59,6 +62,7 @@ impl MovementReason {
     fn reference(self) -> Option<RecordId> {
         match self {
             MovementReason::PurchaseReceipt { purchase_order } => Some(purchase_order),
+            MovementReason::Sale { order } => Some(order),
             MovementReason::Adjustment(_) => None,
         }
     }
@@ -71,6 +75,7 @@ impl MovementReason {
             "adjustment_loss" => Some(MovementReason::Adjustment(AdjustmentKind::Loss)),
             "adjustment_damage" => Some(MovementReason::Adjustment(AdjustmentKind::Damage)),
             "adjustment_count" => Some(MovementReason::Adjustment(AdjustmentKind::Count)),
+            "sale" => Some(MovementReason::Sale { order: reference }),
             _ => None,
         }
     }
@@ -104,6 +109,25 @@ pub struct Adjusted {
     /// `None` when a count matched the ledger: nothing to correct.
     pub movement: Option<StockMovement>,
     /// Set when this adjustment took the Product from above its Reorder
+    /// Point to it or below.
+    pub reached_reorder_point: Option<LowStock>,
+}
+
+/// Units leaving a Stock Location for a record outside the ledger, such as
+/// an Order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewExit {
+    pub product: RecordId,
+    pub location: RecordId,
+    pub quantity: u32,
+    pub reason: MovementReason,
+}
+
+/// What a Stock Movement out did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exited {
+    pub movement: StockMovement,
+    /// Set when the units leaving took the Product from above its Reorder
     /// Point to it or below.
     pub reached_reorder_point: Option<LowStock>,
 }
@@ -408,49 +432,53 @@ impl Inventory {
                 reached_reorder_point: None,
             });
         }
-        if on_hand + change < 0 {
-            return Err(InventoryError::NotEnoughStock { on_hand });
-        }
-        let replay = replay(&transaction, product).await?;
-        let units = u32::try_from(change.unsigned_abs())
-            .map_err(|_| InventoryError::Unreadable(change.to_string()))?;
-        let cost = if change < 0 {
-            replay
-                .valuation
-                .and_then(|valuation| valuation.exit_cost(units))
-                .ok_or(InventoryError::NotEnoughStock { on_hand })?
-        } else {
-            replay
-                .basis
-                .ok_or(InventoryError::NoCostBasis)?
-                .times(Decimal::from(units))
-        };
         let note = note.map(str::trim).filter(|note| !note.is_empty());
-        let movement = self.movement(
-            product,
-            location,
-            change,
-            cost,
-            MovementReason::Adjustment(adjustment.kind()),
-            note.map(str::to_owned),
-        );
-        insert(&transaction, &movement).await?;
-        let before = replay.valuation.map_or(0, |valuation| valuation.quantity());
-        let reached_reorder_point = match reorder_point_of(&transaction, product).await? {
-            Some(point) if before > i64::from(point) && before + change <= i64::from(point) => {
-                Some(LowStock {
+        let moved = self
+            .change(
+                &transaction,
+                Change {
                     product,
-                    quantity: before + change,
-                    reorder_point: point,
-                })
-            }
-            _ => None,
-        };
+                    location,
+                    on_hand,
+                    by: change,
+                    reason: MovementReason::Adjustment(adjustment.kind()),
+                    note: note.map(str::to_owned),
+                },
+            )
+            .await?;
         transaction.commit().await?;
         Ok(Adjusted {
-            movement: Some(movement),
-            reached_reorder_point,
+            movement: Some(moved.movement),
+            reached_reorder_point: moved.reached_reorder_point,
         })
+    }
+
+    /// Takes units out of the ledger on `on`, the caller's transaction, so
+    /// they commit together with what took them, such as an Order. They
+    /// leave at the Average Cost, and the balance there never drops below
+    /// zero: with fewer units on hand nothing is written.
+    pub async fn record_exit(
+        &self,
+        on: &Connection,
+        exit: &NewExit,
+    ) -> Result<Exited, InventoryError> {
+        if exit.quantity == 0 {
+            return Err(InventoryError::NoUnits);
+        }
+        known_location(on, exit.location).await?;
+        let on_hand = balance_in(on, exit.product, exit.location).await?;
+        self.change(
+            on,
+            Change {
+                product: exit.product,
+                location: exit.location,
+                on_hand,
+                by: -i64::from(exit.quantity),
+                reason: exit.reason,
+                note: None,
+            },
+        )
+        .await
     }
 
     /// Sets the Reorder Point of `product`, or clears it with `None`.
@@ -576,6 +604,55 @@ impl Inventory {
         Ok(Stock { products })
     }
 
+    /// Records `change` of a Product's units in one location: units leave
+    /// at the Average Cost and come back at the cost of the last units on
+    /// hand, so the Average Cost never moves. Also says whether the change
+    /// took the Product to its Reorder Point.
+    async fn change(&self, on: &Connection, change: Change) -> Result<Exited, InventoryError> {
+        let Change {
+            product,
+            location,
+            on_hand,
+            by,
+            reason,
+            note,
+        } = change;
+        if on_hand + by < 0 {
+            return Err(InventoryError::NotEnoughStock { on_hand });
+        }
+        let replay = replay(on, product).await?;
+        let units = u32::try_from(by.unsigned_abs())
+            .map_err(|_| InventoryError::Unreadable(by.to_string()))?;
+        let cost = if by < 0 {
+            replay
+                .valuation
+                .and_then(|valuation| valuation.exit_cost(units))
+                .ok_or(InventoryError::NotEnoughStock { on_hand })?
+        } else {
+            replay
+                .basis
+                .ok_or(InventoryError::NoCostBasis)?
+                .times(Decimal::from(units))
+        };
+        let movement = self.movement(product, location, by, cost, reason, note);
+        insert(on, &movement).await?;
+        let before = replay.valuation.map_or(0, |valuation| valuation.quantity());
+        let reached_reorder_point = match reorder_point_of(on, product).await? {
+            Some(point) if before > i64::from(point) && before + by <= i64::from(point) => {
+                Some(LowStock {
+                    product,
+                    quantity: before + by,
+                    reorder_point: point,
+                })
+            }
+            _ => None,
+        };
+        Ok(Exited {
+            movement,
+            reached_reorder_point,
+        })
+    }
+
     /// A new movement, dated now.
     fn movement(
         &self,
@@ -598,6 +675,17 @@ impl Inventory {
             at: record.created_at,
         }
     }
+}
+
+/// Units of a Product to add (or, negative, take) in one location.
+struct Change {
+    product: RecordId,
+    location: RecordId,
+    /// Units there now.
+    on_hand: i64,
+    by: i64,
+    reason: MovementReason,
+    note: Option<String>,
 }
 
 /// A Product's ledger replayed in order.

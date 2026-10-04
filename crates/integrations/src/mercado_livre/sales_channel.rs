@@ -300,7 +300,7 @@ pub(super) fn status(code: &str) -> ListingStatus {
     }
 }
 
-fn listing_type(id: &str) -> Option<ListingType> {
+pub(super) fn listing_type(id: &str) -> Option<ListingType> {
     ListingType::ALL
         .into_iter()
         .find(|kind| listing_type_id(*kind) == id)

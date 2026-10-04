@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, Pricing, PurchaseOrders, StockMirror};
+use mascate_commerce::{Listings, Orders, Pricing, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -47,6 +47,7 @@ pub struct Started {
     pub listings: Arc<Listings>,
     pub pricing: Arc<Pricing>,
     pub stock_mirror: Arc<StockMirror>,
+    pub orders: Arc<Orders>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -221,6 +222,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let orders = Orders::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -240,6 +247,7 @@ pub fn prepare() -> Outcome {
                 listings: Arc::new(listings),
                 pricing: Arc::new(pricing),
                 stock_mirror: Arc::new(stock_mirror),
+                orders: Arc::new(orders),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,

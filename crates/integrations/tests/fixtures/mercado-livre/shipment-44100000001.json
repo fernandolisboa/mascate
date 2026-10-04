@@ -1,0 +1,41 @@
+{
+  "id": 44100000001,
+  "external_reference": null,
+  "status": "ready_to_ship",
+  "substatus": "ready_to_print",
+  "date_created": "2026-10-04T09:15:06.000-03:00",
+  "last_updated": "2026-10-04T09:20:11.000-03:00",
+  "declared_value": 179.8,
+  "logistic": { "direction": "forward", "mode": "me2", "type": "drop_off" },
+  "source": { "site_id": "MLB", "market_place": "MELI" },
+  "tags": [],
+  "dimensions": { "height": 6, "width": 15, "length": 20, "weight": 300 },
+  "lead_time": {
+    "option_id": 9004570,
+    "shipping_method": { "id": 182, "type": "standard", "name": "Normal" },
+    "currency_id": "BRL",
+    "cost": 0,
+    "cost_type": "free",
+    "estimated_handling_limit": { "date": "2026-10-06T23:59:59.000-03:00" },
+    "estimated_delivery_time": { "date": "2026-10-09T00:00:00.000-03:00", "type": "known" }
+  },
+  "origin": { "type": "selling_address", "sender_id": 1234567 },
+  "destination": {
+    "type": "buying_address",
+    "receiver_id": 555000111,
+    "receiver_name": "Ana Souza",
+    "receiver_phone": "XXXXXXX",
+    "shipping_address": {
+      "address_id": 1200345678,
+      "address_line": "Rua da Aurora 100, ap 12",
+      "street_name": "Rua da Aurora",
+      "street_number": "100",
+      "comment": "ap 12",
+      "zip_code": "50050000",
+      "city": { "id": "BR-PE-01", "name": "Recife" },
+      "state": { "id": "BR-PE", "name": "Pernambuco" },
+      "country": { "id": "BR", "name": "Brasil" },
+      "neighborhood": { "id": null, "name": "Boa Vista" }
+    }
+  }
+}

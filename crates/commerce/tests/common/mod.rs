@@ -9,11 +9,14 @@ use std::str::FromStr;
 use std::sync::Mutex;
 
 use mascate_commerce::{
-    AttributeValue, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
-    ChannelIssue, ChannelListing, ChannelStock, ListingPublisher, ListingStatus, ListingToPublish,
-    PublishedListing, Requirement, SaleFee, SalesChannel, Variation,
+    AttributeValue, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
+    ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelStock,
+    ListingPublisher, ListingStatus, ListingToPublish, OrderStatus, PublishedListing, Receiver,
+    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, Variation,
 };
-use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
+use mascate_kernel::{
+    Currency, ListingType, Money, Percentage, PlatformError, RecordId, Timestamp,
+};
 use rust_decimal::Decimal;
 
 pub fn brl(amount: &str) -> Money {
@@ -81,6 +84,10 @@ pub struct Channel {
     pub statuses_set: Mutex<Vec<(String, bool)>>,
     /// Listings the owner paused, which units coming back do not reactivate.
     pub paused_by_seller: Mutex<HashSet<String>>,
+    /// The owner's Orders, as the channel has them now.
+    pub orders: Mutex<Vec<ChannelOrder>>,
+    /// The time each read of Orders started from, in order.
+    pub orders_asked: Mutex<Vec<Timestamp>>,
 }
 
 impl Default for Channel {
@@ -104,6 +111,8 @@ impl Default for Channel {
             stock_failure: Mutex::default(),
             statuses_set: Mutex::default(),
             paused_by_seller: Mutex::default(),
+            orders: Mutex::default(),
+            orders_asked: Mutex::default(),
         }
     }
 }
@@ -145,6 +154,30 @@ impl Channel {
         let mut bands = self.fee_bands.lock().unwrap();
         bands.push((brl(price), fee));
         bands.sort_by_key(|(from, _)| from.amount());
+    }
+
+    /// A buyer buys `order`; like Mercado Livre, the listings sold lose the
+    /// units at once.
+    pub fn sells(&self, order: ChannelOrder) {
+        for line in &order.lines {
+            self.change(&line.item, |listing| {
+                if listing.variation.as_ref().map(|v| v.id.clone()) == line.variation {
+                    listing.available_quantity =
+                        listing.available_quantity.saturating_sub(line.quantity);
+                }
+            });
+        }
+        self.orders.lock().unwrap().push(order);
+    }
+
+    /// The channel changes the Order `id`, as of `at`.
+    pub fn change_order(&self, id: &str, at: Timestamp, change: impl Fn(&mut ChannelOrder)) {
+        for order in self.orders.lock().unwrap().iter_mut() {
+            if order.id == id {
+                change(order);
+                order.updated_at = at;
+            }
+        }
     }
 
     fn check(&self) -> Result<(), PlatformError> {
@@ -266,6 +299,72 @@ impl SalesChannel for Channel {
         self.paused_by_seller.lock().unwrap().remove(id);
         self.change(id, |listing| listing.status = ListingStatus::Active);
         Ok(())
+    }
+}
+
+impl ChannelOrders for Channel {
+    fn orders_changed_since(&self, since: Timestamp) -> Result<Vec<ChannelOrder>, PlatformError> {
+        self.check()?;
+        self.orders_asked.lock().unwrap().push(since);
+        Ok(self
+            .orders
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|order| order.updated_at >= since)
+            .cloned()
+            .collect())
+    }
+}
+
+/// An Order paid at `at` for the lines given, shipped to Ana in Recife.
+pub fn order(id: &str, at: Timestamp, lines: Vec<ChannelOrderLine>) -> ChannelOrder {
+    let total = Money::sum(
+        Currency::Brl,
+        lines
+            .iter()
+            .map(|line| line.unit_price.times(Decimal::from(line.quantity))),
+    )
+    .unwrap();
+    ChannelOrder {
+        id: id.into(),
+        pack: None,
+        status: OrderStatus::Paid,
+        ordered_at: at,
+        updated_at: at,
+        lines,
+        total,
+        paid: Some(total.checked_add(brl("19.90")).unwrap()),
+        shipping_paid: Some(brl("19.90")),
+        buyer: Some(Buyer {
+            nickname: Some("ANA.COMPRA".into()),
+            receiver: Some(Receiver {
+                name: "Ana Souza".into(),
+                address: Some("Rua da Aurora, 100, ap 12".into()),
+                city: Some("Recife".into()),
+                state: Some("Pernambuco".into()),
+                zip_code: Some("50050000".into()),
+            }),
+        }),
+        shipment: Some(Shipment {
+            id: format!("4{id}"),
+            status: ShipmentStatus::ReadyToShip,
+            dispatch_by: Some(at + chrono::TimeDelta::days(1)),
+        }),
+    }
+}
+
+/// `quantity` units of the listing `item`, or of its `variation`, at R$ 89,90.
+pub fn sold(item: &str, variation: Option<&str>, quantity: u32) -> ChannelOrderLine {
+    ChannelOrderLine {
+        item: item.into(),
+        variation: variation.map(Into::into),
+        title: format!("Anúncio {item}"),
+        variation_name: variation.map(|_| "Cor: Preto".into()),
+        quantity,
+        unit_price: brl("89.90"),
+        sale_fee: Some(brl("12.59")),
+        listing_type: Some(ListingType::Classic),
     }
 }
 

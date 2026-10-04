@@ -1,0 +1,138 @@
+{
+  "query": null,
+  "results": [
+    {
+      "id": 2000009876543210,
+      "date_created": "2026-10-04T09:15:02.000-03:00",
+      "date_closed": "2026-10-04T09:15:05.000-03:00",
+      "last_updated": "2026-10-04T09:20:11.000-03:00",
+      "pack_id": null,
+      "fulfilled": null,
+      "status": "paid",
+      "status_detail": null,
+      "tags": ["paid", "not_delivered"],
+      "order_items": [
+        {
+          "item": {
+            "id": "MLB4100000001",
+            "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+            "category_id": "MLB3697",
+            "variation_id": null,
+            "seller_custom_field": null,
+            "seller_sku": "FON-BLU-TWS-001",
+            "variation_attributes": [],
+            "warranty": "Garantia do vendedor: 90 dias",
+            "condition": "new"
+          },
+          "quantity": 2,
+          "requested_quantity": { "value": 2, "measure": "unit" },
+          "unit_price": 89.9,
+          "full_unit_price": 99.9,
+          "currency_id": "BRL",
+          "manufacturing_days": null,
+          "sale_fee": 12.59,
+          "listing_type_id": "gold_special"
+        }
+      ],
+      "total_amount": 179.8,
+      "paid_amount": 199.7,
+      "currency_id": "BRL",
+      "buyer": { "id": 555000111, "nickname": "ANASOUZA2026" },
+      "seller": { "id": 1234567 },
+      "payments": [
+        {
+          "id": 91000000001,
+          "order_id": 2000009876543210,
+          "payer_id": 555000111,
+          "status": "approved",
+          "status_detail": "accredited",
+          "transaction_amount": 179.8,
+          "shipping_cost": 19.9,
+          "total_paid_amount": 199.7,
+          "currency_id": "BRL",
+          "date_approved": "2026-10-04T09:15:04.000-03:00"
+        }
+      ],
+      "shipping": { "id": 44100000001 },
+      "context": { "channel": "marketplace", "site": "MLB" }
+    },
+    {
+      "id": 2000009876543300,
+      "date_created": "2026-10-04T10:02:40.000-03:00",
+      "date_closed": "2026-10-04T10:02:44.000-03:00",
+      "last_updated": "2026-10-04T10:02:44.000-03:00",
+      "pack_id": 2000004455667788,
+      "fulfilled": null,
+      "status": "paid",
+      "status_detail": null,
+      "tags": ["paid", "not_delivered", "pack_order"],
+      "order_items": [
+        {
+          "item": {
+            "id": "MLB4100000003",
+            "title": "Camiseta Básica Algodão",
+            "category_id": "MLB31447",
+            "variation_id": 175000000031,
+            "seller_custom_field": null,
+            "seller_sku": "CAM-PRE-M",
+            "variation_attributes": [
+              { "id": "COLOR", "name": "Cor", "value_id": "52049", "value_name": "Preto" },
+              { "id": "SIZE", "name": "Tamanho", "value_id": "3189154", "value_name": "M" }
+            ],
+            "condition": "new"
+          },
+          "quantity": 1,
+          "unit_price": 49.9,
+          "full_unit_price": 49.9,
+          "currency_id": "BRL",
+          "sale_fee": 8.48,
+          "listing_type_id": "gold_pro"
+        },
+        {
+          "item": {
+            "id": "MLB4100000003",
+            "title": "Camiseta Básica Algodão",
+            "category_id": "MLB31447",
+            "variation_id": 175000000032,
+            "seller_custom_field": "CAM-BRA-M",
+            "variation_attributes": [
+              { "id": "COLOR", "name": "Cor", "value_id": "52055", "value_name": "Branco" },
+              { "id": "SIZE", "name": "Tamanho", "value_id": "3189154", "value_name": "M" }
+            ],
+            "condition": "new"
+          },
+          "quantity": 2,
+          "unit_price": 44.91,
+          "full_unit_price": 49.9,
+          "currency_id": "BRL",
+          "sale_fee": 7.63,
+          "listing_type_id": "gold_pro"
+        }
+      ],
+      "total_amount": 139.72,
+      "paid_amount": 139.72,
+      "currency_id": "BRL",
+      "buyer": { "id": 555000222, "nickname": "BRUNO.LIMA" },
+      "seller": { "id": 1234567 },
+      "payments": [
+        {
+          "id": 91000000002,
+          "order_id": 2000009876543300,
+          "status": "approved",
+          "status_detail": "accredited",
+          "transaction_amount": 139.72,
+          "shipping_cost": 0,
+          "total_paid_amount": 139.72,
+          "currency_id": "BRL"
+        }
+      ],
+      "shipping": { "id": 44100000002 },
+      "context": { "channel": "marketplace", "site": "MLB" }
+    }
+  ],
+  "sort": { "id": "date_asc", "name": "Date ascending" },
+  "available_sorts": [{ "id": "date_desc", "name": "Date descending" }],
+  "filters": [],
+  "paging": { "total": 3, "offset": 0, "limit": 2 },
+  "display": "complete"
+}

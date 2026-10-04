@@ -20,6 +20,7 @@ pub enum Place {
     Offers,
     Products,
     Listings,
+    Orders,
     Purchases,
     Stock,
     Settings,
@@ -27,12 +28,13 @@ pub enum Place {
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 7] = [
+    pub const MAIN: [Place; 8] = [
         Place::Today,
         Place::Opportunities,
         Place::Offers,
         Place::Products,
         Place::Listings,
+        Place::Orders,
         Place::Purchases,
         Place::Stock,
     ];
@@ -47,6 +49,7 @@ impl Place {
             Place::Offers => "Ofertas",
             Place::Products => "Produtos",
             Place::Listings => "Anúncios",
+            Place::Orders => "Pedidos",
             Place::Purchases => "Compras",
             Place::Stock => "Estoque",
             Place::Settings => "Configurações",
@@ -60,6 +63,7 @@ impl Place {
             Place::Offers => IconName::Globe,
             Place::Products => IconName::Inbox,
             Place::Listings => IconName::Building2,
+            Place::Orders => IconName::Bell,
             Place::Purchases => IconName::FileText,
             Place::Stock => IconName::GalleryVerticalEnd,
             Place::Settings => IconName::Settings,

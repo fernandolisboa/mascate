@@ -1,0 +1,22 @@
+# Order Sync pela data da última mudança, com baixa uma vez por item
+
+A #20 traz os Orders do Mercado Livre por polling, dá baixa no estoque de cada venda e avisa o Fernando de cada Order novo. Decidimos quatro coisas.
+
+1. **Uma busca só, pela data da última mudança.** Cada Order Sync pede `GET /orders/search?seller={id}&order.date_last_updated.from={início do último Sync − 10 min}&sort=date_asc`, página por página, e lê o envio de cada Order em `GET /shipments/{id}` (com `x-format-new: true`). O primeiro Sync lê os últimos 30 dias. Isso substitui o "pedidos recentes mais `/missed_feeds`" do ADR 0003: `/missed_feeds` lista os avisos de webhook que não chegaram ao callback do app, e o Mascate não tem servidor nem callback, então não há aviso a perder; a busca pela data já traz tudo o que mudou desde o último Sync, inclusive com o computador desligado. A reconciliação ao abrir o app é esse mesmo Sync, que roda logo na abertura e depois a cada intervalo (5 minutos por padrão, configurável). Os 10 minutos de folga cobrem um Order datado um pouco atrasado ou um relógio fora de hora; ler o mesmo Order de novo não muda nada.
+2. **Order é do Commerce, por uma porta irmã.** O Commerce define `ChannelOrders` (só `orders_changed_since`), separada de `SalesChannel`, como fez com `ListingPublisher` (ADR 0016); o adapter `MercadoLivre` a implementa. Orders ficam em `commerce_orders` e os itens em `commerce_order_lines` (migração 6 do Commerce), com o id do Order no Mercado Livre como chave natural e o par anúncio/variação como chave do item. Os valores que o canal devolve (total, pago, frete pago pelo comprador, preço e tarifa de cada unidade, Listing Type) ficam guardados para a #22 calcular Fees e Realized Margin.
+3. **A baixa é por item, uma vez, na mesma transação.** Cada item de um Order não cancelado, com `fulfillment_mode = own_stock` e vendido depois do primeiro Order Sync, sai do estoque por `Inventory::record_exit` (motivo `Sale`, com o id do Order) na transação que grava o Order (ADR 0012), e guarda o Stock Movement. Um item com movimento nunca sai de novo. O item acha o Listing pelo par anúncio/variação (ADR 0014), e o Listing leva ao Product. Sem Listing, sem Product ligado ou com menos unidades no app do que as vendidas, o item guarda o motivo e espera: cada Sync tenta de novo, e o saldo nunca fica negativo. Depois do Sync de Orders o app chama `StockMirror::send` (ADR 0017), Orders primeiro. Um Order sem pagamento aprovado já tira as unidades, para o app não vender o que o comprador reservou; cancelamentos e devoluções que devolvem unidades são da #21.
+4. **Os dados do comprador têm prazo.** O app guarda só o apelido do comprador, o nome de quem recebe e o endereço de entrega (sem telefone, e-mail ou documento), e os apaga dos Orders vendidos há mais que o prazo escolhido (90 dias por padrão, de 7 dias a 5 anos). A limpeza roda em cada Sync, na abertura do app e ao encurtar o prazo; um Order antigo lido de novo não traz os dados de volta.
+
+## Considered Options
+
+- **Busca mais `/missed_feeds`:** mais chamadas, exige callback configurado no app do Mercado Livre e não traria nada que a busca pela data não traga.
+- **Estender `SalesChannel`:** uma porta só, mas o Sync de Listings, o Pricing e o Stock Mirror passariam a depender de um método que não usam, e cada fake de teste cresceria.
+- **Baixar também os Orders de antes do primeiro Sync:** o estoque que o Fernando contou ao começar já não tinha essas unidades; baixá-las de novo zeraria o saldo. Eles aparecem na lista, marcados como anteriores ao primeiro Sync.
+- **Baixar só Orders pagos:** o Mercado Livre tira as unidades do anúncio na compra; esperar o pagamento deixaria o app com unidades que o canal já não oferece, e um envio do Stock Mirror nesse meio-tempo as devolveria ao anúncio.
+
+## Consequences
+
+- O Inventory ganha `record_exit` e o motivo `Sale`; a regra de cruzamento do Reorder Point é a mesma do ajuste, e uma venda que leva o Product ao ponto notifica como o ajuste.
+- O app avisa por notificação do sistema cada Order novo vendido desde o primeiro Sync; quando chegam mais de 3 num Sync só (depois de dias fechado), uma notificação resume todos.
+- Os Backups diários guardam os dados do comprador até saírem do rodízio; um Backup restaurado passa pela mesma limpeza no Sync seguinte.
+- A #21 lê o status do Order e do envio para atrasos, cancelamentos e devoluções; a #22 lê os valores guardados.

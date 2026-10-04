@@ -65,7 +65,7 @@ O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (tí
 _Avoid_: pendências, validação (sozinho)
 
 **Order**:
-Venda recebida num Sales Channel, com um ou mais itens e seu envio.
+Venda recebida num Sales Channel, com um ou mais itens e seu envio. Chega por Sync; cada item vendido do estoque próprio depois do primeiro Sync de Orders dá baixa uma vez, por um Stock Movement de saída ligado ao Order. Dos compradores o app guarda só o necessário para envio e suporte, pelo prazo que o Fernando escolhe.
 _Avoid_: venda (sozinho), pedido de compra
 
 **Fulfillment Mode**:
