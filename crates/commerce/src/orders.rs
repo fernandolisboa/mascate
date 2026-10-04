@@ -922,7 +922,7 @@ impl Orders {
             if awaiting == 0 {
                 continue;
             }
-            let column = match receipt {
+            let settled = match receipt {
                 ReturnReceipt::BackInStock => {
                     self.inventory
                         .record_return(
@@ -935,12 +935,12 @@ impl Orders {
                         )
                         .await?;
                     received.restocked += awaiting;
-                    "restocked"
+                    Settled::Restocked
                 }
-                ReturnReceipt::Unsellable => "unsellable",
+                ReturnReceipt::Unsellable => Settled::Unsellable,
             };
             let sold = (line.sold.item.as_str(), line.sold.variation.as_deref());
-            settle(&transaction, found.id, sold, column, awaiting, now).await?;
+            settle(&transaction, found.id, sold, settled, awaiting, now).await?;
             received.units += awaiting;
         }
         if received.units == 0 {
@@ -1162,7 +1162,7 @@ impl Orders {
                 )
                 .await?;
             let sold = (item.as_str(), variation.as_deref());
-            settle(on, order, sold, "restocked", units, now).await?;
+            settle(on, order, sold, Settled::Restocked, units, now).await?;
             if !orders.contains(&order) {
                 orders.push(order);
             }
@@ -1285,17 +1285,27 @@ struct Taken {
     reached_reorder_point: Vec<LowStock>,
 }
 
-/// Adds `units` to the `restocked` or `unsellable` count of the line of
-/// `order` that sold `item` and `variation`.
+/// How units on their way back were settled.
+#[derive(Clone, Copy)]
+enum Settled {
+    Restocked,
+    Unsellable,
+}
+
+/// Adds `units` to what was `settled` of the line of `order` that sold
+/// `item` and `variation`.
 async fn settle(
     on: &Connection,
     order: RecordId,
     (item, variation): (&str, Option<&str>),
-    column: &str,
+    settled: Settled,
     units: u32,
     now: Timestamp,
 ) -> Result<(), OrderError> {
-    debug_assert!(matches!(column, "restocked" | "unsellable"));
+    let column = match settled {
+        Settled::Restocked => "restocked",
+        Settled::Unsellable => "unsellable",
+    };
     on.execute(
         &format!(
             "UPDATE commerce_order_lines SET {column} = {column} + ?1, updated_at = ?2

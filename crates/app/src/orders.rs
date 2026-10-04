@@ -504,7 +504,7 @@ impl OrdersScreen {
             .into_any_element()
     }
 
-    fn render_order(&self, order: &Order, cx: &mut Context<Self>) -> AnyElement {
+    fn render_order(&self, index: usize, order: &Order, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let sold = &order.sold;
         let mut facts = vec![catalog::day_and_time(sold.ordered_at)];
@@ -545,7 +545,7 @@ impl OrdersScreen {
         let due = order
             .dispatch_due(chrono::Utc::now(), self.settings.dispatch_warning())
             .map(|due| due_tag(due, &t));
-        let actions = self.render_actions(order, cx);
+        let actions = self.render_actions(index, order, cx);
         let lines: Vec<AnyElement> = order
             .lines
             .iter()
@@ -593,7 +593,12 @@ impl OrdersScreen {
 
     /// The label to print while the Order waits for dispatch, and the
     /// owner's word on units on their way back.
-    fn render_actions(&self, order: &Order, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_actions(
+        &self,
+        index: usize,
+        order: &Order,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let t = look(cx).tokens;
         let id = order.id;
         let busy = self.working_on.is_some();
@@ -607,7 +612,7 @@ impl OrdersScreen {
         if !waiting && awaiting == 0 {
             return None;
         }
-        let key = |name: &'static str| (name, id.as_u128() as usize);
+        let key = |name: &'static str| (name, index);
         Some(
             h_flex()
                 .flex_wrap()
@@ -837,7 +842,8 @@ impl Render for OrdersScreen {
         let cards: Vec<AnyElement> = self
             .orders
             .iter()
-            .map(|order| self.render_order(order, cx))
+            .enumerate()
+            .map(|(index, order)| self.render_order(index, order, cx))
             .collect();
         parts.content.push(
             v_flex()
