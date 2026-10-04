@@ -28,6 +28,14 @@ impl Currency {
     pub fn minor_unit_digits(self) -> u32 {
         2
     }
+
+    /// How the owner reads the currency in Brazilian Portuguese.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Currency::Brl => "R$",
+            Currency::Usd => "US$",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -101,6 +109,27 @@ impl Money {
             .try_fold(Money::zero(currency), Money::checked_add)
     }
 
+    /// The amount as the owner reads it: `R$ 1.234,56`, rounded to cents.
+    pub fn to_pt_br(self) -> String {
+        let rounded = self.rounded().amount;
+        let digits = self.currency.minor_unit_digits() as usize;
+        let plain = format!("{:.*}", digits, rounded.abs());
+        let (whole, fraction) = plain.split_once('.').unwrap_or((&plain, ""));
+        let mut grouped = String::new();
+        for (index, digit) in whole.chars().enumerate() {
+            if index > 0 && (whole.len() - index) % 3 == 0 {
+                grouped.push('.');
+            }
+            grouped.push(digit);
+        }
+        let sign = if rounded.is_sign_negative() && !rounded.is_zero() {
+            "-"
+        } else {
+            ""
+        };
+        format!("{sign}{} {grouped},{fraction}", self.currency.symbol())
+    }
+
     fn same_currency(&self, other: Money) -> Result<(), CurrencyMismatch> {
         if self.currency == other.currency {
             Ok(())
@@ -128,4 +157,77 @@ impl fmt::Display for Money {
             amount
         )
     }
+}
+
+/// Reads an amount the owner typed, as Brazilians write it (`1.234,56`) or
+/// with a dot for decimals (`29.90`), with or without the currency symbol.
+/// When only dots appear, a dot followed by exactly three digits groups
+/// thousands, as in `1.234`. `None` when the text is not an amount.
+pub fn parse_amount(text: &str) -> Option<Decimal> {
+    let mut text = text.trim();
+    let negative = text.starts_with('-');
+    if negative {
+        text = text[1..].trim_start();
+    }
+    for symbol in ["US$", "R$", "$"] {
+        if let Some(rest) = text.strip_prefix(symbol) {
+            text = rest.trim_start_matches(|c: char| c.is_whitespace());
+            break;
+        }
+    }
+    if text.is_empty()
+        || !text
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+    {
+        return None;
+    }
+    let decimal_separator = match (text.rfind(','), text.rfind('.')) {
+        (Some(comma), Some(dot)) => Some(if comma > dot { ',' } else { '.' }),
+        (Some(_), None) if text.matches(',').count() == 1 => Some(','),
+        (Some(_), None) => return None,
+        (None, Some(dot)) => {
+            let single = text.matches('.').count() == 1;
+            let groups_thousands = text.len() - dot - 1 == 3 && !text.starts_with("0.");
+            (single && !groups_thousands).then_some('.')
+        }
+        (None, None) => None,
+    };
+    let (whole, fraction) = match decimal_separator {
+        Some(separator) => text.rsplit_once(separator)?,
+        None => (text, ""),
+    };
+    let whole = ungrouped(whole)?;
+    if fraction.contains(['.', ',']) {
+        return None;
+    }
+    let plain = if fraction.is_empty() {
+        whole
+    } else {
+        format!("{whole}.{fraction}")
+    };
+    let amount: Decimal = plain.parse().ok()?;
+    Some(if negative { -amount } else { amount })
+}
+
+/// The integer part without its thousands separators, which must group by
+/// three: `1.234.567`, never `12.34`.
+fn ungrouped(whole: &str) -> Option<String> {
+    let separator = whole.chars().find(|c| !c.is_ascii_digit());
+    let Some(separator) = separator else {
+        return (!whole.is_empty()).then(|| whole.to_owned());
+    };
+    let mut groups = whole.split(separator);
+    let first = groups.next()?;
+    if first.is_empty() || first.len() > 3 || !first.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let mut digits = first.to_owned();
+    for group in groups {
+        if group.len() != 3 || !group.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        digits.push_str(group);
+    }
+    Some(digits)
 }
