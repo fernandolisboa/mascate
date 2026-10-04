@@ -1,6 +1,16 @@
 //! Finance & Reporting: revenue, Fees, margins and the dashboard.
 
-use mascate_platform::{Reminder, ReminderTopic};
+mod tax;
+
+pub use tax::{TaxError, Taxes};
+
+use mascate_platform::{ModuleMigrations, Reminder, ReminderTopic};
+
+/// This module's own tables.
+pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
+    module: "finance",
+    migrations: &[tax::CREATE_TAX_SETTINGS],
+};
 
 pub const SELLING_WITHOUT_CNPJ: Reminder = Reminder {
     key: "finance.selling_without_cnpj",
