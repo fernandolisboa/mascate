@@ -35,8 +35,12 @@ Origem das Supplier Offers e dos sinais de demanda: API oficial, cadastro manual
 _Avoid_: integração, scraper
 
 **Opportunity**:
-Candidato a Product que cruza uma Supplier Offer com a demanda num Sales Channel, com Estimated Margin e pontuação para ranqueamento.
+Candidato a Product que cruza uma Supplier Offer com a demanda num Sales Channel, com Estimated Margin e pontuação para ranqueamento. Uma Opportunity descartada leva sempre um motivo e nunca volta numa nova Sync.
 _Avoid_: sugestão, lead, achado
+
+**Best Seller**:
+Um dos mais vendidos de uma categoria que o Fernando segue num Sales Channel, com a posição no ranking. É o sinal de demanda das Opportunities.
+_Avoid_: destaque, top, campeão de vendas
 
 ## Venda
 
@@ -63,6 +67,10 @@ _Avoid_: pedido (sozinho), compra ao fornecedor
 **Fee**:
 Valor descontado de uma venda: tarifa do canal, frete, imposto, custo de publicidade.
 _Avoid_: taxa, custo (sozinho)
+
+**Listing Type**:
+Exposição de um Listing no Sales Channel, que define a tarifa de venda: Clássico ou Premium no Mercado Livre.
+_Avoid_: tipo de anúncio (no código), plano
 
 **Price Suggestion**:
 Preço calculado pelo app para um Listing a partir da margem alvo; só vale depois que o Fernando aprova.
