@@ -11,29 +11,24 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Entity, EventEmitter, Global, SharedString, Window, div, px};
+use gpui_kit::{AnyElement, Entity, EventEmitter, SharedString, Window, div, px};
 use mascate_catalog::{
     Catalog, CatalogError, CategoryBestSellers, DemandCategory, DemandSource, DemandSync,
     DiscoverySettings, Opportunity, OpportunityFilter, Product, Sku,
 };
-use mascate_finance::Taxes;
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId, Timestamp, parse_amount};
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, failure};
 use crate::connections::AppConnections;
-use crate::forms::{Outcome, input, notice};
+use crate::forms::{Outcome, amount_text, input, notice, percent_text};
 use crate::kit;
 use crate::layout;
 use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
-
-/// The tax rate setting, shared by every screen that works out a margin.
-pub struct AppTaxes(pub Arc<Taxes>);
-
-impl Global for AppTaxes {}
+use crate::pricing;
 
 /// The step an Opportunity's row is in, below it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,7 +77,8 @@ pub struct OpportunitiesScreen {
     listing_type: ListingType,
     fee: Entity<InputState>,
     shipping: Entity<InputState>,
-    tax: Entity<InputState>,
+    /// The tax rate every margin uses, set in Settings.
+    tax: Percentage,
     min_margin: Entity<InputState>,
     min_price: Entity<InputState>,
     max_price: Entity<InputState>,
@@ -122,7 +118,7 @@ impl OpportunitiesScreen {
             listing_type: ListingType::default(),
             fee: input("14", window, cx),
             shipping: input("20,00", window, cx),
-            tax: input("0", window, cx),
+            tax: Percentage::ZERO,
             min_margin: input("Ex.: 20", window, cx),
             min_price: input("De", window, cx),
             max_price: input("Até", window, cx),
@@ -172,10 +168,7 @@ impl OpportunitiesScreen {
         F: FnOnce(Arc<Catalog>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Changed, Failure>> + Send,
     {
-        let (Some(catalog), Some(taxes)) = (
-            catalog::catalog(cx),
-            cx.try_global::<AppTaxes>().map(|t| t.0.clone()),
-        ) else {
+        let (Some(catalog), Some(taxes)) = (catalog::catalog(cx), pricing::taxes(cx)) else {
             return;
         };
         let connections = cx.global::<AppConnections>().0.clone();
@@ -248,11 +241,7 @@ impl OpportunitiesScreen {
             self.shipping
                 .update(cx, |input, cx| input.set_value(shipping, window, cx));
         }
-        let tax = percent_text(snapshot.tax);
-        if self.tax.read(cx).value().trim().is_empty() || self.reads == 1 {
-            self.tax
-                .update(cx, |input, cx| input.set_value(tax, window, cx));
-        }
+        self.tax = snapshot.tax;
         if self
             .step
             .is_some_and(|(open, _)| !snapshot.opportunities.iter().any(|o| o.id == open))
@@ -344,14 +333,13 @@ impl OpportunitiesScreen {
 
     fn save_assumptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let fee = Percentage::parse(&self.fee.read(cx).value());
-        let tax = Percentage::parse(&self.tax.read(cx).value());
         let shipping = parse_amount(&self.shipping.read(cx).value())
             .filter(|amount| !amount.is_sign_negative())
             .map(|amount| Money::new(amount, Currency::Brl));
-        let (Some(fee), Some(tax), Some(shipping)) = (fee, tax, shipping) else {
+        let (Some(fee), Some(shipping)) = (fee, shipping) else {
             self.outcome = Some(Outcome::Failed(
-                "Digite tarifa e imposto como porcentagem de 0 a 100 (ex.: 14 ou 12,5) e o \
-                 frete como 20,00."
+                "Digite a tarifa como porcentagem de 0 a 100 (ex.: 14 ou 12,5) e o frete como \
+                 20,00."
                     .into(),
             ));
             cx.notify();
@@ -362,19 +350,12 @@ impl OpportunitiesScreen {
             estimated_fee: fee,
             estimated_shipping: shipping,
         };
-        let Some(taxes) = cx.try_global::<AppTaxes>().map(|t| t.0.clone()) else {
-            return;
-        };
         self.outcome = None;
         self.run(
             window,
             cx,
             move |catalog| async move {
                 catalog.save_discovery_settings(settings).await?;
-                taxes
-                    .save_rate(tax)
-                    .await
-                    .map_err(|error| Failure::Text(error.to_string()))?;
                 Ok(Changed::Saved(
                     "Premissas salvas; as margens abaixo já usam os valores novos.",
                 ))
@@ -573,11 +554,13 @@ impl OpportunitiesScreen {
             .border_color(t.frame)
             .bg(t.surface)
             .child(kit::section_heading("Premissas do cálculo"))
-            .child(div().text_sm().text_color(t.text2).child(
+            .child(div().text_sm().text_color(t.text2).child(format!(
                 "A tarifa vem do Mercado Livre para a categoria e o preço; sem ela, vale a \
                  tarifa estimada. O frete estimado entra a partir de R$ 79,00, quando o frete \
-                 grátis é obrigatório. O imposto vale para todos os cálculos de margem.",
-            ))
+                 grátis é obrigatório, e vale também para a sugestão de preço dos anúncios. O \
+                 imposto ({}) vem de Configurações › Preços e margens.",
+                self.tax.to_pt_br()
+            )))
             .child(
                 h_flex()
                     .flex_wrap()
@@ -591,7 +574,6 @@ impl OpportunitiesScreen {
                     )
                     .child(field("Tarifa estimada (%)", 150., &self.fee))
                     .child(field("Frete estimado (R$)", 150., &self.shipping))
-                    .child(field("Imposto (%)", 120., &self.tax))
                     .child(
                         Button::new("save-assumptions")
                             .label("Salvar premissas")
@@ -1145,16 +1127,6 @@ impl Render for OpportunitiesScreen {
         parts.content.push(self.render_assumptions(cx));
         layout::screen(parts, cx)
     }
-}
-
-/// "14", "12,5": a rate as the owner types it.
-fn percent_text(rate: Percentage) -> String {
-    rate.percent().normalize().to_string().replace('.', ",")
-}
-
-/// "20,00": an amount as the owner types it.
-fn amount_text(amount: Money) -> String {
-    format!("{:.2}", amount.rounded().amount()).replace('.', ",")
 }
 
 fn competitors_text(count: u32) -> String {

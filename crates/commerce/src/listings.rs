@@ -11,6 +11,9 @@ use mascate_kernel::{
     Clock, IdGenerator, ListingType, Money, PlatformError, RecordId, Timestamp, fold, folded_words,
 };
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
+use rust_decimal::Decimal;
+
+use crate::SaleFee;
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,6 +91,19 @@ pub trait SalesChannel: Send + Sync {
     /// The listings with `ids`, in any status, one per variation. An id the
     /// channel no longer knows is left out.
     fn listings(&self, ids: &[String]) -> Result<Vec<ChannelListing>, PlatformError>;
+
+    /// What the channel keeps of a sale at `price` in `category` with
+    /// `listing_type`.
+    fn sale_fee(
+        &self,
+        category: &str,
+        price: Money,
+        listing_type: ListingType,
+    ) -> Result<SaleFee, PlatformError>;
+
+    /// Changes the price of the listing `id`, every variation of it
+    /// included, to `price` in whole cents.
+    fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError>;
 }
 
 /// A listing of the owner's, as last synced, with the Product it sells.
@@ -146,6 +162,8 @@ pub struct ListingSync {
 pub enum ListingError {
     #[error("no Listing {0}")]
     UnknownListing(RecordId),
+    #[error("a price is more than zero, in the Listing's currency")]
+    InvalidPrice,
     #[error(transparent)]
     Platform(#[from] PlatformError),
     #[error("the Listings hold a value this app cannot read: {0}")]
@@ -384,6 +402,48 @@ impl Listings {
     /// Takes a Listing back to the ones still to link.
     pub async fn unlink(&self, listing: RecordId) -> Result<Listing, ListingError> {
         self.set_product(listing, None).await
+    }
+
+    /// Sends `price`, rounded to cents, to the channel as the price of the
+    /// Listing and of every variation of the same listing, which share it
+    /// (ADR 0014), and keeps it once the channel takes it. Returns those
+    /// Listings. Only the owner's own action calls this: nothing in the app
+    /// changes a price on its own.
+    pub async fn change_price(
+        &self,
+        listing: RecordId,
+        price: Money,
+        channel: &dyn SalesChannel,
+    ) -> Result<Vec<Listing>, ListingError> {
+        let listed = self.listing(listing).await?.listed;
+        let price = price.rounded();
+        if price.currency() != listed.price.currency() || price.amount() <= Decimal::ZERO {
+            return Err(ListingError::InvalidPrice);
+        }
+        channel.set_price(&listed.id, price)?;
+        self.database
+            .connection()
+            .execute(
+                "UPDATE commerce_listings SET price = ?1, updated_at = ?2
+                 WHERE ml_item_id = ?3 AND deleted_at IS NULL",
+                params![
+                    price.amount().to_string(),
+                    stored(self.clock.now()),
+                    listed.id.clone()
+                ],
+            )
+            .await?;
+        self.sharing_price(&listed.id).await
+    }
+
+    /// The Listings of the channel listing `id`: one, or one per variation.
+    pub(crate) async fn sharing_price(&self, id: &str) -> Result<Vec<Listing>, ListingError> {
+        read(
+            self.database.connection(),
+            "AND ml_item_id = ?1",
+            params![id.to_owned()],
+        )
+        .await
     }
 
     async fn set_product(

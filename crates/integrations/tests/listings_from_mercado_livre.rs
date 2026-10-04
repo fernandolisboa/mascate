@@ -9,11 +9,12 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ListingStatus, ListingSync, Listings, SalesChannel, Variation,
+    ChannelListing, ListingError, ListingStatus, ListingSync, Listings, SaleFee, SalesChannel,
+    Variation,
 };
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, ListingType, Money, PlatformError};
+use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Database, Secret, SecretStore, migrate};
 use rust_decimal::Decimal;
@@ -357,6 +358,210 @@ fn a_sync_imports_the_sellers_listings_and_the_next_one_follows_mercado_livre() 
                     brl("129")
                 ),
             ]
+        );
+    });
+}
+
+fn fee_at(price: &str) -> String {
+    format!(
+        "/sites/MLB/listing_prices?price={price}&listing_type_id=gold_special&category_id=MLB3697"
+    )
+}
+
+fn percent(text: &str) -> Percentage {
+    Percentage::new(Decimal::from_str(text).unwrap()).unwrap()
+}
+
+#[test]
+fn the_sale_fee_comes_as_its_percentage_and_its_fixed_part() {
+    let fake = Fake::connected();
+    fake.serve(&fee_at("49.90"), "listing-prices-fixed-fee.json");
+    fake.serve(&fee_at("100"), "listing-prices.json");
+
+    let below = fake
+        .adapter
+        .sale_fee("MLB3697", brl("49.90"), ListingType::Classic)
+        .unwrap();
+    let above = fake
+        .adapter
+        .sale_fee("MLB3697", brl("100"), ListingType::Classic)
+        .unwrap();
+
+    assert_eq!(
+        below,
+        SaleFee {
+            rate: percent("12"),
+            fixed: brl("6.25")
+        }
+    );
+    assert_eq!(
+        above,
+        SaleFee {
+            rate: percent("14"),
+            fixed: brl("0")
+        }
+    );
+}
+
+#[test]
+fn without_its_details_the_whole_sale_fee_is_a_share_of_the_price() {
+    let fake = Fake::connected();
+    fake.serve(&fee_at("100"), "listing-prices-no-details.json");
+
+    let fee = fake
+        .adapter
+        .sale_fee("MLB3697", brl("100"), ListingType::Classic)
+        .unwrap();
+
+    assert_eq!(
+        fee,
+        SaleFee {
+            rate: percent("14"),
+            fixed: brl("0")
+        }
+    );
+}
+
+#[test]
+fn a_new_price_is_put_on_the_listing_in_cents() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000001", "item-MLB4100000001.json");
+
+    fake.adapter
+        .set_price("MLB4100000001", brl("91.666"))
+        .unwrap();
+
+    let put: Vec<_> = fake
+        .server
+        .received()
+        .into_iter()
+        .filter(|request| request.method == "PUT")
+        .collect();
+    assert_eq!(put.len(), 1);
+    assert_eq!(put[0].path, "/items/MLB4100000001");
+    assert_eq!(put[0].body, r#"{"price":91.67}"#);
+    assert!(
+        put[0]
+            .authorization
+            .as_deref()
+            .is_some_and(|a| a.starts_with("Bearer "))
+    );
+}
+
+#[test]
+fn every_variation_mercado_livre_has_now_takes_the_new_price() {
+    let fake = Fake::connected();
+    // A third variation, added in Mercado Livre after the last Sync: left
+    // out of the request, Mercado Livre would delete it.
+    fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+
+    fake.adapter
+        .set_price("MLB4100000003", brl("59.9"))
+        .unwrap();
+
+    let put = fake
+        .server
+        .received()
+        .into_iter()
+        .find(|request| request.method == "PUT")
+        .unwrap();
+    assert_eq!(
+        put.body,
+        r#"{"variations":[{"id":175000000031,"price":59.9},{"id":175000000032,"price":59.9},{"id":175000000033,"price":59.9}]}"#
+    );
+}
+
+#[test]
+fn a_price_mercado_livre_refuses_says_why() {
+    let fake = Fake::connected();
+    fake.serve("/items/MLB4100000001", "item-MLB4100000001.json");
+    fake.server.serve_method(
+        "PUT",
+        "/items/MLB4100000001",
+        400,
+        fixture("error-400-price.json"),
+    );
+
+    let refused = fake.adapter.set_price("MLB4100000001", brl("1"));
+
+    assert_eq!(
+        refused,
+        Err(PlatformError::Refused(
+            "The price is lower than the minimum allowed for the category".into()
+        ))
+    );
+}
+
+#[test]
+fn an_id_that_is_not_mercado_livres_never_reaches_the_api() {
+    let fake = Fake::connected();
+
+    let refused = fake.adapter.set_price("../oauth/token", brl("10"));
+
+    assert_eq!(refused, Err(PlatformError::NotFound));
+    assert!(
+        fake.server
+            .requests()
+            .iter()
+            .all(|path| !path.starts_with("/items"))
+    );
+}
+
+#[test]
+fn an_approved_price_reaches_mercado_livre_and_the_listing_keeps_it() {
+    block_on(async {
+        let fake = Fake::connected();
+        fake.serve("/items/MLB4100000003", "item-MLB4100000003.json");
+        let dir = tempfile::tempdir().unwrap();
+        let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
+        migrate(
+            &database,
+            fake.clock.as_ref(),
+            &[mascate_commerce::MIGRATIONS],
+        )
+        .await
+        .unwrap();
+        let listings = Listings::new(
+            database,
+            fake.clock.clone(),
+            Arc::new(SequentialIds::default()),
+        );
+        listings.sync(&fake.adapter).await.unwrap();
+        let shirt = listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.listed.id == "MLB4100000003")
+            .unwrap();
+
+        let changed = listings
+            .change_price(shirt.id, brl("59.9"), &fake.adapter)
+            .await
+            .unwrap();
+
+        assert_eq!(changed.len(), 2);
+        assert!(
+            changed
+                .iter()
+                .all(|listing| listing.listed.price == brl("59.9"))
+        );
+        fake.server.serve_method(
+            "PUT",
+            "/items/MLB4100000003",
+            400,
+            fixture("error-400-price.json"),
+        );
+        let refused = listings
+            .change_price(shirt.id, brl("1"), &fake.adapter)
+            .await;
+        assert!(matches!(
+            refused,
+            Err(ListingError::Platform(PlatformError::Refused(_)))
+        ));
+        assert_eq!(
+            listings.listing(shirt.id).await.unwrap().listed.price,
+            brl("59.9")
         );
     });
 }

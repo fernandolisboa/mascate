@@ -1,6 +1,6 @@
-//! Settings screen: Connections (#5), the Restricted Features (#7), Backup
-//! (#6), Updates (#8), then Appearance, which picks the layout (#41) and
-//! the interface theme (#39).
+//! Settings screen: Connections (#5), prices and margins (#19), the
+//! Restricted Features (#7), Backup (#6), Updates (#8), then Appearance,
+//! which picks the layout (#41) and the interface theme (#39).
 //! Later settings join it.
 
 use gpui_kit::assets::IconName;
@@ -21,6 +21,7 @@ use crate::layout;
 use crate::palette::palette;
 use crate::parts::ScreenParts;
 use crate::preferences;
+use crate::pricing::PricingSection;
 use crate::restricted::RestrictedFeaturesSection;
 use crate::updates::UpdatesSection;
 
@@ -96,6 +97,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 
 pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
+    pricing: Entity<PricingSection>,
     restricted: Entity<RestrictedFeaturesSection>,
     backup: Entity<BackupSection>,
     updates: Entity<UpdatesSection>,
@@ -138,6 +140,7 @@ impl SettingsScreen {
             .into();
         Self {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
+            pricing: cx.new(|cx| PricingSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
             backup: cx.new(|cx| BackupSection::new(window, cx)),
             updates: cx.new(UpdatesSection::new),
@@ -533,6 +536,13 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Conexões"))
                 .child(self.connections.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Preços e margens"))
+                .child(self.pricing.clone())
                 .into_any_element(),
         );
         parts.content.push(

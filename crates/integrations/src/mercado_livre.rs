@@ -1,6 +1,7 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
 //! login, reports demand to the catalog and the owner's listings to
-//! commerce (ADR 0013). Only official endpoints, read-only here.
+//! commerce (ADR 0013). Only official endpoints; the one write is a
+//! listing's price, when the owner approves it.
 
 mod answers;
 mod sales_channel;
@@ -15,8 +16,8 @@ use mascate_platform::{SecretStore, http_agent};
 use serde::de::DeserializeOwned;
 
 use answers::{
-    CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrices, MultigetEntry,
-    ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
+    CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrice, ListingPrices,
+    MultigetEntry, ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
 };
 use tokens::Tokens;
 
@@ -58,36 +59,61 @@ impl MercadoLivre {
         }
     }
 
-    /// The JSON answer to `GET path` with `query`, signed with the
-    /// Connection's access token. A token Mercado Livre turns down is renewed
-    /// once before the login counts as expired.
+    /// The JSON answer to `GET path` with `query`.
     fn get<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, PlatformError> {
-        let mut renewed = false;
-        loop {
-            let token = self.tokens.access_token(&self.agent, &self.api)?;
+        let response = self.signed(path, |bearer| {
             let mut request = self
                 .agent
                 .get(format!("{}{path}", self.api))
                 .header("Accept", "application/json")
-                .header("Authorization", format!("Bearer {}", token.expose()));
+                .header("Authorization", bearer);
             for (key, value) in query {
                 request = request.query(key, value);
             }
-            let response = request
-                .call()
+            request.call()
+        })?;
+        read_json(response)
+    }
+
+    /// `PUT path` with the JSON `body`; Mercado Livre's answer is not read.
+    fn put(&self, path: &str, body: &str) -> Result<(), PlatformError> {
+        self.signed(path, |bearer| {
+            self.agent
+                .put(format!("{}{path}", self.api))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Authorization", bearer)
+                .send(body)
+        })?;
+        Ok(())
+    }
+
+    /// A successful answer to the request `send` makes with the
+    /// Connection's access token as its `Authorization` header. A token
+    /// Mercado Livre turns down is renewed once before the login counts as
+    /// expired; a request it refuses (400 or 403) carries its reason.
+    fn signed(
+        &self,
+        path: &str,
+        send: impl Fn(&str) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<ureq::http::Response<ureq::Body>, PlatformError> {
+        let mut renewed = false;
+        loop {
+            let token = self.tokens.access_token(&self.agent, &self.api)?;
+            let response = send(&format!("Bearer {}", token.expose()))
                 .map_err(|error| PlatformError::Failed(error.to_string()))?;
             match response.status().as_u16() {
-                200 => return read_json(response),
+                200 | 201 => return Ok(response),
                 401 if !renewed => {
                     self.tokens.forget(&token);
                     renewed = true;
                 }
                 401 => return Err(PlatformError::Expired),
-                403 => return Err(PlatformError::Refused(refusal(response))),
+                400 | 403 => return Err(PlatformError::Refused(refusal(response))),
                 404 => return Err(PlatformError::NotFound),
                 429 => return Err(PlatformError::RateLimited),
                 status => {
@@ -97,6 +123,27 @@ impl MercadoLivre {
                 }
             }
         }
+    }
+
+    /// What Mercado Livre keeps of a sale at `price` in `category` with
+    /// `listing`.
+    fn listing_price(
+        &self,
+        category: &str,
+        price: Money,
+        listing: ListingType,
+    ) -> Result<ListingPrice, PlatformError> {
+        let prices: ListingPrices = self.get(
+            &format!("/sites/{SITE}/listing_prices"),
+            &[
+                ("price", &price.rounded().amount().to_string()),
+                ("listing_type_id", sales_channel::listing_type_id(listing)),
+                ("category_id", category),
+            ],
+        )?;
+        prices
+            .for_listing(sales_channel::listing_type_id(listing))
+            .ok_or(PlatformError::NotFound)
     }
 
     fn product(&self, id: &str) -> Result<BestSeller, PlatformError> {
@@ -275,18 +322,8 @@ impl DemandSource for MercadoLivre {
         price: Money,
         listing: ListingType,
     ) -> Result<Money, PlatformError> {
-        let prices: ListingPrices = self.get(
-            &format!("/sites/{SITE}/listing_prices"),
-            &[
-                ("price", &price.rounded().amount().to_string()),
-                ("listing_type_id", sales_channel::listing_type_id(listing)),
-                ("category_id", category),
-            ],
-        )?;
-        prices
-            .for_listing(sales_channel::listing_type_id(listing))
-            .and_then(|found| money(&found.sale_fee_amount, &found.currency_id))
-            .ok_or(PlatformError::NotFound)
+        let found = self.listing_price(category, price, listing)?;
+        money(&found.sale_fee_amount, &found.currency_id).ok_or(PlatformError::NotFound)
     }
 }
 
@@ -306,10 +343,22 @@ fn read_json<T: DeserializeOwned>(
     })
 }
 
-/// Mercado Livre's own word for a 403, when it gives one.
+/// Mercado Livre's own word for a refusal, when it gives one: the causes
+/// it lists or, without them, its message.
 fn refusal(response: ureq::http::Response<ureq::Body>) -> String {
     read_json::<answers::ErrorAnswer>(response)
         .ok()
-        .and_then(|answer| answer.message.or(answer.error))
+        .and_then(|answer| {
+            let causes: Vec<String> = answer
+                .cause
+                .into_iter()
+                .filter_map(|cause| cause.message)
+                .collect();
+            if causes.is_empty() {
+                answer.message.or(answer.error)
+            } else {
+                Some(causes.join("; "))
+            }
+        })
         .unwrap_or_else(|| "forbidden".into())
 }

@@ -61,7 +61,7 @@ impl SecretStore for MemorySecretStore {
 
 /// A local HTTP server answering canned responses, for tests of code that
 /// talks to a Platform or to GitHub. Routes match the request's path and
-/// query; unknown ones answer 404.
+/// query, for any method unless one is named; unknown ones answer 404.
 pub struct FakeHttpServer {
     url: String,
     routes: Arc<Mutex<BTreeMap<String, VecDeque<Canned>>>>,
@@ -113,6 +113,18 @@ impl FakeHttpServer {
     /// Answers `path` with `status` and `body`, every time.
     pub fn serve(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
         self.route(path, status, Vec::new(), body.into(), false);
+    }
+
+    /// Answers `method` requests to `path` with `status` and `body`, every
+    /// time; other methods get the answers for `path` alone.
+    pub fn serve_method(&self, method: &str, path: &str, status: u16, body: impl Into<Vec<u8>>) {
+        self.route(
+            &format!("{method} {path}"),
+            status,
+            Vec::new(),
+            body.into(),
+            false,
+        );
     }
 
     /// Answers `path` with `status` and `body` after the answers already
@@ -207,14 +219,20 @@ fn answer(
         .lock()
         .expect("requests lock poisoned")
         .push(Request {
-            method,
+            method: method.clone(),
             path: path.clone(),
             authorization,
             body: String::from_utf8_lossy(&body).into_owned(),
         });
     let canned = {
         let mut routes = routes.lock().expect("routes lock poisoned");
-        match routes.get_mut(&path) {
+        let by_method = format!("{method} {path}");
+        let key = if routes.contains_key(&by_method) {
+            by_method
+        } else {
+            path
+        };
+        match routes.get_mut(&key) {
             Some(answers) if answers.len() > 1 => answers.pop_front(),
             Some(answers) => answers.front().cloned(),
             None => None,

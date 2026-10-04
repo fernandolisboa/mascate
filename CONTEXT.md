@@ -72,8 +72,12 @@ _Avoid_: taxa, custo (sozinho)
 Exposição de um Listing no Sales Channel, que define a tarifa de venda: Clássico ou Premium no Mercado Livre.
 _Avoid_: tipo de anúncio (no código), plano
 
+**Target Margin**:
+Margem que o Fernando quer em cada venda de um Product, em percentual do preço de venda. Cada Product pode ter a sua; sem ela, vale a margem alvo padrão.
+_Avoid_: markup, margem mínima (reservada para Promotions)
+
 **Price Suggestion**:
-Preço calculado pelo app para um Listing a partir da margem alvo; só vale depois que o Fernando aprova.
+Menor preço, em centavos, em que um Listing chega à Target Margin depois das Fees e do Average Cost; as variações do mesmo anúncio dividem o preço. Só vai ao Sales Channel quando o Fernando aprova.
 _Avoid_: reprecificação, preço automático
 
 **Estimated Margin**:

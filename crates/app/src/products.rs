@@ -1,6 +1,6 @@
 //! Produtos (#9): every Product by SKU, and each one's sheet with its SKU,
-//! its folder of files (drop files on the sheet to copy them there) and the
-//! price history of its Supplier Offers.
+//! its folder of files (drop files on the sheet to copy them there), its
+//! target margin (#19) and the price history of its Supplier Offers.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,14 +14,16 @@ use gpui_kit::{AnyElement, Entity, ExternalPaths, SharedString, Subscription, Wi
 use mascate_catalog::{
     AddedFiles, Catalog, CatalogError, NotCopied, OfferHistory, Product, ProductFile,
 };
+use mascate_commerce::TargetMargin;
 use mascate_kernel::RecordId;
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day, failure};
-use crate::forms::{Outcome, notice};
+use crate::forms::{Outcome, notice, percent_text};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
+use crate::pricing;
 
 /// A Product's sheet as last read.
 struct Sheet {
@@ -29,6 +31,8 @@ struct Sheet {
     folder: PathBuf,
     files: Vec<ProductFile>,
     offers: Vec<OfferHistory>,
+    /// Its target margin, or why it could not be read.
+    target: Result<TargetMargin, String>,
 }
 
 pub struct ProductsScreen {
@@ -37,6 +41,7 @@ pub struct ProductsScreen {
     open: Option<RecordId>,
     sheet: Option<Sheet>,
     sku: Entity<InputState>,
+    target: Entity<InputState>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -47,6 +52,7 @@ pub struct ProductsScreen {
 impl ProductsScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sku = cx.new(|cx| InputState::new(window, cx).placeholder("SKU"));
+        let target = cx.new(|cx| InputState::new(window, cx).placeholder("padrão"));
         let subscriptions =
             vec![
                 cx.subscribe_in(&sku, window, |this, _, event: &InputEvent, window, cx| {
@@ -60,6 +66,7 @@ impl ProductsScreen {
             open: None,
             sheet: None,
             sku,
+            target,
             busy: false,
             reads: 0,
             outcome: None,
@@ -104,7 +111,7 @@ impl ProductsScreen {
         F: FnOnce(Arc<Catalog>, Option<RecordId>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Option<T>, CatalogError>> + Send,
     {
-        let Some(catalog) = catalog::catalog(cx) else {
+        let (Some(catalog), Some(pricing)) = (catalog::catalog(cx), pricing::pricing(cx)) else {
             return;
         };
         self.reads += 1;
@@ -122,6 +129,10 @@ impl ProductsScreen {
                             folder: catalog.folder(&product),
                             files: catalog.files(id).await?,
                             offers: catalog.product_offers(id).await?,
+                            target: pricing
+                                .target_margin(id)
+                                .await
+                                .map_err(|error| pricing::target_failure(&error)),
                             product,
                         })
                     }
@@ -148,6 +159,22 @@ impl ProductsScreen {
                                 let sku = sheet.product.sku.to_string();
                                 this.sku
                                     .update(cx, |input, cx| input.set_value(sku, window, cx));
+                            }
+                            // The field shows the Product's own target, empty
+                            // for the default.
+                            let shown_target = this
+                                .sheet
+                                .as_ref()
+                                .map(|sheet| (sheet.product.id, &sheet.target));
+                            if let Some(sheet) = &sheet
+                                && shown_target != Some((sheet.product.id, &sheet.target))
+                            {
+                                let own = match &sheet.target {
+                                    Ok(target) if target.own => percent_text(target.margin),
+                                    _ => String::new(),
+                                };
+                                this.target
+                                    .update(cx, |input, cx| input.set_value(own, window, cx));
                             }
                             this.sheet = sheet;
                         }
@@ -190,6 +217,57 @@ impl ProductsScreen {
                 ));
             },
         );
+    }
+
+    /// Sets the open Product's own target margin from the field or, with
+    /// `default`, goes back to the default.
+    fn save_target(&mut self, default: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(product), Some(pricing)) = (self.open, pricing::pricing(cx)) else {
+            return;
+        };
+        let margin = if default {
+            None
+        } else {
+            match pricing::parse_target(&self.target.read(cx).value()) {
+                Some(margin) => Some(margin),
+                None => {
+                    self.outcome = Some(Outcome::Failed(
+                        "Digite a margem alvo de 0 até menos de 100% (ex.: 25 ou 22,5).".into(),
+                    ));
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        self.outcome = None;
+        let saving = cx.background_executor().spawn(async move {
+            pricing
+                .set_target_margin(product, margin)
+                .await
+                .map_err(|error| pricing::target_failure(&error))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = saving.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.outcome = Some(match saved {
+                    Ok(()) => Outcome::Done(
+                        match margin {
+                            Some(margin) => format!(
+                                "Margem alvo de {} salva; a sugestão de preço dos anúncios \
+                                 deste produto parte dela.",
+                                margin.to_pt_br()
+                            ),
+                            None => "O produto voltou para a margem alvo padrão.".into(),
+                        }
+                        .into(),
+                    ),
+                    Err(error) => Outcome::Failed(error.into()),
+                });
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn add_files(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
@@ -390,8 +468,55 @@ impl ProductsScreen {
                     .map(|history| price_history(history, cx)),
             );
 
+        let target = card()
+            .child(kit::section_heading("Margem alvo"))
+            .child(div().text_sm().text_color(t.text2).child(match &sheet.target {
+                Ok(target) if target.own => format!(
+                    "Este produto tem margem alvo própria de {}. A sugestão de preço dos \
+                     anúncios dele parte dela.",
+                    target.margin.to_pt_br()
+                ),
+                Ok(target) => format!(
+                    "Sem margem alvo própria: vale a padrão, {}, de Configurações › Preços e \
+                     margens. Digite uma para este produto.",
+                    target.margin.to_pt_br()
+                ),
+                Err(error) => error.clone(),
+            }))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .items_center()
+                    .child(div().w(px(120.)).child(Input::new(&self.target).small()))
+                    .child(div().text_sm().child("%"))
+                    .child(
+                        Button::new("save-target")
+                            .label("Salvar margem alvo")
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_target(false, window, cx)
+                            })),
+                    )
+                    .when(sheet.target.as_ref().is_ok_and(|t| t.own), |row| {
+                        row.child(
+                            Button::new("default-target")
+                                .label("Usar a padrão")
+                                .ghost()
+                                .small()
+                                .disabled(self.busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_target(true, window, cx)
+                                })),
+                        )
+                    }),
+            );
+
         vec![
             identity.into_any_element(),
+            target.into_any_element(),
             files.into_any_element(),
             offers.into_any_element(),
         ]
