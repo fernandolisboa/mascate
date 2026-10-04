@@ -23,7 +23,7 @@ pub use appearance::{
 };
 pub use backups::{
     Backup, BackupError, BackupSettings, Backups, DEFAULT_KEEP, MAX_KEEP, RestoreError,
-    apply_staged_restore, default_backup_folder,
+    apply_staged_restore, default_backup_folder, undo_applied_restore,
 };
 pub use database::{Database, DatabaseError, default_database_path};
 pub use flags::{

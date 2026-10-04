@@ -16,8 +16,7 @@ pub enum DatabaseError {
 /// The local database file (ADR 0003), opened once and shared by every module.
 pub struct Database {
     path: PathBuf,
-    // Keeps the underlying database alive for as long as the connection.
-    _database: libsql::Database,
+    database: libsql::Database,
     connection: libsql::Connection,
 }
 
@@ -39,13 +38,18 @@ impl Database {
             .await?;
         Ok(Self {
             path: path.to_path_buf(),
-            _database: database,
+            database,
             connection,
         })
     }
 
     pub fn connection(&self) -> &libsql::Connection {
         &self.connection
+    }
+
+    /// A connection of its own to the same file.
+    pub(crate) fn connect(&self) -> Result<libsql::Connection, libsql::Error> {
+        self.database.connect()
     }
 
     pub fn path(&self) -> &Path {

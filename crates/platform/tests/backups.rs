@@ -8,7 +8,7 @@ use mascate_kernel::Clock;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_platform::{
     BackupError, BackupSettings, Backups, DEFAULT_KEEP, Database, MAX_KEEP, MIGRATIONS, Migration,
-    ModuleMigrations, RestoreError, apply_staged_restore, migrate,
+    ModuleMigrations, RestoreError, apply_staged_restore, migrate, undo_applied_restore,
 };
 
 const CATALOG_V1: Migration = Migration {
@@ -471,7 +471,7 @@ fn a_restored_database_from_an_older_version_is_migrated_on_the_next_start() {
 }
 
 #[test]
-fn restoring_drops_the_journal_of_the_replaced_database() {
+fn restoring_moves_the_replaced_journal_aside() {
     block_on(async {
         let f = fixture().await;
         let file = f.path("backup.db");
@@ -486,6 +486,7 @@ fn restoring_drops_the_journal_of_the_replaced_database() {
         assert!(apply_staged_restore(&path).unwrap());
 
         assert!(!PathBuf::from(format!("{}-wal", path.display())).exists());
+        assert!(PathBuf::from(format!("{}.replaced-wal", path.display())).exists());
         assert_eq!(skus_in(&path).await, ["RESTORED"]);
     });
 }
@@ -687,5 +688,106 @@ fn restoring_the_oldest_backup_survives_the_safety_backup_pruning_it() {
         drop(f.database);
         assert!(apply_staged_restore(&path).unwrap());
         assert_eq!(skus_in(&path).await, ["FIRST"]);
+    });
+}
+
+#[test]
+fn the_new_backup_stays_even_below_backups_dated_in_the_future() {
+    block_on(async {
+        let f = fixture().await;
+        f.backups
+            .save_settings(&BackupSettings {
+                folder: f.default_folder(),
+                keep: 1,
+            })
+            .await
+            .unwrap();
+        f.clock.advance(TimeDelta::days(30));
+        let future = f.backups.back_up_now().await.unwrap();
+        f.clock.advance(TimeDelta::days(-30));
+
+        let backup = f.backups.back_up_now().await.unwrap();
+
+        assert!(backup.path.exists());
+        assert!(!future.path.exists());
+    });
+}
+
+#[test]
+fn export_refuses_the_databases_own_files() {
+    block_on(async {
+        let f = fixture().await;
+        f.add_product("SKU-1").await;
+        let path = f.database_path();
+
+        for name in ["mascate.db", "mascate.db-wal", "mascate.db.restore"] {
+            let to = path.with_file_name(name);
+            let error = f.backups.export(&to).await.unwrap_err();
+            assert!(matches!(error, BackupError::DatabaseFile(_)), "{name}");
+        }
+
+        assert_eq!(skus(&f.database).await, ["SKU-1"]);
+    });
+}
+
+#[test]
+fn the_replaced_database_is_kept_whole_and_a_restore_can_be_undone() {
+    block_on(async {
+        let f = fixture().await;
+        let file = f.path("backup.db");
+        older_database(&file, "RESTORED").await;
+        f.backups.stage_restore(&file).await.unwrap();
+        // Written after the safety Backup, before the restart.
+        f.add_product("LATE").await;
+        let path = f.database_path();
+        drop(f.backups);
+        drop(f.database);
+
+        assert!(apply_staged_restore(&path).unwrap());
+        assert_eq!(
+            skus_in(&PathBuf::from(format!("{}.replaced", path.display()))).await,
+            ["LATE"]
+        );
+
+        undo_applied_restore(&path).unwrap();
+        assert_eq!(skus_in(&path).await, ["LATE"]);
+    });
+}
+
+#[test]
+fn a_swap_that_fails_keeps_the_database_and_drops_the_staged_file() {
+    block_on(async {
+        let f = fixture().await;
+        let file = f.path("backup.db");
+        older_database(&file, "RESTORED").await;
+        f.backups.stage_restore(&file).await.unwrap();
+        f.add_product("CURRENT").await;
+        let path = f.database_path();
+        // Something in the way that cannot be cleared.
+        let blocker = PathBuf::from(format!("{}.replaced", path.display()));
+        std::fs::create_dir_all(blocker.join("inside")).unwrap();
+        drop(f.backups);
+        drop(f.database);
+
+        assert!(apply_staged_restore(&path).is_err());
+
+        assert!(!PathBuf::from(format!("{}.restore", path.display())).exists());
+        assert_eq!(skus_in(&path).await, ["CURRENT"]);
+        assert!(!apply_staged_restore(&path).unwrap());
+    });
+}
+
+#[test]
+fn undoing_without_a_replaced_database_changes_nothing() {
+    block_on(async {
+        let f = fixture().await;
+        f.add_product("CURRENT").await;
+        let path = f.database_path();
+        drop(f.backups);
+        drop(f.database);
+
+        assert!(undo_applied_restore(&path).is_err());
+
+        assert_eq!(skus_in(&path).await, ["CURRENT"]);
     });
 }

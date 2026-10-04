@@ -4,7 +4,7 @@
 //! module.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use chrono::Local;
@@ -30,6 +30,8 @@ pub struct AppBackups {
     pub backups: Arc<Backups>,
     pub settings: BackupSettings,
     pub restore: Option<Result<(), String>>,
+    /// Why the last daily Backup failed, until one succeeds.
+    pub daily_failure: Arc<Mutex<Option<String>>>,
 }
 
 impl Global for AppBackups {}
@@ -41,13 +43,14 @@ pub fn start_daily(cx: &App) {
         return;
     };
     let backups = app.backups.clone();
+    let failure = app.daily_failure.clone();
     let executor = cx.background_executor().clone();
     cx.background_executor()
         .spawn(async move {
             loop {
-                if let Err(error) = backups.back_up_if_due().await {
-                    eprintln!("daily backup failed: {error}");
-                }
+                let outcome = backups.back_up_if_due().await;
+                *failure.lock().unwrap_or_else(PoisonError::into_inner) =
+                    outcome.err().map(backup_failed);
                 executor.timer(DAILY_CHECK).await;
             }
         })
@@ -109,6 +112,8 @@ pub struct BackupSection {
     /// The file waiting for the owner to confirm the restore.
     confirming: Option<PathBuf>,
     busy: bool,
+    /// Settings saves still on their way to the database.
+    saving: usize,
     outcome: Option<Outcome>,
     saves: OrderedSaves,
     _subscriptions: Vec<Subscription>,
@@ -152,6 +157,7 @@ impl BackupSection {
             newest: None,
             confirming: None,
             busy: false,
+            saving: 0,
             outcome: None,
             saves: OrderedSaves::default(),
             _subscriptions: subscriptions,
@@ -206,17 +212,26 @@ impl BackupSection {
             },
             cx.background_executor(),
         );
+        self.saving += 1;
         cx.spawn(async move |this, cx| {
-            if let Err(error) = saving.await {
-                let _ = this.update(cx, |this, cx| {
+            let saved = saving.await;
+            let _ = this.update(cx, |this, cx| {
+                this.saving -= 1;
+                if let Err(error) = saved {
                     this.outcome = Some(Outcome::Failed(error.into()));
-                    cx.notify();
-                });
-            }
+                }
+                // Reads the folder now saved, not the one before.
+                this.read_newest(cx);
+                cx.notify();
+            });
         })
         .detach();
-        self.read_newest(cx);
         cx.notify();
+    }
+
+    /// Working, or settings not saved yet: actions would use the old folder.
+    fn blocked(&self) -> bool {
+        self.busy || self.saving > 0
     }
 
     fn choose_folder(&mut self, cx: &mut Context<Self>) {
@@ -272,7 +287,13 @@ impl BackupSection {
                         .export(&to)
                         .await
                         .map(|()| format!("Banco exportado para {}.", to.display()))
-                        .map_err(|error| format!("Não consegui exportar: {error}"))
+                        .map_err(|error| match error {
+                            BackupError::DatabaseFile(_) => {
+                                "Esse arquivo é o próprio banco do app; escolha outro nome."
+                                    .to_string()
+                            }
+                            error => format!("Não consegui exportar: {error}"),
+                        })
                 }),
                 Ok(Err(error)) => {
                     this.outcome = Some(Outcome::Failed(
@@ -394,7 +415,7 @@ impl BackupSection {
                             .label("Restaurar e reiniciar")
                             .danger()
                             .small()
-                            .disabled(self.busy)
+                            .disabled(self.blocked())
                             .on_click(cx.listener(|this, _, _, cx| this.restore(cx))),
                     )
                     .child(
@@ -453,7 +474,7 @@ impl Render for BackupSection {
                     .label("Escolher pasta…")
                     .outline()
                     .small()
-                    .disabled(self.busy)
+                    .disabled(self.blocked())
                     .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
             );
         let keep = h_flex()
@@ -467,6 +488,12 @@ impl Render for BackupSection {
             )
             .child(div().text_sm().text_color(t.text2).child("Backups"));
 
+        let daily_failure = cx
+            .global::<AppBackups>()
+            .daily_failure
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let newest = match &self.newest {
             Some(backup) => format!(
                 "Último Backup em {}: {}",
@@ -485,7 +512,7 @@ impl Render for BackupSection {
                     .primary()
                     .small()
                     .loading(self.busy)
-                    .disabled(self.busy)
+                    .disabled(self.blocked())
                     .on_click(cx.listener(|this, _, _, cx| this.back_up_now(cx))),
             )
             .when_some(reveal, |row, path| {
@@ -506,7 +533,7 @@ impl Render for BackupSection {
                     .label("Exportar…")
                     .outline()
                     .small()
-                    .disabled(self.busy)
+                    .disabled(self.blocked())
                     .on_click(cx.listener(|this, _, _, cx| this.export(cx))),
             )
             .child(
@@ -514,7 +541,7 @@ impl Render for BackupSection {
                     .label("Restaurar…")
                     .outline()
                     .small()
-                    .disabled(self.busy)
+                    .disabled(self.blocked())
                     .on_click(cx.listener(|this, _, _, cx| this.choose_restore(cx))),
             );
 
@@ -524,6 +551,9 @@ impl Render for BackupSection {
             .child(folder)
             .child(keep)
             .child(div().text_sm().text_color(t.text2).child(newest))
+            .when_some(daily_failure, |section, failure| {
+                section.child(kit::error_notice(format!("Backup diário: {failure}"), cx))
+            })
             .child(actions)
             .child(div().h_2())
             .child(kit::section_heading("Outro computador"))

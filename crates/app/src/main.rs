@@ -74,6 +74,7 @@ fn main() {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),
                     restore: started.restore.clone(),
+                    daily_failure: Default::default(),
                 });
                 backups::start_daily(cx);
             }

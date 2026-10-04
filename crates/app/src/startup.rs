@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use futures::executor::block_on;
@@ -5,7 +6,7 @@ use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, ModuleMigrations, Registry,
     Reminder, Reminders, apply_staged_restore, default_backup_folder, default_database_path,
-    load_appearance, migrate,
+    load_appearance, migrate, undo_applied_restore,
 };
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
@@ -40,20 +41,30 @@ pub struct Started {
 pub fn prepare() -> Outcome {
     let path = default_database_path()
         .ok_or_else(|| "Não encontrei a pasta de dados do usuário.".to_string())?;
-    let restore = match apply_staged_restore(&path) {
+    let mut restore = match apply_staged_restore(&path) {
         Ok(true) => Some(Ok(())),
         Ok(false) => None,
-        // The current database is still whole, so the app goes on with it.
+        // The swap puts the current database back when it fails.
         Err(error) => Some(Err(format!(
-            "Não consegui restaurar o Backup escolhido; o banco continua o de antes: {error}"
+            "Não consegui restaurar o Backup escolhido; o banco continua o de antes. \
+             Tente restaurar de novo: {error}"
         ))),
     };
     let backup_folder = default_backup_folder()
         .or_else(|| path.parent().map(|data| data.join("backups")))
         .ok_or_else(|| "Não encontrei uma pasta para os Backups.".to_string())?;
     block_on(async {
-        let database = Arc::new(Database::open(&path).await?);
-        migrate(&database, &SystemClock, MODULE_MIGRATIONS).await?;
+        let database = match open_migrated(&path).await {
+            Err(error) if matches!(restore, Some(Ok(()))) => {
+                undo_applied_restore(&path)?;
+                restore = Some(Err(format!(
+                    "O arquivo restaurado não abriu nesta versão do app, então o banco de \
+                     antes voltou: {error}"
+                )));
+                open_migrated(&path).await?
+            }
+            opened => opened?,
+        };
         let appearance = load_appearance(&database).await.unwrap_or_else(|error| {
             // A look that cannot be read is no reason to give up the database.
             eprintln!("could not read the saved appearance: {error}");
@@ -95,6 +106,12 @@ pub fn prepare() -> Outcome {
             path.display()
         )
     })
+}
+
+async fn open_migrated(path: &Path) -> Result<Arc<Database>, Box<dyn std::error::Error>> {
+    let database = Database::open(path).await?;
+    migrate(&database, &SystemClock, MODULE_MIGRATIONS).await?;
+    Ok(Arc::new(database))
 }
 
 #[cfg(test)]

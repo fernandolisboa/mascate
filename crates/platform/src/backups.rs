@@ -22,6 +22,7 @@ const NAME_PREFIX: &str = "mascate-";
 const NAME_SUFFIX: &str = ".db";
 const NAME_TIME: &str = "%Y%m%d-%H%M%S%.3f";
 const STAGED_SUFFIX: &str = ".restore";
+const REPLACED_SUFFIX: &str = ".replaced";
 
 /// Where Backups go and how many to keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub enum BackupError {
     PathNotText(PathBuf),
     #[error("could not write {path}: {source}")]
     File { path: PathBuf, source: io::Error },
+    #[error("{0} is one of the database's own files")]
+    DatabaseFile(PathBuf),
     #[error(transparent)]
     Sql(#[from] libsql::Error),
 }
@@ -186,10 +189,11 @@ impl Backups {
             path = settings.folder.join(backup_name(taken_at));
         }
         self.copy_to(&path).await?;
-        for old in list_folder(&settings.folder)?
+        // The new Backup always stays, even below files dated in the future.
+        let older = list_folder(&settings.folder)?
             .into_iter()
-            .skip(settings.keep.into())
-        {
+            .filter(|backup| backup.path != path);
+        for old in older.skip(usize::from(settings.keep) - 1) {
             // The new Backup is safe already; a file that will not go away
             // now goes on a later Backup.
             if let Err(error) = std::fs::remove_file(&old.path) {
@@ -217,6 +221,9 @@ impl Backups {
     /// Writes the same copy as a Backup to `to`, to carry to another machine.
     /// It is not counted among the Backups.
     pub async fn export(&self, to: &Path) -> Result<(), BackupError> {
+        if is_database_file(self.database.path(), to) {
+            return Err(BackupError::DatabaseFile(to.to_path_buf()));
+        }
         if let Some(folder) = to.parent() {
             create_folder(folder)?;
         }
@@ -324,13 +331,11 @@ impl Backups {
         })
     }
 
+    /// Copies through a connection of its own: `VACUUM INTO` fails inside
+    /// a transaction another task left open on the shared one.
     async fn copy_to(&self, path: &Path) -> Result<(), BackupError> {
-        copy_database(
-            self.database.connection(),
-            path,
-            &self.temporary_beside(path),
-        )
-        .await
+        let connection = self.database.connect()?;
+        copy_database(&connection, path, &self.temporary_beside(path)).await
     }
 
     /// A unique name next to `path`, so a copy appears whole under its own
@@ -342,31 +347,86 @@ impl Backups {
 
 /// Swaps a restore staged by [`Backups::stage_restore`] into place. Runs at
 /// start, before the database at `database_path` opens; `false` when no
-/// restore was staged.
+/// restore was staged. The replaced database moves aside, journal and all,
+/// as `<database>.replaced`, where [`undo_applied_restore`] finds it. A
+/// staged file that cannot be swapped in is discarded, so a later start
+/// never replaces work done since.
 pub fn apply_staged_restore(database_path: &Path) -> Result<bool, BackupError> {
     let staged = staged_restore_path(database_path);
     if !staged.exists() {
         return Ok(false);
     }
-    // The replaced database's journal would otherwise be replayed into the
-    // restored one. Its content is in the Backup taken when staging.
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let sidecar = with_suffix(database_path, suffix);
-        match std::fs::remove_file(&sidecar) {
+    let replaced = replaced_path(database_path);
+    let swapped = remove_database(&replaced)
+        .and_then(|()| {
+            if database_path.exists() {
+                move_database(database_path, &replaced)
+            } else {
+                Ok(())
+            }
+        })
+        .and_then(|()| {
+            rename(&staged, database_path).inspect_err(|_| {
+                let _ = move_database(&replaced, database_path);
+            })
+        });
+    if swapped.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    swapped.map(|()| true)
+}
+
+/// Puts back the database a restore replaced, when the restored file turns
+/// out not to open; the restored file is dropped.
+pub fn undo_applied_restore(database_path: &Path) -> Result<(), BackupError> {
+    let replaced = replaced_path(database_path);
+    if !replaced.exists() {
+        return Err(BackupError::File {
+            path: replaced,
+            source: io::ErrorKind::NotFound.into(),
+        });
+    }
+    remove_database(database_path)?;
+    move_database(&replaced, database_path)
+}
+
+const SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+/// Moves a database file and the journal files SQLite keeps beside it, so
+/// the database opens at `to` exactly as it was.
+fn move_database(from: &Path, to: &Path) -> Result<(), BackupError> {
+    rename(from, to)?;
+    for sidecar in SIDECARS {
+        let source = with_suffix(from, sidecar);
+        if source.exists() {
+            rename(&source, &with_suffix(to, sidecar))?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_database(path: &Path) -> Result<(), BackupError> {
+    for file in std::iter::once(path.to_path_buf())
+        .chain(SIDECARS.map(|sidecar| with_suffix(path, sidecar)))
+    {
+        match std::fs::remove_file(&file) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => {
                 return Err(BackupError::File {
-                    path: sidecar,
+                    path: file,
                     source: error,
                 });
             }
             _ => {}
         }
     }
-    std::fs::rename(&staged, database_path).map_err(|source| BackupError::File {
-        path: database_path.to_path_buf(),
+    Ok(())
+}
+
+fn rename(from: &Path, to: &Path) -> Result<(), BackupError> {
+    std::fs::rename(from, to).map_err(|source| BackupError::File {
+        path: to.to_path_buf(),
         source,
-    })?;
-    Ok(true)
+    })
 }
 
 const SQLITE_CORRUPT: std::ffi::c_int = 11;
@@ -380,6 +440,28 @@ struct ReadOnlyFile {
 
 fn staged_restore_path(database_path: &Path) -> PathBuf {
     with_suffix(database_path, STAGED_SUFFIX)
+}
+
+fn replaced_path(database_path: &Path) -> PathBuf {
+    with_suffix(database_path, REPLACED_SUFFIX)
+}
+
+/// Whether `path` is the database or one of the files kept beside it
+/// (journals, a staged or replaced restore).
+fn is_database_file(database_path: &Path, path: &Path) -> bool {
+    let folder = |path: &Path| path.parent().and_then(|folder| folder.canonicalize().ok());
+    let name = |path: &Path| {
+        let name = path.file_name()?.to_str()?;
+        // Windows and macOS file names ignore case.
+        Some(if cfg!(target_os = "linux") {
+            name.to_owned()
+        } else {
+            name.to_lowercase()
+        })
+    };
+    folder(path).is_some()
+        && folder(path) == folder(database_path)
+        && matches!((name(path), name(database_path)), (Some(path), Some(database)) if path.starts_with(&database))
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
