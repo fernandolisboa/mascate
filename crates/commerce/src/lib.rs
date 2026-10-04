@@ -1,6 +1,15 @@
 //! Commerce: Listings, Orders, Purchase Orders and shipping on each Sales Channel.
 
-use mascate_platform::{Reminder, ReminderTopic};
+mod freight;
+mod purchase_orders;
+
+pub use freight::{freight_for_units, split_by_value};
+pub use purchase_orders::{
+    NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
+    PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
+};
+
+use mascate_platform::{ModuleMigrations, Reminder, ReminderTopic};
 
 pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     key: "commerce.buyer_personal_data",
@@ -13,3 +22,9 @@ pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
 
 /// This module's Reminders.
 pub const REMINDERS: &[Reminder] = &[BUYER_PERSONAL_DATA];
+
+/// This module's own tables.
+pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
+    module: "commerce",
+    migrations: &[purchase_orders::CREATE_PURCHASE_ORDERS],
+};

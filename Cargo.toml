@@ -14,6 +14,7 @@ mascate-catalog = { path = "crates/catalog" }
 mascate-commerce = { path = "crates/commerce" }
 mascate-finance = { path = "crates/finance" }
 mascate-integrations = { path = "crates/integrations" }
+mascate-inventory = { path = "crates/inventory" }
 mascate-kernel = { path = "crates/kernel" }
 mascate-marketing = { path = "crates/marketing" }
 mascate-platform = { path = "crates/platform" }

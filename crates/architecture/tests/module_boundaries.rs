@@ -16,7 +16,11 @@ fn allowed() -> BTreeMap<&'static str, Option<&'static [&'static str]>> {
         ("mascate-kernel", Some(&[][..])),
         ("mascate-platform", Some(&["mascate-kernel"][..])),
         ("mascate-catalog", Some(SHARED)),
-        ("mascate-commerce", Some(SHARED)),
+        // Receiving and selling move stock through Inventory (ADR 0012).
+        (
+            "mascate-commerce",
+            Some(&["mascate-kernel", "mascate-platform", "mascate-inventory"][..]),
+        ),
         ("mascate-inventory", Some(SHARED)),
         ("mascate-affiliate", Some(SHARED)),
         ("mascate-marketing", Some(SHARED)),

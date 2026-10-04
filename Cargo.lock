@@ -4267,7 +4267,16 @@ dependencies = [
 name = "mascate-commerce"
 version = "0.2.0"
 dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-inventory",
+ "mascate-kernel",
  "mascate-platform",
+ "proptest",
+ "rust_decimal",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4292,6 +4301,18 @@ dependencies = [
 [[package]]
 name = "mascate-inventory"
 version = "0.2.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-kernel",
+ "mascate-platform",
+ "proptest",
+ "rust_decimal",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
+]
 
 [[package]]
 name = "mascate-kernel"
@@ -4323,6 +4344,7 @@ dependencies = [
  "libsql",
  "mascate-kernel",
  "mascate-platform",
+ "rust_decimal",
  "serde",
  "serde_json",
  "sha2 0.10.9",

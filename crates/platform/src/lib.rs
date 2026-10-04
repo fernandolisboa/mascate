@@ -14,6 +14,7 @@ mod releases;
 mod reminders;
 mod secrets;
 mod single_row;
+mod stored_row;
 mod stored_time;
 mod system_secrets;
 mod updates;
@@ -48,6 +49,7 @@ pub use secrets::{
     Build, Environment, Secret, SecretStore, SecretStoreError, process_environment,
     secret_store_for,
 };
+pub use stored_row::{StoredRow, StoredValueError};
 pub use stored_time::{read_stored, stored};
 pub use system_secrets::SystemSecretStore;
 pub use updates::{
