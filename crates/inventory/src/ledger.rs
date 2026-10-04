@@ -5,11 +5,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use libsql::{Connection, Row, params};
+use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_kernel::{
     Clock, Currency, CurrencyMismatch, IdGenerator, Money, Record, RecordId, Timestamp,
 };
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::Valuation;
@@ -29,18 +30,36 @@ pub struct StockLocation {
 pub enum MovementReason {
     /// Units that arrived from a Purchase Order.
     PurchaseReceipt { purchase_order: RecordId },
+    /// A Stock Adjustment: units the owner corrected by hand.
+    Adjustment(AdjustmentKind),
+}
+
+/// Why the owner corrected the stock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdjustmentKind {
+    /// Units gone: lost, stolen, never found.
+    Loss,
+    /// Units damaged beyond selling.
+    Damage,
+    /// A physical count that differed from the ledger.
+    Count,
 }
 
 impl MovementReason {
     fn code(self) -> &'static str {
         match self {
             MovementReason::PurchaseReceipt { .. } => "purchase_receipt",
+            MovementReason::Adjustment(AdjustmentKind::Loss) => "adjustment_loss",
+            MovementReason::Adjustment(AdjustmentKind::Damage) => "adjustment_damage",
+            MovementReason::Adjustment(AdjustmentKind::Count) => "adjustment_count",
         }
     }
 
-    fn reference(self) -> RecordId {
+    /// The record that brought the units, when one outside the ledger did.
+    fn reference(self) -> Option<RecordId> {
         match self {
-            MovementReason::PurchaseReceipt { purchase_order } => purchase_order,
+            MovementReason::PurchaseReceipt { purchase_order } => Some(purchase_order),
+            MovementReason::Adjustment(_) => None,
         }
     }
 
@@ -49,9 +68,53 @@ impl MovementReason {
             "purchase_receipt" => Some(MovementReason::PurchaseReceipt {
                 purchase_order: reference,
             }),
+            "adjustment_loss" => Some(MovementReason::Adjustment(AdjustmentKind::Loss)),
+            "adjustment_damage" => Some(MovementReason::Adjustment(AdjustmentKind::Damage)),
+            "adjustment_count" => Some(MovementReason::Adjustment(AdjustmentKind::Count)),
             _ => None,
         }
     }
+}
+
+/// A Stock Adjustment the owner asks for, in one Stock Location.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StockAdjustment {
+    /// This many units were lost.
+    Loss(u32),
+    /// This many units were damaged beyond selling.
+    Damage(u32),
+    /// The units physically counted there; the ledger moves by the
+    /// difference.
+    Count(u32),
+}
+
+impl StockAdjustment {
+    fn kind(self) -> AdjustmentKind {
+        match self {
+            StockAdjustment::Loss(_) => AdjustmentKind::Loss,
+            StockAdjustment::Damage(_) => AdjustmentKind::Damage,
+            StockAdjustment::Count(_) => AdjustmentKind::Count,
+        }
+    }
+}
+
+/// What a Stock Adjustment did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adjusted {
+    /// `None` when a count matched the ledger: nothing to correct.
+    pub movement: Option<StockMovement>,
+    /// Set when this adjustment took the Product from above its Reorder
+    /// Point to it or below.
+    pub reached_reorder_point: Option<LowStock>,
+}
+
+/// A Product at or below its Reorder Point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LowStock {
+    pub product: RecordId,
+    /// Units on hand, all Stock Locations together.
+    pub quantity: i64,
+    pub reorder_point: u32,
 }
 
 /// Units coming into a Stock Location, with what they cost in all.
@@ -64,17 +127,20 @@ pub struct NewEntry {
     pub reason: MovementReason,
 }
 
-/// One immutable line of the ledger. Entries count up; later slices add the
-/// movements that count down.
+/// One immutable line of the ledger. Entries count up; adjustments count
+/// either way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StockMovement {
     pub id: RecordId,
     pub product: RecordId,
     pub location: RecordId,
     pub quantity: i64,
-    /// What the units cost in all.
+    /// What the units cost in all; negative for units that left, which
+    /// leave at the Average Cost.
     pub cost: Money,
     pub reason: MovementReason,
+    /// What the owner wrote about an adjustment.
+    pub note: Option<String>,
     pub at: Timestamp,
 }
 
@@ -98,6 +164,15 @@ pub struct ProductStock {
     /// Every location the Product ever moved in, by location id.
     pub by_location: Vec<LocationBalance>,
     pub valuation: Valuation,
+    pub reorder_point: Option<u32>,
+}
+
+impl ProductStock {
+    /// At or below its Reorder Point.
+    pub fn is_low(&self) -> bool {
+        self.reorder_point
+            .is_some_and(|point| self.valuation.quantity() <= i64::from(point))
+    }
 }
 
 /// The stock of every Product that ever moved, oldest first.
@@ -134,8 +209,12 @@ impl Stock {
 
 #[derive(Debug, thiserror::Error)]
 pub enum InventoryError {
-    #[error("an entry needs at least one unit")]
+    #[error("an entry or adjustment needs at least one unit")]
     NoUnits,
+    #[error("only {on_hand} units are on hand there")]
+    NotEnoughStock { on_hand: i64 },
+    #[error("the Product never came into stock, so the units found have no cost")]
+    NoCostBasis,
     #[error("a cost cannot be negative")]
     NegativeCost,
     #[error("no Stock Location {0}")]
@@ -194,8 +273,23 @@ pub(crate) const CREATE_LEDGER: Migration = Migration {
         BEGIN SELECT RAISE(ABORT, 'stock movements are immutable'); END;",
 };
 
+pub(crate) const ADD_ADJUSTMENTS_AND_REORDER_POINTS: Migration = Migration {
+    version: 2,
+    name: "add adjustment notes and reorder points",
+    risky: false,
+    sql: "ALTER TABLE inventory_stock_movements ADD COLUMN note TEXT;
+    CREATE TABLE inventory_reorder_points (
+        id         TEXT    PRIMARY KEY,
+        product_id TEXT    NOT NULL UNIQUE,
+        quantity   INTEGER NOT NULL CHECK (quantity >= 0),
+        created_at TEXT    NOT NULL,
+        updated_at TEXT    NOT NULL,
+        deleted_at TEXT
+    );",
+};
+
 const MOVEMENT_COLUMNS: &str = "id, product_id, location_id, quantity, cost, currency, reason,
-     reference_id, created_at
+     reference_id, created_at, note
      FROM inventory_stock_movements WHERE deleted_at IS NULL";
 
 /// The order the ledger replays in: when each movement was recorded.
@@ -269,64 +363,178 @@ impl Inventory {
         }
         let mut movements = Vec::with_capacity(entries.len());
         for entry in entries {
-            let record = Record::new(self.ids.as_ref(), self.clock.as_ref());
-            let at = stored(record.created_at);
-            on.execute(
-                "INSERT INTO inventory_stock_movements
-                     (id, product_id, location_id, quantity, cost, currency, reason,
-                      reference_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-                params![
-                    record.id.to_string(),
-                    entry.product.to_string(),
-                    entry.location.to_string(),
-                    i64::from(entry.quantity),
-                    entry.cost.amount().to_string(),
-                    entry.cost.currency().code(),
-                    entry.reason.code(),
-                    entry.reason.reference().to_string(),
-                    at
-                ],
-            )
-            .await?;
-            movements.push(StockMovement {
-                id: record.id,
-                product: entry.product,
-                location: entry.location,
-                quantity: i64::from(entry.quantity),
-                cost: entry.cost,
-                reason: entry.reason,
-                at: record.created_at,
-            });
+            let movement = self.movement(
+                entry.product,
+                entry.location,
+                i64::from(entry.quantity),
+                entry.cost,
+                entry.reason,
+                None,
+            );
+            insert(on, &movement).await?;
+            movements.push(movement);
         }
         Ok(movements)
+    }
+
+    /// Records a Stock Adjustment of `product` in `location`. Units leave and
+    /// come back at the Average Cost, so an adjustment never changes it, and
+    /// the balance there never drops below zero. A count that matches the
+    /// ledger records nothing.
+    pub async fn adjust(
+        &self,
+        product: RecordId,
+        location: RecordId,
+        adjustment: StockAdjustment,
+        note: Option<&str>,
+    ) -> Result<Adjusted, InventoryError> {
+        let connection = self.database.connect_for_transaction().await?;
+        // Immediate: the balance it checks still holds when it writes.
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        known_location(&transaction, location).await?;
+        let on_hand = balance_in(&transaction, product, location).await?;
+        let change = match adjustment {
+            StockAdjustment::Loss(0) | StockAdjustment::Damage(0) => {
+                return Err(InventoryError::NoUnits);
+            }
+            StockAdjustment::Loss(units) | StockAdjustment::Damage(units) => -i64::from(units),
+            StockAdjustment::Count(counted) => i64::from(counted) - on_hand,
+        };
+        if change == 0 {
+            return Ok(Adjusted {
+                movement: None,
+                reached_reorder_point: None,
+            });
+        }
+        if on_hand + change < 0 {
+            return Err(InventoryError::NotEnoughStock { on_hand });
+        }
+        let replay = replay(&transaction, product).await?;
+        let units = u32::try_from(change.unsigned_abs())
+            .map_err(|_| InventoryError::Unreadable(change.to_string()))?;
+        let cost = if change < 0 {
+            replay
+                .valuation
+                .and_then(|valuation| valuation.exit_cost(units))
+                .ok_or(InventoryError::NotEnoughStock { on_hand })?
+        } else {
+            replay
+                .basis
+                .ok_or(InventoryError::NoCostBasis)?
+                .times(Decimal::from(units))
+        };
+        let note = note.map(str::trim).filter(|note| !note.is_empty());
+        let movement = self.movement(
+            product,
+            location,
+            change,
+            cost,
+            MovementReason::Adjustment(adjustment.kind()),
+            note.map(str::to_owned),
+        );
+        insert(&transaction, &movement).await?;
+        let before = replay.valuation.map_or(0, |valuation| valuation.quantity());
+        let reached_reorder_point = match reorder_point_of(&transaction, product).await? {
+            Some(point) if before > i64::from(point) && before + change <= i64::from(point) => {
+                Some(LowStock {
+                    product,
+                    quantity: before + change,
+                    reorder_point: point,
+                })
+            }
+            _ => None,
+        };
+        transaction.commit().await?;
+        Ok(Adjusted {
+            movement: Some(movement),
+            reached_reorder_point,
+        })
+    }
+
+    /// Sets the Reorder Point of `product`, or clears it with `None`.
+    pub async fn set_reorder_point(
+        &self,
+        product: RecordId,
+        point: Option<u32>,
+    ) -> Result<(), InventoryError> {
+        let record = Record::new(self.ids.as_ref(), self.clock.as_ref());
+        let at = stored(record.created_at);
+        match point {
+            Some(point) => {
+                self.connection()
+                    .execute(
+                        "INSERT INTO inventory_reorder_points
+                             (id, product_id, quantity, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?4)
+                         ON CONFLICT (product_id) DO UPDATE SET
+                             quantity = excluded.quantity,
+                             updated_at = excluded.updated_at,
+                             deleted_at = NULL",
+                        params![
+                            record.id.to_string(),
+                            product.to_string(),
+                            i64::from(point),
+                            at
+                        ],
+                    )
+                    .await?;
+            }
+            None => {
+                self.connection()
+                    .execute(
+                        "UPDATE inventory_reorder_points SET deleted_at = ?1, updated_at = ?1
+                         WHERE product_id = ?2 AND deleted_at IS NULL",
+                        params![at, product.to_string()],
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Every Product at or below its Reorder Point, the furthest below
+    /// first. A Product that never moved counts as none on hand.
+    pub async fn low_stock(&self) -> Result<Vec<LowStock>, InventoryError> {
+        let stock = self.stock().await?;
+        let mut low: Vec<LowStock> = reorder_points(self.connection())
+            .await?
+            .into_iter()
+            .filter_map(|(product, reorder_point)| {
+                let quantity = stock
+                    .products
+                    .iter()
+                    .find(|stock| stock.product == product)
+                    .map_or(0, |stock| stock.valuation.quantity());
+                (quantity <= i64::from(reorder_point)).then_some(LowStock {
+                    product,
+                    quantity,
+                    reorder_point,
+                })
+            })
+            .collect();
+        low.sort_by_key(|low| (low.quantity - i64::from(low.reorder_point), low.product));
+        Ok(low)
     }
 
     /// A Product's Stock Movements, newest first, each with the stock right
     /// after it.
     pub async fn history(&self, product: RecordId) -> Result<Vec<HistoryLine>, InventoryError> {
-        let movements = self
-            .movements(
-                &format!("SELECT {MOVEMENT_COLUMNS} AND product_id = ?1 {IN_LEDGER_ORDER}"),
-                params![product.to_string()],
-            )
-            .await?;
-        let mut valuation = None;
-        let mut lines = Vec::with_capacity(movements.len());
-        for movement in movements {
-            let after = apply(valuation, &movement)?;
-            valuation = Some(after);
-            lines.push(HistoryLine { movement, after });
-        }
+        let mut lines = replay(self.connection(), product).await?.lines;
         lines.reverse();
         Ok(lines)
     }
 
     /// Every Product's stock, replayed from the ledger.
     pub async fn stock(&self) -> Result<Stock, InventoryError> {
-        let movements = self
-            .movements(&format!("SELECT {MOVEMENT_COLUMNS} {IN_LEDGER_ORDER}"), ())
-            .await?;
+        let movements = movements(
+            self.connection(),
+            &format!("SELECT {MOVEMENT_COLUMNS} {IN_LEDGER_ORDER}"),
+            (),
+        )
+        .await?;
+        let points = reorder_points(self.connection()).await?;
         let mut products: Vec<ProductStock> = Vec::new();
         for movement in movements {
             let index = match products.iter().position(|p| p.product == movement.product) {
@@ -336,6 +544,7 @@ impl Inventory {
                         product: movement.product,
                         by_location: Vec::new(),
                         valuation: Valuation::empty(movement.cost.currency()),
+                        reorder_point: points.get(&movement.product).copied(),
                     });
                     products.len() - 1
                 }
@@ -360,27 +569,105 @@ impl Inventory {
         Ok(Stock { products })
     }
 
-    async fn movements(
+    /// A new movement, dated now.
+    fn movement(
         &self,
-        query: &str,
-        values: impl libsql::params::IntoParams,
-    ) -> Result<Vec<StockMovement>, InventoryError> {
-        let mut rows = self.connection().query(query, values).await?;
-        let mut movements = Vec::new();
-        while let Some(row) = rows.next().await? {
-            movements.push(movement_from(&row)?);
+        product: RecordId,
+        location: RecordId,
+        quantity: i64,
+        cost: Money,
+        reason: MovementReason,
+        note: Option<String>,
+    ) -> StockMovement {
+        let record = Record::new(self.ids.as_ref(), self.clock.as_ref());
+        StockMovement {
+            id: record.id,
+            product,
+            location,
+            quantity,
+            cost,
+            reason,
+            note,
+            at: record.created_at,
         }
-        Ok(movements)
     }
+}
+
+/// A Product's ledger replayed in order.
+struct Replay {
+    lines: Vec<HistoryLine>,
+    /// The stock now; `None` before the first movement.
+    valuation: Option<Valuation>,
+    /// The Average Cost of the last moment with units on hand: what units
+    /// found by a count cost.
+    basis: Option<Money>,
+}
+
+async fn replay(on: &Connection, product: RecordId) -> Result<Replay, InventoryError> {
+    let movements = movements(
+        on,
+        &format!("SELECT {MOVEMENT_COLUMNS} AND product_id = ?1 {IN_LEDGER_ORDER}"),
+        params![product.to_string()],
+    )
+    .await?;
+    let mut replay = Replay {
+        lines: Vec::with_capacity(movements.len()),
+        valuation: None,
+        basis: None,
+    };
+    for movement in movements {
+        let after = apply(replay.valuation, &movement)?;
+        replay.valuation = Some(after);
+        replay.basis = after.average_cost().or(replay.basis);
+        replay.lines.push(HistoryLine { movement, after });
+    }
+    Ok(replay)
 }
 
 /// The stock after `movement`, from the stock before it (`None` before the
 /// Product's first movement).
 fn apply(before: Option<Valuation>, movement: &StockMovement) -> Result<Valuation, InventoryError> {
     let before = before.unwrap_or_else(|| Valuation::empty(movement.cost.currency()));
-    let quantity = u32::try_from(movement.quantity)
-        .map_err(|_| InventoryError::Unreadable(movement.quantity.to_string()))?;
-    Ok(before.enter(quantity, movement.cost)?)
+    Ok(before.moved(movement.quantity, movement.cost)?)
+}
+
+async fn insert(on: &Connection, movement: &StockMovement) -> Result<(), InventoryError> {
+    let at = stored(movement.at);
+    // An adjustment answers to nothing outside the ledger: it names itself.
+    let reference = movement.reason.reference().unwrap_or(movement.id);
+    on.execute(
+        "INSERT INTO inventory_stock_movements
+             (id, product_id, location_id, quantity, cost, currency, reason,
+              reference_id, note, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        params![
+            movement.id.to_string(),
+            movement.product.to_string(),
+            movement.location.to_string(),
+            movement.quantity,
+            movement.cost.amount().to_string(),
+            movement.cost.currency().code(),
+            movement.reason.code(),
+            reference.to_string(),
+            movement.note.clone(),
+            at
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+async fn movements(
+    on: &Connection,
+    query: &str,
+    values: impl libsql::params::IntoParams,
+) -> Result<Vec<StockMovement>, InventoryError> {
+    let mut rows = on.query(query, values).await?;
+    let mut movements = Vec::new();
+    while let Some(row) = rows.next().await? {
+        movements.push(movement_from(&row)?);
+    }
+    Ok(movements)
 }
 
 async fn known_location(on: &Connection, location: RecordId) -> Result<(), InventoryError> {
@@ -393,6 +680,25 @@ async fn known_location(on: &Connection, location: RecordId) -> Result<(), Inven
     match rows.next().await? {
         Some(_) => Ok(()),
         None => Err(InventoryError::UnknownLocation(location)),
+    }
+}
+
+/// Units of `product` on hand in `location`.
+async fn balance_in(
+    on: &Connection,
+    product: RecordId,
+    location: RecordId,
+) -> Result<i64, InventoryError> {
+    let mut rows = on
+        .query(
+            "SELECT COALESCE(SUM(quantity), 0) FROM inventory_stock_movements
+             WHERE product_id = ?1 AND location_id = ?2 AND deleted_at IS NULL",
+            params![product.to_string(), location.to_string()],
+        )
+        .await?;
+    match rows.next().await? {
+        Some(row) => Ok(row.get(0)?),
+        None => Ok(0),
     }
 }
 
@@ -413,6 +719,41 @@ async fn valued_in(on: &Connection, product: RecordId) -> Result<Option<Currency
     }
 }
 
+async fn reorder_point_of(
+    on: &Connection,
+    product: RecordId,
+) -> Result<Option<u32>, InventoryError> {
+    let mut rows = on
+        .query(
+            "SELECT quantity FROM inventory_reorder_points
+             WHERE product_id = ?1 AND deleted_at IS NULL",
+            params![product.to_string()],
+        )
+        .await?;
+    match rows.next().await? {
+        Some(row) => Ok(Some(point_from(row.get(0)?)?)),
+        None => Ok(None),
+    }
+}
+
+async fn reorder_points(on: &Connection) -> Result<BTreeMap<RecordId, u32>, InventoryError> {
+    let mut rows = on
+        .query(
+            "SELECT product_id, quantity FROM inventory_reorder_points WHERE deleted_at IS NULL",
+            (),
+        )
+        .await?;
+    let mut points = BTreeMap::new();
+    while let Some(row) = rows.next().await? {
+        points.insert(row.id_at(0)?, point_from(row.get(1)?)?);
+    }
+    Ok(points)
+}
+
+fn point_from(stored: i64) -> Result<u32, InventoryError> {
+    u32::try_from(stored).map_err(|_| InventoryError::Unreadable(stored.to_string()))
+}
+
 fn movement_from(row: &Row) -> Result<StockMovement, InventoryError> {
     let reason: String = row.get(6)?;
     let reference = row.id_at(7)?;
@@ -425,5 +766,6 @@ fn movement_from(row: &Row) -> Result<StockMovement, InventoryError> {
         reason: MovementReason::from_stored(&reason, reference)
             .ok_or(InventoryError::Unreadable(reason))?,
         at: row.time_at(8)?,
+        note: row.get(9)?,
     })
 }

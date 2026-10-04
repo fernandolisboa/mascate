@@ -1,25 +1,30 @@
-//! Estoque (#13): each Product's balance per Stock Location, its Average
-//! Cost and value, the value of everything in stock, and each Product's
-//! Stock Movements. Every number here is read back from the ledger.
+//! Estoque (#13, #14): each Product's balance per Stock Location, its
+//! Average Cost and value, the value of everything in stock, and each
+//! Product's Stock Movements, Stock Adjustments and Reorder Point. Every
+//! number here is read back from the ledger.
 
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Div, Global, SharedString, Window, div, px};
+use gpui_kit::{AnyElement, App, Div, Entity, Global, SharedString, Window, div, px};
 use mascate_catalog::{Product, Supplier};
 use mascate_commerce::PurchaseOrder;
 use mascate_inventory::{
-    HistoryLine, Inventory, InventoryError, MovementReason, ProductStock, Stock, StockLocation,
+    Adjusted, AdjustmentKind, HOME_LOCATION, HistoryLine, Inventory, InventoryError,
+    MovementReason, ProductStock, Stock, StockAdjustment, StockLocation, StockMovement,
 };
 use mascate_kernel::{Money, RecordId};
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day};
+use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::layout;
+use crate::low_stock;
 use crate::parts::ScreenParts;
 use crate::purchases::{self, units_text};
 
@@ -43,13 +48,28 @@ struct Shown {
     history: Option<(RecordId, Vec<HistoryLine>)>,
 }
 
+const ADJUSTMENT_KINDS: [AdjustmentKind; 3] = [
+    AdjustmentKind::Loss,
+    AdjustmentKind::Damage,
+    AdjustmentKind::Count,
+];
+
 pub struct StockScreen {
     shown: Option<Shown>,
     /// The Product whose movements are open.
     open: Option<RecordId>,
+    /// The adjustment's reason; the owner always picks one.
+    kind: Option<AdjustmentKind>,
+    units: Entity<InputState>,
+    note: Entity<InputState>,
+    reorder_point: Entity<InputState>,
+    /// The Product whose Reorder Point the field holds.
+    filled: Option<RecordId>,
+    busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     failure: Option<SharedString>,
+    outcome: Option<Outcome>,
 }
 
 impl StockScreen {
@@ -57,14 +77,30 @@ impl StockScreen {
         let mut screen = Self {
             shown: None,
             open: None,
+            kind: None,
+            units: input("Quantidade", window, cx),
+            note: input("Observação (opcional)", window, cx),
+            reorder_point: input("Sem alerta", window, cx),
+            filled: None,
+            busy: false,
             reads: 0,
             failure: None,
+            outcome: None,
         };
         screen.refresh(window, cx);
         screen
     }
 
-    fn open(&mut self, product: Option<RecordId>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a Product's movements, or the whole stock with `None`.
+    pub fn open(&mut self, product: Option<RecordId>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open != product {
+            self.kind = None;
+            self.outcome = None;
+            self.filled = None;
+            for field in [&self.units, &self.note] {
+                field.update(cx, |field, cx| field.set_value("", window, cx));
+            }
+        }
         self.open = product;
         self.refresh(window, cx);
     }
@@ -106,12 +142,13 @@ impl StockScreen {
         });
         cx.spawn_in(window, async move |this, cx| {
             let shown = working.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 if this.reads != read {
                     return;
                 }
                 match shown {
                     Ok(shown) => {
+                        this.fill_reorder_point(&shown, window, cx);
                         this.shown = Some(shown);
                         this.failure = None;
                     }
@@ -121,6 +158,263 @@ impl StockScreen {
             });
         })
         .detach();
+    }
+
+    /// Puts the open Product's Reorder Point in its field once per opening,
+    /// so a read never overwrites what the owner is typing.
+    fn fill_reorder_point(&mut self, shown: &Shown, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open.filter(|open| self.filled != Some(*open)) else {
+            return;
+        };
+        let point = shown
+            .stock
+            .products
+            .iter()
+            .find(|stock| stock.product == open)
+            .and_then(|stock| stock.reorder_point)
+            .map(|point| point.to_string())
+            .unwrap_or_default();
+        self.reorder_point
+            .update(cx, |field, cx| field.set_value(point, window, cx));
+        self.filled = Some(open);
+    }
+
+    /// Runs `change` off the UI thread, hands what it returned to `then`
+    /// and reads the stock again.
+    fn change<T, F, Fut>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        change: F,
+        then: impl FnOnce(&mut Self, T, &mut Window, &mut Context<Self>) + 'static,
+    ) where
+        T: Send + 'static,
+        F: FnOnce(Arc<Inventory>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, InventoryError>> + Send,
+    {
+        let Some(inventory) = inventory(cx) else {
+            return;
+        };
+        self.busy = true;
+        self.outcome = None;
+        let working = cx
+            .background_executor()
+            .spawn(async move { change(inventory).await.map_err(|e| inventory_failure(&e)) });
+        cx.spawn_in(window, async move |this, cx| {
+            let changed = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match changed {
+                    Ok(value) => then(this, value, window, cx),
+                    Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
+                }
+                this.refresh(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn failed(&mut self, text: &'static str, cx: &mut Context<Self>) {
+        self.outcome = Some(Outcome::Failed(text.into()));
+        cx.notify();
+    }
+
+    fn adjust(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(product) = self.open else {
+            return;
+        };
+        let Some(kind) = self.kind else {
+            return self.failed("Escolha o motivo do ajuste: perda, avaria ou contagem.", cx);
+        };
+        let units = self.units.read(cx).value().trim().parse::<u32>().ok();
+        let adjustment = match (kind, units) {
+            (AdjustmentKind::Loss, Some(units @ 1..)) => StockAdjustment::Loss(units),
+            (AdjustmentKind::Damage, Some(units @ 1..)) => StockAdjustment::Damage(units),
+            (AdjustmentKind::Count, Some(counted)) => StockAdjustment::Count(counted),
+            (AdjustmentKind::Count, None) => {
+                return self.failed(
+                    "Digite quantas unidades você contou (0 se não sobrou nenhuma).",
+                    cx,
+                );
+            }
+            _ => return self.failed("Digite quantas unidades saíram (1 ou mais).", cx),
+        };
+        let note = self.note.read(cx).value().to_string();
+        self.change(
+            window,
+            cx,
+            move |inventory| async move {
+                inventory
+                    .adjust(product, HOME_LOCATION, adjustment, Some(&note))
+                    .await
+            },
+            |this, adjusted: Adjusted, window, cx| {
+                this.kind = None;
+                for field in [&this.units, &this.note] {
+                    field.update(cx, |field, cx| field.set_value("", window, cx));
+                }
+                this.outcome = Some(Outcome::Done(adjusted_text(&adjusted).into()));
+                if let (Some(low), Some(shown)) = (adjusted.reached_reorder_point, &this.shown) {
+                    low_stock::notify(low, &shown.products, cx);
+                }
+            },
+        );
+    }
+
+    fn save_reorder_point(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(product) = self.open else {
+            return;
+        };
+        let text = self.reorder_point.read(cx).value().trim().to_owned();
+        let point = match text.parse::<u32>() {
+            _ if text.is_empty() => None,
+            Ok(point) => Some(point),
+            Err(_) => {
+                return self.failed(
+                    "Digite o ponto de reposição como um número inteiro, ou deixe vazio para \
+                     não ter alerta.",
+                    cx,
+                );
+            }
+        };
+        self.change(
+            window,
+            cx,
+            move |inventory| async move { inventory.set_reorder_point(product, point).await },
+            move |this, (), _, _| {
+                this.outcome = Some(Outcome::Done(
+                    match point {
+                        Some(point) => format!(
+                            "Ponto de reposição salvo: com {} ou menos, o produto aparece em \
+                             Hoje.",
+                            units_text(i64::from(point))
+                        ),
+                        None => {
+                            "Ponto de reposição removido; este produto não gera alerta.".to_owned()
+                        }
+                    }
+                    .into(),
+                ));
+            },
+        );
+    }
+
+    fn render_controls(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let card = || {
+            v_flex()
+                .flex_1()
+                .min_w(px(300.))
+                .gap_3()
+                .p_4()
+                .rounded(t.radius_lg)
+                .border(t.border_width)
+                .border_color(t.frame)
+                .bg(t.surface)
+        };
+        let field = |label: &'static str, input: AnyElement| {
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().font_medium().child(label))
+                .child(input)
+        };
+        let kinds = ADJUSTMENT_KINDS.into_iter().map(|kind| {
+            Button::new(("adjustment-kind", kind as usize))
+                .label(kind_name(kind))
+                .small()
+                .map(|button| {
+                    if self.kind == Some(kind) {
+                        button.primary()
+                    } else {
+                        button.outline()
+                    }
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.kind = Some(kind);
+                    cx.notify();
+                }))
+        });
+        let (units_label, hint) = match self.kind {
+            Some(AdjustmentKind::Loss) => (
+                "Unidades perdidas",
+                "As unidades saem pelo custo médio, que não muda.",
+            ),
+            Some(AdjustmentKind::Damage) => (
+                "Unidades com avaria",
+                "As unidades saem pelo custo médio, que não muda.",
+            ),
+            Some(AdjustmentKind::Count) => (
+                "Unidades contadas",
+                "Digite o saldo físico; o app registra a diferença.",
+            ),
+            None => ("Unidades", "Escolha o motivo do ajuste."),
+        };
+        let adjust = card()
+            .child(kit::section_heading("Ajustar estoque"))
+            .child(h_flex().gap_2().flex_wrap().children(kinds))
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_end()
+                    .child(field(
+                        units_label,
+                        div()
+                            .w(px(140.))
+                            .child(Input::new(&self.units).small())
+                            .into_any_element(),
+                    ))
+                    .child(div().flex_1().child(field(
+                        "Observação",
+                        Input::new(&self.note).small().into_any_element(),
+                    ))),
+            )
+            .child(div().text_sm().text_color(t.text2).child(hint))
+            .child(
+                h_flex().child(
+                    Button::new("adjust-stock")
+                        .label("Registrar ajuste")
+                        .primary()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.adjust(window, cx))),
+                ),
+            );
+        let reorder = card()
+            .child(kit::section_heading("Ponto de reposição"))
+            .child(div().text_sm().text_color(t.text2).child(
+                "Com o saldo neste número ou abaixo, o produto aparece em Hoje e o app avisa \
+                 quando um ajuste o leva até aqui. Vazio, não há alerta.",
+            ))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .w(px(140.))
+                            .child(Input::new(&self.reorder_point).small()),
+                    )
+                    .child(
+                        Button::new("save-reorder-point")
+                            .label("Salvar ponto")
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_reorder_point(window, cx)
+                            })),
+                    ),
+            );
+        h_flex()
+            .flex_wrap()
+            .gap_3()
+            .items_start()
+            .child(adjust)
+            .child(reorder)
+            .into_any_element()
     }
 
     fn render_summary(&self, shown: &Shown, cx: &App) -> AnyElement {
@@ -230,7 +524,10 @@ impl StockScreen {
                                     .gap_2()
                                     .items_center()
                                     .child(kit::tag(sku, t.accent_text, cx))
-                                    .child(div().min_w_0().truncate().child(name)),
+                                    .child(div().min_w_0().truncate().child(name))
+                                    .when(stock.is_low(), |cell| {
+                                        cell.child(kit::tag("estoque baixo", t.danger, cx))
+                                    }),
                             )
                             .children(shown.locations.iter().map(|location| {
                                 let quantity = stock
@@ -287,7 +584,7 @@ impl StockScreen {
                 .iter()
                 .find(|location| location.id == movement.location)
                 .map_or("Local removido", |location| location.name.as_str());
-            let (what, source) = reason_text(shown, movement.reason);
+            let (what, source) = reason_text(shown, movement);
             let detail = match source {
                 Some(source) => format!("{source} · {location}"),
                 None => location.to_owned(),
@@ -351,7 +648,7 @@ fn cost_text(cost: Option<Money>) -> String {
     cost.map_or_else(|| "—".to_owned(), Money::to_pt_br)
 }
 
-fn product_label(products: &[Product], id: RecordId) -> (String, String) {
+pub fn product_label(products: &[Product], id: RecordId) -> (String, String) {
     products
         .iter()
         .find(|product| product.id == id)
@@ -362,9 +659,13 @@ fn product_label(products: &[Product], id: RecordId) -> (String, String) {
 }
 
 /// What a movement was and where it came from: "Entrada da compra de
-/// 01/10/2026" and "Loja Fones".
-fn reason_text(shown: &Shown, reason: MovementReason) -> (String, Option<String>) {
-    match reason {
+/// 01/10/2026" and "Loja Fones", or "Avaria" and the owner's note.
+fn reason_text(shown: &Shown, movement: &StockMovement) -> (String, Option<String>) {
+    match movement.reason {
+        MovementReason::Adjustment(kind) => (
+            format!("Ajuste: {}", kind_name(kind)),
+            movement.note.clone(),
+        ),
         MovementReason::PurchaseReceipt { purchase_order } => {
             match shown.orders.iter().find(|order| order.id == purchase_order) {
                 Some(order) => {
@@ -387,10 +688,56 @@ fn reason_text(shown: &Shown, reason: MovementReason) -> (String, Option<String>
     }
 }
 
+fn kind_name(kind: AdjustmentKind) -> &'static str {
+    match kind {
+        AdjustmentKind::Loss => "Perda",
+        AdjustmentKind::Damage => "Avaria",
+        AdjustmentKind::Count => "Contagem",
+    }
+}
+
+/// What an adjustment did, as the owner reads it.
+fn adjusted_text(adjusted: &Adjusted) -> String {
+    let Some(movement) = &adjusted.movement else {
+        return "A contagem confere com o saldo; nada a ajustar.".into();
+    };
+    let units = units_text(movement.quantity.abs());
+    let mut text = match movement.reason {
+        MovementReason::Adjustment(AdjustmentKind::Loss) => {
+            format!("{units} saíram do estoque como perda.")
+        }
+        MovementReason::Adjustment(AdjustmentKind::Damage) => {
+            format!("{units} saíram do estoque como avaria.")
+        }
+        MovementReason::Adjustment(AdjustmentKind::Count) if movement.quantity > 0 => {
+            format!("A contagem achou {units} a mais; o saldo foi corrigido.")
+        }
+        MovementReason::Adjustment(AdjustmentKind::Count) => {
+            format!("A contagem achou {units} a menos; o saldo foi corrigido.")
+        }
+        MovementReason::PurchaseReceipt { .. } => "Estoque ajustado.".into(),
+    };
+    if adjusted.reached_reorder_point.is_some() {
+        text.push_str(" O produto chegou ao ponto de reposição.");
+    }
+    text
+}
+
 /// Why reading or writing the stock failed, as the owner reads it.
 pub fn inventory_failure(error: &InventoryError) -> String {
     match error {
-        InventoryError::NoUnits => "Uma entrada precisa de pelo menos 1 unidade.".into(),
+        InventoryError::NoUnits => {
+            "Uma entrada ou um ajuste precisa de pelo menos 1 unidade.".into()
+        }
+        InventoryError::NotEnoughStock { on_hand } => format!(
+            "Só há {} deste produto aqui. Se o físico for outro, use Contagem.",
+            units_text(*on_hand)
+        ),
+        InventoryError::NoCostBasis => {
+            "Este produto nunca entrou no estoque, então o app não sabe quanto custam as \
+             unidades achadas. Registre a compra em Compras e receba-a."
+                .into()
+        }
         InventoryError::NegativeCost => "Um custo não pode ser negativo.".into(),
         InventoryError::UnknownLocation(_) => {
             "Esse local de estoque não existe mais; a lista foi atualizada.".into()
@@ -427,6 +774,9 @@ impl Render for StockScreen {
                 .clone()
                 .map(|failure| kit::error_notice(failure, cx).into_any_element()),
         );
+        parts
+            .notices
+            .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         if self.open.is_some() {
             parts.actions.push(
                 Button::new("back-to-stock")
@@ -443,9 +793,10 @@ impl Render for StockScreen {
         };
         match (self.open, &shown.history) {
             (Some(open), Some((product, history))) if open == *product => {
-                parts
-                    .content
-                    .extend(self.render_history(shown, history, cx));
+                let mut history = self.render_history(shown, history, cx).into_iter();
+                parts.content.extend(history.next());
+                parts.content.push(self.render_controls(cx));
+                parts.content.extend(history);
             }
             (Some(_), _) => {}
             (None, _) => {

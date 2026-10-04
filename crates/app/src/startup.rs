@@ -277,8 +277,8 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 mod tests {
     use mascate_catalog::NewSupplierOffer;
     use mascate_commerce::{NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus, Receiving};
-    use mascate_inventory::HOME_LOCATION;
-    use mascate_kernel::{Currency, Money};
+    use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
+    use mascate_kernel::{Currency, Money, RecordId};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
@@ -286,6 +286,8 @@ mod tests {
     const SAMPLE_SKU: &str = "EXEMPLO-001";
     const SAMPLE_ORDERED: u32 = 3;
     const SAMPLE_RECEIVED: u32 = 2;
+    const SAMPLE_LOST: u32 = 1;
+    const SAMPLE_REORDER_POINT: u32 = 5;
 
     /// One database per published version, written by the version itself
     /// with [`write_this_versions_sample_database`].
@@ -355,8 +357,12 @@ mod tests {
                 .await
                 .unwrap();
             let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
-            let orders =
-                PurchaseOrders::new(database.clone(), inventory, clock.clone(), ids.clone());
+            let orders = PurchaseOrders::new(
+                database.clone(),
+                inventory.clone(),
+                clock.clone(),
+                ids.clone(),
+            );
             let order = orders
                 .create(NewPurchaseOrder {
                     supplier: supplier.id,
@@ -379,6 +385,19 @@ mod tests {
                         quantity: SAMPLE_RECEIVED,
                     }],
                 )
+                .await
+                .unwrap();
+            inventory
+                .adjust(
+                    product.id,
+                    HOME_LOCATION,
+                    StockAdjustment::Loss(SAMPLE_LOST),
+                    Some("amostra"),
+                )
+                .await
+                .unwrap();
+            inventory
+                .set_reorder_point(product.id, Some(SAMPLE_REORDER_POINT))
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -503,8 +522,8 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                // The catalog, Purchase Orders and stock arrived in 0.2.0;
-                // older samples have none.
+                // The catalog, Purchase Orders, stock, its adjustments and
+                // Reorder Points arrived in 0.2.0; older samples have none.
                 if Version::parse(released) >= Version::parse("0.2.0") {
                     let product = products
                         .iter()
@@ -517,15 +536,35 @@ mod tests {
                         "{name}"
                     );
                     let stock = inventory.stock().await.unwrap();
+                    let on_hand = i64::from(SAMPLE_RECEIVED - SAMPLE_LOST);
+                    assert_eq!(stock.products[0].valuation.quantity(), on_hand, "{name}");
+                    assert_eq!(stock.products[0].product, product.id, "{name}");
                     assert_eq!(
-                        stock.products[0].valuation.quantity(),
-                        i64::from(SAMPLE_RECEIVED),
+                        inventory.low_stock().await.unwrap(),
+                        [LowStock {
+                            product: product.id,
+                            quantity: on_hand,
+                            reorder_point: SAMPLE_REORDER_POINT,
+                        }],
                         "{name}"
                     );
-                    assert_eq!(stock.products[0].product, product.id, "{name}");
                 }
                 catalog.add_supplier("Loja nova").await.unwrap();
                 assert!(!inventory.locations().await.unwrap().is_empty(), "{name}");
+                let any_product = RecordId::from_u128(1);
+                inventory
+                    .set_reorder_point(any_product, Some(0))
+                    .await
+                    .unwrap();
+                assert!(
+                    inventory
+                        .low_stock()
+                        .await
+                        .unwrap()
+                        .iter()
+                        .any(|low| low.product == any_product),
+                    "{name}"
+                );
                 orders.purchase_orders().await.unwrap();
             });
         }

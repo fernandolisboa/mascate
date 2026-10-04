@@ -1,86 +1,13 @@
-use std::str::FromStr;
-use std::sync::Arc;
+mod common;
 
-use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_inventory::{
-    HOME_LOCATION, Inventory, InventoryError, LocationBalance, MIGRATIONS, MovementReason,
-    NewEntry, Valuation,
+    HOME_LOCATION, InventoryError, LocationBalance, MovementReason, NewEntry, Valuation,
 };
-use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, RecordId};
-use mascate_platform::{Database, migrate};
+use mascate_kernel::{Currency, Money};
 use rust_decimal::Decimal;
-use uuid::Uuid;
 
-struct Fixture {
-    _dir: tempfile::TempDir,
-    clock: Arc<ManualClock>,
-    database: Arc<Database>,
-    inventory: Inventory,
-}
-
-impl Fixture {
-    async fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let clock = Arc::new(ManualClock::at(
-            Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap(),
-        ));
-        let database = Arc::new(
-            Database::open(&dir.path().join("mascate.db"))
-                .await
-                .unwrap(),
-        );
-        migrate(&database, clock.as_ref(), &[MIGRATIONS])
-            .await
-            .unwrap();
-        let inventory = Inventory::new(
-            database.clone(),
-            clock.clone(),
-            Arc::new(SequentialIds::default()),
-        );
-        Self {
-            _dir: dir,
-            clock,
-            database,
-            inventory,
-        }
-    }
-
-    /// Records entries on a transaction of their own, as a caller would.
-    async fn enter(&self, entries: &[NewEntry]) -> Result<(), InventoryError> {
-        let connection = self.database.connect_for_transaction().await?;
-        let transaction = connection.transaction().await?;
-        self.inventory.record_entries(&transaction, entries).await?;
-        transaction.commit().await?;
-        self.clock.advance(TimeDelta::minutes(1));
-        Ok(())
-    }
-}
-
-fn brl(amount: &str) -> Money {
-    Money::new(Decimal::from_str(amount).unwrap(), Currency::Brl)
-}
-
-fn id(n: u128) -> RecordId {
-    Uuid::from_u128(1_000_000 + n)
-}
-
-const FONE: u128 = 1;
-const CAPA: u128 = 2;
-const ORDER: u128 = 100;
-
-fn entry(product: u128, quantity: u32, cost: &str) -> NewEntry {
-    NewEntry {
-        product: id(product),
-        location: HOME_LOCATION,
-        quantity,
-        cost: brl(cost),
-        reason: MovementReason::PurchaseReceipt {
-            purchase_order: id(ORDER),
-        },
-    }
-}
+use common::{CAPA, FONE, Fixture, ORDER, brl, entry, id};
 
 #[test]
 fn the_owners_space_is_the_first_stock_location() {
