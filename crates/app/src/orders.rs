@@ -33,7 +33,6 @@ use crate::layout;
 use crate::low_stock;
 use crate::mercado_livre;
 use crate::parts::ScreenParts;
-use crate::purchases::units_text;
 use crate::stock::product_label;
 use crate::stock_mirror;
 
@@ -217,7 +216,8 @@ fn dispatch_by(order: &Order) -> Option<Timestamp> {
         .and_then(|shipment| shipment.dispatch_by)
 }
 
-/// "3 pedidos novos. 2 itens baixados do estoque."
+/// "3 pedidos novos. 2 itens baixados do estoque." What is still short
+/// shows on the screen, with its reason.
 fn synced_text(synced: &OrderSync) -> String {
     let mut text = match (synced.new, synced.changed) {
         (0, 0) => "Nenhum pedido novo ou alterado.".to_owned(),
@@ -230,12 +230,6 @@ fn synced_text(synced: &OrderSync) -> String {
         0 => {}
         1 => text.push_str(" 1 item baixado do estoque."),
         taken => text.push_str(&format!(" {taken} itens baixados do estoque.")),
-    }
-    if synced.short > 0 {
-        text.push_str(&format!(
-            " {} ainda sem baixa; veja o motivo em cada pedido.",
-            items_text(synced.short)
-        ));
     }
     text
 }
@@ -505,13 +499,11 @@ impl OrdersScreen {
         match line.stock {
             LineStock::Taken { product, .. } => {
                 let (sku, _) = product_label(&self.products, product);
-                (
-                    format!(
-                        "{} baixadas do estoque de {sku}",
-                        units_text(i64::from(line.sold.quantity))
-                    ),
-                    t.success,
-                )
+                let text = match line.sold.quantity {
+                    1 => format!("1 unidade saiu do estoque de {sku}"),
+                    units => format!("{units} unidades saíram do estoque de {sku}"),
+                };
+                (text, t.success)
             }
             LineStock::Short(StockShort::NoListing) => (
                 "Sem baixa: o anúncio ainda não está em Anúncios. Sincronize os anúncios e \
@@ -757,7 +749,7 @@ impl Render for OrderSettingsSection {
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .w(px(220.))
+                .w(px(260.))
                 .child(div().text_sm().font_medium().child(label))
                 .child(Input::new(input).small())
         };
@@ -819,10 +811,8 @@ mod tests {
             synced_text(&sync(2, 1, 3, 0)),
             "2 pedidos novos. 3 itens baixados do estoque."
         );
-        assert_eq!(
-            synced_text(&sync(1, 0, 0, 1)),
-            "1 pedido novo. 1 item ainda sem baixa; veja o motivo em cada pedido."
-        );
+        // What is still short shows on the screen, not in the Sync's line.
+        assert_eq!(synced_text(&sync(1, 0, 0, 1)), "1 pedido novo.");
         assert_eq!(synced_text(&sync(0, 2, 0, 0)), "2 pedidos alterados.");
     }
 }

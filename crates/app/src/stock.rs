@@ -400,7 +400,7 @@ impl StockScreen {
             .child(kit::section_heading("Ponto de reposição"))
             .child(div().text_sm().text_color(t.text2).child(
                 "Com o saldo neste número ou abaixo, o produto aparece em Hoje e o app avisa \
-                 quando um ajuste o leva até aqui. Vazio, não há alerta.",
+                 quando um ajuste ou uma venda o leva até aqui. Vazio, não há alerta.",
             ))
             .child(
                 h_flex()
