@@ -1,15 +1,11 @@
 //! Suppliers, their Supplier Offers and the Products the offers become.
 
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use libsql::{Connection, Row, Value, params};
-use mascate_kernel::{
-    Clock, Currency, CurrencyMismatch, IdGenerator, Money, Record, RecordId, Timestamp,
-};
-use mascate_platform::{Database, Migration, read_stored, stored};
-use rust_decimal::Decimal;
+use mascate_kernel::{Clock, CurrencyMismatch, IdGenerator, Money, Record, RecordId, Timestamp};
+use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 
 use crate::{InvalidLink, InvalidSku, OfferLink, Sku};
 
@@ -282,7 +278,7 @@ impl Catalog {
         let mut suppliers = Vec::new();
         while let Some(row) = rows.next().await? {
             suppliers.push(Supplier {
-                id: id_at(&row, 0)?,
+                id: row.id_at(0)?,
                 name: row.get(1)?,
             });
         }
@@ -579,7 +575,7 @@ impl Catalog {
             .await?;
         match rows.next().await? {
             Some(row) => Ok(Supplier {
-                id: id_at(&row, 0)?,
+                id: row.id_at(0)?,
                 name: row.get(1)?,
             }),
             None => Err(CatalogError::UnknownSupplier(id)),
@@ -598,7 +594,7 @@ impl Catalog {
             )
             .await?;
         match rows.next().await? {
-            Some(row) => Ok(Some(id_at(&row, 0)?)),
+            Some(row) => Ok(Some(row.id_at(0)?)),
             None => Ok(None),
         }
     }
@@ -640,45 +636,38 @@ fn required(text: &str, missing: CatalogError) -> Result<String, CatalogError> {
     }
 }
 
-fn id_at(row: &Row, at: i32) -> Result<RecordId, CatalogError> {
-    let text: String = row.get(at)?;
-    RecordId::parse_str(&text).map_err(|_| CatalogError::Unreadable(text))
-}
-
-fn decimal_at(row: &Row, at: i32) -> Result<Decimal, CatalogError> {
-    let text: String = row.get(at)?;
-    Decimal::from_str(&text).map_err(|_| CatalogError::Unreadable(text))
+impl From<StoredValueError> for CatalogError {
+    fn from(error: StoredValueError) -> Self {
+        match error {
+            StoredValueError::Unreadable(text) => CatalogError::Unreadable(text),
+            StoredValueError::Sql(error) => CatalogError::Sql(error),
+        }
+    }
 }
 
 fn product_from(row: &Row) -> Result<Product, CatalogError> {
     let sku: String = row.get(1)?;
     Ok(Product {
-        id: id_at(row, 0)?,
+        id: row.id_at(0)?,
         sku: Sku::parse(&sku).map_err(|_| CatalogError::Unreadable(sku))?,
         name: row.get(2)?,
     })
 }
 
 fn offer_from(row: &Row) -> Result<SupplierOffer, CatalogError> {
-    let product: Option<String> = row.get(1)?;
     let source: String = row.get(2)?;
-    let currency: String = row.get(7)?;
-    let currency =
-        Currency::from_code(&currency).ok_or_else(|| CatalogError::Unreadable(currency))?;
-    let observed_at: String = row.get(8)?;
+    let currency = row.currency_at(7)?;
     Ok(SupplierOffer {
-        id: id_at(row, 0)?,
-        product: product
-            .map(|text| RecordId::parse_str(&text).map_err(|_| CatalogError::Unreadable(text)))
-            .transpose()?,
+        id: row.id_at(0)?,
+        product: row.optional_id_at(1)?,
         source: ProductSource::from_code(&source).ok_or(CatalogError::Unreadable(source))?,
         link: row.get(3)?,
         title: row.get(4)?,
-        price: Money::new(decimal_at(row, 5)?, currency),
-        shipping: Money::new(decimal_at(row, 6)?, currency),
-        observed_at: read_stored(&observed_at).ok_or(CatalogError::Unreadable(observed_at))?,
+        price: Money::new(row.decimal_at(5)?, currency),
+        shipping: Money::new(row.decimal_at(6)?, currency),
+        observed_at: row.time_at(8)?,
         supplier: Supplier {
-            id: id_at(row, 9)?,
+            id: row.id_at(9)?,
             name: row.get(10)?,
         },
     })

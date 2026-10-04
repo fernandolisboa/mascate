@@ -5,6 +5,7 @@ mod appearance;
 mod backups;
 mod catalog;
 mod connections;
+mod forms;
 mod home;
 mod kit;
 mod layout;
@@ -14,11 +15,13 @@ mod palette;
 mod parts;
 mod preferences;
 mod products;
+mod purchases;
 mod reminders;
 mod restricted;
 mod settings;
 mod shell;
 mod startup;
+mod stock;
 mod tray;
 mod updates;
 
@@ -36,9 +39,11 @@ use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
 use crate::preferences::Preferences;
+use crate::purchases::AppPurchaseOrders;
 use crate::reminders::AppReminders;
 use crate::restricted::AppFlags;
 use crate::shell::Shell;
+use crate::stock::AppInventory;
 use crate::tray::TrayCommand;
 
 fn main() {
@@ -96,6 +101,8 @@ fn main() {
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
+                cx.set_global(AppInventory(started.inventory.clone()));
+                cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

@@ -7,21 +7,19 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::searchable_list::SearchableVec;
-use gpui_kit::component::select::{Select, SelectState};
+use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Entity, EventEmitter, SharedString, Subscription, Window, div, px};
+use gpui_kit::{AnyElement, Entity, EventEmitter, Subscription, Window, div, px};
 use mascate_catalog::{Catalog, CatalogError, NewSupplierOffer, OfferHistory, Product, Supplier};
 use mascate_kernel::{Currency, Money, RecordId, parse_amount};
 
 use crate::appearance::look;
-use crate::catalog::{self, Choice, NO_DATABASE, day, failure, price_and_shipping, product_choice};
+use crate::catalog::{self, NO_DATABASE, day, failure, price_and_shipping, product_choice};
+use crate::forms::{Choice, Outcome, Picker, input, notice, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
-
-type Picker = Entity<SelectState<SearchableVec<Choice>>>;
 
 /// Asks the window to show a Product's sheet.
 pub struct OpenProduct(pub RecordId);
@@ -31,11 +29,6 @@ pub struct OpenProduct(pub RecordId);
 enum Step {
     CreateProduct,
     LinkProduct,
-}
-
-enum Outcome {
-    Done(SharedString),
-    Failed(SharedString),
 }
 
 pub struct OffersScreen {
@@ -680,40 +673,6 @@ impl OffersScreen {
                 card.children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
             })
             .into_any_element()
-    }
-}
-
-fn input<V: 'static>(
-    placeholder: &'static str,
-    window: &mut Window,
-    cx: &mut Context<V>,
-) -> Entity<InputState> {
-    cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
-}
-
-fn picker<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Picker {
-    cx.new(|cx| {
-        SelectState::new(SearchableVec::new(Vec::<Choice>::new()), None, window, cx)
-            .searchable(true)
-    })
-}
-
-/// Puts `choices` in a picker, keeping what was picked if it is still there.
-fn refill(picker: &Picker, choices: Vec<Choice>, window: &mut Window, cx: &mut gpui_kit::App) {
-    picker.update(cx, |select, cx| {
-        let picked = select.selected_value().copied();
-        select.set_items(SearchableVec::new(choices), window, cx);
-        match picked {
-            Some(picked) => select.set_selected_value(&picked, window, cx),
-            None => select.set_selected_index(None, window, cx),
-        }
-    });
-}
-
-fn notice(outcome: &Outcome, cx: &gpui_kit::App) -> AnyElement {
-    match outcome {
-        Outcome::Done(text) => kit::success_notice(text.clone(), cx).into_any_element(),
-        Outcome::Failed(text) => kit::error_notice(text.clone(), cx).into_any_element(),
     }
 }
 

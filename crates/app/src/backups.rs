@@ -12,15 +12,14 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState, NumberInput};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyElement, App, Entity, Global, PathPromptOptions, SharedString, Subscription, Window, div, px,
-};
+use gpui_kit::{AnyElement, App, Entity, Global, PathPromptOptions, Subscription, Window, div, px};
 use mascate_platform::{
     Backup, BackupError, BackupSettings, Backups, MAX_KEEP, RestoreError,
     stage_restore_without_backup,
 };
 
 use crate::appearance::look;
+use crate::forms::Outcome;
 use crate::kit;
 use crate::ordered_saves::OrderedSaves;
 use crate::startup::MODULE_MIGRATIONS;
@@ -106,12 +105,6 @@ fn restore_refused(error: RestoreError) -> String {
         ),
         RestoreError::Backup(error) => backup_failed(error),
     }
-}
-
-/// The outcome of the last action, shown under the buttons.
-enum Outcome {
-    Done(SharedString),
-    Failed(SharedString),
 }
 
 pub struct BackupSection {
