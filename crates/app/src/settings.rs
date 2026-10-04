@@ -18,6 +18,7 @@ use crate::backups::BackupSection;
 use crate::connections::ConnectionsSection;
 use crate::kit;
 use crate::layout;
+use crate::orders::OrderSettingsSection;
 use crate::palette::palette;
 use crate::parts::ScreenParts;
 use crate::preferences;
@@ -98,6 +99,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
+    orders: Entity<OrderSettingsSection>,
     restricted: Entity<RestrictedFeaturesSection>,
     backup: Entity<BackupSection>,
     updates: Entity<UpdatesSection>,
@@ -141,6 +143,7 @@ impl SettingsScreen {
         Self {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
+            orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
             backup: cx.new(|cx| BackupSection::new(window, cx)),
             updates: cx.new(UpdatesSection::new),
@@ -543,6 +546,13 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Preços e margens"))
                 .child(self.pricing.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Pedidos"))
+                .child(self.orders.clone())
                 .into_any_element(),
         );
         parts.content.push(

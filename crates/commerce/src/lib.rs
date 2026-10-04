@@ -3,6 +3,7 @@
 mod drafts;
 mod freight;
 mod listings;
+mod orders;
 mod pricing;
 mod purchase_orders;
 mod stock_mirror;
@@ -17,6 +18,11 @@ pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
     CatalogProduct, ChannelListing, ChannelStock, LinkSuggestion, Listing, ListingError,
     ListingStatus, ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
+};
+pub use orders::{
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, FulfillmentMode, LineStock, Order,
+    OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync, Orders, Receiver, Shipment,
+    ShipmentStatus, StockShort,
 };
 pub use pricing::{
     CostSource, DraftPrice, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion,
@@ -35,7 +41,8 @@ pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     topic: ReminderTopic::Legal,
     title: "Dados de compradores (LGPD)",
     text: "Nome, endereço e telefone de quem compra são dados pessoais. Use-os só para envio \
-           e suporte; o app guarda apenas o necessário para isso.",
+           e suporte; o app guarda apenas o necessário para isso e apaga depois do prazo \
+           escolhido em Configurações › Pedidos.",
     reappears_after_days: 90,
 };
 
@@ -51,5 +58,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         pricing::CREATE_TARGET_MARGINS,
         drafts::CREATE_DRAFTS,
         stock_mirror::ADD_STOCK_SENT,
+        orders::CREATE_ORDERS,
     ],
 };

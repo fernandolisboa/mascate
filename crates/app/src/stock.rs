@@ -12,7 +12,7 @@ use gpui_kit::component::{Disableable as _, Icon, Sizable as _, StyledExt as _, 
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Entity, Global, SharedString, Window, div, px};
 use mascate_catalog::{Product, Supplier};
-use mascate_commerce::PurchaseOrder;
+use mascate_commerce::{Order, PurchaseOrder};
 use mascate_inventory::{
     Adjusted, AdjustmentKind, HOME_LOCATION, HistoryLine, Inventory, InventoryError,
     MovementReason, ProductStock, Stock, StockAdjustment, StockLocation, StockMovement,
@@ -45,6 +45,8 @@ struct Shown {
     products: Vec<Product>,
     suppliers: Vec<Supplier>,
     orders: Vec<PurchaseOrder>,
+    /// The Orders whose sales the open Product's history names.
+    sales: Vec<Order>,
     /// The open Product's movements, newest first.
     history: Option<(RecordId, Vec<HistoryLine>)>,
 }
@@ -118,6 +120,7 @@ impl StockScreen {
         self.reads += 1;
         let read = self.reads;
         let open = self.open;
+        let sales = crate::orders::orders(cx);
         let working = cx.background_executor().spawn(async move {
             let stock_failure = |error: InventoryError| inventory_failure(&error);
             Ok::<_, String>(Shown {
@@ -132,6 +135,13 @@ impl StockScreen {
                     .purchase_orders()
                     .await
                     .map_err(|e| purchases::failure(&e))?,
+                sales: match (&sales, open) {
+                    (Some(sales), Some(_)) => sales
+                        .orders()
+                        .await
+                        .map_err(|e| crate::orders::failure(&e))?,
+                    _ => Vec::new(),
+                },
                 history: match open {
                     Some(product) => Some((
                         product,
@@ -390,7 +400,7 @@ impl StockScreen {
             .child(kit::section_heading("Ponto de reposição"))
             .child(div().text_sm().text_color(t.text2).child(
                 "Com o saldo neste número ou abaixo, o produto aparece em Hoje e o app avisa \
-                 quando um ajuste o leva até aqui. Vazio, não há alerta.",
+                 quando um ajuste ou uma venda o leva até aqui. Vazio, não há alerta.",
             ))
             .child(
                 h_flex()
@@ -689,6 +699,14 @@ fn reason_text(shown: &Shown, movement: &StockMovement) -> (String, Option<Strin
                 None => ("Entrada de uma compra".to_owned(), None),
             }
         }
+        MovementReason::Sale { order } => (
+            "Venda no Mercado Livre".to_owned(),
+            shown
+                .sales
+                .iter()
+                .find(|sale| sale.id == order)
+                .map(|sale| format!("Pedido {}", sale.sold.id)),
+        ),
     }
 }
 
@@ -719,7 +737,9 @@ fn adjusted_text(adjusted: &Adjusted) -> String {
         MovementReason::Adjustment(AdjustmentKind::Count) => {
             format!("A contagem achou {units} a menos; o saldo foi corrigido.")
         }
-        MovementReason::PurchaseReceipt { .. } => "Estoque ajustado.".into(),
+        MovementReason::PurchaseReceipt { .. } | MovementReason::Sale { .. } => {
+            "Estoque ajustado.".into()
+        }
     };
     if adjusted.reached_reorder_point.is_some() {
         text.push_str(" O produto chegou ao ponto de reposição.");

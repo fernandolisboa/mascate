@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_inventory::{
-    Adjusted, HOME_LOCATION, Inventory, InventoryError, MIGRATIONS, MovementReason, NewEntry,
-    StockAdjustment,
+    Adjusted, Exited, HOME_LOCATION, Inventory, InventoryError, MIGRATIONS, MovementReason,
+    NewEntry, NewExit, StockAdjustment,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, RecordId};
@@ -74,6 +74,28 @@ impl Fixture {
         adjusted
     }
 
+    /// Sells `quantity` units of a Product from the owner's space on a
+    /// transaction of its own, committed only when the exit is recorded.
+    pub async fn sell(&self, product: u128, quantity: u32) -> Result<Exited, InventoryError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection.transaction().await?;
+        let exited = self
+            .inventory
+            .record_exit(
+                &transaction,
+                &NewExit {
+                    product: id(product),
+                    location: HOME_LOCATION,
+                    quantity,
+                    reason: MovementReason::Sale { order: id(SALE) },
+                },
+            )
+            .await?;
+        transaction.commit().await?;
+        self.clock.advance(TimeDelta::minutes(1));
+        Ok(exited)
+    }
+
     /// Units of a Product on hand, all locations together.
     pub async fn units(&self, product: u128) -> i64 {
         self.inventory
@@ -109,6 +131,7 @@ pub fn id(n: u128) -> RecordId {
 pub const FONE: u128 = 1;
 pub const CAPA: u128 = 2;
 pub const ORDER: u128 = 100;
+pub const SALE: u128 = 200;
 
 pub fn entry(product: u128, quantity: u32, cost: &str) -> NewEntry {
     NewEntry {

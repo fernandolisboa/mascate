@@ -1,0 +1,57 @@
+{
+  "query": null,
+  "results": [
+    {
+      "id": 2000009876543400,
+      "date_created": "2026-10-04T10:40:00.000-03:00",
+      "date_closed": null,
+      "last_updated": "2026-10-04T11:10:00.000-03:00",
+      "pack_id": null,
+      "fulfilled": null,
+      "status": "cancelled",
+      "status_detail": { "code": "payment_rejected", "description": "Pagamento recusado" },
+      "tags": ["not_paid"],
+      "order_items": [
+        {
+          "item": {
+            "id": "MLB4100000001",
+            "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+            "category_id": "MLB3697",
+            "variation_id": null,
+            "variation_attributes": []
+          },
+          "quantity": 1,
+          "unit_price": 89.9,
+          "full_unit_price": 99.9,
+          "currency_id": "BRL",
+          "sale_fee": 12.59,
+          "listing_type_id": "gold_special"
+        }
+      ],
+      "total_amount": 89.9,
+      "paid_amount": 0,
+      "currency_id": "BRL",
+      "buyer": { "id": 555000333, "nickname": "CARLA_M" },
+      "seller": { "id": 1234567 },
+      "payments": [
+        {
+          "id": 91000000003,
+          "order_id": 2000009876543400,
+          "status": "rejected",
+          "status_detail": "cc_rejected_insufficient_amount",
+          "transaction_amount": 89.9,
+          "shipping_cost": 19.9,
+          "total_paid_amount": 0,
+          "currency_id": "BRL"
+        }
+      ],
+      "shipping": { "id": null },
+      "context": { "channel": "marketplace", "site": "MLB" }
+    }
+  ],
+  "sort": { "id": "date_asc", "name": "Date ascending" },
+  "available_sorts": [],
+  "filters": [],
+  "paging": { "total": 3, "offset": 2, "limit": 2 },
+  "display": "complete"
+}

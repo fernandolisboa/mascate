@@ -1,10 +1,11 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
 //! login, reports demand to the catalog and the owner's listings to
-//! commerce, and publishes drafts (ADR 0013). Only official endpoints; it
-//! writes on the owner's click (a listing's price, its status, a draft) and
-//! the stock that follows the app's (ADR 0017).
+//! commerce, publishes drafts and reads the owner's Orders (ADR 0013). Only
+//! official endpoints; it writes on the owner's click (a listing's price,
+//! its status, a draft) and the stock that follows the app's (ADR 0017).
 
 mod answers;
+mod orders;
 mod publisher;
 mod sales_channel;
 mod tokens;
@@ -67,12 +68,25 @@ impl MercadoLivre {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, PlatformError> {
+        self.get_with(path, query, &[])
+    }
+
+    /// The JSON answer to `GET path` with `query` and the extra `headers`.
+    fn get_with<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        headers: &[(&str, &str)],
+    ) -> Result<T, PlatformError> {
         let response = self.signed(path, |bearer| {
             let mut request = self
                 .agent
                 .get(format!("{}{path}", self.api))
                 .header("Accept", "application/json")
                 .header("Authorization", bearer);
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
             for (key, value) in query {
                 request = request.query(key, value);
             }

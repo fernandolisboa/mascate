@@ -314,3 +314,105 @@ pub(super) struct ItemState {
     pub status: Option<String>,
     pub permalink: Option<String>,
 }
+
+/// A page of `/orders/search`.
+#[derive(Deserialize)]
+pub(super) struct OrderSearch {
+    #[serde(default)]
+    pub results: Vec<OrderAnswer>,
+    #[serde(default)]
+    pub paging: Paging,
+}
+
+/// An Order as `/orders/search` and `/orders/{id}` report it.
+#[derive(Deserialize)]
+pub(super) struct OrderAnswer {
+    pub id: Number,
+    pub status: String,
+    pub date_created: String,
+    pub last_updated: Option<String>,
+    pub date_last_updated: Option<String>,
+    pub pack_id: Option<Number>,
+    #[serde(default)]
+    pub order_items: Vec<OrderItemAnswer>,
+    pub total_amount: Option<Number>,
+    pub paid_amount: Option<Number>,
+    pub currency_id: Option<String>,
+    #[serde(default)]
+    pub payments: Vec<PaymentAnswer>,
+    pub buyer: Option<OrderBuyer>,
+    pub shipping: Option<OrderShipping>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct OrderItemAnswer {
+    pub item: OrderItem,
+    pub quantity: u32,
+    pub unit_price: Option<Number>,
+    pub sale_fee: Option<Number>,
+    pub currency_id: Option<String>,
+    pub listing_type_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct OrderItem {
+    pub id: String,
+    pub title: String,
+    pub variation_id: Option<Number>,
+    #[serde(default)]
+    pub variation_attributes: Vec<Attribute>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct PaymentAnswer {
+    pub status: Option<String>,
+    pub shipping_cost: Option<Number>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct OrderBuyer {
+    pub nickname: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct OrderShipping {
+    pub id: Option<Number>,
+}
+
+/// A shipment as `/shipments/{id}` reports it with `x-format-new: true`.
+#[derive(Deserialize)]
+pub(super) struct ShipmentAnswer {
+    pub id: Number,
+    pub status: String,
+    pub lead_time: Option<LeadTime>,
+    pub destination: Option<Destination>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct LeadTime {
+    pub estimated_handling_limit: Option<DateAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct DateAnswer {
+    pub date: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct Destination {
+    pub receiver_name: Option<String>,
+    pub shipping_address: Option<ShippingAddress>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ShippingAddress {
+    pub address_line: Option<String>,
+    pub zip_code: Option<String>,
+    pub city: Option<NamedPlace>,
+    pub state: Option<NamedPlace>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct NamedPlace {
+    pub name: Option<String>,
+}

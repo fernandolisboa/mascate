@@ -36,6 +36,8 @@ conta de vendedor do Fernando.
 | `users-me-user-products.json` | `GET /users/me` de um vendedor com a tag `user_product_seller` | Preço por variação; User products |
 | `error-400-stock.json` | `PUT /items/{id}` com `available_quantity` recusado (400, com `cause`) | Sincronização de publicações / erros |
 | `user-items-by-sku.json`, `items-states.json` | `GET /users/{id}/items/search?seller_sku=...` e o multiget com `attributes=id,status,permalink` | Itens e buscas |
+| `orders-search.json`, `orders-search-end.json`, `orders-search-empty.json` | `GET /orders/search?seller=...&order.date_last_updated.from=...&sort=date_asc` em duas páginas (`offset`), e uma busca sem resultados | Gerenciamento de vendas (Filtrar orders, Status da order); Gestão de packs |
+| `shipment-44100000001.json` | `GET /shipments/{id}` com `x-format-new: true` | Gerenciamento de envios |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -73,3 +75,14 @@ recursos vizinhos (conferir no regression pass):
   pausa o anúncio com `sub_status` `out_of_stock` e que repor reativa, exceto o pausado pelo
   vendedor. O app lê as variações com `GET /items/{id}` (os mesmos `item-*.json`) antes do envio.
   O texto de `error-400-stock.json` é inventado no formato de erro da API.
+- Orders (#20): a busca devolve o recurso completo de cada Order em `results`, como
+  `/orders/{id}`, com `paging.total`. Os pedidos cobrem um item simples, um carrinho (`pack_id`)
+  com duas variações e um cancelado com pagamento recusado e `shipping.id` nulo (a página de
+  packs diz que o envio pode não existir ainda). O app usa `last_updated` (ou
+  `date_last_updated`) como hora da última mudança, `unit_price` (com desconto, como manda a
+  página de nota fiscal), `sale_fee` por unidade e o `shipping_cost` dos pagamentos aprovados. O
+  comprador traz só `id` e `nickname`; nome e endereço de quem recebe vêm de `destination` no
+  envio, e o prazo de despacho de `lead_time.estimated_handling_limit.date` (a página de envios
+  descreve os campos, mas não mostra o JSON inteiro: o formato foi completado e deve ser
+  conferido no regression pass). O segundo envio do carrinho (`/shipments/44100000002`) não é
+  servido, como um envio ainda não criado (404). Ids, nomes e endereços são inventados.
