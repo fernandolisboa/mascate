@@ -1022,13 +1022,24 @@ impl ListingsScreen {
                 0 => "Estoque em dia".to_owned(),
                 count => format!("Estoque a enviar ({count})"),
             }))
-            .child(div().text_xs().text_color(t.text2).child(match last_sent {
-                Some(at) => format!(
-                    "o estoque de cada anúncio vinculado segue o saldo do app · último envio: {}",
-                    catalog::day_and_time(at)
-                ),
-                None => "o estoque de cada anúncio vinculado segue o saldo do app".to_owned(),
-            }));
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(t.text2)
+                    .child(match (queue.is_empty(), last_sent) {
+                        (false, _) => "o saldo destes produtos mudou no app; vai ao Mercado Livre \
+                                       agora ou no próximo Sync, e o que falhar fica aqui"
+                            .to_owned(),
+                        (true, Some(at)) => format!(
+                            "o estoque de cada anúncio vinculado segue o saldo do app · último \
+                             envio: {}",
+                            catalog::day_and_time(at)
+                        ),
+                        (true, None) => {
+                            "o estoque de cada anúncio vinculado segue o saldo do app".to_owned()
+                        }
+                    }),
+            );
         let mut section = v_flex().gap_2().child(
             h_flex()
                 .gap_3()
@@ -1049,11 +1060,6 @@ impl ListingsScreen {
                     )
                 }),
         );
-        if !queue.is_empty() {
-            section = section.child(div().text_sm().text_color(t.text2).child(
-                "O saldo destes produtos mudou no app. O estoque vai ao Mercado Livre agora, com a                  conta conectada, ou no próximo Sync; o que falhar fica aqui até ir.",
-            ));
-        }
         for (listing, stock) in queue {
             let listed = &listing.listed;
             let title = match &listed.variation {
