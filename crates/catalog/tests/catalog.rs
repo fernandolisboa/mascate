@@ -249,6 +249,49 @@ fn a_product_made_from_an_offer_takes_its_whole_link_and_a_folder() {
 }
 
 #[test]
+fn a_product_already_sold_elsewhere_needs_no_offer() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shop = f.supplier("Loja").await;
+        f.offer(&shop, "https://loja.example/a", "10").await;
+        f.catalog
+            .create_product(
+                f.offer(&shop, "https://loja.example/b", "10").await.id,
+                "B",
+                "B-1",
+            )
+            .await
+            .unwrap();
+
+        let product = f
+            .catalog
+            .add_product(" Luminária  LED ", "lum-led-001")
+            .await
+            .unwrap();
+
+        assert_eq!(product.name, "Luminária LED");
+        assert_eq!(product.sku.as_str(), "LUM-LED-001");
+        assert!(f.catalog.folder(&product).is_dir());
+        assert_eq!(f.catalog.product(product.id).await.unwrap(), product);
+        assert!(
+            f.catalog
+                .product_offers(product.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            f.catalog.add_product("Outra", "B 1").await,
+            Err(CatalogError::SkuTaken(sku)) if sku.as_str() == "B-1"
+        ));
+        assert!(matches!(
+            f.catalog.add_product(" ", "NEW").await,
+            Err(CatalogError::MissingProductName)
+        ));
+    });
+}
+
+#[test]
 fn a_product_links_offers_from_several_suppliers_and_shows_each_history() {
     block_on(async {
         let f = Fixture::new().await;

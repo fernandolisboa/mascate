@@ -12,3 +12,4 @@ A #11 é a primeira fatia em que um adapter de Platform alimenta outro módulo: 
 - Dependência permitida nova no teste de arquitetura: `mascate-integrations -> mascate-catalog`. Nenhum módulo depende do `mascate-integrations`.
 - Testes do Catalog usam uma porta falsa em memória; os do adapter usam o servidor HTTP falso com respostas gravadas (fixtures da documentação até o regression pass, #37).
 - A alíquota de imposto fica no Finance (`Taxes`), dono das margens e do painel; quem lista Opportunities passa a alíquota ao Catalog. A #19 reaproveita a mesma configuração.
+- O que dois módulos precisam dizer sobre uma Platform no mesmo idioma fica no kernel: `PlatformError` (como uma chamada falha) e `ListingType`, usados pela porta de demanda do Catalog e pela porta de Sales Channel do Commerce (#15). A tradução para os ids de cada Platform fica no adapter.

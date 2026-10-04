@@ -8,14 +8,15 @@
 use std::collections::{HashMap, HashSet};
 
 use libsql::{Row, Value, params};
-use mascate_kernel::{Currency, Margin, Money, Percentage, RecordId, Timestamp};
+use mascate_kernel::{
+    Currency, ListingType, Margin, Money, Percentage, PlatformError, RecordId, Timestamp,
+};
 use mascate_platform::{Migration, StoredRow, load_single_row, save_single_row, stored};
 use rust_decimal::Decimal;
 
 use crate::catalog::{OFFER_COLUMNS, offer_from, required};
 use crate::{
-    BestSeller, Catalog, CatalogError, Competition, DemandCategory, DemandError, DemandSource,
-    ListingType, SupplierOffer,
+    BestSeller, Catalog, CatalogError, Competition, DemandCategory, DemandSource, SupplierOffer,
 };
 
 pub(crate) const CREATE_DEMAND: Migration = Migration {
@@ -782,10 +783,10 @@ impl Catalog {
 
 /// `answer`, with `NotFound` as nothing and a refusal of that one request
 /// as nothing too; whatever stops the whole Sync stays an error.
-fn optional<T>(answer: Result<T, DemandError>) -> Result<Option<T>, CatalogError> {
+fn optional<T>(answer: Result<T, PlatformError>) -> Result<Option<T>, CatalogError> {
     match answer {
         Ok(value) => Ok(Some(value)),
-        Err(DemandError::NotFound | DemandError::Refused(_)) => Ok(None),
+        Err(PlatformError::NotFound | PlatformError::Refused(_)) => Ok(None),
         Err(error) => Err(error.into()),
     }
 }

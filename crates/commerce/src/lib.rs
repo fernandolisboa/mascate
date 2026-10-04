@@ -1,9 +1,14 @@
 //! Commerce: Listings, Orders, Purchase Orders and shipping on each Sales Channel.
 
 mod freight;
+mod listings;
 mod purchase_orders;
 
 pub use freight::{freight_for_units, split_by_value};
+pub use listings::{
+    CatalogProduct, ChannelListing, LinkSuggestion, Listing, ListingError, ListingStatus,
+    ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
+};
 pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
     PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
@@ -26,5 +31,8 @@ pub const REMINDERS: &[Reminder] = &[BUYER_PERSONAL_DATA];
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "commerce",
-    migrations: &[purchase_orders::CREATE_PURCHASE_ORDERS],
+    migrations: &[
+        purchase_orders::CREATE_PURCHASE_ORDERS,
+        listings::CREATE_LISTINGS,
+    ],
 };

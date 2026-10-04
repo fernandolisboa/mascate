@@ -5,6 +5,7 @@ use mascate_kernel::RecordId;
 use crate::appearance;
 use crate::home::Home;
 use crate::layout;
+use crate::listings::ListingsScreen;
 use crate::low_stock::OpenStock;
 use crate::offers::{OffersScreen, OpenProduct};
 use crate::opportunities::OpportunitiesScreen;
@@ -24,6 +25,7 @@ pub struct Shell {
     opportunities: Entity<OpportunitiesScreen>,
     offers: Entity<OffersScreen>,
     products: Entity<ProductsScreen>,
+    listings: Entity<ListingsScreen>,
     purchases: Entity<PurchasesScreen>,
     stock: Entity<StockScreen>,
     settings: Entity<SettingsScreen>,
@@ -41,6 +43,7 @@ impl Shell {
         let opportunities = cx.new(|cx| OpportunitiesScreen::new(window, cx));
         let offers = cx.new(|cx| OffersScreen::new(window, cx));
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
+        let listings = cx.new(|cx| ListingsScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
         let stock = cx.new(|cx| StockScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
@@ -61,6 +64,13 @@ impl Shell {
             ),
             cx.subscribe_in(
                 &offers,
+                window,
+                |shell, _, open: &OpenProduct, window, cx| {
+                    shell.open_product(open.0, window, cx);
+                },
+            ),
+            cx.subscribe_in(
+                &listings,
                 window,
                 |shell, _, open: &OpenProduct, window, cx| {
                     shell.open_product(open.0, window, cx);
@@ -90,6 +100,7 @@ impl Shell {
             opportunities,
             offers,
             products,
+            listings,
             purchases,
             stock,
             settings,
@@ -124,6 +135,9 @@ impl Shell {
                         Place::Products => shell
                             .products
                             .update(cx, |products, cx| products.refresh(window, cx)),
+                        Place::Listings => shell
+                            .listings
+                            .update(cx, |listings, cx| listings.refresh(window, cx)),
                         Place::Purchases => shell
                             .purchases
                             .update(cx, |purchases, cx| purchases.refresh(window, cx)),
@@ -148,6 +162,7 @@ impl Render for Shell {
             Place::Opportunities => self.opportunities.clone().into_any_element(),
             Place::Offers => self.offers.clone().into_any_element(),
             Place::Products => self.products.clone().into_any_element(),
+            Place::Listings => self.listings.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),
             Place::Stock => self.stock.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),

@@ -4302,6 +4302,7 @@ dependencies = [
  "chrono",
  "futures",
  "mascate-catalog",
+ "mascate-commerce",
  "mascate-kernel",
  "mascate-platform",
  "rust_decimal",

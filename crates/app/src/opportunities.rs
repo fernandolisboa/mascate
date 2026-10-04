@@ -13,13 +13,12 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Entity, EventEmitter, Global, SharedString, Window, div, px};
 use mascate_catalog::{
-    Catalog, CatalogError, CategoryBestSellers, DemandCategory, DemandError, DemandSource,
-    DemandSync, DiscoverySettings, ListingType, Opportunity, OpportunityFilter, Product, Sku,
+    Catalog, CatalogError, CategoryBestSellers, DemandCategory, DemandSource, DemandSync,
+    DiscoverySettings, Opportunity, OpportunityFilter, Product, Sku,
 };
 use mascate_finance::Taxes;
-use mascate_integrations::{Connection, ConnectionState, MercadoLivre};
-use mascate_kernel::{Currency, Money, Percentage, RecordId, Timestamp, parse_amount};
-use mascate_platform::{Build, Environment};
+use mascate_integrations::{Connection, ConnectionState};
+use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId, Timestamp, parse_amount};
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, failure};
@@ -27,27 +26,14 @@ use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::layout;
+use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
-
-/// Mercado Livre's adapter, shared by the screens that read it.
-pub struct AppMercadoLivre(pub Arc<MercadoLivre>);
-
-impl Global for AppMercadoLivre {}
 
 /// The tax rate setting, shared by every screen that works out a margin.
 pub struct AppTaxes(pub Arc<Taxes>);
 
 impl Global for AppTaxes {}
-
-/// Where the app reaches Mercado Livre: its API or, in a development build
-/// only, the URL in `MASCATE_ML_API_URL`, for a local fake server.
-pub fn mercado_livre_api(build: Build, environment: &Environment) -> String {
-    match (build, environment("MASCATE_ML_API_URL")) {
-        (Build::Development, Some(url)) if !url.trim().is_empty() => url.trim().to_owned(),
-        _ => mascate_integrations::MERCADO_LIVRE_API_URL.to_owned(),
-    }
-}
 
 /// The step an Opportunity's row is in, below it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -288,7 +274,7 @@ impl OpportunitiesScreen {
     }
 
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = cx.try_global::<AppMercadoLivre>().map(|ml| ml.0.clone()) else {
+        let Some(source) = mercado_livre::adapter(cx) else {
             return;
         };
         self.outcome = None;
@@ -309,7 +295,7 @@ impl OpportunitiesScreen {
     }
 
     fn pick_categories(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = cx.try_global::<AppMercadoLivre>().map(|ml| ml.0.clone()) else {
+        let Some(source) = mercado_livre::adapter(cx) else {
             return;
         };
         self.outcome = None;
@@ -1110,7 +1096,7 @@ impl Render for OpportunitiesScreen {
         {
             parts
                 .notices
-                .push(kit::info_notice(not_connected(state), cx).into_any_element());
+                .push(kit::info_notice(mercado_livre::not_connected(state), cx).into_any_element());
         }
         if self.step.is_none() {
             parts
@@ -1199,46 +1185,13 @@ fn synced(report: &DemandSync) -> String {
     text
 }
 
-fn not_connected(state: &ConnectionState) -> String {
-    let why = match state {
-        ConnectionState::Expired => "O Mercado Livre não aceita mais o login da sua conta.",
-        ConnectionState::Failed { .. } => "Não consegui ler a conexão com o Mercado Livre.",
-        _ => "A conta de vendedor do Mercado Livre não está conectada.",
-    };
-    format!(
-        "{why} Conecte em Configurações › Conexões para sincronizar; o que aparece abaixo é do \
-         último Sync."
-    )
-}
-
 fn reading(error: &Failure) -> String {
     match error {
         Failure::Text(text) => format!("Não consegui ler ou gravar no banco: {text}"),
-        Failure::Catalog(CatalogError::Demand(error)) => demand_failure(error),
+        Failure::Catalog(CatalogError::Platform(error)) => mercado_livre::failure(error),
         Failure::Catalog(CatalogError::MissingReason) => {
             "Diga por que a oportunidade não serve antes de descartar.".into()
         }
         Failure::Catalog(error) => failure(error),
-    }
-}
-
-fn demand_failure(error: &DemandError) -> String {
-    match error {
-        DemandError::NotConnected => {
-            "Conecte a conta do Mercado Livre em Configurações › Conexões para sincronizar.".into()
-        }
-        DemandError::Expired => {
-            "O Mercado Livre não aceita mais o login; reconecte a conta em Configurações › \
-             Conexões."
-                .into()
-        }
-        DemandError::RateLimited => {
-            "O Mercado Livre pediu para esperar antes de consultar de novo. Tente daqui a \
-             alguns minutos; o que já foi lido ficou salvo."
-                .into()
-        }
-        DemandError::Refused(why) => format!("O Mercado Livre recusou a consulta ({why})."),
-        DemandError::NotFound => "O Mercado Livre não encontrou o que foi pedido.".into(),
-        DemandError::Failed(why) => format!("Não consegui falar com o Mercado Livre: {why}"),
     }
 }

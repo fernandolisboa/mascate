@@ -19,6 +19,10 @@ conta de vendedor do Fernando.
 | `product-items-MLB19615318.json` | `GET /products/{id}/items` | Concorrência em catálogo |
 | `listing-prices.json` | `GET /sites/MLB/listing_prices` com `listing_type_id` | Comissão por vender |
 | `error-403.json`, `error-429.json` | formato de erro da API | Boas práticas / erros |
+| `users-me.json` | `GET /users/me` (o id do vendedor) | Consulta de usuários |
+| `user-items-active.json`, `user-items-active-end.json`, `user-items-paused.json` | `GET /users/{id}/items/search` com `status` e `search_type=scan` (página com `scroll_id` e a última, vazia) | Itens e buscas |
+| `items-seller.json` | `GET /items?ids=...&include_attributes=all` dos anúncios do vendedor: simples, com variações e pausado | Itens e buscas; Variações |
+| `items-seller-gone.json` | o mesmo multiget depois: um anúncio encerrado e outro apagado (`code` 404) | Itens e buscas |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -29,3 +33,9 @@ recursos vizinhos (conferir no regression pass):
 - `listing-prices.json`: `sale_fee_details` vem do exemplo para outros sites; o app lê só
   `sale_fee_amount` e `currency_id`.
 - `product-*.json`: `buy_box_winner` traz o preço do anúncio que vence a competição.
+- `items-seller*.json`: a página de variações diz que o SKU do vendedor vem, nesta ordem, do
+  atributo `SELLER_SKU` da variação, do `seller_custom_field` da variação, do `SELLER_SKU` do
+  anúncio e do `seller_custom_field` do anúncio; os anúncios cobrem esses casos. O corpo do 404
+  no multiget segue o formato de erro da API.
+- `user-items-*.json`: a busca por `scan` devolve `scroll_id` até a última página, que vem sem
+  resultados; o valor do `scroll_id` aqui é inventado.

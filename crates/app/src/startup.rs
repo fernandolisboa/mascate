@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
-use mascate_commerce::PurchaseOrders;
+use mascate_commerce::{Listings, PurchaseOrders};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -44,6 +44,7 @@ pub struct Started {
     pub catalog: Arc<Catalog>,
     pub inventory: Arc<Inventory>,
     pub purchase_orders: Arc<PurchaseOrders>,
+    pub listings: Arc<Listings>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -201,6 +202,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let listings = Listings::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -217,6 +223,7 @@ pub fn prepare() -> Outcome {
                 catalog: Arc::new(catalog),
                 inventory,
                 purchase_orders: Arc::new(purchase_orders),
+                listings: Arc::new(listings),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
@@ -284,12 +291,10 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 
 #[cfg(test)]
 mod tests {
-    use mascate_catalog::{
-        DemandCategory, DiscoverySettings, ListingType, NewSupplierOffer, OpportunityFilter,
-    };
+    use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus, Receiving};
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
-    use mascate_kernel::{Currency, Money, Percentage, RecordId};
+    use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
