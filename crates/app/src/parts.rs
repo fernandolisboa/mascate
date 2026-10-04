@@ -18,12 +18,20 @@ pub enum Place {
     Today,
     Offers,
     Products,
+    Purchases,
+    Stock,
     Settings,
 }
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 3] = [Place::Today, Place::Offers, Place::Products];
+    pub const MAIN: [Place; 5] = [
+        Place::Today,
+        Place::Offers,
+        Place::Products,
+        Place::Purchases,
+        Place::Stock,
+    ];
     /// The places kept apart at the end: the sidebar's foot, the tab bar's
     /// right side.
     pub const PINNED: [Place; 1] = [Place::Settings];
@@ -33,6 +41,8 @@ impl Place {
             Place::Today => "Hoje",
             Place::Offers => "Ofertas",
             Place::Products => "Produtos",
+            Place::Purchases => "Compras",
+            Place::Stock => "Estoque",
             Place::Settings => "Configurações",
         }
     }
@@ -42,6 +52,8 @@ impl Place {
             Place::Today => IconName::LayoutDashboard,
             Place::Offers => IconName::Globe,
             Place::Products => IconName::Inbox,
+            Place::Purchases => IconName::FileText,
+            Place::Stock => IconName::GalleryVerticalEnd,
             Place::Settings => IconName::Settings,
         }
     }

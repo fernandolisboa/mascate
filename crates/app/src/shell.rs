@@ -8,7 +8,9 @@ use crate::offers::{OffersScreen, OpenProduct};
 use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
 use crate::products::ProductsScreen;
+use crate::purchases::PurchasesScreen;
 use crate::settings::SettingsScreen;
+use crate::stock::StockScreen;
 
 /// The main window: the navigation and the current screen; where each goes
 /// is the layout's ([`crate::layout`]).
@@ -18,6 +20,8 @@ pub struct Shell {
     home: Entity<Home>,
     offers: Entity<OffersScreen>,
     products: Entity<ProductsScreen>,
+    purchases: Entity<PurchasesScreen>,
+    stock: Entity<StockScreen>,
     settings: Entity<SettingsScreen>,
     _subscriptions: Vec<Subscription>,
 }
@@ -32,6 +36,8 @@ impl Shell {
         let home = cx.new(|cx| Home::new(problem, cx));
         let offers = cx.new(|cx| OffersScreen::new(window, cx));
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
+        let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
+        let stock = cx.new(|cx| StockScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
         // The startup theme guessed the system's appearance before any window
         // existed; this window knows it.
@@ -64,6 +70,8 @@ impl Shell {
             home,
             offers,
             products,
+            purchases,
+            stock,
             settings,
             _subscriptions: subscriptions,
         }
@@ -77,8 +85,8 @@ impl Shell {
             on_pick: std::rc::Rc::new(move |place, window, cx| {
                 let _ = shell.update(cx, |shell, cx| {
                     shell.place = place;
-                    // Each visit reads the catalog again: the other screen
-                    // may have changed it.
+                    // Each visit reads its data again: another screen may
+                    // have changed it.
                     match place {
                         Place::Offers => shell
                             .offers
@@ -86,6 +94,12 @@ impl Shell {
                         Place::Products => shell
                             .products
                             .update(cx, |products, cx| products.refresh(window, cx)),
+                        Place::Purchases => shell
+                            .purchases
+                            .update(cx, |purchases, cx| purchases.refresh(window, cx)),
+                        Place::Stock => shell
+                            .stock
+                            .update(cx, |stock, cx| stock.refresh(window, cx)),
                         Place::Today | Place::Settings => {}
                     }
                     cx.notify();
@@ -102,6 +116,8 @@ impl Render for Shell {
             Place::Today => self.home.clone().into_any_element(),
             Place::Offers => self.offers.clone().into_any_element(),
             Place::Products => self.products.clone().into_any_element(),
+            Place::Purchases => self.purchases.clone().into_any_element(),
+            Place::Stock => self.stock.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),
         };
         layout::shell(navigation, screen, cx)

@@ -72,7 +72,10 @@ fn units_received_in_steps_carry_the_line_freight_on_a_running_total() {
     let first = freight_for_units(share, 3, 0, 1);
     let second = freight_for_units(share, 3, 1, 1);
     let third = freight_for_units(share, 3, 2, 1);
-    assert_eq!([first, second, third], [brl("3.33"), brl("3.34"), brl("3.33")]);
+    assert_eq!(
+        [first, second, third],
+        [brl("3.33"), brl("3.34"), brl("3.33")]
+    );
 }
 
 mod properties {

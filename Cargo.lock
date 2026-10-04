@@ -4229,9 +4229,11 @@ dependencies = [
  "mascate-commerce",
  "mascate-finance",
  "mascate-integrations",
+ "mascate-inventory",
  "mascate-kernel",
  "mascate-marketing",
  "mascate-platform",
+ "rust_decimal",
  "tempfile",
  "tray-icon",
 ]

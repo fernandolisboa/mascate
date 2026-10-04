@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use chrono::Local;
-use gpui_kit::component::searchable_list::SearchableListItem;
-use gpui_kit::{App, Global, SharedString};
+use gpui_kit::{App, Global};
 use mascate_catalog::{Catalog, CatalogError, InvalidLink, InvalidSku, Product, SupplierOffer};
-use mascate_kernel::{RecordId, Timestamp};
+use mascate_kernel::Timestamp;
+
+use crate::forms::Choice;
 
 /// The app's catalog; absent when the database did not open.
 pub struct AppCatalog(pub Arc<Catalog>);
@@ -31,25 +32,6 @@ pub fn price_and_shipping(offer: &SupplierOffer) -> String {
         offer.price.to_pt_br(),
         offer.shipping.to_pt_br()
     )
-}
-
-/// One line of a picker of records.
-#[derive(Clone)]
-pub struct Choice {
-    pub id: RecordId,
-    pub title: SharedString,
-}
-
-impl SearchableListItem for Choice {
-    type Value = RecordId;
-
-    fn title(&self) -> SharedString {
-        self.title.clone()
-    }
-
-    fn value(&self) -> &RecordId {
-        &self.id
-    }
 }
 
 pub fn product_choice(product: &Product) -> Choice {

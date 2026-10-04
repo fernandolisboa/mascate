@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
+use mascate_commerce::PurchaseOrders;
+use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
@@ -13,8 +15,12 @@ use mascate_platform::{
 };
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
-pub const MODULE_MIGRATIONS: &[ModuleMigrations] =
-    &[mascate_platform::MIGRATIONS, mascate_catalog::MIGRATIONS];
+pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
+    mascate_platform::MIGRATIONS,
+    mascate_catalog::MIGRATIONS,
+    mascate_inventory::MIGRATIONS,
+    mascate_commerce::MIGRATIONS,
+];
 
 /// Every module's flags, in the order the settings screen lists them.
 const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS];
@@ -34,6 +40,8 @@ pub struct Started {
     pub reminders: Arc<Reminders>,
     pub backups: Arc<Backups>,
     pub catalog: Arc<Catalog>,
+    pub inventory: Arc<Inventory>,
+    pub purchase_orders: Arc<PurchaseOrders>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
@@ -179,6 +187,17 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let inventory = Arc::new(Inventory::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            ));
+            let purchase_orders = PurchaseOrders::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
             Ok::<_, Box<dyn std::error::Error>>(Started {
@@ -188,6 +207,8 @@ pub fn prepare() -> Outcome {
                 reminders: Arc::new(reminders),
                 backups: Arc::new(backups),
                 catalog: Arc::new(catalog),
+                inventory,
+                purchase_orders: Arc::new(purchase_orders),
                 backup_settings,
                 update_settings,
                 restore,
@@ -255,12 +276,16 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_catalog::NewSupplierOffer;
+    use mascate_commerce::{NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus, Receiving};
+    use mascate_inventory::HOME_LOCATION;
     use mascate_kernel::{Currency, Money};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
 
     const SAMPLE_SKU: &str = "EXEMPLO-001";
+    const SAMPLE_ORDERED: u32 = 3;
+    const SAMPLE_RECEIVED: u32 = 2;
 
     /// One database per published version, written by the version itself
     /// with [`write_this_versions_sample_database`].
@@ -325,8 +350,35 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            catalog
+            let product = catalog
                 .create_product(offer.id, "Produto de exemplo", SAMPLE_SKU)
+                .await
+                .unwrap();
+            let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
+            let orders =
+                PurchaseOrders::new(database.clone(), inventory, clock.clone(), ids.clone());
+            let order = orders
+                .create(NewPurchaseOrder {
+                    supplier: supplier.id,
+                    ordered_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                    freight: Money::new(10.into(), Currency::Brl),
+                    lines: vec![NewPurchaseLine {
+                        product: product.id,
+                        quantity: SAMPLE_ORDERED,
+                        unit_price: Money::new(29.into(), Currency::Brl),
+                    }],
+                })
+                .await
+                .unwrap();
+            orders
+                .receive(
+                    order.id,
+                    HOME_LOCATION,
+                    &[Receiving {
+                        line: order.lines[0].id,
+                        quantity: SAMPLE_RECEIVED,
+                    }],
+                )
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -440,15 +492,41 @@ mod tests {
                 );
                 let products = catalog.products().await.unwrap();
                 // The catalog arrived in 0.2.0; older samples have none.
+                let inventory = Arc::new(Inventory::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                ));
+                let orders = PurchaseOrders::new(
+                    database.clone(),
+                    inventory.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                // The catalog, Purchase Orders and stock arrived in 0.2.0;
+                // older samples have none.
                 if Version::parse(released) >= Version::parse("0.2.0") {
-                    assert!(
-                        products
-                            .iter()
-                            .any(|product| product.sku.as_str() == SAMPLE_SKU),
+                    let product = products
+                        .iter()
+                        .find(|product| product.sku.as_str() == SAMPLE_SKU)
+                        .unwrap_or_else(|| panic!("{name}"));
+                    let order = orders.purchase_orders().await.unwrap().remove(0);
+                    assert_eq!(
+                        order.status(),
+                        PurchaseOrderStatus::PartlyReceived,
                         "{name}"
                     );
+                    let stock = inventory.stock().await.unwrap();
+                    assert_eq!(
+                        stock.products[0].valuation.quantity(),
+                        i64::from(SAMPLE_RECEIVED),
+                        "{name}"
+                    );
+                    assert_eq!(stock.products[0].product, product.id, "{name}");
                 }
                 catalog.add_supplier("Loja nova").await.unwrap();
+                assert!(!inventory.locations().await.unwrap().is_empty(), "{name}");
+                orders.purchase_orders().await.unwrap();
             });
         }
     }

@@ -86,6 +86,10 @@ _Avoid_: depósito, armazém
 Registro imutável de entrada, saída ou ajuste de um Product numa Stock Location. O saldo é sempre derivado dos movimentos.
 _Avoid_: saldo, lançamento
 
+**Receipt**:
+Chegada de toda ou de parte de uma Purchase Order ao espaço do Fernando. Cada Receipt gera os Stock Movements de entrada, com o preço e a parte do frete que as unidades carregam.
+_Avoid_: recebimento parcial (sozinho), baixa, entrada (quando se fala da chegada)
+
 **Average Cost**:
 Custo unitário de um Product em estoque, recalculado como média ponderada móvel a cada entrada.
 _Avoid_: preço de custo, custo FIFO

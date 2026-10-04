@@ -18,6 +18,7 @@ use mascate_kernel::RecordId;
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day, failure};
+use crate::forms::{Outcome, notice};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
@@ -28,11 +29,6 @@ struct Sheet {
     folder: PathBuf,
     files: Vec<ProductFile>,
     offers: Vec<OfferHistory>,
-}
-
-enum Outcome {
-    Done(SharedString),
-    Failed(SharedString),
 }
 
 pub struct ProductsScreen {
@@ -512,10 +508,7 @@ impl Render for ProductsScreen {
         }
         parts
             .notices
-            .extend(self.outcome.as_ref().map(|outcome| match outcome {
-                Outcome::Done(text) => kit::success_notice(text.clone(), cx).into_any_element(),
-                Outcome::Failed(text) => kit::error_notice(text.clone(), cx).into_any_element(),
-            }));
+            .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         if self.open.is_some() {
             parts.actions.push(
                 Button::new("back-to-products")

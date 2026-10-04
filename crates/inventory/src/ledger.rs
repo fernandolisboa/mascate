@@ -397,10 +397,7 @@ async fn known_location(on: &Connection, location: RecordId) -> Result<(), Inven
 }
 
 /// The currency a Product's stock is valued in: its first entry's.
-async fn valued_in(
-    on: &Connection,
-    product: RecordId,
-) -> Result<Option<Currency>, InventoryError> {
+async fn valued_in(on: &Connection, product: RecordId) -> Result<Option<Currency>, InventoryError> {
     let mut rows = on
         .query(
             &format!(

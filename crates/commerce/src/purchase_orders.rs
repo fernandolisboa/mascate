@@ -60,7 +60,7 @@ impl PurchaseLine {
 
     /// Units still expected.
     pub fn remaining(&self) -> u32 {
-        self.quantity - self.received
+        self.quantity.saturating_sub(self.received)
     }
 
     /// What one unit costs once delivered: its price plus its part of the
@@ -292,8 +292,9 @@ impl PurchaseOrders {
         stored(self.clock.now())
     }
 
-    /// A connection of its own whose transaction holds the write lock from
-    /// the start, so what it checks still holds when it writes.
+    /// A connection of its own for a transaction. Each one starts
+    /// immediate, taking the write lock first, so what it checks still holds
+    /// when it writes.
     async fn writer(&self) -> Result<Connection, PurchaseOrderError> {
         Ok(self.database.connect_for_transaction().await?)
     }

@@ -51,9 +51,7 @@ impl Fixture {
     async fn enter(&self, entries: &[NewEntry]) -> Result<(), InventoryError> {
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection.transaction().await?;
-        self.inventory
-            .record_entries(&transaction, entries)
-            .await?;
+        self.inventory.record_entries(&transaction, entries).await?;
         transaction.commit().await?;
         self.clock.advance(TimeDelta::minutes(1));
         Ok(())
@@ -171,7 +169,10 @@ fn the_value_in_stock_adds_every_product_per_currency() {
         assert_eq!(stock.units(), 5);
         assert_eq!(
             stock.value(),
-            [brl("49.99"), Money::new(Decimal::new(700, 2), Currency::Usd)]
+            [
+                brl("49.99"),
+                Money::new(Decimal::new(700, 2), Currency::Usd)
+            ]
         );
     });
 }
@@ -210,15 +211,18 @@ fn a_product_stays_valued_in_the_currency_of_its_first_entry() {
             ..entry(FONE, 1, "0")
         };
         assert!(matches!(
-            f.enter(&[in_dollars.clone()]).await,
+            f.enter(std::slice::from_ref(&in_dollars)).await,
             Err(InventoryError::Currencies(_))
         ));
         // Within one batch too.
         assert!(matches!(
-            f.enter(&[entry(CAPA, 1, "1"), NewEntry {
-                product: id(CAPA),
-                ..in_dollars
-            }])
+            f.enter(&[
+                entry(CAPA, 1, "1"),
+                NewEntry {
+                    product: id(CAPA),
+                    ..in_dollars
+                }
+            ])
             .await,
             Err(InventoryError::Currencies(_))
         ));
