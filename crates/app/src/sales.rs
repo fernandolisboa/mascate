@@ -12,7 +12,7 @@ use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Hsla, SharedString, Subscription, Window, div, px};
 use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesSummary};
-use mascate_kernel::{Currency, Money, Timestamp};
+use mascate_kernel::{Currency, Margin, Money, Timestamp};
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
@@ -160,10 +160,10 @@ impl SalesScreen {
                     .into_any_element();
             }
         };
-        let figure = |label: &'static str, text: String| {
+        let wide_figure = |label: &'static str, text: String, min_width: f32| {
             v_flex()
                 .flex_1()
-                .min_w(px(150.))
+                .min_w(px(min_width))
                 .gap_1()
                 .p_4()
                 .rounded(t.radius_lg)
@@ -171,16 +171,19 @@ impl SalesScreen {
                 .border_color(t.frame)
                 .bg(t.surface)
                 .child(div().text_sm().text_color(t.text2).child(label))
-                .child(div().text_xl().font_semibold().child(text))
+                .child(
+                    div()
+                        .text_xl()
+                        .font_semibold()
+                        .whitespace_nowrap()
+                        .child(text),
+                )
         };
-        let margin = match &summary.margin {
-            Some(margin) => format!(
-                "{} ({})",
-                margin.amount.to_pt_br(),
-                margin.percent_to_pt_br()
-            ),
-            None => "–".into(),
-        };
+        let figure = |label, text| wide_figure(label, text, 150.);
+        let margin = summary
+            .margin
+            .as_ref()
+            .map_or_else(|| "–".into(), amount_text);
         let mut caveats = Vec::new();
         if summary.provisional > 0 {
             caveats.push(format!(
@@ -205,7 +208,7 @@ impl SalesScreen {
                     .child(figure("Tarifas", summary.fees.to_pt_br()))
                     .child(figure("Imposto", summary.tax.to_pt_br()))
                     .child(figure("Custo", summary.cost.to_pt_br()))
-                    .child(figure("Margem realizada", margin)),
+                    .child(wide_figure("Margem realizada", margin, 260.)),
             )
             .children(
                 caveats
@@ -403,9 +406,22 @@ pub fn margin_detail(margin: &RealizedMargin, cx: &App) -> AnyElement {
 
 /// "R$ 32,10 (17,9%)"; a dash without a cost.
 fn margin_text(margin: &RealizedMargin) -> String {
-    match &margin.margin {
-        Some(found) => format!("{} ({})", found.amount.to_pt_br(), found.percent_to_pt_br()),
-        None => "–".into(),
+    margin
+        .margin
+        .as_ref()
+        .map_or_else(|| "–".into(), amount_text)
+}
+
+/// "R$ 32,10 (17,9%)", or the value alone when nothing was received to
+/// take a percent of.
+fn amount_text(margin: &Margin) -> String {
+    match margin.percent {
+        Some(_) => format!(
+            "{} ({})",
+            margin.amount.to_pt_br(),
+            margin.percent_to_pt_br()
+        ),
+        None => margin.amount.to_pt_br(),
     }
 }
 

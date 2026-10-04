@@ -67,7 +67,7 @@ impl Place {
             Place::Products => IconName::Inbox,
             Place::Listings => IconName::Building2,
             Place::Orders => IconName::Bell,
-            Place::Sales => IconName::ReceiptText,
+            Place::Sales => IconName::ChartPie,
             Place::Purchases => IconName::FileText,
             Place::Stock => IconName::GalleryVerticalEnd,
             Place::Settings => IconName::Settings,
@@ -108,6 +108,26 @@ impl ScreenParts {
             actions: Vec::new(),
             notices: Vec::new(),
             content: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::AssetSource;
+    use gpui_kit::assets::Assets;
+
+    use super::*;
+
+    /// The app ships only gpui-kit's default icons: any other draws nothing.
+    #[test]
+    fn every_place_has_an_icon_the_app_ships() {
+        for place in Place::MAIN.into_iter().chain(Place::PINNED) {
+            assert!(
+                matches!(Assets.load(&place.icon().path()), Ok(Some(_))),
+                "{} has no shipped icon",
+                place.name()
+            );
         }
     }
 }
