@@ -2,10 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appearance;
+mod backups;
 mod connections;
 mod home;
 mod kit;
 mod layout;
+mod ordered_saves;
 mod palette;
 mod parts;
 mod preferences;
@@ -25,6 +27,7 @@ use mascate_platform::{
     Build, SystemSecretStore, process_environment, secret_store_for, system_user,
 };
 
+use crate::backups::AppBackups;
 use crate::connections::AppConnections;
 use crate::preferences::Preferences;
 use crate::reminders::AppReminders;
@@ -67,6 +70,12 @@ fn main() {
                     user: user.clone(),
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
+                cx.set_global(AppBackups {
+                    backups: started.backups.clone(),
+                    settings: started.backup_settings.clone(),
+                    restore: started.restore.clone(),
+                });
+                backups::start_daily(cx);
             }
             appearance::init(saved.theme, cx);
             layout::show(saved.layout, cx);

@@ -20,6 +20,13 @@ pub struct ModuleMigrations {
     pub migrations: &'static [Migration],
 }
 
+impl ModuleMigrations {
+    /// The version this app brings the module's tables to.
+    pub fn latest_version(&self) -> u32 {
+        self.migrations.last().map_or(0, |m| m.version)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedMigration {
     pub module: &'static str,
@@ -75,7 +82,7 @@ pub async fn migrate(
     for module in modules {
         check_order(module)?;
         let current = current_version(connection, module.module).await?;
-        let known = module.migrations.last().map_or(0, |m| m.version);
+        let known = module.latest_version();
         if current > known {
             return Err(MigrationError::DatabaseNewerThanApp {
                 module: module.module,

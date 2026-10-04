@@ -4227,7 +4227,11 @@ dependencies = [
 name = "mascate-integrations"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "futures",
+ "mascate-kernel",
  "mascate-platform",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

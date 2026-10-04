@@ -1,5 +1,6 @@
-//! Settings screen: Connections (#5), the Restricted Features (#7), then
-//! Appearance, which picks the layout (#41) and the interface theme (#39).
+//! Settings screen: Connections (#5), the Restricted Features (#7), Backup
+//! (#6), then Appearance, which picks the layout (#41) and the interface
+//! theme (#39).
 //! Later settings join it.
 
 use gpui_kit::assets::IconName;
@@ -13,6 +14,7 @@ use gpui_kit::{
 use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, UiThemePreference};
 
 use crate::appearance::{self, color, look};
+use crate::backups::BackupSection;
 use crate::connections::ConnectionsSection;
 use crate::kit;
 use crate::layout;
@@ -94,6 +96,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     restricted: Entity<RestrictedFeaturesSection>,
+    backup: Entity<BackupSection>,
     /// The light and dark slots of "follow the system", kept while a fixed
     /// theme is on so following again restores them.
     follow_pair: (UiTheme, UiTheme),
@@ -134,6 +137,7 @@ impl SettingsScreen {
         Self {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
+            backup: cx.new(|cx| BackupSection::new(window, cx)),
             follow_pair,
             light_theme,
             dark_theme,
@@ -538,6 +542,13 @@ impl Render for SettingsScreen {
                         .child("Funcionalidades restritas"),
                 )
                 .child(self.restricted.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Backup"))
+                .child(self.backup.clone())
                 .into_any_element(),
         );
         parts.content.push(
