@@ -10,6 +10,7 @@ use crate::listings::ListingsScreen;
 use crate::low_stock::OpenStock;
 use crate::offers::{OffersScreen, OpenProduct};
 use crate::opportunities::OpportunitiesScreen;
+use crate::order_alerts::OpenOrders;
 use crate::orders::OrdersScreen;
 use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
@@ -100,6 +101,15 @@ impl Shell {
                         .stock
                         .update(cx, |stock, cx| stock.open(Some(open.0), window, cx));
                     shell.place = Place::Stock;
+                    cx.notify();
+                },
+            ),
+            cx.subscribe_in(
+                &home.read(cx).order_alerts.clone(),
+                window,
+                |shell, _, _: &OpenOrders, _, cx| {
+                    shell.orders.update(cx, OrdersScreen::refresh);
+                    shell.place = Place::Orders;
                     cx.notify();
                 },
             ),

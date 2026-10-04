@@ -342,6 +342,32 @@ pub(super) struct OrderAnswer {
     pub payments: Vec<PaymentAnswer>,
     pub buyer: Option<OrderBuyer>,
     pub shipping: Option<OrderShipping>,
+    /// The claims the buyer opened on the Order.
+    #[serde(default)]
+    pub mediations: Vec<MediationAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct MediationAnswer {
+    pub id: Number,
+}
+
+/// `/post-purchase/v2/claims/{id}/returns`.
+#[derive(Deserialize)]
+pub(super) struct ReturnAnswer {
+    pub id: Number,
+    pub status: String,
+    #[serde(default)]
+    pub orders: Vec<ReturnedOrderAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReturnedOrderAnswer {
+    pub order_id: Number,
+    pub item_id: String,
+    pub variation_id: Option<Number>,
+    /// Units coming back, written as text such as "1.0".
+    pub return_quantity: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]

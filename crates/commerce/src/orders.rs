@@ -1,10 +1,11 @@
-//! Orders (#20): the sales in the Sales Channel, read by an Order Sync that
-//! the app runs by polling (ADR 0003, ADR 0018). Each Order is kept by the
-//! channel's id, so reading it again changes nothing, and each line of an
-//! Order sold from the owner's stock takes its units out of the ledger
-//! once, in the same transaction that records it (ADR 0012). The buyer's
-//! data stays only for shipping and support, for as long as the owner
-//! chose.
+//! Orders (#20, #21): the sales in the Sales Channel, read by an Order Sync
+//! that the app runs by polling (ADR 0003, ADR 0018). Each Order is kept by
+//! the channel's id, so reading it again changes nothing, and each line of
+//! an Order sold from the owner's stock takes its units out of the ledger
+//! once, in the same transaction that records it (ADR 0012). A cancellation
+//! before shipping puts them back by itself; units the buyer sends back
+//! wait for the owner to say they arrived (ADR 0019). The buyer's data
+//! stays only for shipping and support, for as long as the owner chose.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use libsql::{Connection, Row, TransactionBehavior, Value, params};
 use mascate_inventory::{
-    HOME_LOCATION, Inventory, InventoryError, LowStock, MovementReason, NewExit,
+    HOME_LOCATION, Inventory, InventoryError, LowStock, MovementReason, NewExit, NewReturn,
 };
 use mascate_kernel::{
     Clock, CurrencyMismatch, IdGenerator, ListingType, Money, PlatformError, RecordId, Timestamp,
@@ -95,10 +96,40 @@ pub(crate) const CREATE_ORDERS: Migration = Migration {
     );",
 };
 
+pub(crate) const ADD_RETURNS: Migration = Migration {
+    version: 7,
+    name: "add returns and the dispatch warning",
+    risky: false,
+    sql: "ALTER TABLE commerce_order_lines ADD COLUMN restocked INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE commerce_order_lines ADD COLUMN unsellable INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE commerce_order_returns (
+        id              TEXT    PRIMARY KEY,
+        order_id        TEXT    NOT NULL REFERENCES commerce_orders (id),
+        ml_return_id    TEXT    NOT NULL,
+        status          TEXT    NOT NULL,
+        ml_item_id      TEXT    NOT NULL,
+        ml_variation_id TEXT,
+        quantity        INTEGER NOT NULL,
+        created_at      TEXT    NOT NULL,
+        updated_at      TEXT    NOT NULL,
+        deleted_at      TEXT
+    );
+    CREATE UNIQUE INDEX commerce_order_returns_by_item
+        ON commerce_order_returns
+            (order_id, ml_return_id, ml_item_id, COALESCE(ml_variation_id, ''))
+        WHERE deleted_at IS NULL;
+    ALTER TABLE commerce_order_settings
+        ADD COLUMN warn_before_dispatch_hours INTEGER NOT NULL DEFAULT 24;",
+};
+
 const SYNC_TABLE: &str = "commerce_order_syncs";
 const SYNC_COLUMNS: &[&str] = &["first_synced_at", "synced_through"];
 const SETTINGS_TABLE: &str = "commerce_order_settings";
-const SETTINGS_COLUMNS: &[&str] = &["sync_every_minutes", "keep_buyer_data_days"];
+const SETTINGS_COLUMNS: &[&str] = &[
+    "sync_every_minutes",
+    "keep_buyer_data_days",
+    "warn_before_dispatch_hours",
+];
 
 /// How far back the first Order Sync reads: the recent Orders, to list.
 const FIRST_SYNC_DAYS: i64 = 30;
@@ -200,6 +231,14 @@ impl ShipmentStatus {
     fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.code() == code)
     }
+
+    /// Whether the units already left the owner's hands.
+    fn left_the_owner(self) -> bool {
+        matches!(
+            self,
+            ShipmentStatus::Shipped | ShipmentStatus::Delivered | ShipmentStatus::NotDelivered
+        )
+    }
 }
 
 /// An Order's shipment, as the channel reports it.
@@ -251,6 +290,54 @@ pub struct ChannelOrderLine {
     pub listing_type: Option<ListingType>,
 }
 
+/// Where a return the buyer opened stands in the channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReturnStatus {
+    /// Opened, with the units still with the buyer or on their way back.
+    OnTheWay,
+    /// Delivered to the owner, as the channel reports it.
+    Delivered,
+    /// Called off: the units are not coming back.
+    Cancelled,
+}
+
+impl ReturnStatus {
+    const ALL: [ReturnStatus; 3] = [
+        ReturnStatus::OnTheWay,
+        ReturnStatus::Delivered,
+        ReturnStatus::Cancelled,
+    ];
+
+    fn code(self) -> &'static str {
+        match self {
+            ReturnStatus::OnTheWay => "on_the_way",
+            ReturnStatus::Delivered => "delivered",
+            ReturnStatus::Cancelled => "cancelled",
+        }
+    }
+
+    fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|status| status.code() == code)
+    }
+}
+
+/// Units of one item of an Order a return sends back.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReturnedItem {
+    pub item: String,
+    pub variation: Option<String>,
+    pub quantity: u32,
+}
+
+/// A return of the buyer's, as the channel reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelReturn {
+    /// The channel's id of the return.
+    pub id: String,
+    pub status: ReturnStatus,
+    pub items: Vec<ReturnedItem>,
+}
+
 /// An Order as the Sales Channel reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelOrder {
@@ -272,6 +359,32 @@ pub struct ChannelOrder {
     /// `None` once its time to be kept is over.
     pub buyer: Option<Buyer>,
     pub shipment: Option<Shipment>,
+    /// The returns the buyer opened, if any.
+    pub returns: Vec<ChannelReturn>,
+}
+
+impl ChannelOrder {
+    /// Units of `line` on their way back to the owner: every one when the
+    /// shipment failed or the Order was cancelled once shipped, otherwise
+    /// those of the returns not called off.
+    fn units_coming_back(&self, line: &ChannelOrderLine) -> u32 {
+        let shipment = self.shipment.as_ref().map(|shipment| shipment.status);
+        let all_back = shipment == Some(ShipmentStatus::NotDelivered)
+            || (self.status == OrderStatus::Cancelled
+                && shipment.is_some_and(ShipmentStatus::left_the_owner));
+        if all_back {
+            return line.quantity;
+        }
+        let returned: u32 = self
+            .returns
+            .iter()
+            .filter(|found| found.status != ReturnStatus::Cancelled)
+            .flat_map(|found| &found.items)
+            .filter(|item| item.item == line.item && item.variation == line.variation)
+            .map(|item| item.quantity)
+            .sum();
+        returned.min(line.quantity)
+    }
 }
 
 /// The Orders of the owner's Sales Channel, as a Platform's adapter reports
@@ -280,6 +393,21 @@ pub trait ChannelOrders: Send + Sync {
     /// Every Order of the owner's created or changed at `since` or after,
     /// each with its shipment.
     fn orders_changed_since(&self, since: Timestamp) -> Result<Vec<ChannelOrder>, PlatformError>;
+}
+
+/// The shipping labels of the owner's Orders, as a Platform's adapter prints
+/// them. Calls block on the network, so they run off the UI thread.
+pub trait ShippingLabels: Send + Sync {
+    /// The label of the channel's shipment `shipment`, as a PDF document.
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError>;
+}
+
+/// A shipping label, ready to save and print.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShippingLabel {
+    /// A file name for it, from the Order's id in the channel.
+    pub file_name: String,
+    pub pdf: Vec<u8>,
 }
 
 /// Why a line's units have not left the stock yet. Each Order Sync tries
@@ -333,11 +461,25 @@ pub enum LineStock {
     Dropship,
 }
 
+/// What became of the units of a line that came back, or are coming.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnitsBack {
+    /// On their way back, or arrived without the owner saying so yet.
+    pub awaiting: u32,
+    /// Back on the shelf: by the cancellation, or received by the owner.
+    pub restocked: u32,
+    /// Received by the owner, but not fit to sell again.
+    pub unsellable: u32,
+}
+
 /// One item of an Order, with what became of its stock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderLine {
     pub sold: ChannelOrderLine,
     pub stock: LineStock,
+    /// Units that left the stock and are coming back, or came; only lines
+    /// whose units left the stock have any.
+    pub back: UnitsBack,
 }
 
 /// A sale of the owner's, as last synced.
@@ -359,6 +501,67 @@ impl Order {
     pub fn units(&self) -> u32 {
         self.lines.iter().map(|line| line.sold.quantity).sum()
     }
+
+    /// Units on their way back that the owner has yet to say arrived.
+    pub fn units_awaiting_return(&self) -> u32 {
+        self.lines.iter().map(|line| line.back.awaiting).sum()
+    }
+
+    /// Whether the Order is late to dispatch, or will be within `warning`
+    /// of `now`; `None` when it is not waiting for the owner to dispatch
+    /// it, or has time.
+    pub fn dispatch_due(&self, now: Timestamp, warning: TimeDelta) -> Option<DispatchDue> {
+        if self.sold.status == OrderStatus::Cancelled {
+            return None;
+        }
+        let shipment = self.sold.shipment.as_ref()?;
+        if shipment.status != ShipmentStatus::ReadyToShip {
+            return None;
+        }
+        let by = shipment.dispatch_by?;
+        if by < now {
+            Some(DispatchDue::Late)
+        } else if by - now <= warning {
+            Some(DispatchDue::Soon)
+        } else {
+            None
+        }
+    }
+}
+
+/// How close an Order waiting for dispatch is to its deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchDue {
+    /// Past the time the channel set to dispatch it by.
+    Late,
+    /// Within the warning the owner chose.
+    Soon,
+}
+
+/// An Order waiting for dispatch that is late or close to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchAlert {
+    pub order: Order,
+    pub due: DispatchDue,
+}
+
+/// What the owner found when a return arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturnReceipt {
+    /// The units are fit to sell again: they go back on the shelf.
+    BackInStock,
+    /// The units arrived damaged or incomplete: the return closes and the
+    /// stock stays as it is.
+    Unsellable,
+}
+
+/// What receiving a return did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReturnReceived {
+    /// Units the return settled, every line together.
+    pub units: u32,
+    /// Units that went back on the shelf.
+    pub restocked: u32,
 }
 
 /// What an Order Sync did.
@@ -379,6 +582,9 @@ pub struct OrderSync {
     pub short: usize,
     /// Products the units leaving took to their Reorder Point.
     pub reached_reorder_point: Vec<LowStock>,
+    /// Orders cancelled before shipping whose units went back on the shelf
+    /// in this Sync.
+    pub restocked: usize,
 }
 
 /// How the app reads Orders: how often, and how long the buyer's data stays.
@@ -386,33 +592,53 @@ pub struct OrderSync {
 pub struct OrderSettings {
     pub sync_every_minutes: u32,
     pub keep_buyer_data_days: u32,
+    /// How long before the time to dispatch an Order it shows as close.
+    pub warn_before_dispatch_hours: u32,
 }
 
 impl OrderSettings {
     pub const SYNC_EVERY_MINUTES: std::ops::RangeInclusive<u32> = 1..=60;
     pub const KEEP_BUYER_DATA_DAYS: std::ops::RangeInclusive<u32> = 7..=1825;
+    pub const WARN_BEFORE_DISPATCH_HOURS: std::ops::RangeInclusive<u32> = 1..=72;
 
     fn is_valid(self) -> bool {
         Self::SYNC_EVERY_MINUTES.contains(&self.sync_every_minutes)
             && Self::KEEP_BUYER_DATA_DAYS.contains(&self.keep_buyer_data_days)
+            && Self::WARN_BEFORE_DISPATCH_HOURS.contains(&self.warn_before_dispatch_hours)
+    }
+
+    /// How long before the time to dispatch an Order it shows as close.
+    pub fn dispatch_warning(self) -> TimeDelta {
+        TimeDelta::hours(i64::from(self.warn_before_dispatch_hours))
     }
 }
 
 impl Default for OrderSettings {
     /// A Sync every 5 minutes (ADR 0003); the buyer's data for 90 days,
-    /// past the channel's time for returns and claims.
+    /// past the channel's time for returns and claims; Orders show as
+    /// close to their time to dispatch a day before it.
     fn default() -> Self {
         Self {
             sync_every_minutes: 5,
             keep_buyer_data_days: 90,
+            warn_before_dispatch_hours: 24,
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OrderError {
-    #[error("a Sync runs every 1 to 60 minutes and the buyer's data stays from 7 days to 5 years")]
+    #[error(
+        "a Sync runs every 1 to 60 minutes, the buyer's data stays from 7 days to 5 years and \
+         the warning before dispatch is 1 to 72 hours"
+    )]
     InvalidSettings,
+    #[error("no Order {0}")]
+    UnknownOrder(RecordId),
+    #[error("the Order has no units on their way back")]
+    NoReturnAwaiting,
+    #[error("the Order is not waiting to be dispatched, so it has no label to print")]
+    NoLabel,
     #[error(transparent)]
     Platform(#[from] PlatformError),
     #[error(transparent)]
@@ -442,8 +668,12 @@ const ORDER_COLUMNS: &str = "id, ml_order_id, ml_pack_id, status, fulfillment_mo
 
 const LINE_COLUMNS: &str = "order_id, ml_item_id, ml_variation_id, title, variation_name,
      quantity, unit_price, sale_fee, currency, listing_type, product_id, stock_movement_id,
-     stock_short
+     stock_short, restocked, unsellable
      FROM commerce_order_lines WHERE deleted_at IS NULL";
+
+const RETURN_COLUMNS: &str = "order_id, ml_return_id, status, ml_item_id, ml_variation_id,
+     quantity
+     FROM commerce_order_returns WHERE deleted_at IS NULL";
 
 /// The first Order Sync and how far the last one read.
 struct SyncState {
@@ -512,6 +742,7 @@ impl Orders {
         let mut arrived = Vec::new();
         for mut reported in fresh.into_values() {
             merge_repeated_lines(&mut reported);
+            sort_returns(&mut reported);
             if reported.ordered_at < keep_since {
                 reported.buyer = None;
             }
@@ -536,12 +767,16 @@ impl Orders {
                     write_order(&transaction, known.id, &reported, started).await?;
                     self.write_lines(&transaction, known.id, &reported.lines, started)
                         .await?;
+                    self.write_returns(&transaction, known.id, &reported.returns, started)
+                        .await?;
                 }
                 None => {
                     report.new += 1;
                     let id = self.ids.next_id();
                     insert_order(&transaction, id, &reported, started).await?;
                     self.write_lines(&transaction, id, &reported.lines, started)
+                        .await?;
+                    self.write_returns(&transaction, id, &reported.returns, started)
                         .await?;
                     if reported.ordered_at >= first_synced_at {
                         arrived.push(id);
@@ -554,6 +789,7 @@ impl Orders {
             .await?;
         report.taken = taken.lines;
         report.reached_reorder_point = taken.reached_reorder_point;
+        report.restocked = self.restock_cancelled(&transaction, started).await?;
         erase_buyer_data(&transaction, keep_since, started).await?;
         save_single_row(
             &transaction,
@@ -584,22 +820,134 @@ impl Orders {
 
     /// Every Order, newest first.
     pub async fn orders(&self) -> Result<Vec<Order>, OrderError> {
-        let connection = self.database.connection();
-        let mut orders = read_orders(connection, "", ()).await?;
         let first_synced_at = self.sync_state().await?.map(|state| state.first_synced_at);
-        let mut lines = read_lines(connection).await?;
-        for order in &mut orders {
-            let kept = lines.remove(&order.id).unwrap_or_default();
-            order.sold.lines = kept.iter().map(|(sold, _)| sold.clone()).collect();
-            order.lines = kept
-                .into_iter()
-                .map(|(sold, taken)| OrderLine {
-                    stock: line_stock(order, taken, first_synced_at),
-                    sold,
-                })
-                .collect();
+        load_orders(self.database.connection(), None, first_synced_at).await
+    }
+
+    /// The Orders waiting for the owner to dispatch them that are late or
+    /// within the warning the owner chose, the closest to their time first.
+    pub async fn dispatch_alerts(&self) -> Result<Vec<DispatchAlert>, OrderError> {
+        let now = self.clock.now();
+        let warning = self.settings().await?.dispatch_warning();
+        let mut alerts: Vec<DispatchAlert> = self
+            .orders()
+            .await?
+            .into_iter()
+            .filter_map(|order| {
+                order
+                    .dispatch_due(now, warning)
+                    .map(|due| DispatchAlert { order, due })
+            })
+            .collect();
+        alerts.sort_by_key(|alert| {
+            (
+                alert
+                    .order
+                    .sold
+                    .shipment
+                    .as_ref()
+                    .and_then(|s| s.dispatch_by),
+                alert.order.sold.id.clone(),
+            )
+        });
+        Ok(alerts)
+    }
+
+    /// The label of an Order waiting to be dispatched, as a PDF to save and
+    /// print.
+    pub async fn shipping_label(
+        &self,
+        labels: &dyn ShippingLabels,
+        order: RecordId,
+    ) -> Result<ShippingLabel, OrderError> {
+        let found = load_orders(self.database.connection(), Some(order), None)
+            .await?
+            .pop()
+            .ok_or(OrderError::UnknownOrder(order))?;
+        let shipment = match &found.sold.shipment {
+            Some(shipment)
+                if shipment.status == ShipmentStatus::ReadyToShip
+                    && found.sold.status != OrderStatus::Cancelled =>
+            {
+                shipment
+            }
+            _ => return Err(OrderError::NoLabel),
+        };
+        let pdf = labels.label_pdf(&shipment.id)?;
+        if !pdf.starts_with(b"%PDF-") {
+            return Err(PlatformError::Failed(
+                "the channel sent a label that is not a PDF document".into(),
+            )
+            .into());
         }
-        Ok(orders)
+        let name: String = found
+            .sold
+            .id
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
+        Ok(ShippingLabel {
+            file_name: format!("etiqueta-{name}.pdf"),
+            pdf,
+        })
+    }
+
+    /// Settles the units of `order` on their way back, as the owner found
+    /// them on arrival: fit to sell, they go back on the shelf at the cost
+    /// they left with; unsellable, the return closes and the stock stays.
+    /// Units settled never come back twice.
+    pub async fn receive_return(
+        &self,
+        order: RecordId,
+        receipt: ReturnReceipt,
+    ) -> Result<ReturnReceived, OrderError> {
+        let now = self.clock.now();
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let found = load_orders(&transaction, Some(order), None)
+            .await?
+            .pop()
+            .ok_or(OrderError::UnknownOrder(order))?;
+        let mut received = ReturnReceived {
+            units: 0,
+            restocked: 0,
+        };
+        for line in &found.lines {
+            let awaiting = line.back.awaiting;
+            let LineStock::Taken { movement, .. } = line.stock else {
+                continue;
+            };
+            if awaiting == 0 {
+                continue;
+            }
+            let column = match receipt {
+                ReturnReceipt::BackInStock => {
+                    self.inventory
+                        .record_return(
+                            &transaction,
+                            &NewReturn {
+                                exit: movement,
+                                quantity: awaiting,
+                                reason: MovementReason::SaleReturned { order: found.id },
+                            },
+                        )
+                        .await?;
+                    received.restocked += awaiting;
+                    "restocked"
+                }
+                ReturnReceipt::Unsellable => "unsellable",
+            };
+            let sold = (line.sold.item.as_str(), line.sold.variation.as_deref());
+            settle(&transaction, found.id, sold, column, awaiting, now).await?;
+            received.units += awaiting;
+        }
+        if received.units == 0 {
+            return Err(OrderError::NoReturnAwaiting);
+        }
+        transaction.commit().await?;
+        Ok(received)
     }
 
     /// When the Orders were last synced; `None` before the first Sync.
@@ -613,6 +961,7 @@ impl Orders {
                 let settings = OrderSettings {
                     sync_every_minutes: row.get(0)?,
                     keep_buyer_data_days: row.get(1)?,
+                    warn_before_dispatch_hours: row.get(2)?,
                 };
                 Ok(if settings.is_valid() {
                     settings
@@ -639,6 +988,7 @@ impl Orders {
             vec![
                 Value::Integer(i64::from(settings.sync_every_minutes)),
                 Value::Integer(i64::from(settings.keep_buyer_data_days)),
+                Value::Integer(i64::from(settings.warn_before_dispatch_hours)),
             ],
         )
         .await?;
@@ -712,6 +1062,112 @@ impl Orders {
             .await?;
         }
         Ok(())
+    }
+
+    /// Writes `returns` over the Order's: each item of each return by the
+    /// channel's ids, and those the channel no longer reports gone.
+    async fn write_returns(
+        &self,
+        on: &Connection,
+        order: RecordId,
+        returns: &[ChannelReturn],
+        now: Timestamp,
+    ) -> Result<(), OrderError> {
+        for found in returns {
+            for item in &found.items {
+                on.execute(
+                    "INSERT INTO commerce_order_returns
+                         (id, order_id, ml_return_id, status, ml_item_id, ml_variation_id,
+                          quantity, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                     ON CONFLICT (order_id, ml_return_id, ml_item_id,
+                                  COALESCE(ml_variation_id, ''))
+                         WHERE deleted_at IS NULL
+                     DO UPDATE SET status = excluded.status, quantity = excluded.quantity,
+                         updated_at = excluded.updated_at",
+                    params![
+                        self.ids.next_id().to_string(),
+                        order.to_string(),
+                        found.id.clone(),
+                        found.status.code(),
+                        item.item.clone(),
+                        item.variation.clone(),
+                        item.quantity,
+                        stored(now)
+                    ],
+                )
+                .await?;
+            }
+        }
+        on.execute(
+            "UPDATE commerce_order_returns SET deleted_at = ?1, updated_at = ?1
+             WHERE order_id = ?2 AND deleted_at IS NULL AND updated_at < ?1",
+            params![stored(now), order.to_string()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Puts back on the shelf the units of every Order cancelled before
+    /// shipping that are not back yet, and returns how many Orders they
+    /// were.
+    async fn restock_cancelled(
+        &self,
+        on: &Connection,
+        now: Timestamp,
+    ) -> Result<usize, OrderError> {
+        let mut rows = on
+            .query(
+                "SELECT line.order_id, line.ml_item_id, line.ml_variation_id,
+                     line.stock_movement_id, line.quantity - line.restocked - line.unsellable,
+                     ord.shipment_status
+                 FROM commerce_order_lines line
+                 JOIN commerce_orders ord ON ord.id = line.order_id AND ord.deleted_at IS NULL
+                 WHERE line.deleted_at IS NULL AND line.stock_movement_id IS NOT NULL
+                     AND ord.status = ?1
+                     AND line.quantity > line.restocked + line.unsellable
+                 ORDER BY ord.ordered_at, ord.id, line.position",
+                params![OrderStatus::Cancelled.code()],
+            )
+            .await?;
+        let mut due = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let shipment = match row.get::<Option<String>>(5)? {
+                Some(code) => {
+                    Some(ShipmentStatus::from_code(&code).ok_or(OrderError::Unreadable(code))?)
+                }
+                None => None,
+            };
+            if shipment.is_some_and(ShipmentStatus::left_the_owner) {
+                continue;
+            }
+            due.push((
+                row.id_at(0)?,
+                row.get::<String>(1)?,
+                row.get::<Option<String>>(2)?,
+                row.id_at(3)?,
+                row.get::<u32>(4)?,
+            ));
+        }
+        let mut orders = Vec::new();
+        for (order, item, variation, exit, units) in due {
+            self.inventory
+                .record_return(
+                    on,
+                    &NewReturn {
+                        exit,
+                        quantity: units,
+                        reason: MovementReason::SaleCancelled { order },
+                    },
+                )
+                .await?;
+            let sold = (item.as_str(), variation.as_deref());
+            settle(on, order, sold, "restocked", units, now).await?;
+            if !orders.contains(&order) {
+                orders.push(order);
+            }
+        }
+        Ok(orders.len())
     }
 
     /// Takes out of the stock the units of every line still to take: sold
@@ -829,6 +1285,38 @@ struct Taken {
     reached_reorder_point: Vec<LowStock>,
 }
 
+/// Adds `units` to the `restocked` or `unsellable` count of the line of
+/// `order` that sold `item` and `variation`.
+async fn settle(
+    on: &Connection,
+    order: RecordId,
+    (item, variation): (&str, Option<&str>),
+    column: &str,
+    units: u32,
+    now: Timestamp,
+) -> Result<(), OrderError> {
+    debug_assert!(matches!(column, "restocked" | "unsellable"));
+    on.execute(
+        &format!(
+            "UPDATE commerce_order_lines SET {column} = {column} + ?1, updated_at = ?2
+             WHERE order_id = ?3 AND ml_item_id = ?4
+                 AND COALESCE(ml_variation_id, '') = COALESCE(?5, '') AND deleted_at IS NULL"
+        ),
+        params![units, stored(now), order.to_string(), item, variation],
+    )
+    .await?;
+    Ok(())
+}
+
+/// The channel's returns in one order, so an Order read again compares the
+/// same.
+fn sort_returns(order: &mut ChannelOrder) {
+    for found in &mut order.returns {
+        found.items.sort();
+    }
+    order.returns.sort_by(|a, b| a.id.cmp(&b.id));
+}
+
 /// The channel lists one item per listing and variation; should it repeat
 /// one, its units count once, in one line.
 fn merge_repeated_lines(order: &mut ChannelOrder) {
@@ -856,6 +1344,7 @@ fn same_as_kept(kept: &Order, reported: &ChannelOrder) -> bool {
         && kept.sold.paid == reported.paid
         && kept.sold.shipping_paid == reported.shipping_paid
         && kept.sold.shipment == reported.shipment
+        && kept.sold.returns == reported.returns
         && (kept.sold.buyer == reported.buyer || kept.buyer_data_erased_at.is_some())
 }
 
@@ -1049,6 +1538,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
             shipping_paid: amount(10)?,
             buyer,
             shipment,
+            returns: Vec::new(),
         },
         lines: Vec::new(),
         fulfillment_mode: FulfillmentMode::from_code(&mode).ok_or(OrderError::Unreadable(mode))?,
@@ -1057,20 +1547,59 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
     })
 }
 
-/// What a line kept of its stock: the Product and movement, or why not.
+/// The Orders, newest first, with their lines and returns: every one, or
+/// only `order`.
+async fn load_orders(
+    on: &Connection,
+    order: Option<RecordId>,
+    first_synced_at: Option<Timestamp>,
+) -> Result<Vec<Order>, OrderError> {
+    let (by_id, by_order, values) = match order {
+        Some(order) => (
+            "AND id = ?1",
+            "AND order_id = ?1",
+            vec![Value::Text(order.to_string())],
+        ),
+        None => ("", "", Vec::new()),
+    };
+    let mut orders = read_orders(on, by_id, values.clone()).await?;
+    let mut lines = read_lines(on, by_order, values.clone()).await?;
+    let mut returns = read_returns(on, by_order, values).await?;
+    for order in &mut orders {
+        order.sold.returns = returns.remove(&order.id).unwrap_or_default();
+        let kept = lines.remove(&order.id).unwrap_or_default();
+        order.sold.lines = kept.iter().map(|(sold, _)| sold.clone()).collect();
+        order.lines = kept
+            .into_iter()
+            .map(|(sold, kept)| OrderLine {
+                back: units_back(&order.sold, &sold, &kept),
+                stock: line_stock(order, &kept, first_synced_at),
+                sold,
+            })
+            .collect();
+    }
+    Ok(orders)
+}
+
+/// What a line kept of its stock: the Product and movement, or why not,
+/// and what came back of it.
 struct KeptStock {
     taken: Option<(RecordId, RecordId)>,
     short: Option<StockShort>,
+    restocked: u32,
+    unsellable: u32,
 }
 
-/// Every Order's lines, in the channel's order, by Order.
+/// The Orders' lines, in the channel's order, by Order.
 async fn read_lines(
     on: &Connection,
+    filter: &str,
+    values: Vec<Value>,
 ) -> Result<BTreeMap<RecordId, Vec<(ChannelOrderLine, KeptStock)>>, OrderError> {
     let mut rows = on
         .query(
-            &format!("SELECT {LINE_COLUMNS} ORDER BY order_id, position"),
-            (),
+            &format!("SELECT {LINE_COLUMNS} {filter} ORDER BY order_id, position"),
+            values,
         )
         .await?;
     let mut lines: BTreeMap<RecordId, Vec<(ChannelOrderLine, KeptStock)>> = BTreeMap::new();
@@ -1100,14 +1629,72 @@ async fn read_lines(
                 sale_fee,
                 listing_type: listing_type.and_then(|code| ListingType::from_code(&code)),
             },
-            KeptStock { taken, short },
+            KeptStock {
+                taken,
+                short,
+                restocked: row.get(13)?,
+                unsellable: row.get(14)?,
+            },
         ));
     }
     Ok(lines)
 }
 
+/// The Orders' returns, each with its items, by Order.
+async fn read_returns(
+    on: &Connection,
+    filter: &str,
+    values: Vec<Value>,
+) -> Result<BTreeMap<RecordId, Vec<ChannelReturn>>, OrderError> {
+    let mut rows = on
+        .query(
+            &format!(
+                "SELECT {RETURN_COLUMNS} {filter}
+                 ORDER BY order_id, ml_return_id, ml_item_id, COALESCE(ml_variation_id, '')"
+            ),
+            values,
+        )
+        .await?;
+    let mut returns: BTreeMap<RecordId, Vec<ChannelReturn>> = BTreeMap::new();
+    while let Some(row) = rows.next().await? {
+        let id: String = row.get(1)?;
+        let status: String = row.get(2)?;
+        let status = ReturnStatus::from_code(&status).ok_or(OrderError::Unreadable(status))?;
+        let item = ReturnedItem {
+            item: row.get(3)?,
+            variation: row.get(4)?,
+            quantity: row.get(5)?,
+        };
+        let of_order = returns.entry(row.id_at(0)?).or_default();
+        match of_order.last_mut() {
+            Some(last) if last.id == id => last.items.push(item),
+            _ => of_order.push(ChannelReturn {
+                id,
+                status,
+                items: vec![item],
+            }),
+        }
+    }
+    Ok(returns)
+}
+
+/// What came back of a line's units, or is on its way: only units that
+/// left the stock come back to it.
+fn units_back(order: &ChannelOrder, line: &ChannelOrderLine, kept: &KeptStock) -> UnitsBack {
+    let settled = kept.restocked + kept.unsellable;
+    UnitsBack {
+        awaiting: if kept.taken.is_some() {
+            order.units_coming_back(line).saturating_sub(settled)
+        } else {
+            0
+        },
+        restocked: kept.restocked,
+        unsellable: kept.unsellable,
+    }
+}
+
 /// What became of a line's stock, from what it kept and its Order.
-fn line_stock(order: &Order, kept: KeptStock, first_synced_at: Option<Timestamp>) -> LineStock {
+fn line_stock(order: &Order, kept: &KeptStock, first_synced_at: Option<Timestamp>) -> LineStock {
     if let Some((product, movement)) = kept.taken {
         return LineStock::Taken { product, movement };
     }

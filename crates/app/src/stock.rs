@@ -675,6 +675,13 @@ pub fn product_label(products: &[Product], id: RecordId) -> (String, String) {
 /// What a movement was and where it came from: "Entrada da compra de
 /// 01/10/2026" and "Loja Fones", or "Avaria" and the owner's note.
 fn reason_text(shown: &Shown, movement: &StockMovement) -> (String, Option<String>) {
+    let sale = |order: RecordId| {
+        shown
+            .sales
+            .iter()
+            .find(|sale| sale.id == order)
+            .map(|sale| format!("Pedido {}", sale.sold.id))
+    };
     match movement.reason {
         MovementReason::Adjustment(kind) => (
             format!("Ajuste: {}", kind_name(kind)),
@@ -699,14 +706,11 @@ fn reason_text(shown: &Shown, movement: &StockMovement) -> (String, Option<Strin
                 None => ("Entrada de uma compra".to_owned(), None),
             }
         }
-        MovementReason::Sale { order } => (
-            "Venda no Mercado Livre".to_owned(),
-            shown
-                .sales
-                .iter()
-                .find(|sale| sale.id == order)
-                .map(|sale| format!("Pedido {}", sale.sold.id)),
-        ),
+        MovementReason::Sale { order } => ("Venda no Mercado Livre".to_owned(), sale(order)),
+        MovementReason::SaleCancelled { order } => {
+            ("Pedido cancelado antes do envio".to_owned(), sale(order))
+        }
+        MovementReason::SaleReturned { order } => ("Devolução recebida".to_owned(), sale(order)),
     }
 }
 
@@ -737,9 +741,10 @@ fn adjusted_text(adjusted: &Adjusted) -> String {
         MovementReason::Adjustment(AdjustmentKind::Count) => {
             format!("A contagem achou {units} a menos; o saldo foi corrigido.")
         }
-        MovementReason::PurchaseReceipt { .. } | MovementReason::Sale { .. } => {
-            "Estoque ajustado.".into()
-        }
+        MovementReason::PurchaseReceipt { .. }
+        | MovementReason::Sale { .. }
+        | MovementReason::SaleCancelled { .. }
+        | MovementReason::SaleReturned { .. } => "Estoque ajustado.".into(),
     };
     if adjusted.reached_reorder_point.is_some() {
         text.push_str(" O produto chegou ao ponto de reposição.");
@@ -769,6 +774,11 @@ pub fn inventory_failure(error: &InventoryError) -> String {
         InventoryError::Currencies(_) => {
             "O estoque deste produto está em outra moeda; registre a compra na mesma moeda das \
              anteriores."
+                .into()
+        }
+        InventoryError::UnknownExit(_) | InventoryError::ReturnsMoreThanLeft { .. } => {
+            "Essas unidades não saíram do estoque por esta venda, então não podem voltar por \
+             ela."
                 .into()
         }
         InventoryError::Unreadable(_) | InventoryError::Sql(_) => {

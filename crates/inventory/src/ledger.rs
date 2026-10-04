@@ -34,6 +34,11 @@ pub enum MovementReason {
     Adjustment(AdjustmentKind),
     /// Units sold in an Order of a Sales Channel.
     Sale { order: RecordId },
+    /// Units of a sale back on the shelf, its Order cancelled before they
+    /// shipped.
+    SaleCancelled { order: RecordId },
+    /// Units of a sale the buyer sent back, received by the owner.
+    SaleReturned { order: RecordId },
 }
 
 /// Why the owner corrected the stock.
@@ -55,6 +60,8 @@ impl MovementReason {
             MovementReason::Adjustment(AdjustmentKind::Damage) => "adjustment_damage",
             MovementReason::Adjustment(AdjustmentKind::Count) => "adjustment_count",
             MovementReason::Sale { .. } => "sale",
+            MovementReason::SaleCancelled { .. } => "sale_cancelled",
+            MovementReason::SaleReturned { .. } => "sale_returned",
         }
     }
 
@@ -62,7 +69,9 @@ impl MovementReason {
     fn reference(self) -> Option<RecordId> {
         match self {
             MovementReason::PurchaseReceipt { purchase_order } => Some(purchase_order),
-            MovementReason::Sale { order } => Some(order),
+            MovementReason::Sale { order }
+            | MovementReason::SaleCancelled { order }
+            | MovementReason::SaleReturned { order } => Some(order),
             MovementReason::Adjustment(_) => None,
         }
     }
@@ -76,6 +85,8 @@ impl MovementReason {
             "adjustment_damage" => Some(MovementReason::Adjustment(AdjustmentKind::Damage)),
             "adjustment_count" => Some(MovementReason::Adjustment(AdjustmentKind::Count)),
             "sale" => Some(MovementReason::Sale { order: reference }),
+            "sale_cancelled" => Some(MovementReason::SaleCancelled { order: reference }),
+            "sale_returned" => Some(MovementReason::SaleReturned { order: reference }),
             _ => None,
         }
     }
@@ -130,6 +141,16 @@ pub struct Exited {
     /// Set when the units leaving took the Product from above its Reorder
     /// Point to it or below.
     pub reached_reorder_point: Option<LowStock>,
+}
+
+/// Units that left by `exit` coming back to where they left from, such as
+/// those of a cancelled Order or of a return the owner received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewReturn {
+    /// The Stock Movement the units left by.
+    pub exit: RecordId,
+    pub quantity: u32,
+    pub reason: MovementReason,
 }
 
 /// A Product at or below its Reorder Point.
@@ -241,6 +262,10 @@ pub enum InventoryError {
     NoCostBasis,
     #[error("a cost cannot be negative")]
     NegativeCost,
+    #[error("no Stock Movement {0} took units out")]
+    UnknownExit(RecordId),
+    #[error("only {left} units left by that movement")]
+    ReturnsMoreThanLeft { left: u32 },
     #[error("no Stock Location {0}")]
     UnknownLocation(RecordId),
     #[error("the Product's stock is valued in another currency: {0}")]
@@ -479,6 +504,50 @@ impl Inventory {
             },
         )
         .await
+    }
+
+    /// Puts back units that left by an exit, on `on`, the caller's
+    /// transaction, so they commit together with what brought them back.
+    /// They come back to the location they left and at the cost they left
+    /// with, so the ledger reads as if they never left. The caller keeps
+    /// track of what already came back: the ledger only refuses more units
+    /// than the exit took.
+    pub async fn record_return(
+        &self,
+        on: &Connection,
+        back: &NewReturn,
+    ) -> Result<StockMovement, InventoryError> {
+        if back.quantity == 0 {
+            return Err(InventoryError::NoUnits);
+        }
+        let exit = movements(
+            on,
+            &format!("SELECT {MOVEMENT_COLUMNS} AND id = ?1"),
+            params![back.exit.to_string()],
+        )
+        .await?
+        .pop()
+        .filter(|exit| exit.quantity < 0)
+        .ok_or(InventoryError::UnknownExit(back.exit))?;
+        let left = u32::try_from(exit.quantity.unsigned_abs())
+            .map_err(|_| InventoryError::Unreadable(exit.quantity.to_string()))?;
+        if back.quantity > left {
+            return Err(InventoryError::ReturnsMoreThanLeft { left });
+        }
+        let cost = Money::new(
+            -exit.cost.amount() * Decimal::from(back.quantity) / Decimal::from(left),
+            exit.cost.currency(),
+        );
+        let movement = self.movement(
+            exit.product,
+            exit.location,
+            i64::from(back.quantity),
+            cost,
+            back.reason,
+            None,
+        );
+        insert(on, &movement).await?;
+        Ok(movement)
     }
 
     /// Sets the Reorder Point of `product`, or clears it with `None`.

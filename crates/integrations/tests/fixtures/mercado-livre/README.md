@@ -38,6 +38,9 @@ conta de vendedor do Fernando.
 | `user-items-by-sku.json`, `items-states.json` | `GET /users/{id}/items/search?seller_sku=...` e o multiget com `attributes=id,status,permalink` | Itens e buscas |
 | `orders-search.json`, `orders-search-end.json`, `orders-search-empty.json` | `GET /orders/search?seller=...&order.date_last_updated.from=...&sort=date_asc` em duas páginas (`offset`), e uma busca sem resultados | Gerenciamento de vendas (Filtrar orders, Status da order); Gestão de packs |
 | `shipment-44100000001.json` | `GET /shipments/{id}` com `x-format-new: true` | Gerenciamento de envios |
+| `orders-search-returned.json`, `shipment-44100000005.json` | a busca de Orders com um pedido entregue que tem duas reclamações em `mediations`, e o seu envio entregue | Gerenciamento de vendas; Gerenciamento de envios |
+| `claim-5298178312-returns.json` | `GET /post-purchase/v2/claims/{id}/returns` de uma devolução parcial a caminho do vendedor | Gerenciar devoluções |
+| `shipment-label-44100000001.pdf` | `GET /shipment_labels?shipment_ids=...&response_type=pdf` | Mercado Envios 2 (Imprimir etiquetas) |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -86,3 +89,15 @@ recursos vizinhos (conferir no regression pass):
   descreve os campos, mas não mostra o JSON inteiro: o formato foi completado e deve ser
   conferido no regression pass). O segundo envio do carrinho (`/shipments/44100000002`) não é
   servido, como um envio ainda não criado (404). Ids, nomes e endereços são inventados.
+- Etiquetas, atrasos, cancelamentos e devoluções (#21): a etiqueta vem de `GET /shipment_labels`
+  com `response_type=pdf` (a página também oferece `zpl2`, que o app não usa), só para envios
+  `ready_to_ship` com `substatus` `ready_to_print` ou `printed`; o PDF aqui é um arquivo mínimo
+  feito à mão, não uma etiqueta real. As devoluções vêm das reclamações que o pedido lista em
+  `mediations` (campo do recurso de Order que a página de vendas não mostra no exemplo: conferir
+  no regression pass), cada uma lida em `/post-purchase/v2/claims/{id}/returns`; uma reclamação
+  sem devolução responde 404. O app lê `status` e os itens de `orders[]` do próprio pedido, com
+  `return_quantity` escrito como texto ("2.0"), como no exemplo da página. A lista completa de
+  status da devolução não aparece na documentação consultada: o app trata `delivered` como
+  entregue, `cancelled` e `expired` como desistência e qualquer outro como a caminho; conferir no
+  regression pass. Também fica para o regression pass se o `last_updated` do Order muda quando a
+  reclamação ou a devolução muda (a busca de Orders depende disso).

@@ -1,0 +1,77 @@
+{
+  "id": 44100000005,
+  "external_reference": null,
+  "status": "delivered",
+  "substatus": null,
+  "date_created": "2026-09-28T14:02:20.000-03:00",
+  "last_updated": "2026-10-01T16:40:00.000-03:00",
+  "declared_value": 149.7,
+  "logistic": {
+    "direction": "forward",
+    "mode": "me2",
+    "type": "drop_off"
+  },
+  "source": {
+    "site_id": "MLB",
+    "market_place": "MELI"
+  },
+  "tags": [],
+  "dimensions": {
+    "height": 6,
+    "width": 15,
+    "length": 20,
+    "weight": 300
+  },
+  "lead_time": {
+    "option_id": 9004570,
+    "shipping_method": {
+      "id": 182,
+      "type": "standard",
+      "name": "Normal"
+    },
+    "currency_id": "BRL",
+    "cost": 0,
+    "cost_type": "free",
+    "estimated_handling_limit": {
+      "date": "2026-09-29T23:59:59.000-03:00"
+    },
+    "estimated_delivery_time": {
+      "date": "2026-10-02T00:00:00.000-03:00",
+      "type": "known"
+    }
+  },
+  "origin": {
+    "type": "selling_address",
+    "sender_id": 1234567
+  },
+  "destination": {
+    "type": "buying_address",
+    "receiver_id": 555000444,
+    "receiver_name": "Eduarda Farias",
+    "receiver_phone": "XXXXXXX",
+    "shipping_address": {
+      "address_id": 1200345699,
+      "address_line": "Avenida Sete de Setembro 1500",
+      "street_name": "Avenida Sete de Setembro",
+      "street_number": "1500",
+      "comment": null,
+      "zip_code": "40080001",
+      "city": {
+        "id": "BR-BA-01",
+        "name": "Salvador"
+      },
+      "state": {
+        "id": "BR-BA",
+        "name": "Bahia"
+      },
+      "country": {
+        "id": "BR",
+        "name": "Brasil"
+      },
+      "neighborhood": {
+        "id": null,
+        "name": "Vitória"
+      }
+    }
+  }
+}

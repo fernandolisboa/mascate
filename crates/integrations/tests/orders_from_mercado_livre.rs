@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_commerce::{
-    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, OrderStatus, Receiver, Shipment,
-    ShipmentStatus,
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, OrderStatus, Receiver,
+    ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
 };
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::ManualClock;
@@ -28,6 +28,11 @@ const SEARCH_NEXT: &str = "/orders/search?seller=1234567\
 const SHIPMENT: &str = "/shipments/44100000001";
 /// Mercado Livre has not made this shipment yet: it answers 404.
 const SHIPMENT_NOT_YET: &str = "/shipments/44100000002";
+const LABEL: &str = "/shipment_labels?shipment_ids=44100000001&response_type=pdf";
+/// A claim the buyer opened with a return of part of the Order.
+const CLAIM_RETURN: &str = "/post-purchase/v2/claims/5298178312/returns";
+/// A claim without a return, such as one about a missing part: 404.
+const CLAIM_WITHOUT_RETURN: &str = "/post-purchase/v2/claims/5298178399/returns";
 
 fn fixture(name: &str) -> String {
     let path = format!(
@@ -124,6 +129,7 @@ fn fone_order() -> ChannelOrder {
             status: ShipmentStatus::ReadyToShip,
             dispatch_by: Some(at("2026-10-06T23:59:59-03:00")),
         }),
+        returns: Vec::new(),
     }
 }
 
@@ -176,6 +182,7 @@ fn orders_come_page_by_page_with_their_items_buyer_and_shipment() {
                     receiver: None,
                 }),
                 shipment: None,
+                returns: Vec::new(),
             },
             ChannelOrder {
                 id: "2000009876543400".into(),
@@ -196,6 +203,7 @@ fn orders_come_page_by_page_with_their_items_buyer_and_shipment() {
                     receiver: None,
                 }),
                 shipment: None,
+                returns: Vec::new(),
             },
         ]
     );
@@ -269,5 +277,111 @@ fn nothing_changed_is_an_empty_answer() {
     assert_eq!(
         fake.adapter.orders_changed_since(fake.since()),
         Ok(Vec::new())
+    );
+}
+
+#[test]
+fn a_claim_with_a_return_comes_with_the_items_of_the_order_it_sends_back() {
+    let fake = Fake::connected();
+    fake.serve(SEARCH, "orders-search-returned.json");
+    fake.serve("/shipments/44100000005", "shipment-44100000005.json");
+    fake.serve(CLAIM_RETURN, "claim-5298178312-returns.json");
+
+    let orders = fake.adapter.orders_changed_since(fake.since()).unwrap();
+
+    assert_eq!(orders.len(), 1);
+    let returned = &orders[0];
+    assert_eq!(returned.id, "2000009876543500");
+    assert_eq!(
+        returned.shipment.as_ref().map(|shipment| shipment.status),
+        Some(ShipmentStatus::Delivered)
+    );
+    assert_eq!(
+        returned.returns,
+        [ChannelReturn {
+            id: "57341011".into(),
+            status: ReturnStatus::OnTheWay,
+            items: vec![ReturnedItem {
+                item: "MLB4100000003".into(),
+                variation: Some("175000000031".into()),
+                quantity: 2,
+            }],
+        }]
+    );
+    let asked: Vec<String> = fake
+        .server
+        .received()
+        .into_iter()
+        .map(|request| request.path)
+        .collect();
+    assert!(asked.iter().any(|path| path == CLAIM_WITHOUT_RETURN));
+}
+
+#[test]
+fn a_return_mercado_livre_reports_delivered_or_cancelled_says_so() {
+    let fake = Fake::connected();
+    fake.serve(SEARCH, "orders-search-returned.json");
+    fake.serve("/shipments/44100000005", "shipment-44100000005.json");
+    for (status, expected) in [
+        ("delivered", ReturnStatus::Delivered),
+        ("cancelled", ReturnStatus::Cancelled),
+        ("expired", ReturnStatus::Cancelled),
+        ("label_generated", ReturnStatus::OnTheWay),
+    ] {
+        let answer = fixture("claim-5298178312-returns.json").replace(
+            "\"status\": \"shipped\",\n  \"related",
+            &format!("\"status\": \"{status}\",\n  \"related"),
+        );
+        fake.server.serve(CLAIM_RETURN, 200, answer);
+
+        let orders = fake.adapter.orders_changed_since(fake.since()).unwrap();
+
+        assert_eq!(orders[0].returns[0].status, expected, "{status}");
+    }
+}
+
+#[test]
+fn the_label_of_a_shipment_comes_as_the_pdf_mercado_livre_prints() {
+    let fake = Fake::connected();
+    let pdf = std::fs::read(format!(
+        "{}/tests/fixtures/mercado-livre/shipment-label-44100000001.pdf",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    fake.server.serve(LABEL, 200, pdf.clone());
+
+    assert_eq!(fake.adapter.label_pdf("44100000001").unwrap(), pdf);
+
+    let asked = fake
+        .server
+        .received()
+        .into_iter()
+        .find(|request| request.path == LABEL)
+        .unwrap();
+    assert!(
+        asked
+            .headers
+            .contains(&("accept".to_owned(), "application/pdf".to_owned()))
+    );
+    assert!(
+        asked
+            .authorization
+            .is_some_and(|bearer| bearer.starts_with("Bearer "))
+    );
+}
+
+#[test]
+fn a_label_mercado_livre_refuses_or_an_odd_shipment_id_is_an_error() {
+    let fake = Fake::connected();
+    fake.server.serve(LABEL, 400, fixture("error-403.json"));
+    assert!(matches!(
+        fake.adapter.label_pdf("44100000001"),
+        Err(PlatformError::Refused(_))
+    ));
+
+    // An id that is not one never reaches the network.
+    assert_eq!(
+        fake.adapter.label_pdf("441&response_type=zpl2"),
+        Err(PlatformError::NotFound)
     );
 }
