@@ -32,7 +32,7 @@ fn registers_suppliers_by_name_and_refuses_the_same_name_in_another_case() {
         ));
         assert!(matches!(
             f.catalog.add_supplier("   ").await,
-            Err(CatalogError::Empty(_))
+            Err(CatalogError::MissingSupplierName)
         ));
     });
 }
@@ -131,7 +131,7 @@ fn refuses_offers_it_cannot_trust() {
 
         assert!(matches!(
             refused(new_offer(&shop, SHOPEE_FONE, "  ", "1")).await,
-            CatalogError::Empty(_)
+            CatalogError::MissingTitle
         ));
         let mut unknown = new_offer(&shop, SHOPEE_FONE, "Fone", "1");
         unknown.supplier = uuid_of(999);
@@ -170,6 +170,7 @@ fn a_new_price_at_the_same_link_adds_to_its_history() {
         assert_eq!(histories[0].earlier, std::slice::from_ref(&first));
         let prices: Vec<_> = histories[0].offers().map(|offer| offer.price).collect();
         assert_eq!(prices, [brl("34.90"), brl("39.90")]);
+        assert_eq!(histories[0].lowest_total(), brl("39.90"));
         assert_eq!(histories[1].latest, other);
         assert!(histories[1].earlier.is_empty());
     });
@@ -225,7 +226,10 @@ fn a_product_made_from_an_offer_takes_its_whole_link_and_a_folder() {
         assert_eq!(product.sku.as_str(), "FON-BLU-001");
         assert!(f.catalog.folder(&product).is_dir());
         assert!(f.catalog.folder(&product).ends_with("produtos/FON-BLU-001"));
-        assert_eq!(f.catalog.products().await.unwrap(), std::slice::from_ref(&product));
+        assert_eq!(
+            f.catalog.products().await.unwrap(),
+            std::slice::from_ref(&product)
+        );
         assert_eq!(f.catalog.product(product.id).await.unwrap(), product);
         for offer in [first.id, second.id] {
             assert_eq!(
@@ -337,6 +341,10 @@ fn skus_are_unique_and_a_refused_product_leaves_no_folder() {
         assert!(matches!(
             f.catalog.create_product(b.id, "B", "../../x").await,
             Err(CatalogError::InvalidSku(_))
+        ));
+        assert!(matches!(
+            f.catalog.create_product(b.id, "  ", "NEW").await,
+            Err(CatalogError::MissingProductName)
         ));
         assert!(matches!(
             f.catalog.create_product(uuid_of(999), "B", "NEW").await,
@@ -457,4 +465,26 @@ impl Fixture {
         use mascate_kernel::Clock;
         self.clock.now()
     }
+}
+
+#[test]
+fn a_folder_already_named_after_a_typed_sku_is_adopted_with_its_files() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shop = f.supplier("Loja").await;
+        let offer = f.offer(&shop, SHOPEE_FONE, "10").await;
+        let folder = f.dir.path().join("produtos/FONE-1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("foto.jpg"), b"jpg").unwrap();
+
+        let product = f
+            .catalog
+            .create_product(offer.id, "Fone", "fone-1")
+            .await
+            .unwrap();
+
+        let files = f.catalog.files(product.id).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "foto.jpg");
+    });
 }

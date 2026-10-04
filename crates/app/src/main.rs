@@ -3,14 +3,17 @@
 
 mod appearance;
 mod backups;
+mod catalog;
 mod connections;
 mod home;
 mod kit;
 mod layout;
+mod offers;
 mod ordered_saves;
 mod palette;
 mod parts;
 mod preferences;
+mod products;
 mod reminders;
 mod restricted;
 mod settings;
@@ -30,6 +33,7 @@ use mascate_platform::{
 };
 
 use crate::backups::{AppBackups, UnopenedDatabase};
+use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
 use crate::preferences::Preferences;
 use crate::reminders::AppReminders;
@@ -91,6 +95,7 @@ fn main() {
                     user: user.clone(),
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
+                cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

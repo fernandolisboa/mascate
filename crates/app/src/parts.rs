@@ -16,12 +16,14 @@ pub type OnPick<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     Today,
+    Offers,
+    Products,
     Settings,
 }
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 1] = [Place::Today];
+    pub const MAIN: [Place; 3] = [Place::Today, Place::Offers, Place::Products];
     /// The places kept apart at the end: the sidebar's foot, the tab bar's
     /// right side.
     pub const PINNED: [Place; 1] = [Place::Settings];
@@ -29,6 +31,8 @@ impl Place {
     pub fn name(self) -> &'static str {
         match self {
             Place::Today => "Hoje",
+            Place::Offers => "Ofertas",
+            Place::Products => "Produtos",
             Place::Settings => "Configurações",
         }
     }
@@ -36,6 +40,8 @@ impl Place {
     pub fn icon(self) -> IconName {
         match self {
             Place::Today => IconName::LayoutDashboard,
+            Place::Offers => IconName::Globe,
+            Place::Products => IconName::Inbox,
             Place::Settings => IconName::Settings,
         }
     }

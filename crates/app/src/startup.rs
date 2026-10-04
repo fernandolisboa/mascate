@@ -2,16 +2,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures::executor::block_on;
+use mascate_catalog::Catalog;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
-    Version, apply_staged_restore, default_backup_folder, default_database_path, load_appearance,
-    load_update_settings, open_and_migrate, undo_applied_restore,
+    Version, apply_staged_restore, default_backup_folder, default_database_path,
+    default_owner_folder, load_appearance, load_update_settings, open_and_migrate,
+    undo_applied_restore,
 };
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
-pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[mascate_platform::MIGRATIONS];
+pub const MODULE_MIGRATIONS: &[ModuleMigrations] =
+    &[mascate_platform::MIGRATIONS, mascate_catalog::MIGRATIONS];
 
 /// Every module's flags, in the order the settings screen lists them.
 const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS];
@@ -30,6 +33,7 @@ pub struct Started {
     pub flags: Arc<Flags>,
     pub reminders: Arc<Reminders>,
     pub backups: Arc<Backups>,
+    pub catalog: Arc<Catalog>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
@@ -114,6 +118,14 @@ pub fn prepare() -> Outcome {
     let backup_folder = default_backup_folder()
         .or_else(|| path.parent().map(|data| data.join("backups")))
         .ok_or_else(|| Problem::new("Não encontrei uma pasta para os Backups.", Some(&path)))?;
+    let product_files = default_owner_folder("produtos")
+        .or_else(|| path.parent().map(|data| data.join("produtos")))
+        .ok_or_else(|| {
+            Problem::new(
+                "Não encontrei uma pasta para os arquivos dos produtos.",
+                Some(&path),
+            )
+        })?;
     block_on(async {
         let opened = match open(&path, &backup_folder).await {
             Err(error) if matches!(restore, Some(Ok(()))) => {
@@ -161,6 +173,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let catalog = Catalog::new(
+                database.clone(),
+                product_files,
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
             Ok::<_, Box<dyn std::error::Error>>(Started {
@@ -169,6 +187,7 @@ pub fn prepare() -> Outcome {
                 flags: Arc::new(flags),
                 reminders: Arc::new(reminders),
                 backups: Arc::new(backups),
+                catalog: Arc::new(catalog),
                 backup_settings,
                 update_settings,
                 restore,
@@ -235,9 +254,13 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 
 #[cfg(test)]
 mod tests {
+    use mascate_catalog::NewSupplierOffer;
+    use mascate_kernel::{Currency, Money};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
+
+    const SAMPLE_SKU: &str = "EXEMPLO-001";
 
     /// One database per published version, written by the version itself
     /// with [`write_this_versions_sample_database`].
@@ -285,6 +308,27 @@ mod tests {
                 ids.clone(),
             );
             reminders.dismiss(MODULE_REMINDERS[0][0].key).await.unwrap();
+            let catalog = Catalog::new(
+                database.clone(),
+                std::env::temp_dir().join("mascate-sample-products"),
+                clock.clone(),
+                ids.clone(),
+            );
+            let supplier = catalog.add_supplier("Loja de exemplo").await.unwrap();
+            let offer = catalog
+                .register_offer(NewSupplierOffer {
+                    supplier: supplier.id,
+                    link: "https://shopee.com.br/exemplo-i.1.2".into(),
+                    title: "Produto de exemplo".into(),
+                    price: Money::new(29.into(), Currency::Brl),
+                    shipping: Money::zero(Currency::Brl),
+                })
+                .await
+                .unwrap();
+            catalog
+                .create_product(offer.id, "Produto de exemplo", SAMPLE_SKU)
+                .await
+                .unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -388,6 +432,23 @@ mod tests {
                     UpdateSettings::default(),
                     "{name}"
                 );
+                let catalog = Catalog::new(
+                    database.clone(),
+                    dir.path().join("produtos"),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                let products = catalog.products().await.unwrap();
+                // The catalog arrived in 0.2.0; older samples have none.
+                if Version::parse(released) >= Version::parse("0.2.0") {
+                    assert!(
+                        products
+                            .iter()
+                            .any(|product| product.sku.as_str() == SAMPLE_SKU),
+                        "{name}"
+                    );
+                }
+                catalog.add_supplier("Loja nova").await.unwrap();
             });
         }
     }

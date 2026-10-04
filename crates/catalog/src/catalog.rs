@@ -89,6 +89,18 @@ impl OfferHistory {
     pub fn offers(&self) -> impl Iterator<Item = &SupplierOffer> {
         std::iter::once(&self.latest).chain(&self.earlier)
     }
+
+    /// The cheapest delivered price ever seen at this link. Every offer at
+    /// one link shares the latest one's currency only by convention, so
+    /// offers in another currency are left out.
+    pub fn lowest_total(&self) -> Money {
+        let currency = self.latest.price.currency();
+        self.offers()
+            .map(SupplierOffer::total)
+            .filter(|total| total.currency() == currency)
+            .min_by_key(|total| total.amount())
+            .unwrap_or_else(|| self.latest.total())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,8 +112,12 @@ pub struct Product {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
-    #[error("the {0} is empty")]
-    Empty(&'static str),
+    #[error("the supplier needs a name")]
+    MissingSupplierName,
+    #[error("the Supplier Offer needs a title")]
+    MissingTitle,
+    #[error("the Product needs a name")]
+    MissingProductName,
     #[error("a supplier named {0} already exists")]
     SupplierExists(String),
     #[error("no supplier {0}")]
@@ -226,7 +242,7 @@ impl Catalog {
 
     /// Registers a Supplier. Names are unique, ignoring case.
     pub async fn add_supplier(&self, name: &str) -> Result<Supplier, CatalogError> {
-        let name = required(name, "supplier name")?;
+        let name = required(name, CatalogError::MissingSupplierName)?;
         let mut taken = self
             .connection()
             .query(
@@ -280,7 +296,7 @@ impl Catalog {
         offer: NewSupplierOffer,
     ) -> Result<SupplierOffer, CatalogError> {
         let link = OfferLink::parse(&offer.link)?;
-        let title = required(&offer.title, "title")?;
+        let title = required(&offer.title, CatalogError::MissingTitle)?;
         offer.price.checked_add(offer.shipping)?;
         if offer.price.is_negative() || offer.shipping.is_negative() {
             return Err(CatalogError::Negative);
@@ -411,7 +427,7 @@ impl Catalog {
         name: &str,
         sku: &str,
     ) -> Result<Product, CatalogError> {
-        let name = required(name, "product name")?;
+        let name = required(name, CatalogError::MissingProductName)?;
         let sku = Sku::parse(sku)?;
         self.offer(from_offer).await?;
         if self
@@ -421,6 +437,7 @@ impl Catalog {
         {
             return Err(CatalogError::SkuTaken(sku));
         }
+        // A folder already named after the SKU is adopted with what it holds.
         let folder = self.folder_of(&sku);
         let made_folder = !folder.exists();
         create_folder(&folder)?;
@@ -612,11 +629,12 @@ pub(crate) fn create_folder(path: &Path) -> Result<(), CatalogError> {
     })
 }
 
-/// `text` trimmed with its runs of spaces made one; an error when nothing is left.
-fn required(text: &str, what: &'static str) -> Result<String, CatalogError> {
+/// `text` trimmed with its runs of spaces made one; `missing` when nothing
+/// is left.
+fn required(text: &str, missing: CatalogError) -> Result<String, CatalogError> {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.is_empty() {
-        Err(CatalogError::Empty(what))
+        Err(missing)
     } else {
         Ok(text)
     }

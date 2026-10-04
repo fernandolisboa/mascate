@@ -4225,6 +4225,7 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "mascate-catalog",
  "mascate-commerce",
  "mascate-finance",
  "mascate-integrations",
