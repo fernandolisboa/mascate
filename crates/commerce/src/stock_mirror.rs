@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use libsql::{Row, params};
+use libsql::{Row, TransactionBehavior, params};
 use mascate_inventory::Inventory;
 use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, stored};
@@ -18,11 +18,18 @@ pub(crate) const ADD_STOCK_SENT: Migration = Migration {
     version: 5,
     name: "keep the stock sent to the channel",
     risky: false,
-    sql: "ALTER TABLE commerce_listings ADD COLUMN stock_sent INTEGER;
-    ALTER TABLE commerce_listings ADD COLUMN stock_sent_at TEXT;
-    ALTER TABLE commerce_listings ADD COLUMN stock_failure TEXT;
-    ALTER TABLE commerce_listings ADD COLUMN stock_failure_detail TEXT;
-    ALTER TABLE commerce_listings ADD COLUMN stock_failed_at TEXT;",
+    sql: "CREATE TABLE commerce_listing_stock (
+        id                   TEXT    PRIMARY KEY,
+        listing_id           TEXT    NOT NULL UNIQUE,
+        stock_sent           INTEGER,
+        stock_sent_at        TEXT,
+        stock_failure        TEXT,
+        stock_failure_detail TEXT,
+        stock_failed_at      TEXT,
+        created_at           TEXT    NOT NULL,
+        updated_at           TEXT    NOT NULL,
+        deleted_at           TEXT
+    );",
 };
 
 /// Rounds of sending one call makes at most. A movement recorded while a
@@ -192,22 +199,36 @@ impl StockMirror {
 
     async fn record_sent(&self, stock: &MirroredStock) -> Result<(), ListingError> {
         let quantity = stock.to_send.unwrap_or_default();
-        self.listings
-            .database
-            .connection()
+        let now = stored(self.listings.clock.now());
+        let connection = self.listings.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        transaction
             .execute(
-                "UPDATE commerce_listings
-                 SET stock_sent = ?1, available_quantity = ?1, stock_sent_at = ?2,
-                     stock_failure = NULL, stock_failure_detail = NULL,
-                     stock_failed_at = NULL, updated_at = ?2
+                "UPDATE commerce_listings SET available_quantity = ?1, updated_at = ?2
                  WHERE id = ?3",
+                params![quantity, now.clone(), stock.listing.to_string()],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO commerce_listing_stock
+                     (id, listing_id, stock_sent, stock_sent_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?4, ?4)
+                 ON CONFLICT (listing_id) DO UPDATE SET
+                     stock_sent = excluded.stock_sent, stock_sent_at = excluded.stock_sent_at,
+                     stock_failure = NULL, stock_failure_detail = NULL,
+                     stock_failed_at = NULL, updated_at = excluded.updated_at",
                 params![
+                    self.listings.ids.next_id().to_string(),
+                    stock.listing.to_string(),
                     quantity,
-                    stored(self.listings.clock.now()),
-                    stock.listing.to_string()
+                    now
                 ],
             )
             .await?;
+        transaction.commit().await?;
         Ok(())
     }
 
@@ -221,15 +242,20 @@ impl StockMirror {
             .database
             .connection()
             .execute(
-                "UPDATE commerce_listings
-                 SET stock_failure = ?1, stock_failure_detail = ?2, stock_failed_at = ?3,
-                     updated_at = ?3
-                 WHERE id = ?4",
+                "INSERT INTO commerce_listing_stock (id, listing_id, stock_failure,
+                     stock_failure_detail, stock_failed_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
+                 ON CONFLICT (listing_id) DO UPDATE SET
+                     stock_failure = excluded.stock_failure,
+                     stock_failure_detail = excluded.stock_failure_detail,
+                     stock_failed_at = excluded.stock_failed_at,
+                     updated_at = excluded.updated_at",
                 params![
+                    self.listings.ids.next_id().to_string(),
+                    listing.to_string(),
                     code,
                     detail,
-                    stored(self.listings.clock.now()),
-                    listing.to_string()
+                    stored(self.listings.clock.now())
                 ],
             )
             .await?;
@@ -253,11 +279,16 @@ impl StockMirror {
             .database
             .connection()
             .query(
-                "SELECT id, ml_item_id, ml_variation_id, product_id, status,
-                     available_quantity, stock_sent, stock_sent_at, stock_failure,
-                     stock_failure_detail, stock_failed_at
-                 FROM commerce_listings WHERE deleted_at IS NULL AND ml_item_id IS NOT NULL
-                 ORDER BY title COLLATE NOCASE, variation_name COLLATE NOCASE, ml_item_id",
+                "SELECT listing.id, listing.ml_item_id, listing.ml_variation_id,
+                     listing.product_id, listing.status, listing.available_quantity,
+                     stock.stock_sent, stock.stock_sent_at, stock.stock_failure,
+                     stock.stock_failure_detail, stock.stock_failed_at
+                 FROM commerce_listings listing
+                 LEFT JOIN commerce_listing_stock stock
+                     ON stock.listing_id = listing.id AND stock.deleted_at IS NULL
+                 WHERE listing.deleted_at IS NULL AND listing.ml_item_id IS NOT NULL
+                 ORDER BY listing.title COLLATE NOCASE, listing.variation_name COLLATE NOCASE,
+                     listing.ml_item_id",
                 (),
             )
             .await?;

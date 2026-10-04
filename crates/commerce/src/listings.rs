@@ -572,18 +572,18 @@ impl Listings {
         listing: RecordId,
         product: Option<RecordId>,
     ) -> Result<Listing, ListingError> {
-        let changed = self
-            .database
-            .connection()
+        let now = stored(self.clock.now());
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let changed = transaction
             .execute(
-                // Stock sent for another Product says nothing about this one.
-                "UPDATE commerce_listings SET product_id = ?1, updated_at = ?2,
-                     stock_sent = NULL, stock_sent_at = NULL, stock_failure = NULL,
-                     stock_failure_detail = NULL, stock_failed_at = NULL
+                "UPDATE commerce_listings SET product_id = ?1, updated_at = ?2
                  WHERE id = ?3 AND deleted_at IS NULL",
                 params![
                     product.map(|id| id.to_string()),
-                    stored(self.clock.now()),
+                    now.clone(),
                     listing.to_string()
                 ],
             )
@@ -591,6 +591,17 @@ impl Listings {
         if changed == 0 {
             return Err(ListingError::UnknownListing(listing));
         }
+        // Stock sent for another Product says nothing about this one.
+        transaction
+            .execute(
+                "UPDATE commerce_listing_stock SET stock_sent = NULL, stock_sent_at = NULL,
+                     stock_failure = NULL, stock_failure_detail = NULL,
+                     stock_failed_at = NULL, updated_at = ?1
+                 WHERE listing_id = ?2",
+                params![now, listing.to_string()],
+            )
+            .await?;
+        transaction.commit().await?;
         self.listing(listing).await
     }
 
