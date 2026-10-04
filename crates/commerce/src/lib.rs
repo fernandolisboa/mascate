@@ -2,12 +2,17 @@
 
 mod freight;
 mod listings;
+mod pricing;
 mod purchase_orders;
 
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
     CatalogProduct, ChannelListing, LinkSuggestion, Listing, ListingError, ListingStatus,
     ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
+};
+pub use pricing::{
+    PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion, Pricing, PricingError,
+    SaleFee, TargetMargin,
 };
 pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
@@ -34,5 +39,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     migrations: &[
         purchase_orders::CREATE_PURCHASE_ORDERS,
         listings::CREATE_LISTINGS,
+        pricing::CREATE_TARGET_MARGINS,
     ],
 };

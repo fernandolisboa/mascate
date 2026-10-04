@@ -1,0 +1,39 @@
+{
+  "id": "MLB4100000001",
+  "site_id": "MLB",
+  "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+  "seller_id": 1234567,
+  "category_id": "MLB3697",
+  "price": 89.9,
+  "base_price": 89.9,
+  "original_price": null,
+  "currency_id": "BRL",
+  "initial_quantity": 20,
+  "available_quantity": 12,
+  "sold_quantity": 8,
+  "buying_mode": "buy_it_now",
+  "listing_type_id": "gold_special",
+  "condition": "new",
+  "permalink": "https://produto.mercadolivre.com.br/MLB-4100000001-fone-de-ouvido-bluetooth-tws-pro-preto-_JM",
+  "thumbnail": "http://http2.mlstatic.com/D_123456-MLB000000001_092026-I.jpg",
+  "status": "active",
+  "seller_custom_field": null,
+  "catalog_product_id": "MLB19615318",
+  "attributes": [
+    {
+      "id": "BRAND",
+      "name": "Marca",
+      "value_id": null,
+      "value_name": "Genérica",
+      "value_struct": null
+    },
+    {
+      "id": "SELLER_SKU",
+      "name": "SKU",
+      "value_id": null,
+      "value_name": "FON-BLU-TWS-001",
+      "value_struct": null
+    }
+  ],
+  "variations": []
+}

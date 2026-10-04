@@ -289,3 +289,26 @@ mod properties {
         }
     }
 }
+
+#[test]
+fn the_average_cost_outlives_the_last_unit_and_is_none_before_the_first() {
+    block_on(async {
+        let f = Fixture::new().await;
+        assert_eq!(f.inventory.average_cost(id(FONE)).await.unwrap(), None);
+        f.enter(&[entry(FONE, 2, "50.00")]).await.unwrap();
+        f.enter(&[entry(FONE, 2, "70.00")]).await.unwrap();
+        assert_eq!(
+            f.inventory.average_cost(id(FONE)).await.unwrap(),
+            Some(brl("30"))
+        );
+
+        f.adjust(FONE, StockAdjustment::Loss(4)).await.unwrap();
+
+        assert_eq!(f.units(FONE).await, 0);
+        assert_eq!(
+            f.inventory.average_cost(id(FONE)).await.unwrap(),
+            Some(brl("30"))
+        );
+        assert_eq!(f.inventory.average_cost(id(CAPA)).await.unwrap(), None);
+    });
+}

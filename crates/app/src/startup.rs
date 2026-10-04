@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, PurchaseOrders};
+use mascate_commerce::{Listings, Pricing, PurchaseOrders};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -45,6 +45,7 @@ pub struct Started {
     pub inventory: Arc<Inventory>,
     pub purchase_orders: Arc<PurchaseOrders>,
     pub listings: Arc<Listings>,
+    pub pricing: Arc<Pricing>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -207,6 +208,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let pricing = Pricing::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -224,6 +231,7 @@ pub fn prepare() -> Outcome {
                 inventory,
                 purchase_orders: Arc::new(purchase_orders),
                 listings: Arc::new(listings),
+                pricing: Arc::new(pricing),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
@@ -294,7 +302,7 @@ mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelListing, ListingStatus, NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus,
-        Receiving, SalesChannel,
+        Receiving, SaleFee, SalesChannel,
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
@@ -342,6 +350,14 @@ mod tests {
 
         fn listings(&self, _: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
             Ok(vec![sample_listing()])
+        }
+
+        fn sale_fee(&self, _: &str, _: Money, _: ListingType) -> Result<SaleFee, PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn set_price(&self, _: &str, _: Money) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
         }
     }
 
@@ -683,6 +699,27 @@ mod tests {
                     "{name}"
                 );
                 orders.purchase_orders().await.unwrap();
+                // Target margins arrived in 0.2.0; every older database starts
+                // with the default and takes a Product's own.
+                let pricing = Pricing::new(
+                    database.clone(),
+                    inventory.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert_eq!(
+                    pricing.default_target_margin().await.unwrap(),
+                    Percentage::new(20.into()).unwrap(),
+                    "{name}"
+                );
+                pricing
+                    .set_target_margin(any_product, Some(Percentage::new(30.into()).unwrap()))
+                    .await
+                    .unwrap();
+                assert!(
+                    pricing.target_margin(any_product).await.unwrap().own,
+                    "{name}"
+                );
                 catalog
                     .opportunities(&OpportunityFilter::default(), taxes.rate().await.unwrap())
                     .await

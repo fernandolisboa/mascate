@@ -1,33 +1,41 @@
 //! Anúncios (#15): the owner's Mercado Livre listings, synced, and the
 //! queue of the ones still without a Product: confirm the suggested one,
-//! pick another, or make a Product from the listing.
+//! pick another, or make a Product from the listing. Each linked listing
+//! opens its price (#19): the Price Suggestion from the target margin and
+//! the price simulator. A price reaches Mercado Livre only when the owner
+//! sends it.
 
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Entity, EventEmitter, Global, Hsla, Window, div, px};
+use gpui_kit::{
+    AnyElement, App, Entity, EventEmitter, Global, Hsla, Subscription, Window, div, px,
+};
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
+    PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
     SuggestedBy,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::{RecordId, Timestamp};
+use mascate_kernel::{Money, Percentage, RecordId, Timestamp, parse_amount};
+use rust_decimal::Decimal;
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE, product_choice};
 use crate::connections::AppConnections;
-use crate::forms::{Outcome, Picker, input, notice, picker, refill};
+use crate::forms::{Outcome, Picker, amount_text, input, notice, percent_text, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
+use crate::pricing;
 
 /// The app's Listings; absent when the database did not open.
 pub struct AppListings(pub Arc<Listings>);
@@ -43,6 +51,96 @@ fn listings(cx: &App) -> Option<Arc<Listings>> {
 enum Step {
     PickProduct,
     CreateProduct,
+}
+
+/// A listing's price, open below its row.
+struct PricePanel {
+    listing: RecordId,
+    loading: bool,
+    /// Today's sale, where the simulator starts, or why there is none.
+    today: Option<Result<PriceScenario, String>>,
+    /// The Price Suggestion, or why there is none.
+    suggestion: Option<Result<PriceSuggestion, String>>,
+}
+
+/// The simulator's fields, one per part of the sale.
+struct Simulator {
+    price: Entity<InputState>,
+    discount: Entity<InputState>,
+    fee_rate: Entity<InputState>,
+    fee_fixed: Entity<InputState>,
+    shipping: Entity<InputState>,
+    ads: Entity<InputState>,
+    tax: Entity<InputState>,
+    cost: Entity<InputState>,
+}
+
+impl Simulator {
+    fn new(window: &mut Window, cx: &mut Context<ListingsScreen>) -> Self {
+        Self {
+            price: input("0,00", window, cx),
+            discount: input("0", window, cx),
+            fee_rate: input("0", window, cx),
+            fee_fixed: input("0,00", window, cx),
+            shipping: input("0,00", window, cx),
+            ads: input("0,00", window, cx),
+            tax: input("0", window, cx),
+            cost: input("0,00", window, cx),
+        }
+    }
+
+    fn fields(&self) -> [&Entity<InputState>; 8] {
+        [
+            &self.price,
+            &self.discount,
+            &self.fee_rate,
+            &self.fee_fixed,
+            &self.shipping,
+            &self.ads,
+            &self.tax,
+            &self.cost,
+        ]
+    }
+
+    fn fill(&self, sale: &PriceScenario, window: &mut Window, cx: &mut App) {
+        let values = [
+            amount_text(sale.price),
+            percent_text(sale.discount),
+            percent_text(sale.sale_fee.rate),
+            amount_text(sale.sale_fee.fixed),
+            amount_text(sale.shipping),
+            amount_text(sale.ads),
+            percent_text(sale.tax),
+            amount_text(sale.cost),
+        ];
+        for (field, value) in self.fields().into_iter().zip(values) {
+            field.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+    }
+
+    /// The sale as typed, in the currency of `like`; `None` while a field
+    /// is not a number.
+    fn read(&self, like: &PriceScenario, cx: &App) -> Option<PriceScenario> {
+        let currency = like.price.currency();
+        let money = |field: &Entity<InputState>| {
+            parse_amount(&field.read(cx).value())
+                .filter(|amount| !amount.is_sign_negative())
+                .map(|amount| Money::new(amount, currency))
+        };
+        let rate = |field: &Entity<InputState>| Percentage::parse(&field.read(cx).value());
+        Some(PriceScenario {
+            price: money(&self.price)?,
+            discount: rate(&self.discount)?,
+            sale_fee: SaleFee {
+                rate: rate(&self.fee_rate)?,
+                fixed: money(&self.fee_fixed)?,
+            },
+            shipping: money(&self.shipping)?,
+            ads: money(&self.ads)?,
+            tax: rate(&self.tax)?,
+            cost: money(&self.cost)?,
+        })
+    }
 }
 
 /// Everything the screen shows, read in one go off the UI thread.
@@ -73,12 +171,28 @@ pub struct ListingsScreen {
     outcome: Option<Outcome>,
     /// The outcome of the last step on a row.
     row_outcome: Option<Outcome>,
+    price: Option<PricePanel>,
+    simulator: Simulator,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<OpenProduct> for ListingsScreen {}
 
 impl ListingsScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let simulator = Simulator::new(window, cx);
+        // The simulator's margin follows every keystroke.
+        let subscriptions = simulator
+            .fields()
+            .into_iter()
+            .map(|field| {
+                cx.subscribe(field, |_, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                })
+            })
+            .collect();
         let mut screen = Self {
             listings: Vec::new(),
             to_link: Vec::new(),
@@ -94,6 +208,9 @@ impl ListingsScreen {
             reads: 0,
             outcome: None,
             row_outcome: None,
+            price: None,
+            simulator,
+            _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
         screen
@@ -166,7 +283,7 @@ impl ListingsScreen {
     /// Shows a failure where the owner acted: the open row, or the screen.
     fn failed(&mut self, error: String) {
         let text = Outcome::Failed(error.into());
-        if self.step.is_some() {
+        if self.step.is_some() || self.price.is_some() {
             self.row_outcome = Some(text);
         } else {
             self.outcome = Some(text);
@@ -187,6 +304,14 @@ impl ListingsScreen {
                 .any(|entry| entry.listing.id == open)
         }) {
             self.step = None;
+        }
+        if self.price.as_ref().is_some_and(|panel| {
+            !snapshot
+                .listings
+                .iter()
+                .any(|listing| listing.id == panel.listing && listing.product.is_some())
+        }) {
+            self.price = None;
         }
         self.listings = snapshot.listings;
         self.to_link = snapshot.to_link;
@@ -209,6 +334,7 @@ impl ListingsScreen {
         };
         self.outcome = None;
         self.step = None;
+        self.price = None;
         self.syncing = true;
         self.run(
             window,
@@ -234,6 +360,7 @@ impl ListingsScreen {
         cx: &mut Context<Self>,
     ) {
         self.step = Some((listing, step));
+        self.price = None;
         self.row_outcome = None;
         self.outcome = None;
         let Some(entry) = self
@@ -371,6 +498,7 @@ impl ListingsScreen {
     fn unlink(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
         self.outcome = None;
         self.step = None;
+        self.price = None;
         self.run(
             window,
             cx,
@@ -387,6 +515,377 @@ impl ListingsScreen {
                 ));
             },
         );
+    }
+
+    /// Opens the listing's price below its row: today's sale, with the
+    /// channel's fee at today's price, in the simulator, and the Price
+    /// Suggestion. Nothing is sent to the channel.
+    fn open_price(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(channel), Some(pricing), Some(taxes), Some(catalog)) = (
+            mercado_livre::adapter(cx),
+            pricing::pricing(cx),
+            pricing::taxes(cx),
+            catalog::catalog(cx),
+        ) else {
+            return;
+        };
+        self.step = None;
+        self.outcome = None;
+        self.row_outcome = None;
+        self.price = Some(PricePanel {
+            listing,
+            loading: true,
+            today: None,
+            suggestion: None,
+        });
+        let reading = cx.background_executor().spawn(async move {
+            let assumptions = PriceAssumptions {
+                tax: taxes.rate().await.map_err(|error| {
+                    format!("Não consegui ler o imposto nas configurações: {error}")
+                })?,
+                estimated_shipping: catalog
+                    .discovery_settings()
+                    .await
+                    .map_err(|error| catalog::failure(&error))?
+                    .estimated_shipping,
+            };
+            let today = pricing.today(listing, channel.as_ref(), assumptions).await;
+            let suggestion = match today {
+                Ok(_) => Some(
+                    pricing
+                        .suggest(listing, channel.as_ref(), assumptions)
+                        .await,
+                ),
+                Err(_) => None,
+            };
+            Ok::<_, String>((today, suggestion))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let read = reading.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(panel) = this.price.as_mut().filter(|panel| panel.listing == listing)
+                else {
+                    return;
+                };
+                panel.loading = false;
+                match read {
+                    Ok((today, suggestion)) => {
+                        if let Ok(sale) = &today {
+                            this.simulator.fill(sale, window, cx);
+                        }
+                        let products = &this.products;
+                        let why = |error: PricingError| price_failure(&error, listing, products);
+                        let panel = this.price.as_mut().expect("still open");
+                        panel.today = Some(today.map_err(why));
+                        panel.suggestion = suggestion.map(|found| found.map_err(why));
+                    }
+                    Err(error) => panel.today = Some(Err(error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn close_price(&mut self, cx: &mut Context<Self>) {
+        self.price = None;
+        self.row_outcome = None;
+        cx.notify();
+    }
+
+    /// Takes the suggested sale into the simulator.
+    fn simulate_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Ok(suggestion)) = self.price.as_ref().and_then(|p| p.suggestion.as_ref()) {
+            self.simulator.fill(&suggestion.suggested, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Sends `price` to Mercado Livre for the listing and its variations:
+    /// only ever on the owner's click.
+    fn send_price(
+        &mut self,
+        listing: RecordId,
+        price: Money,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(channel) = mercado_livre::adapter(cx) else {
+            return;
+        };
+        self.row_outcome = None;
+        self.run(
+            window,
+            cx,
+            move |listings, _| async move {
+                listings
+                    .change_price(listing, price, channel.as_ref())
+                    .await
+                    .map(Some)
+                    .map_err(|e| failure(&e))
+            },
+            move |this, changed: Vec<Listing>, _, _| {
+                this.price = None;
+                let price = price.rounded().to_pt_br();
+                this.outcome = Some(Outcome::Done(
+                    match changed.len() {
+                        0 | 1 => format!("Preço de {price} enviado ao Mercado Livre."),
+                        count => format!(
+                            "Preço de {price} enviado ao Mercado Livre para as {count} variações \
+                             do anúncio."
+                        ),
+                    }
+                    .into(),
+                ));
+            },
+        );
+    }
+
+    fn send_simulated(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let like = self
+            .price
+            .as_ref()
+            .and_then(|panel| panel.today.as_ref())
+            .and_then(|today| today.as_ref().ok())
+            .copied();
+        match like.and_then(|like| self.simulator.read(&like, cx)) {
+            Some(sale) if sale.price.rounded().amount() > Decimal::ZERO => {
+                self.send_price(listing, sale.price, window, cx)
+            }
+            _ => {
+                self.row_outcome = Some(Outcome::Failed(
+                    "Digite um preço maior que zero e números em todos os campos.".into(),
+                ));
+                cx.notify();
+            }
+        }
+    }
+
+    fn render_price(&self, panel: &PricePanel, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let listing = panel.listing;
+        let mut body = v_flex().gap_3();
+        if panel.loading {
+            body =
+                body.child(div().text_sm().text_color(t.text2).child(
+                    "Consultando a tarifa do Mercado Livre para o preço de hoje e o sugerido…",
+                ));
+        }
+        if let Some(Err(error)) = &panel.today {
+            body = body.child(kit::error_notice(error.clone(), cx));
+        }
+        match &panel.suggestion {
+            Some(Ok(suggestion)) => {
+                let product = self
+                    .product(suggestion.product)
+                    .map(|product| product.sku.to_string())
+                    .unwrap_or_default();
+                let target = format!(
+                    "margem alvo de {} ({}) para {product}",
+                    suggestion.target.margin.to_pt_br(),
+                    if suggestion.target.own {
+                        "do produto"
+                    } else {
+                        "padrão"
+                    }
+                );
+                let today = suggestion.current.breakdown().ok().map(|today| {
+                    format!(
+                        "Hoje: {} com margem de {} ({}).",
+                        suggestion.current.price.to_pt_br(),
+                        today.margin.amount.to_pt_br(),
+                        today.margin.percent_to_pt_br()
+                    )
+                });
+                let shared = (suggestion.listings.len() > 1).then(|| {
+                    format!(
+                        "O preço vale para as {} variações do anúncio; sugerido pelo produto que \
+                         precisa do preço mais alto.",
+                        suggestion.listings.len()
+                    )
+                });
+                let price = suggestion.price;
+                body = body.child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_baseline()
+                                .child(div().text_sm().text_color(t.text2).child("Preço sugerido"))
+                                .child(div().text_xl().font_semibold().child(price.to_pt_br()))
+                                .child(div().text_sm().text_color(t.text2).child(target)),
+                        )
+                        .children(
+                            suggestion
+                                .suggested
+                                .breakdown()
+                                .ok()
+                                .map(|sale| breakdown_line(&sale, cx)),
+                        )
+                        .children(
+                            today
+                                .into_iter()
+                                .chain(shared)
+                                .map(|text| div().text_xs().text_color(t.text2).child(text)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .pt_1()
+                                .child(
+                                    Button::new("approve-price")
+                                        .label(format!(
+                                            "Aprovar e enviar {} ao ML",
+                                            price.to_pt_br()
+                                        ))
+                                        .icon(IconName::Check)
+                                        .primary()
+                                        .small()
+                                        .loading(self.busy)
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.send_price(listing, price, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("simulate-suggestion")
+                                        .label("Levar ao simulador")
+                                        .outline()
+                                        .small()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.simulate_suggestion(window, cx)
+                                        })),
+                                ),
+                        ),
+                );
+            }
+            Some(Err(error)) => {
+                body = body.child(kit::info_notice(
+                    format!("Sem sugestão de preço. {error}"),
+                    cx,
+                ));
+            }
+            None => {}
+        }
+        if let Some(Ok(like)) = &panel.today {
+            body = body.child(self.render_simulator(listing, like, cx));
+        }
+        v_flex()
+            .gap_2()
+            .pt_3()
+            .border_t(t.border_width)
+            .border_color(t.frame)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(div().font_medium().child("Preço"))
+                    .child(
+                        Button::new("close-price")
+                            .label("Fechar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.close_price(cx))),
+                    ),
+            )
+            .child(body)
+            .children(self.row_outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element()
+    }
+
+    fn render_simulator(
+        &self,
+        listing: RecordId,
+        like: &PriceScenario,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        let field = |label: &'static str, input: &Entity<InputState>| {
+            v_flex()
+                .gap_1()
+                .w(px(120.))
+                .child(div().text_xs().font_medium().child(label))
+                .child(Input::new(input).small())
+        };
+        let s = &self.simulator;
+        let simulated = s.read(like, cx);
+        let result = match simulated.as_ref().map(PriceScenario::breakdown) {
+            Some(Ok(sale)) => {
+                let ink = if sale.margin.amount.is_negative() {
+                    t.danger
+                } else {
+                    t.success
+                };
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_baseline()
+                            .child(div().text_sm().text_color(t.text2).child("Margem"))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_semibold()
+                                    .text_color(ink)
+                                    .child(sale.margin.amount.to_pt_br()),
+                            )
+                            .child(
+                                div()
+                                    .font_medium()
+                                    .text_color(ink)
+                                    .child(sale.margin.percent_to_pt_br()),
+                            ),
+                    )
+                    .child(breakdown_line(&sale, cx))
+            }
+            _ => v_flex().child(div().text_sm().text_color(t.danger).child(
+                "Digite números em todos os campos: valores como 89,90 e porcentagens de 0 a 100.",
+            )),
+        };
+        let send = simulated.map(|sale| sale.price.rounded());
+        v_flex()
+            .gap_2()
+            .child(div().font_medium().child("Simulador"))
+            .child(div().text_xs().text_color(t.text2).child(
+                "Começa com a venda de hoje: tarifa do Mercado Livre no preço de hoje, frete \
+                 estimado a partir de R$ 79,00, imposto das configurações e custo médio do \
+                 estoque. Mexa em qualquer parte para ver a margem; a tarifa não é consultada \
+                 de novo.",
+            ))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(field("Preço (R$)", &s.price))
+                    .child(field("Desconto (%)", &s.discount))
+                    .child(field("Tarifa (%)", &s.fee_rate))
+                    .child(field("Tarifa fixa (R$)", &s.fee_fixed))
+                    .child(field("Frete (R$)", &s.shipping))
+                    .child(field("Ads por venda (R$)", &s.ads))
+                    .child(field("Imposto (%)", &s.tax))
+                    .child(field("Custo (R$)", &s.cost)),
+            )
+            .child(result)
+            .child(
+                h_flex().child(
+                    Button::new("send-simulated")
+                        .label(match send {
+                            Some(price) => format!("Enviar {} ao ML", price.to_pt_br()),
+                            None => "Enviar ao ML".into(),
+                        })
+                        .outline()
+                        .small()
+                        .disabled(self.busy || send.is_none())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.send_simulated(listing, window, cx)
+                        })),
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_sync(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -681,19 +1180,45 @@ impl ListingsScreen {
                             .on_click(
                                 cx.listener(move |this, _, window, cx| this.unlink(id, window, cx)),
                             ),
-                    ),
+                    )
+                    .when(listing.listed.status != ListingStatus::Closed, |row| {
+                        row.child(
+                            Button::new(("price", index))
+                                .label("Preço")
+                                .outline()
+                                .small()
+                                .disabled(self.busy || !self.connected())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_price(id, window, cx)
+                                })),
+                        )
+                    }),
                 None => row.child(kit::tag("sem produto", t.text2, cx)),
             });
-        h_flex()
+        let panel = self
+            .price
+            .as_ref()
+            .filter(|panel| panel.listing == id)
+            .map(|panel| self.render_price(panel, cx));
+        v_flex()
             .gap_3()
-            .items_center()
             .p_3()
             .rounded(t.radius_lg)
             .border(t.border_width)
-            .border_color(t.frame)
+            .border_color(if panel.is_some() {
+                t.accent_edge
+            } else {
+                t.frame
+            })
             .bg(t.surface)
-            .child(self.summary(&format!("listing-{index}"), listing, cx))
-            .child(linked)
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(self.summary(&format!("listing-{index}"), listing, cx))
+                    .child(linked),
+            )
+            .children(panel)
             .into_any_element()
     }
 }
@@ -716,7 +1241,7 @@ impl Render for ListingsScreen {
                 .notices
                 .push(kit::info_notice(mercado_livre::not_connected(state), cx).into_any_element());
         }
-        if self.step.is_none() {
+        if self.step.is_none() && self.price.is_none() {
             parts
                 .notices
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
@@ -821,8 +1346,68 @@ fn failure(error: &ListingError) -> String {
         ListingError::UnknownListing(_) => {
             "Esse anúncio não existe mais; a lista foi atualizada.".into()
         }
+        ListingError::InvalidPrice => "O preço precisa ser maior que zero, em reais.".into(),
         ListingError::Platform(error) => mercado_livre::failure(error),
         ListingError::Unreadable(_) | ListingError::Sql(_) => {
+            format!("Não consegui ler ou gravar no banco: {error}")
+        }
+    }
+}
+
+/// "R$ 91,67 − tarifa R$ 12,83 − frete R$ 20,00 − …": where the money of a
+/// sale goes.
+fn breakdown_line(sale: &PriceBreakdown, cx: &App) -> gpui_kit::Div {
+    let t = look(cx).tokens;
+    div().text_xs().text_color(t.text2).child(format!(
+        "{} − tarifa {} − frete {} − Ads {} − imposto {} − custo {} = margem {} ({})",
+        sale.sale_price.to_pt_br(),
+        sale.sale_fee.to_pt_br(),
+        sale.shipping.to_pt_br(),
+        sale.ads.to_pt_br(),
+        sale.tax.to_pt_br(),
+        sale.cost.to_pt_br(),
+        sale.margin.amount.to_pt_br(),
+        sale.margin.percent_to_pt_br(),
+    ))
+}
+
+/// Why a listing has no price to work out, as the owner reads it.
+fn price_failure(error: &PricingError, listing: RecordId, products: &[Product]) -> String {
+    let sku = |id: RecordId| {
+        products
+            .iter()
+            .find(|product| product.id == id)
+            .map(|product| product.sku.to_string())
+            .unwrap_or_else(|| "do anúncio".into())
+    };
+    match error {
+        PricingError::Listing(error) => failure(error),
+        PricingError::Closed => "O anúncio está encerrado no Mercado Livre.".into(),
+        PricingError::NotLinked(id) if *id == listing => {
+            "Vincule o anúncio a um produto para ter o custo.".into()
+        }
+        PricingError::NotLinked(_) => "Uma variação deste anúncio está sem produto; vincule-a \
+             antes, porque o preço vale para todas as variações."
+            .into(),
+        PricingError::NoCost(product) => format!(
+            "O produto {} ainda não entrou no estoque, então não tem custo médio. Registre o \
+             recebimento em Compras.",
+            sku(*product)
+        ),
+        PricingError::NoFeeBasis => "O Mercado Livre não informou a categoria ou o tipo do \
+             anúncio; sincronize de novo."
+            .into(),
+        PricingError::Unreachable => "Nenhum preço chega à margem alvo: tarifa, imposto e \
+             margem alvo somam 100% ou mais. Baixe a margem alvo na ficha do produto ou em \
+             Configurações."
+            .into(),
+        PricingError::Unsettled => "A tarifa do Mercado Livre mudou a cada preço consultado; \
+             use o simulador."
+            .into(),
+        PricingError::InvalidTarget => pricing::target_failure(error),
+        PricingError::Currencies(_) => "O custo e o preço estão em moedas diferentes.".into(),
+        PricingError::Platform(error) => mercado_livre::failure(error),
+        PricingError::Stock(_) | PricingError::Unreadable(_) | PricingError::Sql(_) => {
             format!("Não consegui ler ou gravar no banco: {error}")
         }
     }

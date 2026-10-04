@@ -6,7 +6,7 @@ use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::SelectState;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, SharedString, Window};
-use mascate_kernel::RecordId;
+use mascate_kernel::{Money, Percentage, RecordId};
 
 use crate::kit;
 
@@ -69,4 +69,14 @@ pub fn notice(outcome: &Outcome, cx: &App) -> AnyElement {
         Outcome::Done(text) => kit::success_notice(text.clone(), cx).into_any_element(),
         Outcome::Failed(text) => kit::error_notice(text.clone(), cx).into_any_element(),
     }
+}
+
+/// "14", "12,5": a rate as the owner types it.
+pub fn percent_text(rate: Percentage) -> String {
+    rate.percent().normalize().to_string().replace('.', ",")
+}
+
+/// "20,00": an amount as the owner types it.
+pub fn amount_text(amount: Money) -> String {
+    format!("{:.2}", amount.rounded().amount()).replace('.', ",")
 }

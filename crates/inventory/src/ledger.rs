@@ -526,6 +526,13 @@ impl Inventory {
         Ok(lines)
     }
 
+    /// What one unit of `product` cost: the Average Cost of the units on
+    /// hand or, with none left, of the last ones there were. `None` when the
+    /// Product never came into stock.
+    pub async fn average_cost(&self, product: RecordId) -> Result<Option<Money>, InventoryError> {
+        Ok(replay(self.connection(), product).await?.basis)
+    }
+
     /// Every Product's stock, replayed from the ledger.
     pub async fn stock(&self) -> Result<Stock, InventoryError> {
         let movements = movements(

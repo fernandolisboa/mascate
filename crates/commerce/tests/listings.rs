@@ -2,130 +2,23 @@
 //! commerce's public interface with a real temporary database and an
 //! in-memory Sales Channel.
 
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+mod common;
+
+use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    CatalogProduct, ChannelListing, Listing, ListingError, ListingStatus, ListingSync, Listings,
-    SalesChannel, SuggestedBy, Variation,
+    ChannelListing, Listing, ListingError, ListingStatus, ListingSync, Listings, SuggestedBy,
+    Variation,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, ListingType, Money, PlatformError, RecordId};
+
+use common::{Channel, brl, listing, product, variation};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
-
-fn brl(amount: &str) -> Money {
-    Money::new(Decimal::from_str(amount).unwrap(), Currency::Brl)
-}
-
-fn listing(id: &str, title: &str) -> ChannelListing {
-    ChannelListing {
-        id: id.into(),
-        variation: None,
-        title: title.into(),
-        price: brl("89.90"),
-        available_quantity: 5,
-        status: ListingStatus::Active,
-        link: Some(format!("https://produto.mercadolivre.com.br/{id}")),
-        listing_type: Some(ListingType::Classic),
-        category: Some("MLB3697".into()),
-        seller_sku: None,
-    }
-}
-
-fn variation(of: &ChannelListing, id: &str, name: &str) -> ChannelListing {
-    ChannelListing {
-        variation: Some(Variation {
-            id: id.into(),
-            name: name.into(),
-        }),
-        ..of.clone()
-    }
-}
-
-fn product(id: u128, sku: &str, name: &str) -> CatalogProduct {
-    CatalogProduct {
-        id: RecordId::from_u128(id),
-        sku: sku.into(),
-        name: name.into(),
-    }
-}
-
-/// A Sales Channel answering from memory: the listings it has, which of
-/// them it lists as active or paused, and the ids it was asked for.
-#[derive(Default)]
-struct Channel {
-    listings: Mutex<Vec<ChannelListing>>,
-    asked: Mutex<Vec<Vec<String>>>,
-    failure: Mutex<Option<PlatformError>>,
-}
-
-impl Channel {
-    fn has(&self, listings: Vec<ChannelListing>) {
-        *self.listings.lock().unwrap() = listings;
-    }
-
-    fn change(&self, id: &str, change: impl Fn(&mut ChannelListing)) {
-        self.listings
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .filter(|listing| listing.id == id)
-            .for_each(change);
-    }
-
-    fn remove(&self, id: &str, variation: Option<&str>) {
-        self.listings.lock().unwrap().retain(|listing| {
-            listing.id != id
-                || variation.is_some_and(|wanted| {
-                    listing.variation.as_ref().map(|v| v.id.as_str()) != Some(wanted)
-                })
-        });
-    }
-
-    fn last_asked(&self) -> Vec<String> {
-        self.asked
-            .lock()
-            .unwrap()
-            .last()
-            .cloned()
-            .unwrap_or_default()
-    }
-}
-
-impl SalesChannel for Channel {
-    fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
-        if let Some(error) = self.failure.lock().unwrap().clone() {
-            return Err(error);
-        }
-        let mut ids: Vec<String> = Vec::new();
-        for listing in self.listings.lock().unwrap().iter() {
-            if matches!(
-                listing.status,
-                ListingStatus::Active | ListingStatus::Paused
-            ) && !ids.contains(&listing.id)
-            {
-                ids.push(listing.id.clone());
-            }
-        }
-        Ok(ids)
-    }
-
-    fn listings(&self, ids: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
-        self.asked.lock().unwrap().push(ids.to_vec());
-        Ok(self
-            .listings
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|listing| ids.contains(&listing.id))
-            .cloned()
-            .collect())
-    }
-}
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -653,4 +546,81 @@ proptest! {
             assert_eq!(before, after);
         });
     }
+}
+
+#[test]
+fn a_new_price_goes_to_the_channel_in_cents_and_every_variation_takes_it() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let base = listing("MLB1", "Camiseta Básica");
+        fx.channel.has(vec![
+            variation(&base, "11", "Cor: Preto"),
+            variation(&base, "12", "Cor: Branco"),
+            listing("MLB2", "Fone Bluetooth TWS"),
+        ]);
+        fx.sync().await;
+        let black = fx.find("MLB1", Some("11")).await;
+
+        let changed = fx
+            .listings
+            .change_price(black.id, brl("99.904"), &fx.channel)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *fx.channel.prices_set.lock().unwrap(),
+            [("MLB1".to_owned(), brl("99.90"))]
+        );
+        assert_eq!(changed.len(), 2);
+        assert!(changed.iter().all(|l| l.listed.price == brl("99.90")));
+        assert_eq!(fx.find("MLB1", Some("12")).await.listed.price, brl("99.90"));
+        assert_eq!(fx.find("MLB2", None).await.listed.price, brl("89.90"));
+        // The channel now reports the same price: the next Sync sees no change.
+        assert_eq!(fx.sync().await.changed, 0);
+    });
+}
+
+#[test]
+fn a_price_of_zero_or_in_another_currency_never_reaches_the_channel() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![listing("MLB1", "Fone Bluetooth TWS")]);
+        fx.sync().await;
+        let id = fx.find("MLB1", None).await.id;
+
+        for price in [
+            brl("0"),
+            brl("0.004"),
+            brl("-10"),
+            Money::new(Decimal::from(10), Currency::Usd),
+        ] {
+            let refused = fx.listings.change_price(id, price, &fx.channel).await;
+            assert!(
+                matches!(refused, Err(ListingError::InvalidPrice)),
+                "{price}"
+            );
+        }
+        assert!(fx.channel.prices_set.lock().unwrap().is_empty());
+        assert_eq!(fx.find("MLB1", None).await.listed.price, brl("89.90"));
+    });
+}
+
+#[test]
+fn a_price_the_channel_refuses_leaves_the_listing_as_it_was() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![listing("MLB1", "Fone Bluetooth TWS")]);
+        fx.sync().await;
+        let id = fx.find("MLB1", None).await.id;
+        *fx.channel.failure.lock().unwrap() =
+            Some(PlatformError::Refused("price is too low".into()));
+
+        let refused = fx.listings.change_price(id, brl("5"), &fx.channel).await;
+
+        assert!(matches!(
+            refused,
+            Err(ListingError::Platform(PlatformError::Refused(_)))
+        ));
+        assert_eq!(fx.find("MLB1", None).await.listed.price, brl("89.90"));
+    });
 }

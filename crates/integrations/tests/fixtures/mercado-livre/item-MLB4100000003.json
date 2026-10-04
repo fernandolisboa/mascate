@@ -1,0 +1,119 @@
+{
+  "id": "MLB4100000003",
+  "site_id": "MLB",
+  "title": "Camiseta Básica Algodão",
+  "seller_id": 1234567,
+  "category_id": "MLB31447",
+  "price": 49.9,
+  "base_price": 49.9,
+  "original_price": null,
+  "currency_id": "BRL",
+  "initial_quantity": 10,
+  "available_quantity": 10,
+  "sold_quantity": 0,
+  "buying_mode": "buy_it_now",
+  "listing_type_id": "gold_pro",
+  "condition": "new",
+  "permalink": "https://produto.mercadolivre.com.br/MLB-4100000003-camiseta-basica-algodo-_JM",
+  "thumbnail": "http://http2.mlstatic.com/D_654321-MLB000000003_092026-I.jpg",
+  "status": "active",
+  "seller_custom_field": null,
+  "catalog_product_id": null,
+  "attributes": [
+    {
+      "id": "BRAND",
+      "name": "Marca",
+      "value_id": null,
+      "value_name": "Mascate",
+      "value_struct": null
+    }
+  ],
+  "variations": [
+    {
+      "id": 175000000031,
+      "attribute_combinations": [
+        {
+          "id": "COLOR",
+          "name": "Cor",
+          "value_id": "52049",
+          "value_name": "Preto"
+        },
+        {
+          "id": "SIZE",
+          "name": "Tamanho",
+          "value_id": "3189152",
+          "value_name": "M"
+        }
+      ],
+      "price": 49.9,
+      "available_quantity": 4,
+      "sold_quantity": 0,
+      "picture_ids": [
+        "654321-MLB000000003_092026"
+      ],
+      "seller_custom_field": null,
+      "catalog_product_id": null,
+      "attributes": [
+        {
+          "id": "SELLER_SKU",
+          "name": "SKU",
+          "value_id": null,
+          "value_name": "CAM-PRE-M",
+          "value_struct": null
+        }
+      ]
+    },
+    {
+      "id": 175000000032,
+      "attribute_combinations": [
+        {
+          "id": "COLOR",
+          "name": "Cor",
+          "value_id": "52055",
+          "value_name": "Branco"
+        },
+        {
+          "id": "SIZE",
+          "name": "Tamanho",
+          "value_id": "3189152",
+          "value_name": "M"
+        }
+      ],
+      "price": 49.9,
+      "available_quantity": 6,
+      "sold_quantity": 0,
+      "picture_ids": [
+        "654322-MLB000000003_092026"
+      ],
+      "seller_custom_field": "CAM-BRA-M",
+      "catalog_product_id": null,
+      "attributes": []
+    },
+    {
+      "id": 175000000033,
+      "attribute_combinations": [
+        {
+          "id": "COLOR",
+          "name": "Cor",
+          "value_id": "52055",
+          "value_name": "Branco"
+        },
+        {
+          "id": "SIZE",
+          "name": "Tamanho",
+          "value_id": null,
+          "value_name": "G"
+        }
+      ],
+      "price": 49.9,
+      "available_quantity": 3,
+      "sold_quantity": 0,
+      "picture_ids": [
+        "654322-MLB000000003_092026"
+      ],
+      "seller_custom_field": "CAM-BRA-G",
+      "catalog_product_id": null,
+      "attributes": []
+    }
+  ]
+}

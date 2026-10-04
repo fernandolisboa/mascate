@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use libsql::{Row, Value, params};
 use mascate_kernel::{
     Currency, ListingType, Margin, Money, Percentage, PlatformError, RecordId, Timestamp,
+    shipping_paid_by_seller,
 };
 use mascate_platform::{Migration, StoredRow, load_single_row, save_single_row, stored};
 use rust_decimal::Decimal;
@@ -91,10 +92,6 @@ const SETTINGS_COLUMNS: &[&str] = &[
     "estimated_shipping",
     "currency",
 ];
-
-/// Mercado Livre makes the seller offer free shipping, and pay part of it,
-/// from this price on; below it the buyer pays for shipping.
-const FREE_SHIPPING_FROM: Decimal = Decimal::from_parts(79, 0, 0, false, 0);
 
 /// How many catalog products each Supplier Offer is compared with: the best
 /// few search results, so discarding a wrong match leaves the right one.
@@ -870,13 +867,7 @@ fn opportunity_from(
         },
     };
     let shipping = Charge {
-        amount: if sale_price.amount() >= FREE_SHIPPING_FROM
-            && settings.estimated_shipping.currency() == currency
-        {
-            settings.estimated_shipping
-        } else {
-            Money::zero(currency)
-        },
+        amount: shipping_paid_by_seller(sale_price, settings.estimated_shipping),
         estimated: true,
     };
     let tax_amount = tax.of(sale_price);

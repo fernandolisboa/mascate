@@ -1,10 +1,14 @@
-//! The owner's listings, for commerce's Sales Channel port.
+//! The owner's listings, for commerce's Sales Channel port: read them, the
+//! sale fee at a price, and a new price once the owner approves it.
 
-use mascate_commerce::{ChannelListing, ListingStatus, SalesChannel, Variation};
-use mascate_kernel::{ListingType, PlatformError};
+use mascate_commerce::{ChannelListing, ListingStatus, SaleFee, SalesChannel, Variation};
+use mascate_kernel::{ListingType, Money, Percentage, PlatformError};
+use rust_decimal::Decimal;
 
 use super::MercadoLivre;
-use super::answers::{Attribute, MultigetEntry, SellerItem, SellerItems, UserAnswer, money};
+use super::answers::{
+    Attribute, ItemVariationIds, MultigetEntry, SellerItem, SellerItems, UserAnswer, decimal, money,
+};
 
 /// Listings per page of the seller's listings; the most Mercado Livre allows.
 const SEARCH_PAGE: &str = "100";
@@ -86,6 +90,67 @@ impl SalesChannel for MercadoLivre {
             }
         }
         Ok(listings)
+    }
+
+    /// The percentage and fixed parts of the fee from `sale_fee_details`;
+    /// without them, the whole fee as a share of the price.
+    fn sale_fee(
+        &self,
+        category: &str,
+        price: Money,
+        listing_type: ListingType,
+    ) -> Result<SaleFee, PlatformError> {
+        let found = self.listing_price(category, price, listing_type)?;
+        let unexpected =
+            || PlatformError::Failed("Mercado Livre answered a sale fee unexpectedly".into());
+        let parts = found.sale_fee_details.as_ref().and_then(|details| {
+            Some((
+                decimal(&details.percentage_fee)?,
+                decimal(&details.fixed_fee).unwrap_or_default(),
+            ))
+        });
+        let (percent, fixed) = match parts {
+            Some(parts) => parts,
+            None => {
+                let whole = money(&found.sale_fee_amount, &found.currency_id)
+                    .ok_or(PlatformError::NotFound)?;
+                if price.amount() <= Decimal::ZERO {
+                    return Err(unexpected());
+                }
+                (
+                    whole.amount() * Decimal::ONE_HUNDRED / price.amount(),
+                    Decimal::ZERO,
+                )
+            }
+        };
+        Ok(SaleFee {
+            rate: Percentage::new(percent).map_err(|_| unexpected())?,
+            fixed: Money::new(fixed, price.currency()),
+        })
+    }
+
+    /// A listing with variations takes the price on each of them, all named
+    /// in one request: Mercado Livre deletes a variation left out. So the
+    /// variations are read from Mercado Livre right before, never from the
+    /// last Sync.
+    fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError> {
+        // The id goes into the path: only Mercado Livre's own letters and digits.
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(PlatformError::NotFound);
+        }
+        let price = price.rounded().amount();
+        let item: ItemVariationIds = self.get(&format!("/items/{id}"), &[])?;
+        let body = if item.variations.is_empty() {
+            format!(r#"{{"price":{price}}}"#)
+        } else {
+            let variations: Vec<String> = item
+                .variations
+                .iter()
+                .map(|variation| format!(r#"{{"id":{},"price":{price}}}"#, variation.id))
+                .collect();
+            format!(r#"{{"variations":[{}]}}"#, variations.join(","))
+        };
+        self.put(&format!("/items/{id}"), &body)
     }
 }
 

@@ -12,14 +12,18 @@ use serde_json::Number;
 /// `None` when either is missing or not one the app handles. The number is
 /// read from its text, never through a float.
 pub(super) fn money(amount: &Option<Number>, currency: &Option<String>) -> Option<Money> {
-    let text = amount.as_ref()?.to_string();
-    let amount = Decimal::from_str(&text)
-        .or_else(|_| Decimal::from_scientific(&text))
-        .ok()?;
     Some(Money::new(
-        amount,
+        decimal(amount)?,
         Currency::from_code(currency.as_deref()?)?,
     ))
+}
+
+/// A JSON number, read from its text, never through a float.
+pub(super) fn decimal(number: &Option<Number>) -> Option<Decimal> {
+    let text = number.as_ref()?.to_string();
+    Decimal::from_str(&text)
+        .or_else(|_| Decimal::from_scientific(&text))
+        .ok()
 }
 
 #[derive(Deserialize)]
@@ -33,6 +37,14 @@ pub(super) struct TokenAnswer {
 pub(super) struct ErrorAnswer {
     pub message: Option<String>,
     pub error: Option<String>,
+    /// What exactly was wrong with a request, when Mercado Livre says.
+    #[serde(default)]
+    pub cause: Vec<ErrorCause>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ErrorCause {
+    pub message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +192,27 @@ pub(super) struct ListingPrice {
     pub listing_type_id: Option<String>,
     pub sale_fee_amount: Option<Number>,
     pub currency_id: Option<String>,
+    pub sale_fee_details: Option<SaleFeeDetails>,
+}
+
+/// How the sale fee is made up: a percentage of the price plus a fixed
+/// amount, which Mercado Livre charges below a price.
+#[derive(Deserialize)]
+pub(super) struct SaleFeeDetails {
+    pub percentage_fee: Option<Number>,
+    pub fixed_fee: Option<Number>,
+}
+
+/// A listing's variation ids, as `GET /items/{id}` reports them.
+#[derive(Deserialize)]
+pub(super) struct ItemVariationIds {
+    #[serde(default)]
+    pub variations: Vec<VariationId>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct VariationId {
+    pub id: u64,
 }
 
 #[derive(Deserialize)]

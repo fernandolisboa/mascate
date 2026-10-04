@@ -123,3 +123,15 @@ proptest! {
         prop_assert!(!share.is_negative());
     }
 }
+
+#[test]
+fn the_seller_pays_shipping_from_the_free_shipping_price_on() {
+    use mascate_kernel::shipping_paid_by_seller;
+
+    let estimate = brl("20");
+    assert_eq!(shipping_paid_by_seller(brl("78.99"), estimate), brl("0"));
+    assert_eq!(shipping_paid_by_seller(brl("79"), estimate), estimate);
+    assert_eq!(shipping_paid_by_seller(brl("250"), estimate), estimate);
+    let in_dollars = Money::new(decimal("20"), Currency::Usd);
+    assert_eq!(shipping_paid_by_seller(brl("100"), in_dollars), brl("0"));
+}
