@@ -1,11 +1,13 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{Entity, SharedString, Subscription, Window};
+use mascate_kernel::RecordId;
 
 use crate::appearance;
 use crate::home::Home;
 use crate::layout;
 use crate::low_stock::OpenStock;
 use crate::offers::{OffersScreen, OpenProduct};
+use crate::opportunities::OpportunitiesScreen;
 use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
 use crate::products::ProductsScreen;
@@ -19,6 +21,7 @@ pub struct Shell {
     place: Place,
     state: AppState,
     home: Entity<Home>,
+    opportunities: Entity<OpportunitiesScreen>,
     offers: Entity<OffersScreen>,
     products: Entity<ProductsScreen>,
     purchases: Entity<PurchasesScreen>,
@@ -35,6 +38,7 @@ impl Shell {
             Some(_) => AppState::DatabaseUnavailable,
         };
         let home = cx.new(|cx| Home::new(problem, cx));
+        let opportunities = cx.new(|cx| OpportunitiesScreen::new(window, cx));
         let offers = cx.new(|cx| OffersScreen::new(window, cx));
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
@@ -49,14 +53,17 @@ impl Shell {
         );
         let subscriptions = vec![
             cx.subscribe_in(
+                &opportunities,
+                window,
+                |shell, _, open: &OpenProduct, window, cx| {
+                    shell.open_product(open.0, window, cx);
+                },
+            ),
+            cx.subscribe_in(
                 &offers,
                 window,
                 |shell, _, open: &OpenProduct, window, cx| {
-                    shell
-                        .products
-                        .update(cx, |products, cx| products.open(open.0, window, cx));
-                    shell.place = Place::Products;
-                    cx.notify();
+                    shell.open_product(open.0, window, cx);
                 },
             ),
             cx.subscribe_in(
@@ -80,6 +87,7 @@ impl Shell {
             place: Place::Today,
             state,
             home,
+            opportunities,
             offers,
             products,
             purchases,
@@ -87,6 +95,13 @@ impl Shell {
             settings,
             _subscriptions: subscriptions,
         }
+    }
+
+    fn open_product(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        self.products
+            .update(cx, |products, cx| products.open(product, window, cx));
+        self.place = Place::Products;
+        cx.notify();
     }
 
     fn navigation(&self, cx: &mut Context<Self>) -> Navigation {
@@ -100,6 +115,9 @@ impl Shell {
                     // Each visit reads its data again: another screen may
                     // have changed it.
                     match place {
+                        Place::Opportunities => shell
+                            .opportunities
+                            .update(cx, |opportunities, cx| opportunities.refresh(window, cx)),
                         Place::Offers => shell
                             .offers
                             .update(cx, |offers, cx| offers.refresh(window, cx)),
@@ -127,6 +145,7 @@ impl Render for Shell {
         let navigation = self.navigation(cx);
         let screen = match self.place {
             Place::Today => self.home.clone().into_any_element(),
+            Place::Opportunities => self.opportunities.clone().into_any_element(),
             Place::Offers => self.offers.clone().into_any_element(),
             Place::Products => self.products.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),

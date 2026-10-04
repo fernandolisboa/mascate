@@ -1,4 +1,4 @@
-//! What the Ofertas and Produtos screens (#9) share: the catalog module and
+//! What the Oportunidades (#11), Ofertas and Produtos (#9) screens share: the catalog module and
 //! how its values and failures read in Portuguese.
 
 use std::sync::Arc;
@@ -25,6 +25,12 @@ pub fn day(at: Timestamp) -> String {
     at.with_timezone(&Local).format("%d/%m/%Y").to_string()
 }
 
+pub fn day_and_time(at: Timestamp) -> String {
+    at.with_timezone(&Local)
+        .format("%d/%m/%Y %H:%M")
+        .to_string()
+}
+
 /// "R$ 29,90 + R$ 5,00 de frete".
 pub fn price_and_shipping(offer: &SupplierOffer) -> String {
     format!(
@@ -47,10 +53,15 @@ pub fn failure(error: &CatalogError) -> String {
         CatalogError::MissingSupplierName => "Digite o nome do fornecedor.".into(),
         CatalogError::MissingTitle => "Digite o título da oferta.".into(),
         CatalogError::MissingProductName => "Digite o nome do produto.".into(),
+        CatalogError::MissingReason => "Diga por que a oportunidade não serve.".into(),
+        CatalogError::Demand(error) => {
+            format!("O Mercado Livre não respondeu como esperado: {error}")
+        }
         CatalogError::SupplierExists(name) => format!("O fornecedor {name} já existe."),
         CatalogError::UnknownSupplier(_)
         | CatalogError::UnknownOffer(_)
-        | CatalogError::UnknownProduct(_) => {
+        | CatalogError::UnknownProduct(_)
+        | CatalogError::UnknownOpportunity(_) => {
             "Esse item não existe mais; a lista foi atualizada.".into()
         }
         CatalogError::InvalidLink(InvalidLink::Empty) => "Cole o link da oferta.".into(),
