@@ -1,0 +1,163 @@
+[
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000001",
+      "site_id": "MLB",
+      "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+      "seller_id": 1234567,
+      "category_id": "MLB3697",
+      "price": 89.9,
+      "base_price": 89.9,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 20,
+      "available_quantity": 12,
+      "sold_quantity": 8,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000001-fone-de-ouvido-bluetooth-tws-pro-preto-_JM",
+      "thumbnail": "http://http2.mlstatic.com/D_123456-MLB000000001_092026-I.jpg",
+      "status": "active",
+      "seller_custom_field": null,
+      "catalog_product_id": "MLB19615318",
+      "attributes": [
+        {
+          "id": "BRAND",
+          "name": "Marca",
+          "value_id": null,
+          "value_name": "Genérica",
+          "value_struct": null
+        },
+        {
+          "id": "SELLER_SKU",
+          "name": "SKU",
+          "value_id": null,
+          "value_name": "FON-BLU-TWS-001",
+          "value_struct": null
+        }
+      ],
+      "variations": []
+    }
+  },
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000003",
+      "site_id": "MLB",
+      "title": "Camiseta Básica Algodão",
+      "seller_id": 1234567,
+      "category_id": "MLB31447",
+      "price": 49.9,
+      "base_price": 49.9,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 10,
+      "available_quantity": 10,
+      "sold_quantity": 0,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "gold_pro",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000003-camiseta-basica-algodo-_JM",
+      "thumbnail": "http://http2.mlstatic.com/D_654321-MLB000000003_092026-I.jpg",
+      "status": "active",
+      "seller_custom_field": null,
+      "catalog_product_id": null,
+      "attributes": [
+        {
+          "id": "BRAND",
+          "name": "Marca",
+          "value_id": null,
+          "value_name": "Mascate",
+          "value_struct": null
+        }
+      ],
+      "variations": [
+        {
+          "id": 175000000031,
+          "attribute_combinations": [
+            {
+              "id": "COLOR",
+              "name": "Cor",
+              "value_id": "52049",
+              "value_name": "Preto"
+            },
+            {
+              "id": "SIZE",
+              "name": "Tamanho",
+              "value_id": "3189152",
+              "value_name": "M"
+            }
+          ],
+          "price": 49.9,
+          "available_quantity": 4,
+          "sold_quantity": 0,
+          "picture_ids": ["654321-MLB000000003_092026"],
+          "seller_custom_field": null,
+          "catalog_product_id": null,
+          "attributes": [
+            {
+              "id": "SELLER_SKU",
+              "name": "SKU",
+              "value_id": null,
+              "value_name": "CAM-PRE-M",
+              "value_struct": null
+            }
+          ]
+        },
+        {
+          "id": 175000000032,
+          "attribute_combinations": [
+            {
+              "id": "COLOR",
+              "name": "Cor",
+              "value_id": "52055",
+              "value_name": "Branco"
+            },
+            {
+              "id": "SIZE",
+              "name": "Tamanho",
+              "value_id": "3189152",
+              "value_name": "M"
+            }
+          ],
+          "price": 49.9,
+          "available_quantity": 6,
+          "sold_quantity": 0,
+          "picture_ids": ["654322-MLB000000003_092026"],
+          "seller_custom_field": "CAM-BRA-M",
+          "catalog_product_id": null,
+          "attributes": []
+        }
+      ]
+    }
+  },
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000002",
+      "site_id": "MLB",
+      "title": "Luminária Led De Mesa Articulada",
+      "seller_id": 1234567,
+      "category_id": "MLB1582",
+      "price": 129,
+      "base_price": 129,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 5,
+      "available_quantity": 0,
+      "sold_quantity": 5,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "free",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000002-luminaria-led-de-mesa-articulada-_JM",
+      "thumbnail": "http://http2.mlstatic.com/D_777777-MLB000000002_092026-I.jpg",
+      "status": "paused",
+      "seller_custom_field": "LUM-LED-001",
+      "catalog_product_id": null,
+      "attributes": [],
+      "variations": []
+    }
+  }
+]

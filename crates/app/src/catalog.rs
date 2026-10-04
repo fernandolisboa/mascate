@@ -54,9 +54,7 @@ pub fn failure(error: &CatalogError) -> String {
         CatalogError::MissingTitle => "Digite o título da oferta.".into(),
         CatalogError::MissingProductName => "Digite o nome do produto.".into(),
         CatalogError::MissingReason => "Diga por que a oportunidade não serve.".into(),
-        CatalogError::Demand(error) => {
-            format!("O Mercado Livre não respondeu como esperado: {error}")
-        }
+        CatalogError::Platform(error) => crate::mercado_livre::failure(error),
         CatalogError::SupplierExists(name) => format!("O fornecedor {name} já existe."),
         CatalogError::UnknownSupplier(_)
         | CatalogError::UnknownOffer(_)

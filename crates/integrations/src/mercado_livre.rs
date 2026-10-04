@@ -1,23 +1,22 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
-//! login, and reports demand to the catalog (ADR 0013). Only official
-//! endpoints, read-only here.
+//! login, reports demand to the catalog and the owner's listings to
+//! commerce (ADR 0013). Only official endpoints, read-only here.
 
 mod answers;
+mod sales_channel;
 mod tokens;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use mascate_catalog::{
-    BestSeller, CatalogMatch, Competition, DemandCategory, DemandError, DemandSource, ListingType,
-};
-use mascate_kernel::{Clock, Currency, Money};
+use mascate_catalog::{BestSeller, CatalogMatch, Competition, DemandCategory, DemandSource};
+use mascate_kernel::{Clock, Currency, ListingType, Money, PlatformError};
 use mascate_platform::{SecretStore, http_agent};
 use serde::de::DeserializeOwned;
 
 use answers::{
-    CategoryAnswer, HighlightKind, Highlights, ItemsAnswer, ListingPrices, ProductAnswer,
-    ProductItems, ProductSearch, UserProductAnswer, money,
+    CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrices, MultigetEntry,
+    ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
 };
 use tokens::Tokens;
 
@@ -66,7 +65,7 @@ impl MercadoLivre {
         &self,
         path: &str,
         query: &[(&str, &str)],
-    ) -> Result<T, DemandError> {
+    ) -> Result<T, PlatformError> {
         let mut renewed = false;
         loop {
             let token = self.tokens.access_token(&self.agent, &self.api)?;
@@ -80,19 +79,19 @@ impl MercadoLivre {
             }
             let response = request
                 .call()
-                .map_err(|error| DemandError::Failed(error.to_string()))?;
+                .map_err(|error| PlatformError::Failed(error.to_string()))?;
             match response.status().as_u16() {
                 200 => return read_json(response),
                 401 if !renewed => {
                     self.tokens.forget(&token);
                     renewed = true;
                 }
-                401 => return Err(DemandError::Expired),
-                403 => return Err(DemandError::Refused(refusal(response))),
-                404 => return Err(DemandError::NotFound),
-                429 => return Err(DemandError::RateLimited),
+                401 => return Err(PlatformError::Expired),
+                403 => return Err(PlatformError::Refused(refusal(response))),
+                404 => return Err(PlatformError::NotFound),
+                429 => return Err(PlatformError::RateLimited),
                 status => {
-                    return Err(DemandError::Failed(format!(
+                    return Err(PlatformError::Failed(format!(
                         "Mercado Livre answered {status} for {path}"
                     )));
                 }
@@ -100,7 +99,7 @@ impl MercadoLivre {
         }
     }
 
-    fn product(&self, id: &str) -> Result<BestSeller, DemandError> {
+    fn product(&self, id: &str) -> Result<BestSeller, PlatformError> {
         let product: ProductAnswer = self.get(&format!("/products/{id}"), &[])?;
         Ok(BestSeller {
             id: product.id.clone(),
@@ -113,7 +112,7 @@ impl MercadoLivre {
         })
     }
 
-    fn user_product(&self, id: &str) -> Result<BestSeller, DemandError> {
+    fn user_product(&self, id: &str) -> Result<BestSeller, PlatformError> {
         let product: UserProductAnswer = self.get(&format!("/user-products/{id}"), &[])?;
         Ok(BestSeller {
             id: product.id,
@@ -125,11 +124,11 @@ impl MercadoLivre {
     }
 
     /// Single listings, read in one request.
-    fn items(&self, ids: &[&str]) -> Result<Vec<BestSeller>, DemandError> {
+    fn items(&self, ids: &[&str]) -> Result<Vec<BestSeller>, PlatformError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let answers: Vec<ItemsAnswer> = self.get(
+        let answers: Vec<MultigetEntry> = self.get(
             "/items",
             &[
                 ("ids", &ids.join(",")),
@@ -142,7 +141,7 @@ impl MercadoLivre {
         Ok(answers
             .into_iter()
             .filter(|answer| answer.code == 200)
-            .filter_map(|answer| answer.body)
+            .filter_map(|answer| answer.body::<ItemAnswer>().ok())
             .map(|item| BestSeller {
                 price: money(&item.price, &item.currency_id),
                 id: item.id,
@@ -159,7 +158,7 @@ impl DemandSource for MercadoLivre {
         Currency::Brl
     }
 
-    fn categories(&self) -> Result<Vec<DemandCategory>, DemandError> {
+    fn categories(&self) -> Result<Vec<DemandCategory>, PlatformError> {
         let categories: Vec<CategoryAnswer> =
             self.get(&format!("/sites/{SITE}/categories"), &[])?;
         Ok(categories
@@ -173,11 +172,11 @@ impl DemandSource for MercadoLivre {
 
     /// Resolves each of the top 20 into a title, its catalog product and a
     /// price. An entry Mercado Livre no longer shows is left out.
-    fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, DemandError> {
+    fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, PlatformError> {
         let highlights: Highlights =
             match self.get(&format!("/highlights/{SITE}/category/{category}"), &[]) {
                 // A category too small for a ranking has none.
-                Err(DemandError::NotFound) => return Ok(Vec::new()),
+                Err(PlatformError::NotFound) => return Ok(Vec::new()),
                 other => other?,
             };
         let item_ids: Vec<&str> = highlights
@@ -187,7 +186,7 @@ impl DemandSource for MercadoLivre {
             .map(|entry| entry.id.as_str())
             .collect();
         let items = match self.items(&item_ids) {
-            Err(DemandError::NotFound | DemandError::Refused(_)) => Vec::new(),
+            Err(PlatformError::NotFound | PlatformError::Refused(_)) => Vec::new(),
             other => other?,
         };
         let mut best_sellers = Vec::new();
@@ -199,7 +198,7 @@ impl DemandSource for MercadoLivre {
                     .iter()
                     .find(|item| item.id == entry.id)
                     .cloned()
-                    .ok_or(DemandError::NotFound),
+                    .ok_or(PlatformError::NotFound),
                 HighlightKind::Other => continue,
             };
             match resolved {
@@ -207,14 +206,14 @@ impl DemandSource for MercadoLivre {
                     position: entry.position,
                     ..best_seller
                 }),
-                Err(DemandError::NotFound | DemandError::Refused(_)) => {}
+                Err(PlatformError::NotFound | PlatformError::Refused(_)) => {}
                 Err(error) => return Err(error),
             }
         }
         Ok(best_sellers)
     }
 
-    fn search(&self, query: &str) -> Result<Vec<CatalogMatch>, DemandError> {
+    fn search(&self, query: &str) -> Result<Vec<CatalogMatch>, PlatformError> {
         let found: ProductSearch = self.get(
             "/products/search",
             &[
@@ -234,7 +233,7 @@ impl DemandSource for MercadoLivre {
             .collect())
     }
 
-    fn competition(&self, product: &str) -> Result<Competition, DemandError> {
+    fn competition(&self, product: &str) -> Result<Competition, PlatformError> {
         let items: ProductItems = self.get(
             &format!("/products/{product}/items"),
             &[("limit", &COMPETITORS_PAGE.to_string())],
@@ -255,7 +254,7 @@ impl DemandSource for MercadoLivre {
         })
     }
 
-    fn root_category(&self, category: &str) -> Result<DemandCategory, DemandError> {
+    fn root_category(&self, category: &str) -> Result<DemandCategory, PlatformError> {
         let found: CategoryAnswer = self.get(&format!("/categories/{category}"), &[])?;
         let root = found.path_from_root.into_iter().next();
         Ok(match root {
@@ -275,33 +274,33 @@ impl DemandSource for MercadoLivre {
         category: &str,
         price: Money,
         listing: ListingType,
-    ) -> Result<Money, DemandError> {
+    ) -> Result<Money, PlatformError> {
         let prices: ListingPrices = self.get(
             &format!("/sites/{SITE}/listing_prices"),
             &[
                 ("price", &price.rounded().amount().to_string()),
-                ("listing_type_id", listing.code()),
+                ("listing_type_id", sales_channel::listing_type_id(listing)),
                 ("category_id", category),
             ],
         )?;
         prices
-            .for_listing(listing.code())
+            .for_listing(sales_channel::listing_type_id(listing))
             .and_then(|found| money(&found.sale_fee_amount, &found.currency_id))
-            .ok_or(DemandError::NotFound)
+            .ok_or(PlatformError::NotFound)
     }
 }
 
 fn read_json<T: DeserializeOwned>(
     response: ureq::http::Response<ureq::Body>,
-) -> Result<T, DemandError> {
+) -> Result<T, PlatformError> {
     let bytes = response
         .into_body()
         .into_with_config()
         .limit(MAX_ANSWER_BYTES)
         .read_to_vec()
-        .map_err(|error| DemandError::Failed(error.to_string()))?;
+        .map_err(|error| PlatformError::Failed(error.to_string()))?;
     serde_json::from_slice(&bytes).map_err(|error| {
-        DemandError::Failed(format!(
+        PlatformError::Failed(format!(
             "Mercado Livre answered something unexpected: {error}"
         ))
     })

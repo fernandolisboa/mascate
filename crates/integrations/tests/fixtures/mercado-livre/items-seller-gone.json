@@ -1,0 +1,57 @@
+[
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000001",
+      "site_id": "MLB",
+      "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+      "seller_id": 1234567,
+      "category_id": "MLB3697",
+      "price": 79.9,
+      "currency_id": "BRL",
+      "available_quantity": 0,
+      "listing_type_id": "gold_special",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000001-fone-de-ouvido-bluetooth-tws-pro-preto-_JM",
+      "status": "closed",
+      "seller_custom_field": null,
+      "attributes": [],
+      "variations": []
+    }
+  },
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000002",
+      "site_id": "MLB",
+      "title": "Luminária Led De Mesa Articulada",
+      "seller_id": 1234567,
+      "category_id": "MLB1582",
+      "price": 129,
+      "base_price": 129,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 5,
+      "available_quantity": 0,
+      "sold_quantity": 5,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "free",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000002-luminaria-led-de-mesa-articulada-_JM",
+      "thumbnail": "http://http2.mlstatic.com/D_777777-MLB000000002_092026-I.jpg",
+      "status": "paused",
+      "seller_custom_field": "LUM-LED-001",
+      "catalog_product_id": null,
+      "attributes": [],
+      "variations": []
+    }
+  },
+  {
+    "code": 404,
+    "body": {
+      "message": "Item with id MLB4100000003 not found",
+      "error": "not_found",
+      "status": 404,
+      "cause": []
+    }
+  }
+]

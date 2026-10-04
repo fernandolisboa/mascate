@@ -11,9 +11,7 @@ pub use catalog::{
     Catalog, CatalogError, NewSupplierOffer, OfferHistory, Product, ProductSource, Supplier,
     SupplierOffer,
 };
-pub use demand::{
-    BestSeller, CatalogMatch, Competition, DemandCategory, DemandError, DemandSource, ListingType,
-};
+pub use demand::{BestSeller, CatalogMatch, Competition, DemandCategory, DemandSource};
 pub use files::{AddedFiles, NotCopied, ProductFile};
 pub use link::{InvalidLink, OfferLink};
 pub use opportunities::{

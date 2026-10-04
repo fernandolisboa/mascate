@@ -49,7 +49,7 @@ Platform onde o Fernando vende como vendedor (Mercado Livre na fase 1).
 _Avoid_: canal (sozinho), marketplace, loja
 
 **Listing**:
-Anúncio de um Product num Sales Channel. Nasce como rascunho no app e passa a publicado quando sobe para o canal.
+Anúncio de um Product num Sales Channel. Nasce como rascunho no app e passa a publicado quando sobe para o canal; os que já existem no canal chegam por Sync. Um anúncio com variações vira um Listing por variação, porque cada uma vende um Product.
 _Avoid_: anúncio de afiliado, publicação, item do ML
 
 **Order**:

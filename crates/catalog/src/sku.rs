@@ -1,5 +1,7 @@
 use std::fmt;
 
+use mascate_kernel::{fold, folded_words};
+
 /// A Product's own code, which also names its folder: upper-case letters
 /// and digits in groups joined by single hyphens.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -62,9 +64,8 @@ impl Sku {
     /// unique: the first three letters of its first three words of three or
     /// more characters, as `FON-OUV-BLU` for "Fone de Ouvido Bluetooth".
     pub(crate) fn stem_for(name: &str) -> String {
-        let words: Vec<String> = name
-            .split(|c: char| !c.is_alphanumeric())
-            .map(|word| word.chars().filter_map(fold).collect::<String>())
+        let words: Vec<String> = folded_words(name)
+            .into_iter()
             .filter(|word| word.len() >= 3)
             .take(3)
             .map(|word| word[..3].to_owned())
@@ -86,21 +87,4 @@ impl fmt::Display for Sku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
-}
-
-/// An ASCII letter or digit in upper case, accents of Portuguese dropped;
-/// `None` for anything else.
-fn fold(c: char) -> Option<char> {
-    let folded = match c.to_lowercase().next().unwrap_or(c) {
-        'á' | 'à' | 'â' | 'ã' | 'ä' => 'A',
-        'é' | 'è' | 'ê' | 'ë' => 'E',
-        'í' | 'ì' | 'î' | 'ï' => 'I',
-        'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'O',
-        'ú' | 'ù' | 'û' | 'ü' => 'U',
-        'ç' => 'C',
-        'ñ' => 'N',
-        c if c.is_ascii_alphanumeric() => c.to_ascii_uppercase(),
-        _ => return None,
-    };
-    Some(folded)
 }

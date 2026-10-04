@@ -6,8 +6,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::TimeDelta;
-use mascate_catalog::DemandError;
-use mascate_kernel::{Clock, Timestamp};
+use mascate_kernel::{Clock, PlatformError, Timestamp};
 use mascate_platform::{Secret, SecretStore};
 
 use super::answers::{ErrorAnswer, TokenAnswer};
@@ -44,7 +43,7 @@ impl Tokens {
 
     /// A valid access token, renewed first when there is none or it is
     /// about to expire.
-    pub fn access_token(&self, agent: &ureq::Agent, api: &str) -> Result<Secret, DemandError> {
+    pub fn access_token(&self, agent: &ureq::Agent, api: &str) -> Result<Secret, PlatformError> {
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(token) = current
             .as_ref()
@@ -67,11 +66,11 @@ impl Tokens {
         }
     }
 
-    fn renew(&self, agent: &ureq::Agent, api: &str) -> Result<AccessToken, DemandError> {
+    fn renew(&self, agent: &ureq::Agent, api: &str) -> Result<AccessToken, PlatformError> {
         let read = |name| match self.store.read(name) {
             Ok(Some(secret)) => Ok(secret),
-            Ok(None) => Err(DemandError::NotConnected),
-            Err(error) => Err(DemandError::Failed(error.to_string())),
+            Ok(None) => Err(PlatformError::NotConnected),
+            Err(error) => Err(PlatformError::Failed(error.to_string())),
         };
         let (client_id, client_secret, refresh_token) =
             (read(CLIENT_ID)?, read(CLIENT_SECRET)?, read(REFRESH_TOKEN)?);
@@ -84,7 +83,7 @@ impl Tokens {
                 ("client_secret", client_secret.expose()),
                 ("refresh_token", refresh_token.expose()),
             ])
-            .map_err(|error| DemandError::Failed(error.to_string()))?;
+            .map_err(|error| PlatformError::Failed(error.to_string()))?;
         match response.status().as_u16() {
             200 => {}
             // `invalid_grant`: the refresh token was used, revoked or expired.
@@ -92,14 +91,14 @@ impl Tokens {
                 let answer = read_json::<ErrorAnswer>(response).ok();
                 return Err(match answer.and_then(|answer| answer.error).as_deref() {
                     Some("invalid_client") => {
-                        DemandError::Refused("Mercado Livre does not know this app".into())
+                        PlatformError::Refused("Mercado Livre does not know this app".into())
                     }
-                    _ => DemandError::Expired,
+                    _ => PlatformError::Expired,
                 });
             }
-            429 => return Err(DemandError::RateLimited),
+            429 => return Err(PlatformError::RateLimited),
             status => {
-                return Err(DemandError::Failed(format!(
+                return Err(PlatformError::Failed(format!(
                     "Mercado Livre answered {status} when renewing the login"
                 )));
             }
@@ -108,7 +107,7 @@ impl Tokens {
         self.store
             .write(REFRESH_TOKEN, &Secret::new(answer.refresh_token))
             .map_err(|error| {
-                DemandError::Failed(format!("could not keep the renewed login: {error}"))
+                PlatformError::Failed(format!("could not keep the renewed login: {error}"))
             })?;
         Ok(AccessToken {
             value: Secret::new(answer.access_token),

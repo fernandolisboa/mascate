@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use libsql::{Connection, Row, Value, params};
-use mascate_kernel::{Clock, CurrencyMismatch, IdGenerator, Money, Record, RecordId, Timestamp};
+use mascate_kernel::{
+    Clock, CurrencyMismatch, IdGenerator, Money, PlatformError, Record, RecordId, Timestamp,
+};
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 
-use crate::{DemandError, InvalidLink, InvalidSku, OfferLink, Sku};
+use crate::{InvalidLink, InvalidSku, OfferLink, Sku};
 
 /// Where Supplier Offers come from. Only the owner's own typing for now;
 /// Platform APIs join as their adapters land.
@@ -127,7 +129,7 @@ pub enum CatalogError {
     #[error("say why the Opportunity is discarded")]
     MissingReason,
     #[error(transparent)]
-    Demand(#[from] DemandError),
+    Platform(#[from] PlatformError),
     #[error(transparent)]
     InvalidLink(#[from] InvalidLink),
     #[error(transparent)]
@@ -442,9 +444,24 @@ impl Catalog {
         name: &str,
         sku: &str,
     ) -> Result<Product, CatalogError> {
+        self.offer(from_offer).await?;
+        self.insert_product(name, sku, Some(from_offer)).await
+    }
+
+    /// Makes a Product that no Supplier Offer leads to yet, such as one
+    /// already sold in a Sales Channel, with its folder.
+    pub async fn add_product(&self, name: &str, sku: &str) -> Result<Product, CatalogError> {
+        self.insert_product(name, sku, None).await
+    }
+
+    async fn insert_product(
+        &self,
+        name: &str,
+        sku: &str,
+        from_offer: Option<RecordId>,
+    ) -> Result<Product, CatalogError> {
         let name = required(name, CatalogError::MissingProductName)?;
         let sku = Sku::parse(sku)?;
-        self.offer(from_offer).await?;
         if self
             .product_with_sku(self.connection(), &sku)
             .await?
@@ -471,7 +488,9 @@ impl Catalog {
                     params![record.id.to_string(), sku.as_str(), name.clone(), at],
                 )
                 .await?;
-            link_offers(&transaction, from_offer, record.id, &self.now()).await?;
+            if let Some(offer) = from_offer {
+                link_offers(&transaction, offer, record.id, &self.now()).await?;
+            }
             transaction.commit().await?;
             Ok(())
         };

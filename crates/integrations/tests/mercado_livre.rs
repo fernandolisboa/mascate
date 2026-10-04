@@ -5,10 +5,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
-use mascate_catalog::{DemandCategory, DemandError, DemandSource, ListingType};
+use mascate_catalog::{DemandCategory, DemandSource};
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::ManualClock;
-use mascate_kernel::{Currency, Money};
+use mascate_kernel::{Currency, ListingType, Money, PlatformError};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Secret, SecretStore};
 use rust_decimal::Decimal;
@@ -237,7 +237,7 @@ fn without_the_seller_login_nothing_is_requested() {
         .write("ML_CLIENT_ID", &Secret::new("1234567890"))
         .unwrap();
 
-    assert_eq!(fake.adapter.categories(), Err(DemandError::NotConnected));
+    assert_eq!(fake.adapter.categories(), Err(PlatformError::NotConnected));
     assert!(fake.server.received().is_empty());
 }
 
@@ -247,7 +247,7 @@ fn a_refresh_token_mercado_livre_no_longer_accepts_means_the_login_expired() {
     fake.server
         .serve("/oauth/token", 400, fixture("token-invalid-grant.json"));
 
-    assert_eq!(fake.adapter.categories(), Err(DemandError::Expired));
+    assert_eq!(fake.adapter.categories(), Err(PlatformError::Expired));
     assert_eq!(
         fake.store.read("ML_REFRESH_TOKEN").unwrap(),
         Some(Secret::new("TG-first"))
@@ -265,7 +265,7 @@ fn a_turned_down_access_token_is_renewed_once_before_the_login_counts_as_expired
     assert_eq!(fake.renewals(), 2);
 
     fake.server.serve("/sites/MLB/categories", 401, "{}");
-    assert_eq!(fake.adapter.categories(), Err(DemandError::Expired));
+    assert_eq!(fake.adapter.categories(), Err(PlatformError::Expired));
     assert_eq!(fake.renewals(), 3);
 }
 
@@ -279,18 +279,18 @@ fn rate_limits_and_refusals_are_reported_as_such() {
     fake.server
         .serve("/products/MLB1/items?limit=50", 500, "{}");
 
-    assert_eq!(fake.adapter.categories(), Err(DemandError::RateLimited));
+    assert_eq!(fake.adapter.categories(), Err(PlatformError::RateLimited));
     assert_eq!(
         fake.adapter.root_category("MLB3697"),
-        Err(DemandError::Refused("forbidden".into()))
+        Err(PlatformError::Refused("forbidden".into()))
     );
     assert!(matches!(
         fake.adapter.competition("MLB1"),
-        Err(DemandError::Failed(_))
+        Err(PlatformError::Failed(_))
     ));
     assert_eq!(
         fake.adapter.competition("MLB404"),
-        Err(DemandError::NotFound)
+        Err(PlatformError::NotFound)
     );
 }
 
@@ -302,7 +302,7 @@ fn an_answer_that_is_not_what_the_documentation_shows_is_a_failure() {
 
     assert!(matches!(
         fake.adapter.categories(),
-        Err(DemandError::Failed(_))
+        Err(PlatformError::Failed(_))
     ));
 }
 
@@ -380,6 +380,6 @@ fn the_sale_fee_is_mercado_livres_for_the_category_price_and_listing_type() {
     assert_eq!(
         fake.adapter
             .sale_fee("MLB3697", brl("99.93"), ListingType::Premium),
-        Err(DemandError::NotFound)
+        Err(PlatformError::NotFound)
     );
 }

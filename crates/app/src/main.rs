@@ -9,7 +9,9 @@ mod forms;
 mod home;
 mod kit;
 mod layout;
+mod listings;
 mod low_stock;
+mod mercado_livre;
 mod offers;
 mod opportunities;
 mod ordered_saves;
@@ -41,7 +43,9 @@ use mascate_platform::{
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
-use crate::opportunities::{AppMercadoLivre, AppTaxes};
+use crate::listings::AppListings;
+use crate::mercado_livre::AppMercadoLivre;
+use crate::opportunities::AppTaxes;
 use crate::preferences::Preferences;
 use crate::purchases::AppPurchaseOrders;
 use crate::reminders::AppReminders;
@@ -75,7 +79,7 @@ fn main() {
     );
     let connections = Arc::new(Connections::new(secrets.clone()));
     let mercado_livre = Arc::new(MercadoLivre::new(
-        &opportunities::mercado_livre_api(Build::CURRENT, &process_environment()),
+        &mercado_livre::api_url(Build::CURRENT, &process_environment()),
         &format!("Mascate/{}", env!("CARGO_PKG_VERSION")),
         secrets,
         Arc::new(SystemClock),
@@ -118,6 +122,7 @@ fn main() {
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppInventory(started.inventory.clone()));
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
+                cx.set_global(AppListings(started.listings.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

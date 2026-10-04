@@ -6,11 +6,10 @@ use std::sync::Mutex;
 
 use futures::executor::block_on;
 use mascate_catalog::{
-    BestSeller, CatalogError, CatalogMatch, Competition, DemandCategory, DemandError, DemandSource,
-    DiscoverySettings, ListingType, MATCHES_PER_OFFER, NewSupplierOffer, Opportunity,
-    OpportunityFilter, score,
+    BestSeller, CatalogError, CatalogMatch, Competition, DemandCategory, DemandSource,
+    DiscoverySettings, MATCHES_PER_OFFER, NewSupplierOffer, Opportunity, OpportunityFilter, score,
 };
-use mascate_kernel::{Currency, Margin, Money, Percentage};
+use mascate_kernel::{Currency, ListingType, Margin, Money, Percentage, PlatformError};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 
@@ -50,7 +49,7 @@ struct FakeChannel {
     competitions: Mutex<HashMap<String, Competition>>,
     roots: HashMap<String, DemandCategory>,
     fees: Mutex<HashMap<(String, String), Money>>,
-    failure: Mutex<Option<DemandError>>,
+    failure: Mutex<Option<PlatformError>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -104,7 +103,7 @@ impl FakeChannel {
             .insert((category.into(), listing.code().into()), brl(fee));
     }
 
-    fn fail_with(&self, error: DemandError) {
+    fn fail_with(&self, error: PlatformError) {
         *self.failure.lock().unwrap() = Some(error);
     }
 
@@ -112,7 +111,7 @@ impl FakeChannel {
         self.calls.lock().unwrap().clone()
     }
 
-    fn called(&self, call: String) -> Result<(), DemandError> {
+    fn called(&self, call: String) -> Result<(), PlatformError> {
         self.calls.lock().unwrap().push(call);
         match self.failure.lock().unwrap().clone() {
             Some(error) => Err(error),
@@ -126,12 +125,12 @@ impl DemandSource for FakeChannel {
         Currency::Brl
     }
 
-    fn categories(&self) -> Result<Vec<DemandCategory>, DemandError> {
+    fn categories(&self) -> Result<Vec<DemandCategory>, PlatformError> {
         self.called("categories".into())?;
         Ok(vec![eletronicos(), casa()])
     }
 
-    fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, DemandError> {
+    fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, PlatformError> {
         self.called(format!("best_sellers {category}"))?;
         Ok(self
             .best_sellers
@@ -142,7 +141,7 @@ impl DemandSource for FakeChannel {
             .unwrap_or_default())
     }
 
-    fn search(&self, query: &str) -> Result<Vec<CatalogMatch>, DemandError> {
+    fn search(&self, query: &str) -> Result<Vec<CatalogMatch>, PlatformError> {
         self.called(format!("search {query}"))?;
         Ok(self
             .searches
@@ -153,22 +152,22 @@ impl DemandSource for FakeChannel {
             .unwrap_or_default())
     }
 
-    fn competition(&self, product: &str) -> Result<Competition, DemandError> {
+    fn competition(&self, product: &str) -> Result<Competition, PlatformError> {
         self.called(format!("competition {product}"))?;
         self.competitions
             .lock()
             .unwrap()
             .get(product)
             .cloned()
-            .ok_or(DemandError::NotFound)
+            .ok_or(PlatformError::NotFound)
     }
 
-    fn root_category(&self, category: &str) -> Result<DemandCategory, DemandError> {
+    fn root_category(&self, category: &str) -> Result<DemandCategory, PlatformError> {
         self.called(format!("root {category}"))?;
         self.roots
             .get(category)
             .cloned()
-            .ok_or(DemandError::NotFound)
+            .ok_or(PlatformError::NotFound)
     }
 
     fn sale_fee(
@@ -176,7 +175,7 @@ impl DemandSource for FakeChannel {
         category: &str,
         price: Money,
         listing: ListingType,
-    ) -> Result<Money, DemandError> {
+    ) -> Result<Money, PlatformError> {
         self.called(format!(
             "fee {category} {} {}",
             price.amount(),
@@ -187,7 +186,7 @@ impl DemandSource for FakeChannel {
             .unwrap()
             .get(&(category.to_owned(), listing.code().to_owned()))
             .copied()
-            .ok_or(DemandError::NotFound)
+            .ok_or(PlatformError::NotFound)
     }
 }
 
@@ -668,11 +667,11 @@ fn a_sync_stops_when_the_channel_no_longer_accepts_the_login() {
         let channel = FakeChannel::new();
         fone(&f, &channel).await;
         f.catalog.follow_categories(&[eletronicos()]).await.unwrap();
-        channel.fail_with(DemandError::Expired);
+        channel.fail_with(PlatformError::Expired);
 
         assert!(matches!(
             f.catalog.sync_demand(&channel).await,
-            Err(CatalogError::Demand(DemandError::Expired))
+            Err(CatalogError::Platform(PlatformError::Expired))
         ));
         assert_eq!(channel.calls(), ["best_sellers MLB1000"]);
     });

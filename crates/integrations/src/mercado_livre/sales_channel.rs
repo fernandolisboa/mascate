@@ -1,0 +1,178 @@
+//! The owner's listings, for commerce's Sales Channel port.
+
+use mascate_commerce::{ChannelListing, ListingStatus, SalesChannel, Variation};
+use mascate_kernel::{ListingType, PlatformError};
+
+use super::MercadoLivre;
+use super::answers::{Attribute, MultigetEntry, SellerItem, SellerItems, UserAnswer, money};
+
+/// Listings per page of the seller's listings; the most Mercado Livre allows.
+const SEARCH_PAGE: &str = "100";
+
+/// Ids per `/items` multiget; the most Mercado Livre allows.
+const MULTIGET_LIMIT: usize = 20;
+
+/// Mercado Livre's id for a listing type.
+pub(super) fn listing_type_id(listing: ListingType) -> &'static str {
+    match listing {
+        ListingType::Classic => "gold_special",
+        ListingType::Premium => "gold_pro",
+    }
+}
+
+impl SalesChannel for MercadoLivre {
+    /// Pages through the seller's listings with `search_type=scan`, which
+    /// has no cap on how many it returns, one status at a time.
+    fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
+        let user: UserAnswer = self.get("/users/me", &[])?;
+        let path = format!("/users/{}/items/search", user.id);
+        let mut ids: Vec<String> = Vec::new();
+        for status in ["active", "paused"] {
+            let mut scroll: Option<String> = None;
+            loop {
+                let mut query = vec![
+                    ("status", status),
+                    ("search_type", "scan"),
+                    ("limit", SEARCH_PAGE),
+                ];
+                if let Some(scroll) = &scroll {
+                    query.push(("scroll_id", scroll));
+                }
+                let page: SellerItems = self.get(&path, &query)?;
+                if page.results.is_empty() {
+                    break;
+                }
+                for id in page.results {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                match page.scroll_id {
+                    Some(next) => scroll = Some(next),
+                    None => break,
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    fn listings(&self, ids: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
+        let mut listings = Vec::new();
+        for chunk in ids.chunks(MULTIGET_LIMIT) {
+            // `include_attributes=all` brings each variation's own attributes,
+            // where its SELLER_SKU is.
+            let answers: Vec<MultigetEntry> = self.get(
+                "/items",
+                &[("ids", &chunk.join(",")), ("include_attributes", "all")],
+            )?;
+            for answer in answers {
+                match answer.code {
+                    200 => {
+                        let item: SellerItem = answer.body().map_err(|error| {
+                            PlatformError::Failed(format!(
+                                "Mercado Livre answered a listing unexpectedly: {error}"
+                            ))
+                        })?;
+                        listings.extend(channel_listings(item)?);
+                    }
+                    // Deleted: the Sync closes it.
+                    404 => {}
+                    code => {
+                        return Err(PlatformError::Failed(format!(
+                            "Mercado Livre answered {code} for one of the listings"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(listings)
+    }
+}
+
+/// A listing, or one per variation when it has them. A variation's SKU is,
+/// in Mercado Livre's own order: its SELLER_SKU attribute, its
+/// `seller_custom_field`, then the listing's.
+fn channel_listings(item: SellerItem) -> Result<Vec<ChannelListing>, PlatformError> {
+    let price = money(&item.price, &item.currency_id).ok_or_else(|| {
+        PlatformError::Failed(format!("Mercado Livre sent {} without a price", item.id))
+    })?;
+    let item_sku = seller_sku(&item.attributes, &item.seller_custom_field);
+    let listing = ChannelListing {
+        id: item.id,
+        variation: None,
+        title: item.title,
+        price,
+        available_quantity: item.available_quantity,
+        status: status(&item.status),
+        link: item.permalink.filter(|link| is_web_link(link)),
+        listing_type: item.listing_type_id.as_deref().and_then(listing_type),
+        category: item.category_id,
+        seller_sku: item_sku,
+    };
+    if item.variations.is_empty() {
+        return Ok(vec![listing]);
+    }
+    Ok(item
+        .variations
+        .into_iter()
+        .map(|variation| ChannelListing {
+            variation: Some(Variation {
+                id: variation.id.to_string(),
+                name: variation_name(&variation.attribute_combinations),
+            }),
+            price: money(&variation.price, &item.currency_id).unwrap_or(listing.price),
+            available_quantity: variation.available_quantity,
+            seller_sku: seller_sku(&variation.attributes, &variation.seller_custom_field)
+                .or_else(|| listing.seller_sku.clone()),
+            ..listing.clone()
+        })
+        .collect())
+}
+
+fn seller_sku(attributes: &[Attribute], custom_field: &Option<String>) -> Option<String> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.id.as_deref() == Some("SELLER_SKU"))
+        .and_then(|attribute| attribute.value_name.clone())
+        .filter(|sku| !sku.trim().is_empty())
+        .or_else(|| custom_field.clone().filter(|sku| !sku.trim().is_empty()))
+        .map(|sku| sku.trim().to_owned())
+}
+
+/// "Cor: Preto · Tamanho: M".
+fn variation_name(combinations: &[Attribute]) -> String {
+    combinations
+        .iter()
+        .filter_map(|attribute| {
+            let value = attribute.value_name.as_deref()?;
+            Some(match attribute.name.as_deref() {
+                Some(name) => format!("{name}: {value}"),
+                None => value.to_owned(),
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn status(code: &str) -> ListingStatus {
+    match code {
+        "active" => ListingStatus::Active,
+        "paused" => ListingStatus::Paused,
+        "closed" => ListingStatus::Closed,
+        "under_review" => ListingStatus::UnderReview,
+        // `inactive`, `payment_required`, `not_yet_active` and any new one.
+        _ => ListingStatus::Inactive,
+    }
+}
+
+fn listing_type(id: &str) -> Option<ListingType> {
+    ListingType::ALL
+        .into_iter()
+        .find(|kind| listing_type_id(*kind) == id)
+}
+
+/// The app opens a listing's link in the browser, so it takes only a web
+/// address.
+fn is_web_link(link: &str) -> bool {
+    link.starts_with("https://") || link.starts_with("http://")
+}
