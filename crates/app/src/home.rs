@@ -1,21 +1,26 @@
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{SharedString, Window, div};
+use gpui_kit::{Entity, SharedString, Window, div};
 
 use crate::appearance::look;
 use crate::layout;
 use crate::parts::ScreenParts;
+use crate::reminders::RemindersArea;
 
-/// The first screen: what needs attention today. Empty until later slices
-/// feed it Orders, questions, low stock and Reminders.
+/// The first screen: what needs attention today, with the Reminders at its
+/// foot. Later slices feed it Orders, questions and low stock.
 pub struct Home {
     /// Why the database is not ready, if it isn't.
     problem: Option<SharedString>,
+    reminders: Entity<RemindersArea>,
 }
 
 impl Home {
-    pub fn new(problem: Option<SharedString>) -> Self {
-        Self { problem }
+    pub fn new(problem: Option<SharedString>, cx: &mut Context<Self>) -> Self {
+        Self {
+            problem,
+            reminders: cx.new(RemindersArea::new),
+        }
     }
 }
 
@@ -25,9 +30,7 @@ impl Render for Home {
         let (title, detail) = match &self.problem {
             None => (
                 SharedString::from("Nada precisa da sua atenção agora"),
-                SharedString::from(
-                    "Pedidos, perguntas, estoque baixo e lembretes vão aparecer aqui.",
-                ),
+                SharedString::from("Pedidos, perguntas e estoque baixo vão aparecer aqui."),
             ),
             Some(problem) => ("O app não conseguiu iniciar".into(), problem.clone()),
         };
@@ -43,6 +46,9 @@ impl Render for Home {
                 .child(div().text_color(t.text2).child(detail))
                 .into_any_element(),
         );
+        parts
+            .content
+            .push(self.reminders.clone().into_any_element());
         layout::screen(parts, cx)
     }
 }

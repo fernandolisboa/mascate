@@ -373,17 +373,7 @@ fn state_tag(state: Option<&ConnectionState>, cx: &App) -> AnyElement {
         Some(ConnectionState::Expired) => ("Expirada", t.danger),
         Some(ConnectionState::Failed { .. }) => ("Com erro", t.danger),
     };
-    div()
-        .flex_none()
-        .px_2()
-        .py_0p5()
-        .rounded(t.radius)
-        .border(t.border_width)
-        .border_color(ink)
-        .text_xs()
-        .text_color(ink)
-        .child(text)
-        .into_any_element()
+    kit::tag(text, ink, cx).into_any_element()
 }
 
 impl Render for ConnectionsSection {

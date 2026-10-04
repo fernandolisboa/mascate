@@ -25,7 +25,7 @@ impl Shell {
             None => AppState::Ready,
             Some(_) => AppState::DatabaseUnavailable,
         };
-        let home = cx.new(|_| Home::new(problem));
+        let home = cx.new(|cx| Home::new(problem, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
         // The startup theme guessed the system's appearance before any window
         // existed; this window knows it.

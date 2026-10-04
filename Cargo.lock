@@ -4182,10 +4182,14 @@ dependencies = [
 name = "mascate"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "futures",
  "gpui-kit",
+ "mascate-commerce",
+ "mascate-finance",
  "mascate-integrations",
  "mascate-kernel",
+ "mascate-marketing",
  "mascate-platform",
  "tray-icon",
 ]
@@ -4208,10 +4212,16 @@ version = "0.1.0"
 [[package]]
 name = "mascate-commerce"
 version = "0.1.0"
+dependencies = [
+ "mascate-platform",
+]
 
 [[package]]
 name = "mascate-finance"
 version = "0.1.0"
+dependencies = [
+ "mascate-platform",
+]
 
 [[package]]
 name = "mascate-integrations"
@@ -4240,6 +4250,9 @@ dependencies = [
 [[package]]
 name = "mascate-marketing"
 version = "0.1.0"
+dependencies = [
+ "mascate-platform",
+]
 
 [[package]]
 name = "mascate-platform"

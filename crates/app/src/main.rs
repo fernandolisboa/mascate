@@ -9,6 +9,8 @@ mod layout;
 mod palette;
 mod parts;
 mod preferences;
+mod reminders;
+mod restricted;
 mod settings;
 mod shell;
 mod startup;
@@ -19,10 +21,14 @@ use std::sync::Arc;
 use futures::StreamExt;
 use gpui_kit::*;
 use mascate_integrations::Connections;
-use mascate_platform::{Build, SystemSecretStore, process_environment, secret_store_for};
+use mascate_platform::{
+    Build, SystemSecretStore, process_environment, secret_store_for, system_user,
+};
 
 use crate::connections::AppConnections;
 use crate::preferences::Preferences;
+use crate::reminders::AppReminders;
+use crate::restricted::AppFlags;
 use crate::shell::Shell;
 use crate::tray::TrayCommand;
 
@@ -34,8 +40,14 @@ fn main() {
         process_environment(),
     );
     let connections = Arc::new(Connections::new(secrets));
-    let (database, saved, problem) = match startup {
-        Ok(started) => (Some(started.database), started.appearance, None),
+    let user: SharedString = system_user(&process_environment())
+        .unwrap_or_else(|| "usuário do sistema".into())
+        .into();
+    let (started, saved, problem) = match startup {
+        Ok(started) => {
+            let saved = started.appearance;
+            (Some(started), saved, None)
+        }
         Err(problem) => (None, Default::default(), Some(SharedString::from(problem))),
     };
 
@@ -44,8 +56,18 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            cx.set_global(Preferences::new(database, saved));
+            cx.set_global(Preferences::new(
+                started.as_ref().map(|started| started.database.clone()),
+                saved,
+            ));
             cx.set_global(AppConnections(connections));
+            if let Some(started) = &started {
+                cx.set_global(AppFlags {
+                    flags: started.flags.clone(),
+                    user: user.clone(),
+                });
+                cx.set_global(AppReminders(started.reminders.clone()));
+            }
             appearance::init(saved.theme, cx);
             layout::show(saved.layout, cx);
 

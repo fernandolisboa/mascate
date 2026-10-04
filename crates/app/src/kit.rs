@@ -4,7 +4,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Div, SharedString, div, px};
+use gpui_kit::{App, Div, Hsla, SharedString, div, px};
 
 use crate::appearance::look;
 
@@ -50,4 +50,19 @@ pub fn radio(on: bool, cx: &App) -> Div {
                 dot.border_1()
             }
         })
+}
+
+/// A small outlined label in `ink`: a state, a kind, a phase.
+pub fn tag(text: impl Into<SharedString>, ink: Hsla, cx: &App) -> Div {
+    let t = look(cx).tokens;
+    div()
+        .flex_none()
+        .px_2()
+        .py_0p5()
+        .rounded(t.radius)
+        .border(t.border_width)
+        .border_color(ink)
+        .text_xs()
+        .text_color(ink)
+        .child(text.into())
 }
