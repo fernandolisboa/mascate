@@ -3,12 +3,23 @@
 use libsql::{Connection, Row, Value};
 use mascate_kernel::{Clock, IdGenerator, Record};
 
-/// The live row's `columns`, or `None` before anything was saved.
+/// The live row's `columns`, or `None` before anything was saved, the
+/// table included: a database waiting for its migrations is read before
+/// they run.
 pub(crate) async fn load(
     connection: &Connection,
     table: &'static str,
     columns: &[&'static str],
 ) -> Result<Option<Row>, libsql::Error> {
+    let mut exists = connection
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+        )
+        .await?;
+    if exists.next().await?.is_none() {
+        return Ok(None);
+    }
     let mut rows = connection
         .query(
             &format!(

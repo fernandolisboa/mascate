@@ -116,7 +116,83 @@ async fn open_migrated(path: &Path) -> Result<Arc<Database>, Box<dyn std::error:
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
+
     use super::*;
+
+    /// One database per published version, written by the version itself
+    /// with [`write_this_versions_sample_database`].
+    fn released_databases() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/released-databases")
+    }
+
+    /// Run when tagging a release: `cargo test -p mascate -- --ignored
+    /// write_this_versions_sample_database`, then commit the file.
+    #[test]
+    #[ignore = "writes the sample database of a release"]
+    fn write_this_versions_sample_database() {
+        let path = released_databases().join(format!("{}.db", env!("CARGO_PKG_VERSION")));
+        let _ = std::fs::remove_file(&path);
+        block_on(async {
+            let database = open_migrated(&path).await.unwrap();
+            let clock = Arc::new(SystemClock);
+            let ids = Arc::new(UuidV7Generator);
+            save_appearance(
+                &database,
+                clock.as_ref(),
+                ids.as_ref(),
+                Appearance {
+                    theme: UiThemePreference::Fixed(UiTheme::BlackGold),
+                    layout: LayoutId::Studio,
+                },
+            )
+            .await
+            .unwrap();
+            let flags = Flags::new(
+                database.clone(),
+                Registry::new(MODULE_FLAGS).unwrap(),
+                clock.clone(),
+                ids.clone(),
+            );
+            let key = MODULE_FLAGS[0][0].key;
+            flags
+                .turn_on(flags.request_turn_on(key).unwrap().confirm("sample"))
+                .await
+                .unwrap();
+            let reminders = Reminders::new(
+                database.clone(),
+                Registry::new(MODULE_REMINDERS).unwrap(),
+                clock.clone(),
+                ids.clone(),
+            );
+            reminders.dismiss(MODULE_REMINDERS[0][0].key).await.unwrap();
+            let backups = Backups::new(
+                database.clone(),
+                MODULE_MIGRATIONS,
+                PathBuf::from("/backups"),
+                clock,
+                ids,
+            );
+            backups
+                .save_settings(&BackupSettings {
+                    folder: PathBuf::from(if cfg!(windows) {
+                        r"C:\Users\owner\Documents\Mascate\Backups"
+                    } else {
+                        "/home/owner/Documents/Mascate/Backups"
+                    }),
+                    keep: 7,
+                })
+                .await
+                .unwrap();
+            database
+                .connection()
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .await
+                .unwrap();
+        });
+    }
 
     #[test]
     fn every_module_declares_flags_and_reminders_under_distinct_keys() {

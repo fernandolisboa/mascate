@@ -14,11 +14,13 @@ use mascate_platform::{
 const CATALOG_V1: Migration = Migration {
     version: 1,
     name: "create products",
+    risky: false,
     sql: "CREATE TABLE catalog_products (id TEXT PRIMARY KEY, sku TEXT NOT NULL);",
 };
 const CATALOG_V2: Migration = Migration {
     version: 2,
     name: "add product title",
+    risky: false,
     sql: "ALTER TABLE catalog_products ADD COLUMN title TEXT;",
 };
 
@@ -569,6 +571,7 @@ fn refuses_a_database_from_a_newer_version() {
         const CATALOG_V3: Migration = Migration {
             version: 3,
             name: "add product brand",
+            risky: false,
             sql: "ALTER TABLE catalog_products ADD COLUMN brand TEXT;",
         };
         migrate(
@@ -612,6 +615,7 @@ fn refuses_a_database_with_a_module_this_version_does_not_know() {
                     migrations: &[Migration {
                         version: 1,
                         name: "create points",
+                        risky: false,
                         sql: "CREATE TABLE loyalty_points (id TEXT PRIMARY KEY);",
                     }],
                 },

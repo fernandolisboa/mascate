@@ -1,0 +1,14 @@
+{
+  "version": "{version}",
+  "risky_migrations": [],
+  "installers": {
+    "windows-x86_64": {
+      "file": "Mascate_{version}_x64-setup.exe",
+      "sha256": "{windows_sha256}"
+    },
+    "linux-x86_64-appimage": {
+      "file": "Mascate_{version}_x86_64.AppImage",
+      "sha256": "{appimage_sha256}"
+    }
+  }
+}

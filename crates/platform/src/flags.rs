@@ -127,6 +127,7 @@ pub enum FlagError {
 pub(crate) const CREATE_FLAG_CHANGES: Migration = Migration {
     version: 2,
     name: "create flag changes",
+    risky: false,
     sql: "CREATE TABLE platform_flag_changes (
         id         TEXT PRIMARY KEY,
         flag       TEXT NOT NULL,
