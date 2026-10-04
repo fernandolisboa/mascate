@@ -7,7 +7,7 @@ use libsql::{Connection, Row, Value, params};
 use mascate_kernel::{Clock, CurrencyMismatch, IdGenerator, Money, Record, RecordId, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 
-use crate::{InvalidLink, InvalidSku, OfferLink, Sku};
+use crate::{DemandError, InvalidLink, InvalidSku, OfferLink, Sku};
 
 /// Where Supplier Offers come from. Only the owner's own typing for now;
 /// Platform APIs join as their adapters land.
@@ -122,6 +122,12 @@ pub enum CatalogError {
     UnknownOffer(RecordId),
     #[error("no Product {0}")]
     UnknownProduct(RecordId),
+    #[error("no Opportunity {0} to discard")]
+    UnknownOpportunity(RecordId),
+    #[error("say why the Opportunity is discarded")]
+    MissingReason,
+    #[error(transparent)]
+    Demand(#[from] DemandError),
     #[error(transparent)]
     InvalidLink(#[from] InvalidLink),
     #[error(transparent)]
@@ -191,7 +197,8 @@ pub(crate) const CREATE_CATALOG: Migration = Migration {
 };
 
 /// The columns [`offer_from`] reads, then the link's key.
-const OFFER_COLUMNS: &str = "o.id, o.product_id, o.source, o.link, o.title, o.price, o.shipping,
+pub(crate) const OFFER_COLUMNS: &str =
+    "o.id, o.product_id, o.source, o.link, o.title, o.price, o.shipping,
      o.currency, o.observed_at, s.id, s.name, o.link_key
      FROM catalog_supplier_offers o JOIN catalog_suppliers s ON s.id = o.supplier_id
      WHERE o.deleted_at IS NULL";
@@ -220,19 +227,31 @@ impl Catalog {
         }
     }
 
-    fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         self.database.connection()
+    }
+
+    pub(crate) fn database(&self) -> &Database {
+        &self.database
+    }
+
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
+    pub(crate) fn ids(&self) -> &dyn IdGenerator {
+        self.ids.as_ref()
     }
 
     pub(crate) fn next_id(&self) -> RecordId {
         self.ids.next_id()
     }
 
-    fn new_record(&self) -> Record {
+    pub(crate) fn new_record(&self) -> Record {
         Record::new(self.ids.as_ref(), self.clock.as_ref())
     }
 
-    fn now(&self) -> String {
+    pub(crate) fn now(&self) -> String {
         stored(self.clock.now())
     }
 
@@ -627,7 +646,7 @@ pub(crate) fn create_folder(path: &Path) -> Result<(), CatalogError> {
 
 /// `text` trimmed with its runs of spaces made one; `missing` when nothing
 /// is left.
-fn required(text: &str, missing: CatalogError) -> Result<String, CatalogError> {
+pub(crate) fn required(text: &str, missing: CatalogError) -> Result<String, CatalogError> {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.is_empty() {
         Err(missing)
@@ -654,7 +673,7 @@ fn product_from(row: &Row) -> Result<Product, CatalogError> {
     })
 }
 
-fn offer_from(row: &Row) -> Result<SupplierOffer, CatalogError> {
+pub(crate) fn offer_from(row: &Row) -> Result<SupplierOffer, CatalogError> {
     let source: String = row.get(2)?;
     let currency = row.currency_at(7)?;
     Ok(SupplierOffer {

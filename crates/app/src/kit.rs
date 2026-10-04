@@ -21,6 +21,11 @@ pub fn error_notice(text: impl Into<SharedString>, cx: &App) -> Div {
     notice(IconName::CircleX, look(cx).tokens.danger, text.into())
 }
 
+/// Something to know, neither good nor bad: icon and text in the accent ink.
+pub fn info_notice(text: impl Into<SharedString>, cx: &App) -> Div {
+    notice(IconName::Info, look(cx).tokens.accent_text, text.into())
+}
+
 /// Something that went well: icon and text in the success ink.
 pub fn success_notice(text: impl Into<SharedString>, cx: &App) -> Div {
     notice(IconName::CircleCheck, look(cx).tokens.success, text.into())

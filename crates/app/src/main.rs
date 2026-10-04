@@ -11,6 +11,7 @@ mod kit;
 mod layout;
 mod low_stock;
 mod offers;
+mod opportunities;
 mod ordered_saves;
 mod palette;
 mod parts;
@@ -30,7 +31,8 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui_kit::*;
-use mascate_integrations::Connections;
+use mascate_integrations::{Connections, MercadoLivre};
+use mascate_kernel::SystemClock;
 use mascate_platform::{
     Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
     secret_store_for, system_user,
@@ -39,6 +41,7 @@ use mascate_platform::{
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
+use crate::opportunities::{AppMercadoLivre, AppTaxes};
 use crate::preferences::Preferences;
 use crate::purchases::AppPurchaseOrders;
 use crate::reminders::AppReminders;
@@ -70,7 +73,13 @@ fn main() {
         Arc::new(SystemSecretStore::default()),
         process_environment(),
     );
-    let connections = Arc::new(Connections::new(secrets));
+    let connections = Arc::new(Connections::new(secrets.clone()));
+    let mercado_livre = Arc::new(MercadoLivre::new(
+        &opportunities::mercado_livre_api(Build::CURRENT, &process_environment()),
+        &format!("Mascate/{}", env!("CARGO_PKG_VERSION")),
+        secrets,
+        Arc::new(SystemClock),
+    ));
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())
         .into();
@@ -98,6 +107,7 @@ fn main() {
                 saved,
             ));
             cx.set_global(AppConnections(connections));
+            cx.set_global(AppMercadoLivre(mercado_livre));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),
@@ -105,6 +115,7 @@ fn main() {
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
+                cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppInventory(started.inventory.clone()));
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
                 cx.set_global(AppBackups {

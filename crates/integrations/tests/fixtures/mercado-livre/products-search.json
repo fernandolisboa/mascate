@@ -1,0 +1,30 @@
+{
+  "keywords": "Fone Bluetooth TWS",
+  "paging": {"total": 2, "limit": 10, "offset": 0},
+  "results": [
+    {
+      "id": "MLB19615318",
+      "status": "active",
+      "domain_id": "MLB-HEADPHONES",
+      "settings": {"listing_strategy": "catalog_required"},
+      "name": "Fone de Ouvido Bluetooth TWS Pro",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [],
+      "parent_id": "MLB19615300",
+      "children_ids": []
+    },
+    {
+      "id": "MLB22345678",
+      "status": "active",
+      "domain_id": "MLB-HEADPHONES",
+      "settings": {"listing_strategy": "catalog_required"},
+      "name": "Fone Bluetooth TWS com Estojo de Carga",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [],
+      "parent_id": null,
+      "children_ids": []
+    }
+  ]
+}

@@ -4285,7 +4285,14 @@ dependencies = [
 name = "mascate-finance"
 version = "0.2.0"
 dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-kernel",
  "mascate-platform",
+ "rust_decimal",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4294,10 +4301,15 @@ version = "0.2.0"
 dependencies = [
  "chrono",
  "futures",
+ "mascate-catalog",
  "mascate-kernel",
  "mascate-platform",
+ "rust_decimal",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "ureq",
 ]
 
 [[package]]

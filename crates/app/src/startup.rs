@@ -4,6 +4,7 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
 use mascate_commerce::PurchaseOrders;
+use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_platform::{
@@ -20,6 +21,7 @@ pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
     mascate_catalog::MIGRATIONS,
     mascate_inventory::MIGRATIONS,
     mascate_commerce::MIGRATIONS,
+    mascate_finance::MIGRATIONS,
 ];
 
 /// Every module's flags, in the order the settings screen lists them.
@@ -42,6 +44,7 @@ pub struct Started {
     pub catalog: Arc<Catalog>,
     pub inventory: Arc<Inventory>,
     pub purchase_orders: Arc<PurchaseOrders>,
+    pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
@@ -198,6 +201,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let taxes = Taxes::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
             Ok::<_, Box<dyn std::error::Error>>(Started {
@@ -209,6 +217,7 @@ pub fn prepare() -> Outcome {
                 catalog: Arc::new(catalog),
                 inventory,
                 purchase_orders: Arc::new(purchase_orders),
+                taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
                 restore,
@@ -275,10 +284,12 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 
 #[cfg(test)]
 mod tests {
-    use mascate_catalog::NewSupplierOffer;
+    use mascate_catalog::{
+        DemandCategory, DiscoverySettings, ListingType, NewSupplierOffer, OpportunityFilter,
+    };
     use mascate_commerce::{NewPurchaseLine, NewPurchaseOrder, PurchaseOrderStatus, Receiving};
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
-    use mascate_kernel::{Currency, Money, RecordId};
+    use mascate_kernel::{Currency, Money, Percentage, RecordId};
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
@@ -288,6 +299,22 @@ mod tests {
     const SAMPLE_RECEIVED: u32 = 2;
     const SAMPLE_LOST: u32 = 1;
     const SAMPLE_REORDER_POINT: u32 = 5;
+    const SAMPLE_TAX_PERCENT: u32 = 6;
+
+    fn sample_discovery_settings() -> DiscoverySettings {
+        DiscoverySettings {
+            listing_type: ListingType::Premium,
+            estimated_fee: Percentage::new(17.into()).unwrap(),
+            estimated_shipping: Money::new(25.into(), Currency::Brl),
+        }
+    }
+
+    fn sample_category() -> DemandCategory {
+        DemandCategory {
+            id: "MLB1000".into(),
+            name: "Eletrônicos, Áudio e Vídeo".into(),
+        }
+    }
 
     /// One database per published version, written by the version itself
     /// with [`write_this_versions_sample_database`].
@@ -398,6 +425,18 @@ mod tests {
                 .unwrap();
             inventory
                 .set_reorder_point(product.id, Some(SAMPLE_REORDER_POINT))
+                .await
+                .unwrap();
+            catalog
+                .save_discovery_settings(sample_discovery_settings())
+                .await
+                .unwrap();
+            catalog
+                .follow_categories(&[sample_category()])
+                .await
+                .unwrap();
+            Taxes::new(database.clone(), clock.clone(), ids.clone())
+                .save_rate(Percentage::new(SAMPLE_TAX_PERCENT.into()).unwrap())
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -522,9 +561,30 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                // The catalog, Purchase Orders, stock, its adjustments and
-                // Reorder Points arrived in 0.2.0; older samples have none.
+                let taxes = Taxes::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                // The catalog, Purchase Orders, stock, its adjustments,
+                // Reorder Points, discovery settings and the tax rate arrived
+                // in 0.2.0; older samples have none.
                 if Version::parse(released) >= Version::parse("0.2.0") {
+                    assert_eq!(
+                        catalog.discovery_settings().await.unwrap(),
+                        sample_discovery_settings(),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        catalog.demand_categories().await.unwrap(),
+                        [sample_category()],
+                        "{name}"
+                    );
+                    assert_eq!(
+                        taxes.rate().await.unwrap(),
+                        Percentage::new(SAMPLE_TAX_PERCENT.into()).unwrap(),
+                        "{name}"
+                    );
                     let product = products
                         .iter()
                         .find(|product| product.sku.as_str() == SAMPLE_SKU)
@@ -566,6 +626,14 @@ mod tests {
                     "{name}"
                 );
                 orders.purchase_orders().await.unwrap();
+                catalog
+                    .opportunities(&OpportunityFilter::default(), taxes.rate().await.unwrap())
+                    .await
+                    .unwrap();
+                catalog
+                    .follow_categories(&[sample_category()])
+                    .await
+                    .unwrap();
             });
         }
     }

@@ -1,0 +1,19 @@
+{
+  "currency_id": "BRL",
+  "free_relist": false,
+  "listing_exposure": "highest",
+  "listing_fee_amount": 0,
+  "listing_fee_details": {"fixed_fee": 0, "gross_amount": 0},
+  "listing_type_id": "gold_special",
+  "listing_type_name": "Clássico",
+  "requires_picture": true,
+  "sale_fee_amount": 13.99,
+  "sale_fee_details": {
+    "financing_add_on_fee": 0,
+    "fixed_fee": 0,
+    "gross_amount": 13.99,
+    "meli_percentage_fee": 14,
+    "percentage_fee": 14
+  },
+  "stop_time": "2046-10-04T00:00:00.000-03:00"
+}

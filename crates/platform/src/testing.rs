@@ -1,8 +1,8 @@
 //! Doubles for other crates' tests: a [`SecretStore`] in memory and a fake
 //! HTTP server.
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use crate::{Secret, SecretStore, SecretStoreError};
 
@@ -60,11 +60,22 @@ impl SecretStore for MemorySecretStore {
 }
 
 /// A local HTTP server answering canned responses, for tests of code that
-/// talks to a Platform or to GitHub. Unknown paths answer 404.
+/// talks to a Platform or to GitHub. Routes match the request's path and
+/// query; unknown ones answer 404.
 pub struct FakeHttpServer {
     url: String,
-    routes: std::sync::Arc<Mutex<BTreeMap<String, Canned>>>,
-    requests: std::sync::Arc<Mutex<Vec<String>>>,
+    routes: Arc<Mutex<BTreeMap<String, VecDeque<Canned>>>>,
+    requests: Arc<Mutex<Vec<Request>>>,
+}
+
+/// A request the fake server received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    pub method: String,
+    /// The path with its query.
+    pub path: String,
+    pub authorization: Option<String>,
+    pub body: String,
 }
 
 #[derive(Debug, Clone)]
@@ -78,8 +89,8 @@ impl FakeHttpServer {
     pub fn start() -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
         let url = format!("http://{}", listener.local_addr().expect("local address"));
-        let routes = std::sync::Arc::new(Mutex::new(BTreeMap::<String, Canned>::new()));
-        let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let routes = Arc::new(Mutex::new(BTreeMap::new()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let (served, logged) = (routes.clone(), requests.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
@@ -99,72 +110,121 @@ impl FakeHttpServer {
         &self.url
     }
 
-    /// Answers `path` with `status` and `body`.
+    /// Answers `path` with `status` and `body`, every time.
     pub fn serve(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
-        self.route(path, status, Vec::new(), body.into());
+        self.route(path, status, Vec::new(), body.into(), false);
+    }
+
+    /// Answers `path` with `status` and `body` after the answers already
+    /// queued for it; the last answer keeps repeating.
+    pub fn then_serve(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
+        self.route(path, status, Vec::new(), body.into(), true);
     }
 
     /// Answers `path` with a redirect to `to`.
     pub fn redirect(&self, path: &str, to: &str) {
-        self.route(path, 302, vec![("Location".into(), to.into())], Vec::new());
+        self.route(
+            path,
+            302,
+            vec![("Location".into(), to.into())],
+            Vec::new(),
+            false,
+        );
     }
 
     /// The paths requested so far, in order.
     pub fn requests(&self) -> Vec<String> {
+        self.received()
+            .into_iter()
+            .map(|request| request.path)
+            .collect()
+    }
+
+    /// Every request received so far, in order.
+    pub fn received(&self) -> Vec<Request> {
         self.requests
             .lock()
             .expect("requests lock poisoned")
             .clone()
     }
 
-    fn route(&self, path: &str, status: u16, headers: Vec<(String, String)>, body: Vec<u8>) {
-        self.routes.lock().expect("routes lock poisoned").insert(
-            path.to_owned(),
-            Canned {
-                status,
-                headers,
-                body,
-            },
-        );
+    fn route(
+        &self,
+        path: &str,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        queued: bool,
+    ) {
+        let canned = Canned {
+            status,
+            headers,
+            body,
+        };
+        let mut routes = self.routes.lock().expect("routes lock poisoned");
+        let answers = routes.entry(path.to_owned()).or_default();
+        if !queued {
+            answers.clear();
+        }
+        answers.push_back(canned);
     }
 }
 
 fn answer(
     stream: std::net::TcpStream,
-    routes: &Mutex<BTreeMap<String, Canned>>,
-    requests: &Mutex<Vec<String>>,
+    routes: &Mutex<BTreeMap<String, VecDeque<Canned>>>,
+    requests: &Mutex<Vec<Request>>,
 ) {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
 
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
         return;
     }
-    // Skips the headers; the fake serves GETs, which have no body.
+    let mut length = 0;
+    let mut authorization = None;
     let mut header = String::new();
     while reader.read_line(&mut header).is_ok_and(|read| read > 2) {
+        if let Some((name, value)) = header.split_once(':') {
+            let value = value.trim().to_owned();
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.parse().unwrap_or(0);
+            } else if name.eq_ignore_ascii_case("authorization") {
+                authorization = Some(value);
+            }
+        }
         header.clear();
     }
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or_default()
-        .to_owned();
+    let mut body = vec![0; length];
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    let mut words = request_line.split_whitespace();
+    let method = words.next().unwrap_or_default().to_owned();
+    let path = words.next().unwrap_or_default().to_owned();
     requests
         .lock()
         .expect("requests lock poisoned")
-        .push(path.clone());
-    let canned = routes
-        .lock()
-        .expect("routes lock poisoned")
-        .get(&path)
-        .cloned()
-        .unwrap_or(Canned {
-            status: 404,
-            headers: Vec::new(),
-            body: br#"{"message":"Not Found"}"#.to_vec(),
+        .push(Request {
+            method,
+            path: path.clone(),
+            authorization,
+            body: String::from_utf8_lossy(&body).into_owned(),
         });
+    let canned = {
+        let mut routes = routes.lock().expect("routes lock poisoned");
+        match routes.get_mut(&path) {
+            Some(answers) if answers.len() > 1 => answers.pop_front(),
+            Some(answers) => answers.front().cloned(),
+            None => None,
+        }
+    }
+    .unwrap_or(Canned {
+        status: 404,
+        headers: Vec::new(),
+        body: br#"{"message":"Not Found"}"#.to_vec(),
+    });
     let mut head = format!(
         "HTTP/1.1 {} Canned\r\nContent-Length: {}\r\nConnection: close\r\n",
         canned.status,

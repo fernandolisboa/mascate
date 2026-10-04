@@ -7,6 +7,7 @@ mod appearance;
 mod backups;
 mod database;
 mod flags;
+mod http;
 mod migrations;
 mod opening;
 mod registry;
@@ -36,6 +37,7 @@ pub use flags::{
     ConfirmedTurnOn, Flag, FlagChange, FlagError, FlagKind, FlagStatus, Flags, Phase,
     TurnOnRequest, system_user,
 };
+pub use http::http_agent;
 pub use migrations::{
     AppliedMigration, Migration, MigrationError, MigrationId, ModuleMigrations, migrate,
 };
@@ -49,6 +51,7 @@ pub use secrets::{
     Build, Environment, Secret, SecretStore, SecretStoreError, process_environment,
     secret_store_for,
 };
+pub use single_row::{load as load_single_row, save as save_single_row};
 pub use stored_row::{StoredRow, StoredValueError};
 pub use stored_time::{read_stored, stored};
 pub use system_secrets::SystemSecretStore;

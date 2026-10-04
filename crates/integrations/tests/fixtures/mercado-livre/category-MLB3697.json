@@ -1,0 +1,14 @@
+{
+  "id": "MLB3697",
+  "name": "Fones de Ouvido",
+  "picture": "https://http2.mlstatic.com/storage/categories-api/images/fones.png",
+  "permalink": "https://www.mercadolivre.com.br/c/eletronicos-audio-e-video",
+  "total_items_in_this_category": 158240,
+  "path_from_root": [
+    {"id": "MLB1000", "name": "Eletrônicos, Áudio e Vídeo"},
+    {"id": "MLB3835", "name": "Áudio"},
+    {"id": "MLB3697", "name": "Fones de Ouvido"}
+  ],
+  "children_categories": [],
+  "settings": {"listing_allowed": true, "currencies": ["BRL"]}
+}

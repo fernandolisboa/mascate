@@ -16,6 +16,7 @@ pub type OnPick<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     Today,
+    Opportunities,
     Offers,
     Products,
     Purchases,
@@ -25,8 +26,9 @@ pub enum Place {
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 5] = [
+    pub const MAIN: [Place; 6] = [
         Place::Today,
+        Place::Opportunities,
         Place::Offers,
         Place::Products,
         Place::Purchases,
@@ -39,6 +41,7 @@ impl Place {
     pub fn name(self) -> &'static str {
         match self {
             Place::Today => "Hoje",
+            Place::Opportunities => "Oportunidades",
             Place::Offers => "Ofertas",
             Place::Products => "Produtos",
             Place::Purchases => "Compras",
@@ -50,6 +53,7 @@ impl Place {
     pub fn icon(self) -> IconName {
         match self {
             Place::Today => IconName::LayoutDashboard,
+            Place::Opportunities => IconName::Star,
             Place::Offers => IconName::Globe,
             Place::Products => IconName::Inbox,
             Place::Purchases => IconName::FileText,

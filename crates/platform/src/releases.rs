@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::{MigrationId, ModuleMigrations};
+use crate::{MigrationId, ModuleMigrations, http_agent};
 
 /// The manifest every Release carries among its files.
 pub const MANIFEST_NAME: &str = "mascate-update.json";
@@ -162,22 +162,7 @@ impl ReleaseChannel {
     /// Releases under the REST API URL `api`, whose files download from
     /// URLs starting with `downloads`. Plain HTTP only when `api` is.
     pub fn new(api: &str, downloads: &str, user_agent: &str, target: Option<Target>) -> Self {
-        let agent = ureq::Agent::config_builder()
-            .https_only(api.starts_with("https://"))
-            // The system's certificates, so antivirus or company TLS
-            // inspection the system trusts does not break updates.
-            .tls_config(
-                ureq::tls::TlsConfig::builder()
-                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .http_status_as_error(false)
-            .user_agent(user_agent)
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .timeout_recv_response(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(30 * 60)))
-            .build()
-            .into();
+        let agent = http_agent(api, user_agent, Duration::from_secs(30 * 60));
         Self {
             agent,
             api: api.trim_end_matches('/').to_owned(),
