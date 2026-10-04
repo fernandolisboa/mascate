@@ -42,8 +42,31 @@ impl Valuation {
     /// Takes in `quantity` units that cost `cost` in all. The Average Cost
     /// moves toward their unit cost in proportion to how many came in.
     pub fn enter(self, quantity: u32, cost: Money) -> Result<Self, CurrencyMismatch> {
+        self.moved(i64::from(quantity), cost)
+    }
+
+    /// What `units` units carry out of stock at the Average Cost, as the
+    /// negative cost of the movement that takes them; `None` when fewer are
+    /// on hand. Taking them leaves the Average Cost where it was.
+    pub fn exit_cost(&self, units: u32) -> Option<Money> {
+        let units = i64::from(units);
+        if units > self.quantity {
+            return None;
+        }
+        // The last units take all that is left, so no rounding stays behind.
+        let share = if units == self.quantity {
+            self.value.amount()
+        } else {
+            self.value.amount() * Decimal::from(units) / Decimal::from(self.quantity)
+        };
+        Some(Money::new(-share, self.value.currency()))
+    }
+
+    /// Applies one Stock Movement: units and cost both signed, negative for
+    /// what leaves.
+    pub(crate) fn moved(self, quantity: i64, cost: Money) -> Result<Self, CurrencyMismatch> {
         Ok(Self {
-            quantity: self.quantity + i64::from(quantity),
+            quantity: self.quantity + quantity,
             value: self.value.checked_add(cost)?,
         })
     }

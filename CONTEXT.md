@@ -94,6 +94,14 @@ _Avoid_: recebimento parcial (sozinho), baixa, entrada (quando se fala da chegad
 Custo unitário de um Product em estoque, recalculado como média ponderada móvel a cada entrada.
 _Avoid_: preço de custo, custo FIFO
 
+**Stock Adjustment**:
+Stock Movement que o Fernando registra à mão para corrigir o saldo, sempre com motivo: perda, avaria ou contagem. Na contagem ele informa o saldo físico e o ajuste é a diferença. As unidades saem (ou voltam) pelo Average Cost, então um ajuste nunca o altera, e o saldo nunca fica negativo.
+_Avoid_: baixa manual, acerto, correção (sozinho)
+
+**Reorder Point**:
+Saldo de um Product a partir do qual é hora de comprar de novo. Com o saldo nele ou abaixo, o Product aparece como estoque baixo na tela Hoje; quando um movimento o leva até ali, o app notifica.
+_Avoid_: estoque mínimo, ponto de pedido
+
 ## Afiliação
 
 **Program**:

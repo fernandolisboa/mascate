@@ -1,11 +1,13 @@
-//! Inventory: Stock Locations and the append-only ledger of Stock Movements.
+//! Inventory: Stock Locations, the append-only ledger of Stock Movements
+//! and each Product's Reorder Point.
 
 mod ledger;
 mod valuation;
 
 pub use ledger::{
-    HOME_LOCATION, HistoryLine, Inventory, InventoryError, LocationBalance, MovementReason,
-    NewEntry, ProductStock, Stock, StockLocation, StockMovement,
+    Adjusted, AdjustmentKind, HOME_LOCATION, HistoryLine, Inventory, InventoryError,
+    LocationBalance, LowStock, MovementReason, NewEntry, ProductStock, Stock, StockAdjustment,
+    StockLocation, StockMovement,
 };
 pub use valuation::Valuation;
 
@@ -14,5 +16,8 @@ use mascate_platform::ModuleMigrations;
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "inventory",
-    migrations: &[ledger::CREATE_LEDGER],
+    migrations: &[
+        ledger::CREATE_LEDGER,
+        ledger::ADD_ADJUSTMENTS_AND_REORDER_POINTS,
+    ],
 };
