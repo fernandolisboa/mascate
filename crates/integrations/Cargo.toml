@@ -8,6 +8,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+mascate-platform.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+mascate-platform = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

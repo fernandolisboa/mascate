@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 futures.workspace = true
 gpui-kit.workspace = true
+mascate-integrations.workspace = true
 mascate-kernel.workspace = true
 mascate-platform.workspace = true
 tray-icon.workspace = true

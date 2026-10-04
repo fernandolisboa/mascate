@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appearance;
+mod connections;
 mod home;
 mod kit;
 mod layout;
@@ -13,15 +14,26 @@ mod shell;
 mod startup;
 mod tray;
 
+use std::sync::Arc;
+
 use futures::StreamExt;
 use gpui_kit::*;
+use mascate_integrations::Connections;
+use mascate_platform::{Build, SystemSecretStore, process_environment, secret_store_for};
 
+use crate::connections::AppConnections;
 use crate::preferences::Preferences;
 use crate::shell::Shell;
 use crate::tray::TrayCommand;
 
 fn main() {
     let startup = startup::prepare();
+    let secrets = secret_store_for(
+        Build::CURRENT,
+        Arc::new(SystemSecretStore::default()),
+        process_environment(),
+    );
+    let connections = Arc::new(Connections::new(secrets));
     let (database, saved, problem) = match startup {
         Ok(started) => (Some(started.database), started.appearance, None),
         Err(problem) => (None, Default::default(), Some(SharedString::from(problem))),
@@ -33,6 +45,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             cx.set_global(Preferences::new(database, saved));
+            cx.set_global(AppConnections(connections));
             appearance::init(saved.theme, cx);
             layout::show(saved.layout, cx);
 
