@@ -742,7 +742,7 @@ impl OpportunitiesScreen {
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .w(px(110.))
+                .w(px(130.))
                 .child(div().text_xs().text_color(t.text2).child(label))
                 .child(Input::new(input).small())
         };
@@ -851,7 +851,15 @@ impl OpportunitiesScreen {
                 cx,
             ))
             .child(kit::tag(
-                format!("pontuação {}", opportunity.score.round_dp(1).normalize()),
+                format!(
+                    "pontuação {}",
+                    opportunity
+                        .score
+                        .round_dp(1)
+                        .normalize()
+                        .to_string()
+                        .replace('.', ",")
+                ),
                 t.text2,
                 cx,
             ));
