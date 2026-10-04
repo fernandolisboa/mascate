@@ -41,7 +41,7 @@ pub use migrations::{
 pub use opening::{OpenError, Opened, open_and_migrate};
 pub use registry::{DuplicateKey, Registered, Registry};
 pub use releases::{
-    Installer, MANIFEST_NAME, Release, ReleaseChannel, ReleaseError, Target, Version,
+    Installer, MANIFEST_NAME, RELEASES_PAGE, Release, ReleaseChannel, ReleaseError, Target, Version,
 };
 pub use reminders::{Reminder, ReminderError, ReminderTopic, Reminders};
 pub use secrets::{

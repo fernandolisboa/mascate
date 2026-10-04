@@ -4,6 +4,8 @@
 //! when a new one cannot migrate the database. The rules live in the
 //! platform module.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,12 +18,13 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, SharedString, Subscription, Window, div, px};
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_platform::{
-    Database, Finish, Installation, Release, ReleaseError, UpdateError, UpdateSettings, Updater,
-    Version, run_installer_after_exit, save_update_settings,
+    Database, Finish, Installation, RELEASES_PAGE, Release, ReleaseError, UpdateError,
+    UpdateSettings, Updater, Version, run_installer_after_exit, save_update_settings,
 };
 
 use crate::appearance::look;
 use crate::kit;
+use crate::ordered_saves::OrderedSaves;
 
 /// How often the app looks for a newer version while it runs.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
@@ -52,6 +55,7 @@ pub struct AppUpdates {
     error: Option<String>,
     /// This version could not migrate the database at start.
     failed_to_migrate: bool,
+    saves: Rc<RefCell<OrderedSaves>>,
 }
 
 impl Global for AppUpdates {}
@@ -74,6 +78,7 @@ pub fn init(
         checked_at: None,
         error: None,
         failed_to_migrate,
+        saves: Default::default(),
     });
 }
 
@@ -170,7 +175,7 @@ fn install_now(cx: &mut App) {
     let installing = cx
         .background_executor()
         .spawn(async move { updater.install(&release) });
-    finish_when_done(installing, Activity::Idle, cx);
+    finish_when_done(installing, cx);
 }
 
 /// Goes back to the version this one updated from, after it could not
@@ -186,27 +191,25 @@ pub fn go_back(cx: &mut App) {
     let going = cx
         .background_executor()
         .spawn(async move { updater.roll_back() });
-    finish_when_done(going, Activity::Idle, cx);
+    finish_when_done(going, cx);
 }
 
-fn finish_when_done(
-    task: gpui_kit::Task<Result<Finish, UpdateError>>,
-    on_error: Activity,
-    cx: &mut App,
-) {
+/// Finishes an install when `task` has put the new version in place, or
+/// says why it could not.
+fn finish_when_done(task: gpui_kit::Task<Result<Finish, UpdateError>>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let done = task.await;
         cx.update(|cx| match done {
             Ok(finish) => {
                 if let Err(error) = finish_install(finish, cx) {
                     let app = cx.global_mut::<AppUpdates>();
-                    app.activity = on_error;
+                    app.activity = Activity::Idle;
                     app.error = Some(error);
                 }
             }
             Err(error) => {
                 let app = cx.global_mut::<AppUpdates>();
-                app.activity = on_error;
+                app.activity = Activity::Idle;
                 app.error = Some(install_failed(&error));
             }
         });
@@ -249,16 +252,21 @@ fn set_silent(silent: bool, cx: &mut App) {
     let settings = UpdateSettings { silent };
     app.settings = settings;
     app.error = None;
-    let saving = cx.background_executor().spawn(async move {
-        save_update_settings(&database, &SystemClock, &UuidV7Generator, settings).await
-    });
+    let saving = app.saves.clone().borrow_mut().save(
+        async move {
+            save_update_settings(&database, &SystemClock, &UuidV7Generator, settings)
+                .await
+                .map_err(|error| {
+                    format!("Não consegui salvar a opção de atualização silenciosa: {error}")
+                })
+        },
+        cx.background_executor(),
+    );
     cx.spawn(async move |cx| {
         let saved = saving.await;
         cx.update(|cx| {
             if let Err(error) = saved {
-                cx.global_mut::<AppUpdates>().error = Some(format!(
-                    "Não consegui salvar a opção de atualização silenciosa: {error}"
-                ));
+                cx.global_mut::<AppUpdates>().error = Some(error);
             }
             install_silently_if_on(cx);
         });
@@ -281,9 +289,16 @@ fn check_failed(error: &UpdateError) -> String {
 fn install_failed(error: &UpdateError) -> String {
     match error {
         UpdateError::NothingToGoBackTo => {
-            "Não sei de qual versão o app veio, então não dá para voltar sozinho. Baixe a \
-             versão anterior na página de versões do Mascate."
+            "Não sei de qual versão o app veio, então não dá para voltar sozinho. Instale a \
+             versão anterior pela página de versões no GitHub."
                 .into()
+        }
+        UpdateError::NotPublished(version) => format!(
+            "A versão {version} não está publicada no GitHub; instale outra pela página de \
+             versões."
+        ),
+        UpdateError::Release(ReleaseError::Network(_) | ReleaseError::RateLimited) => {
+            "Não consegui falar com o GitHub agora; tente de novo daqui a pouco.".into()
         }
         error => format!("Não consegui instalar: {error}"),
     }
@@ -437,11 +452,29 @@ impl UpdateNotice {
 
     fn render_going_back(&self, app: &AppUpdates, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let to = app.updater.previous().map_or_else(
-            || "a versão anterior".into(),
-            |version| format!("a {version}"),
-        );
+        let current = app.updater.current();
+        let previous = app
+            .updater
+            .previous()
+            .filter(|previous| *previous < current);
         let going = app.activity == Activity::GoingBack;
+        let next = match (previous, going) {
+            (Some(previous), true) => format!(" Voltando para a {previous}…"),
+            (Some(previous), false) => format!(" Dá para voltar para a {previous}."),
+            (None, _) => String::new(),
+        };
+        let mut buttons = h_flex().gap_2().flex_wrap();
+        if let Some(previous) = previous {
+            buttons = buttons.child(
+                Button::new("go-back")
+                    .label(format!("Voltar para a {previous}"))
+                    .primary()
+                    .small()
+                    .loading(going)
+                    .disabled(going)
+                    .on_click(|_, _, cx| go_back(cx)),
+            );
+        }
         v_flex()
             .gap_2()
             .p_3()
@@ -449,29 +482,23 @@ impl UpdateNotice {
             .border(t.border_width)
             .border_color(t.danger)
             .child(div().font_medium().child(format!(
-                "Esta versão ({}) não conseguiu migrar o banco.",
-                app.updater.current()
+                "Esta versão ({current}) não conseguiu migrar o banco."
             )))
             .child(div().text_sm().text_color(t.text2).child(format!(
                 "O banco voltou exatamente como estava, a partir do Backup feito antes da \
-                 migração. {} {to}.",
-                if going {
-                    "Voltando para"
-                } else {
-                    "Dá para voltar para"
-                }
+                 migração.{next}"
             )))
             .when_some(app.error.clone(), |notice, error| {
                 notice.child(kit::error_notice(error, cx))
             })
             .child(
-                Button::new("go-back")
-                    .label("Voltar de versão")
-                    .primary()
-                    .small()
-                    .loading(going)
-                    .disabled(going)
-                    .on_click(|_, _, cx| go_back(cx)),
+                buttons.child(
+                    Button::new("open-releases")
+                        .label("Ver as versões no GitHub")
+                        .ghost()
+                        .small()
+                        .on_click(|_, _, cx| cx.open_url(RELEASES_PAGE)),
+                ),
             )
             .into_any_element()
     }

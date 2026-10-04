@@ -18,6 +18,8 @@ use crate::{MigrationId, ModuleMigrations};
 pub const MANIFEST_NAME: &str = "mascate-update.json";
 
 const REPOSITORY: &str = "fernandolisboa/mascate";
+/// Every published version of the app, for the owner to pick one by hand.
+pub const RELEASES_PAGE: &str = "https://github.com/fernandolisboa/mascate/releases";
 /// The API answer and the manifest are small; anything bigger is not them.
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
 const MAX_INSTALLER_BYTES: u64 = 1024 * 1024 * 1024;
@@ -162,6 +164,13 @@ impl ReleaseChannel {
     pub fn new(api: &str, downloads: &str, user_agent: &str, target: Option<Target>) -> Self {
         let agent = ureq::Agent::config_builder()
             .https_only(api.starts_with("https://"))
+            // The system's certificates, so antivirus or company TLS
+            // inspection the system trusts does not break updates.
+            .tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .http_status_as_error(false)
             .user_agent(user_agent)
             .timeout_connect(Some(Duration::from_secs(15)))
