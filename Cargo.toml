@@ -10,8 +10,11 @@ license = "UNLICENSED"
 publish = false
 
 [workspace.dependencies]
+mascate-commerce = { path = "crates/commerce" }
+mascate-finance = { path = "crates/finance" }
 mascate-integrations = { path = "crates/integrations" }
 mascate-kernel = { path = "crates/kernel" }
+mascate-marketing = { path = "crates/marketing" }
 mascate-platform = { path = "crates/platform" }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

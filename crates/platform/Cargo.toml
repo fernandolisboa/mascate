@@ -1,6 +1,6 @@
 [package]
 name = "mascate-platform"
-description = "App platform module: local database, migrations, app data location and the secret store."
+description = "App platform module: local database, migrations, app data location, the secret store, flags and Reminders."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+chrono.workspace = true
 directories.workspace = true
 libsql.workspace = true
 mascate-kernel.workspace = true
@@ -25,7 +26,6 @@ windows-native-keyring-store.workspace = true
 zbus-secret-service-keyring-store.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
 futures.workspace = true
 mascate-kernel = { workspace = true, features = ["test-support"] }
 mascate-platform = { path = ".", features = ["test-support"] }

@@ -1,5 +1,6 @@
-//! Settings screen: Connections (#5), then Appearance, which picks the
-//! layout (#41) and the interface theme (#39). Later settings join it.
+//! Settings screen: Connections (#5), the Restricted Features (#7), then
+//! Appearance, which picks the layout (#41) and the interface theme (#39).
+//! Later settings join it.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
@@ -18,6 +19,7 @@ use crate::layout;
 use crate::palette::palette;
 use crate::parts::ScreenParts;
 use crate::preferences;
+use crate::restricted::RestrictedFeaturesSection;
 
 fn theme_name(theme: UiTheme) -> &'static str {
     match theme {
@@ -91,6 +93,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 
 pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
+    restricted: Entity<RestrictedFeaturesSection>,
     /// The light and dark slots of "follow the system", kept while a fixed
     /// theme is on so following again restores them.
     follow_pair: (UiTheme, UiTheme),
@@ -130,6 +133,7 @@ impl SettingsScreen {
             .into();
         Self {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
+            restricted: cx.new(RestrictedFeaturesSection::new),
             follow_pair,
             light_theme,
             dark_theme,
@@ -522,6 +526,18 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Conexões"))
                 .child(self.connections.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xl()
+                        .font_semibold()
+                        .child("Funcionalidades restritas"),
+                )
+                .child(self.restricted.clone())
                 .into_any_element(),
         );
         parts.content.push(
