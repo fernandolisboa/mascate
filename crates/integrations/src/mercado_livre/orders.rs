@@ -1,20 +1,26 @@
-//! The owner's Orders, for commerce's port: every Order created or changed
+//! The owner's Orders, for commerce's ports: every Order created or changed
 //! since a time, by polling `/orders/search` (ADR 0018), each with its
-//! shipment from `/shipments/{id}`. Of the buyer it keeps only what
-//! shipping and support need.
+//! shipment from `/shipments/{id}` and the returns of its claims from
+//! `/post-purchase/v2/claims/{id}/returns` (ADR 0019); and the shipping
+//! label of a shipment, from `/shipment_labels`. Of the buyer it keeps only
+//! what shipping and support need.
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use std::str::FromStr;
+
 use mascate_commerce::{
-    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, OrderStatus, Receiver, Shipment,
-    ShipmentStatus,
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, OrderStatus, Receiver,
+    ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
 };
 use mascate_kernel::{Currency, Money, PlatformError, Timestamp};
-use serde_json::Number;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
+use serde_json::{Number, Value};
 
 use super::MercadoLivre;
 use super::answers::{
-    Attribute, OrderAnswer, OrderItemAnswer, OrderSearch, ShipmentAnswer, UserAnswer, decimal,
-    money,
+    Attribute, OrderAnswer, OrderItemAnswer, OrderSearch, ReturnAnswer, ShipmentAnswer, UserAnswer,
+    decimal, money,
 };
 use super::sales_channel::{listing_type, path_id};
 
@@ -53,6 +59,21 @@ impl ChannelOrders for MercadoLivre {
             }
         }
         Ok(orders)
+    }
+}
+
+impl ShippingLabels for MercadoLivre {
+    /// The label as Mercado Livre prints it for a drop-off or a pickup, in
+    /// its standard 10 x 15 cm size.
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError> {
+        self.get_bytes(
+            "/shipment_labels",
+            &[
+                ("shipment_ids", path_id(shipment)?),
+                ("response_type", "pdf"),
+            ],
+            "application/pdf",
+        )
     }
 }
 
@@ -101,6 +122,12 @@ impl MercadoLivre {
             Some(shipment) => self.shipment(&whole_id(&shipment))?,
             None => None,
         };
+        let mut returns = Vec::new();
+        for mediation in &answer.mediations {
+            if let Some(found) = self.claim_return(&whole_id(&mediation.id), &id)? {
+                returns.push(found);
+            }
+        }
         let receiver = shipment.as_ref().and_then(|(_, receiver)| receiver.clone());
         let nickname = answer.buyer.and_then(|buyer| buyer.nickname);
         let buyer =
@@ -116,8 +143,43 @@ impl MercadoLivre {
             shipping_paid,
             buyer,
             shipment: shipment.map(|(shipment, _)| shipment),
+            returns,
             id,
         })
+    }
+
+    /// The return of the claim `claim` with the items of `order` it sends
+    /// back; `None` when the claim asks for no return, or none of `order`.
+    fn claim_return(
+        &self,
+        claim: &str,
+        order: &str,
+    ) -> Result<Option<ChannelReturn>, PlatformError> {
+        let found: ReturnAnswer = match self.get(
+            &format!("/post-purchase/v2/claims/{}/returns", path_id(claim)?),
+            &[],
+        ) {
+            Err(PlatformError::NotFound) => return Ok(None),
+            other => other?,
+        };
+        let items: Vec<ReturnedItem> = found
+            .orders
+            .into_iter()
+            .filter(|returned| whole_id(&returned.order_id) == order)
+            .filter_map(|returned| {
+                Some(ReturnedItem {
+                    quantity: units(returned.return_quantity.as_ref()?)?,
+                    variation: returned.variation_id.as_ref().map(whole_id),
+                    item: returned.item_id,
+                })
+            })
+            .filter(|item| item.quantity > 0)
+            .collect();
+        Ok((!items.is_empty()).then(|| ChannelReturn {
+            id: whole_id(&found.id),
+            status: return_status(&found.status),
+            items,
+        }))
     }
 
     /// The shipment `id` and who it goes to; `None` when Mercado Livre has
@@ -231,6 +293,27 @@ fn order_status(code: &str) -> OrderStatus {
         // `partially_paid` and any new one: the units stay sold until the
         // channel says otherwise.
         _ => OrderStatus::AwaitingPayment,
+    }
+}
+
+/// Whole units from a quantity Mercado Livre writes as text ("1.0") or as
+/// a number.
+fn units(quantity: &Value) -> Option<u32> {
+    let decimal = match quantity {
+        Value::String(text) => Decimal::from_str(text.trim()).ok()?,
+        Value::Number(number) => decimal(&Some(number.clone()))?,
+        _ => return None,
+    };
+    decimal.trunc().to_u32()
+}
+
+fn return_status(code: &str) -> ReturnStatus {
+    match code {
+        "delivered" => ReturnStatus::Delivered,
+        "cancelled" | "expired" => ReturnStatus::Cancelled,
+        // `pending`, `label_generated`, `shipped` and any new one: the
+        // owner says when the units arrive.
+        _ => ReturnStatus::OnTheWay,
     }
 }
 

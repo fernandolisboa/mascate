@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_inventory::{
     Adjusted, Exited, HOME_LOCATION, Inventory, InventoryError, MIGRATIONS, MovementReason,
-    NewEntry, NewExit, StockAdjustment,
+    NewEntry, NewExit, NewReturn, StockAdjustment, StockMovement,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, RecordId};
@@ -94,6 +94,31 @@ impl Fixture {
         transaction.commit().await?;
         self.clock.advance(TimeDelta::minutes(1));
         Ok(exited)
+    }
+
+    /// Puts back `quantity` units that left by `exit`, on a transaction of
+    /// its own.
+    pub async fn put_back(
+        &self,
+        exit: RecordId,
+        quantity: u32,
+    ) -> Result<StockMovement, InventoryError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection.transaction().await?;
+        let back = self
+            .inventory
+            .record_return(
+                &transaction,
+                &NewReturn {
+                    exit,
+                    quantity,
+                    reason: MovementReason::SaleReturned { order: id(SALE) },
+                },
+            )
+            .await?;
+        transaction.commit().await?;
+        self.clock.advance(TimeDelta::minutes(1));
+        Ok(back)
     }
 
     /// Units of a Product on hand, all locations together.

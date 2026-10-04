@@ -1,9 +1,12 @@
-//! Pedidos (#20): the owner's Mercado Livre Orders, read by an Order Sync
-//! when the app opens and every few minutes after, window open or in the
-//! tray (ADR 0018). Each new Order comes with a system notification, and
+//! Pedidos (#20, #21): the owner's Mercado Livre Orders, read by an Order
+//! Sync when the app opens and every few minutes after, window open or in
+//! the tray (ADR 0018). Each new Order comes with a system notification, and
 //! its units leave the stock; the stock of the listings follows right after.
-//! Settings › Pedidos sets how often, and how long the buyer's data stays.
-//! The rules live in Commerce.
+//! Each Order waiting for dispatch prints its label and shows when it is
+//! late or close; units on their way back wait for the owner to say they
+//! arrived (ADR 0019). Settings › Pedidos sets how often, how long the
+//! buyer's data stays and how early the warning comes. The rules live in
+//! Commerce.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,11 +21,12 @@ use gpui_kit::{
 };
 use mascate_catalog::Product;
 use mascate_commerce::{
-    LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync, Orders,
-    ShipmentStatus, StockShort,
+    DispatchDue, LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync,
+    Orders, ReturnReceipt, ShipmentStatus, ShippingLabel, StockShort,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::Timestamp;
+use mascate_kernel::{RecordId, Timestamp};
+use mascate_platform::default_owner_folder;
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
@@ -33,6 +37,7 @@ use crate::layout;
 use crate::low_stock;
 use crate::mercado_livre;
 use crate::parts::ScreenParts;
+use crate::purchases::units_text;
 use crate::stock::product_label;
 use crate::stock_mirror;
 
@@ -66,9 +71,15 @@ pub struct Round {
 pub fn failure(error: &OrderError) -> String {
     match error {
         OrderError::Platform(error) => mercado_livre::failure(error),
-        OrderError::InvalidSettings => {
-            "O Sync roda a cada 1 a 60 minutos, e os dados do comprador ficam de 7 a 1825 dias."
-                .into()
+        OrderError::InvalidSettings => "O Sync roda a cada 1 a 60 minutos, os dados do \
+                                        comprador ficam de 7 a 1825 dias e o aviso de despacho \
+                                        vem de 1 a 72 horas antes."
+            .into(),
+        OrderError::NoLabel => "Este pedido não está esperando despacho, então não tem etiqueta \
+                                para imprimir. Sincronize os pedidos para ver o estado atual."
+            .into(),
+        OrderError::NoReturnAwaiting => {
+            "Este pedido não tem unidades voltando; nada mudou no estoque.".into()
         }
         error => format!("Não consegui ler ou gravar os pedidos no banco: {error}"),
     }
@@ -193,7 +204,7 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
 }
 
 /// "2× Fone Bluetooth", and "+ 1 item" for each other line.
-fn sold_text(order: &Order) -> String {
+pub fn sold_text(order: &Order) -> String {
     let mut lines = order.lines.iter();
     let Some(first) = lines.next() else {
         return format!("Pedido {}", order.sold.id);
@@ -231,7 +242,58 @@ fn synced_text(synced: &OrderSync) -> String {
         1 => text.push_str(" 1 item baixado do estoque."),
         taken => text.push_str(&format!(" {taken} itens baixados do estoque.")),
     }
+    match synced.restocked {
+        0 => {}
+        1 => text.push_str(" 1 pedido cancelado antes do envio devolveu as unidades ao estoque."),
+        restocked => text.push_str(&format!(
+            " {restocked} pedidos cancelados antes do envio devolveram as unidades ao estoque."
+        )),
+    }
     text
+}
+
+/// Where labels go: `Documentos/Mascate/Etiquetas`.
+const LABELS_FOLDER: &str = "Etiquetas";
+
+/// Downloads the label of `order` off the UI thread, saves it in the
+/// labels folder and opens it in the system's PDF viewer, ready to print.
+/// Says what happened.
+pub fn print_label(order: RecordId, cx: &mut App) -> Option<Task<Result<String, String>>> {
+    let (Some(orders), Some(labels)) = (orders(cx), mercado_livre::adapter(cx)) else {
+        return None;
+    };
+    let folder = default_owner_folder(LABELS_FOLDER)?;
+    let saving = cx.background_executor().spawn(async move {
+        let label: ShippingLabel = orders
+            .shipping_label(labels.as_ref(), order)
+            .await
+            .map_err(|e| failure(&e))?;
+        std::fs::create_dir_all(&folder)
+            .and_then(|()| std::fs::write(folder.join(&label.file_name), &label.pdf))
+            .map_err(|error| {
+                format!(
+                    "Não consegui salvar a etiqueta em {}: {error}",
+                    folder.display()
+                )
+            })?;
+        Ok::<_, String>(folder.join(&label.file_name))
+    });
+    Some(cx.spawn(async move |cx| {
+        let path = saving.await?;
+        cx.update(|cx| cx.open_with_system(&path));
+        Ok(format!(
+            "Etiqueta salva em {} e aberta para imprimir.",
+            path.display()
+        ))
+    }))
+}
+
+/// "Atrasado" or "Despachar logo", in the ink that says how urgent.
+pub fn due_tag(due: DispatchDue, t: &Tokens) -> (&'static str, Hsla) {
+    match due {
+        DispatchDue::Late => ("Atrasado", t.danger),
+        DispatchDue::Soon => ("Prazo perto", t.accent_text),
+    }
 }
 
 fn items_text(count: usize) -> String {
@@ -257,6 +319,8 @@ pub struct OrdersScreen {
     settings: OrderSettings,
     connection: Option<ConnectionState>,
     syncing: bool,
+    /// The Order whose label or return is on its way.
+    working_on: Option<RecordId>,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -274,6 +338,7 @@ impl OrdersScreen {
             settings: OrderSettings::default(),
             connection: None,
             syncing: false,
+            working_on: None,
             reads: 0,
             outcome: None,
             _subscriptions: subscriptions,
@@ -351,6 +416,67 @@ impl OrdersScreen {
         self.connection == Some(ConnectionState::Connected)
     }
 
+    fn print_label(&mut self, order: RecordId, cx: &mut Context<Self>) {
+        let Some(printing) = print_label(order, cx) else {
+            return;
+        };
+        self.working_on = Some(order);
+        self.outcome = None;
+        cx.spawn(async move |this, cx| {
+            let printed = printing.await;
+            let _ = this.update(cx, |this, cx| {
+                this.working_on = None;
+                this.outcome = Some(match printed {
+                    Ok(done) => Outcome::Done(done.into()),
+                    Err(error) => Outcome::Failed(error.into()),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn receive_return(&mut self, order: RecordId, receipt: ReturnReceipt, cx: &mut Context<Self>) {
+        let Some(orders) = orders(cx) else {
+            return;
+        };
+        self.working_on = Some(order);
+        self.outcome = None;
+        let receiving = cx.background_executor().spawn(async move {
+            orders
+                .receive_return(order, receipt)
+                .await
+                .map_err(|e| failure(&e))
+        });
+        cx.spawn(async move |this, cx| {
+            let received = receiving.await;
+            let _ = this.update(cx, |this, cx| {
+                this.working_on = None;
+                this.outcome = Some(match received {
+                    Ok(received) if received.restocked > 0 => {
+                        stock_mirror::send_after_movement(cx);
+                        Outcome::Done(
+                            format!("{} de volta ao estoque.", units_text(received.restocked))
+                                .into(),
+                        )
+                    }
+                    Ok(received) => Outcome::Done(
+                        format!(
+                            "Devolução fechada: {} sem condição de venda, o estoque não mudou.",
+                            units_text(received.units)
+                        )
+                        .into(),
+                    ),
+                    Err(error) => Outcome::Failed(error.into()),
+                });
+                this.refresh(cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_sync(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let when = match self.last_sync {
@@ -378,7 +504,7 @@ impl OrdersScreen {
             .into_any_element()
     }
 
-    fn render_order(&self, order: &Order, cx: &App) -> AnyElement {
+    fn render_order(&self, index: usize, order: &Order, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let sold = &order.sold;
         let mut facts = vec![catalog::day_and_time(sold.ordered_at)];
@@ -416,6 +542,10 @@ impl OrdersScreen {
             }
             (text, shipment_ink(shipment.status, &t))
         });
+        let due = order
+            .dispatch_due(chrono::Utc::now(), self.settings.dispatch_warning())
+            .map(|due| due_tag(due, &t));
+        let actions = self.render_actions(index, order, cx);
         let lines: Vec<AnyElement> = order
             .lines
             .iter()
@@ -449,14 +579,86 @@ impl OrdersScreen {
                                 status_ink(sold.status, &t),
                                 cx,
                             ))
-                            .children(shipment.map(|(text, ink)| kit::tag(text, ink, cx))),
+                            .children(shipment.map(|(text, ink)| kit::tag(text, ink, cx)))
+                            .children(due.map(|(text, ink)| kit::tag(text, ink, cx))),
                     )
                     .child(div().flex_none().font_medium().child(sold.total.to_pt_br())),
             )
             .child(div().text_xs().text_color(t.text2).child(facts.join(" · ")))
             .child(div().text_sm().child(buyer))
             .children(lines)
+            .children(actions)
             .into_any_element()
+    }
+
+    /// The label to print while the Order waits for dispatch, and the
+    /// owner's word on units on their way back.
+    fn render_actions(
+        &self,
+        index: usize,
+        order: &Order,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let t = look(cx).tokens;
+        let id = order.id;
+        let busy = self.working_on.is_some();
+        let waiting = order.sold.status != OrderStatus::Cancelled
+            && order
+                .sold
+                .shipment
+                .as_ref()
+                .is_some_and(|shipment| shipment.status == ShipmentStatus::ReadyToShip);
+        let awaiting = order.units_awaiting_return();
+        if !waiting && awaiting == 0 {
+            return None;
+        }
+        let key = |name: &'static str| (name, index);
+        Some(
+            h_flex()
+                .flex_wrap()
+                .gap_2()
+                .items_center()
+                .when(waiting, |row| {
+                    row.child(
+                        Button::new(key("print-label"))
+                            .label("Baixar etiqueta")
+                            .icon(IconName::ArrowDown)
+                            .outline()
+                            .small()
+                            .loading(self.working_on == Some(id))
+                            .disabled(busy || !self.connected())
+                            .on_click(cx.listener(move |this, _, _, cx| this.print_label(id, cx))),
+                    )
+                })
+                .when(awaiting > 0, |row| {
+                    row.child(div().text_sm().text_color(t.accent_text).child(format!(
+                        "{} voltando. Quando chegar, confirme:",
+                        units_text(awaiting)
+                    )))
+                    .child(
+                        Button::new(key("return-in-stock"))
+                            .label("Chegou, volta ao estoque")
+                            .primary()
+                            .small()
+                            .loading(self.working_on == Some(id))
+                            .disabled(busy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.receive_return(id, ReturnReceipt::BackInStock, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(key("return-unsellable"))
+                            .label("Chegou sem condição de venda")
+                            .ghost()
+                            .small()
+                            .disabled(busy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.receive_return(id, ReturnReceipt::Unsellable, cx)
+                            })),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     fn settings_days(&self) -> u32 {
@@ -499,10 +701,24 @@ impl OrdersScreen {
         match line.stock {
             LineStock::Taken { product, .. } => {
                 let (sku, _) = product_label(&self.products, product);
-                let text = match line.sold.quantity {
+                let mut text = match line.sold.quantity {
                     1 => format!("1 unidade saiu do estoque de {sku}"),
                     units => format!("{units} unidades saíram do estoque de {sku}"),
                 };
+                let back = line.back;
+                if back.restocked > 0 {
+                    text.push_str(&format!("; {} de volta", units_text(back.restocked)));
+                }
+                if back.unsellable > 0 {
+                    text.push_str(&format!(
+                        "; {} sem condição de venda",
+                        units_text(back.unsellable)
+                    ));
+                }
+                if back.awaiting > 0 {
+                    text.push_str(&format!("; {} voltando", units_text(back.awaiting)));
+                    return (text, t.accent_text);
+                }
                 (text, t.success)
             }
             LineStock::Short(StockShort::NoListing) => (
@@ -626,7 +842,8 @@ impl Render for OrdersScreen {
         let cards: Vec<AnyElement> = self
             .orders
             .iter()
-            .map(|order| self.render_order(order, cx))
+            .enumerate()
+            .map(|(index, order)| self.render_order(index, order, cx))
             .collect();
         parts.content.push(
             v_flex()
@@ -652,6 +869,7 @@ impl Render for OrdersScreen {
 pub struct OrderSettingsSection {
     every: Entity<InputState>,
     keep: Entity<InputState>,
+    warn: Entity<InputState>,
     busy: bool,
     outcome: Option<Outcome>,
 }
@@ -661,6 +879,7 @@ impl OrderSettingsSection {
         let section = Self {
             every: input("5", window, cx),
             keep: input("90", window, cx),
+            warn: input("24", window, cx),
             busy: false,
             outcome: None,
         };
@@ -686,6 +905,10 @@ impl OrderSettingsSection {
                         this.keep.update(cx, |input, cx| {
                             input.set_value(settings.keep_buyer_data_days.to_string(), window, cx)
                         });
+                        this.warn.update(cx, |input, cx| {
+                            let hours = settings.warn_before_dispatch_hours.to_string();
+                            input.set_value(hours, window, cx)
+                        });
                     }
                     Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
                 }
@@ -700,10 +923,12 @@ impl OrderSettingsSection {
             return;
         };
         let number = |field: &Entity<InputState>| field.read(cx).value().trim().parse::<u32>();
-        let (Ok(every), Ok(keep)) = (number(&self.every), number(&self.keep)) else {
+        let (Ok(every), Ok(keep), Ok(warn)) =
+            (number(&self.every), number(&self.keep), number(&self.warn))
+        else {
             self.outcome = Some(Outcome::Failed(
-                "Digite os minutos entre os Syncs (1 a 60) e os dias para guardar os dados do \
-                 comprador (7 a 1825)."
+                "Digite os minutos entre os Syncs (1 a 60), os dias para guardar os dados do \
+                 comprador (7 a 1825) e as horas de aviso antes do prazo de despacho (1 a 72)."
                     .into(),
             ));
             cx.notify();
@@ -712,6 +937,7 @@ impl OrderSettingsSection {
         let settings = OrderSettings {
             sync_every_minutes: every,
             keep_buyer_data_days: keep,
+            warn_before_dispatch_hours: warn,
         };
         self.busy = true;
         self.outcome = None;
@@ -728,8 +954,9 @@ impl OrderSettingsSection {
                 this.outcome = Some(match saved {
                     Ok(()) => Outcome::Done(
                         format!(
-                            "Salvo: Sync de pedidos a cada {every} min a partir do próximo, e \
-                             dados do comprador por {keep} dias."
+                            "Salvo: Sync de pedidos a cada {every} min a partir do próximo, \
+                             dados do comprador por {keep} dias e aviso de despacho {warn} h \
+                             antes do prazo."
                         )
                         .into(),
                     ),
@@ -764,7 +991,8 @@ impl Render for OrderSettingsSection {
                 "Com o app aberto ou na bandeja, os pedidos do Mercado Livre chegam por Sync: ao \
                  abrir o app (cobrindo o tempo em que ficou fechado) e depois a cada intervalo. \
                  Do comprador o app guarda só apelido, nome de quem recebe e endereço de entrega, \
-                 e apaga esses dados dos pedidos mais antigos que o prazo.",
+                 e apaga esses dados dos pedidos mais antigos que o prazo. Pedidos a despachar \
+                 aparecem em Hoje quando o prazo chega perto, e atrasados quando passa.",
             ))
             .child(
                 h_flex()
@@ -773,6 +1001,10 @@ impl Render for OrderSettingsSection {
                     .items_end()
                     .child(field("Sync a cada (minutos)", &self.every))
                     .child(field("Guardar dados do comprador (dias)", &self.keep))
+                    .child(field(
+                        "Avisar antes do prazo de despacho (horas)",
+                        &self.warn,
+                    ))
                     .child(
                         Button::new("save-order-settings")
                             .label("Salvar")
@@ -814,5 +1046,13 @@ mod tests {
         // What is still short shows on the screen, not in the Sync's line.
         assert_eq!(synced_text(&sync(1, 0, 0, 1)), "1 pedido novo.");
         assert_eq!(synced_text(&sync(0, 2, 0, 0)), "2 pedidos alterados.");
+        assert_eq!(
+            synced_text(&OrderSync {
+                restocked: 1,
+                ..sync(0, 1, 0, 0)
+            }),
+            "1 pedido alterado. 1 pedido cancelado antes do envio devolveu as unidades ao \
+             estoque."
+        );
     }
 }

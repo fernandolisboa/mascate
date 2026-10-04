@@ -1,0 +1,60 @@
+{
+  "query": null,
+  "results": [
+    {
+      "id": 2000009876543500,
+      "date_created": "2026-09-28T14:02:10.000-03:00",
+      "date_closed": "2026-09-28T14:02:14.000-03:00",
+      "last_updated": "2026-10-04T11:30:00.000-03:00",
+      "pack_id": null,
+      "fulfilled": true,
+      "status": "paid",
+      "status_detail": null,
+      "tags": ["paid", "delivered"],
+      "order_items": [
+        {
+          "item": {
+            "id": "MLB4100000003",
+            "title": "Camiseta Básica Algodão",
+            "category_id": "MLB31447",
+            "variation_id": 175000000031,
+            "variation_attributes": [
+              { "id": "COLOR", "name": "Cor", "value_id": "52049", "value_name": "Preto" },
+              { "id": "SIZE", "name": "Tamanho", "value_id": "3259478", "value_name": "M" }
+            ]
+          },
+          "quantity": 3,
+          "unit_price": 49.9,
+          "full_unit_price": 49.9,
+          "currency_id": "BRL",
+          "sale_fee": 8.48,
+          "listing_type_id": "gold_pro"
+        }
+      ],
+      "total_amount": 149.7,
+      "paid_amount": 149.7,
+      "currency_id": "BRL",
+      "buyer": { "id": 555000444, "nickname": "DUDA.F" },
+      "seller": { "id": 1234567 },
+      "payments": [
+        {
+          "id": 91000000005,
+          "order_id": 2000009876543500,
+          "status": "approved",
+          "transaction_amount": 149.7,
+          "shipping_cost": 0,
+          "total_paid_amount": 149.7,
+          "currency_id": "BRL"
+        }
+      ],
+      "shipping": { "id": 44100000005 },
+      "mediations": [{ "id": 5298178312 }, { "id": 5298178399 }],
+      "context": { "channel": "marketplace", "site": "MLB" }
+    }
+  ],
+  "sort": { "id": "date_asc", "name": "Date ascending" },
+  "available_sorts": [],
+  "filters": [],
+  "paging": { "total": 1, "offset": 0, "limit": 50 },
+  "display": "complete"
+}

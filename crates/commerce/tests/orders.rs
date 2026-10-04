@@ -1,8 +1,10 @@
 //! Orders through commerce's public interface with a real temporary
 //! database, the real Inventory and an in-memory Sales Channel: each Order
-//! is kept once by the channel's id, its units leave the stock once, the
-//! Sync after a long pause reads everything since the last one, and the
-//! buyer's data goes when its time is over.
+//! is kept once by the channel's id, its units leave the stock once and
+//! come back once (by themselves on a cancellation before shipping, on the
+//! owner's word for a return), the Sync after a long pause reads
+//! everything since the last one, late Orders stand out, labels print, and
+//! the buyer's data goes when its time is over.
 
 mod common;
 
@@ -11,9 +13,10 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelStock, LineStock, Listings, NewPurchaseLine, NewPurchaseOrder, Order,
-    OrderError, OrderSettings, OrderStatus, Orders, PurchaseOrders, Receiving, ShipmentStatus,
-    StockMirror, StockShort,
+    ChannelListing, ChannelReturn, ChannelStock, DispatchDue, LineStock, Listings, NewPurchaseLine,
+    NewPurchaseOrder, Order, OrderError, OrderSettings, OrderStatus, Orders, PurchaseOrders,
+    Receiving, ReturnReceipt, ReturnStatus, ReturnedItem, ShipmentStatus, StockMirror, StockShort,
+    UnitsBack,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, LowStock, MovementReason};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -22,6 +25,26 @@ use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 
 use common::{Channel, brl, listing, order, sold, variation};
+
+fn back(awaiting: u32, restocked: u32, unsellable: u32) -> UnitsBack {
+    UnitsBack {
+        awaiting,
+        restocked,
+        unsellable,
+    }
+}
+
+fn returning(id: &str, status: ReturnStatus, item: &str, quantity: u32) -> ChannelReturn {
+    ChannelReturn {
+        id: id.into(),
+        status,
+        items: vec![ReturnedItem {
+            item: item.into(),
+            variation: None,
+            quantity,
+        }],
+    }
+}
 
 fn fone() -> RecordId {
     RecordId::from_u128(1_000_010)
@@ -178,6 +201,22 @@ impl Fixture {
             .iter()
             .filter(|line| matches!(line.movement.reason, MovementReason::Sale { .. }))
             .count()
+    }
+
+    /// Sells `units` fones in the Order `id` and syncs, so they leave the
+    /// stock.
+    async fn sold_fones(&self, id: &str, units: u32) -> Order {
+        let at = self.later(1);
+        self.channel
+            .sells(order(id, at, vec![sold("MLB1", None, units)]));
+        self.sync().await;
+        self.order(id).await
+    }
+
+    /// Changes the Order `id` in the channel a minute from now.
+    fn channel_changes(&self, id: &str, change: impl Fn(&mut mascate_commerce::ChannelOrder)) {
+        let at = self.later(1);
+        self.channel.change_order(id, at, change);
     }
 
     fn asked_since(&self) -> Timestamp {
@@ -372,7 +411,7 @@ fn a_sale_of_more_than_the_app_has_waits_for_the_units() {
 }
 
 #[test]
-fn a_cancelled_order_takes_nothing_and_one_cancelled_later_keeps_its_movement() {
+fn a_cancelled_order_takes_nothing_and_one_cancelled_before_shipping_puts_its_units_back() {
     block_on(async {
         let fx = Fixture::selling().await;
         let at = fx.later(1);
@@ -386,17 +425,348 @@ fn a_cancelled_order_takes_nothing_and_one_cancelled_later_keeps_its_movement() 
         assert_eq!(stock_of(&fx.order("2000006").await), [LineStock::Cancelled]);
         assert_eq!(fx.units(fone()).await, 8);
 
-        // Putting the units back on a cancellation is for the returns (#21).
+        // Cancelled while still waiting to ship: the units never left the
+        // owner's hands, so they go back with nobody to confirm it.
         let changed_at = fx.later(1);
         fx.channel.change_order("2000007", changed_at, |found| {
             found.status = OrderStatus::Cancelled;
         });
         let synced = fx.sync().await;
-        assert_eq!(synced.changed, 1);
+        assert_eq!((synced.changed, synced.restocked), (1, 1));
         let kept = fx.order("2000007").await;
         assert_eq!(kept.sold.status, OrderStatus::Cancelled);
-        assert!(matches!(stock_of(&kept)[..], [LineStock::Taken { .. }]));
+        let LineStock::Taken { movement, .. } = kept.lines[0].stock else {
+            panic!("{:?}", kept.lines[0].stock);
+        };
+        assert_eq!(kept.lines[0].back, back(0, 2, 0));
+        assert_eq!(fx.units(fone()).await, 10);
+        let history = fx.inventory.history(fone()).await.unwrap();
+        assert_eq!(
+            history[0].movement.reason,
+            MovementReason::SaleCancelled { order: kept.id }
+        );
+        assert_eq!(history[0].movement.quantity, 2);
+        assert_eq!(history[1].movement.id, movement);
+        assert_eq!(
+            fx.inventory.average_cost(fone()).await.unwrap(),
+            Some(brl("20"))
+        );
+
+        // Read again, the cancellation puts nothing back twice.
+        assert_eq!(fx.sync().await.restocked, 0);
+        assert_eq!(fx.units(fone()).await, 10);
+        assert_eq!(fx.order("2000007").await.lines[0].back, back(0, 2, 0));
+    });
+}
+
+#[test]
+fn units_back_from_a_cancellation_go_back_to_the_listing() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sold_fones("2000030", 3).await;
+        fx.mirror.send(&fx.channel).await.unwrap();
+        fx.channel.stocks_set.lock().unwrap().clear();
+        fx.channel_changes("2000030", |found| found.status = OrderStatus::Cancelled);
+
+        fx.sync().await;
+        fx.mirror.send(&fx.channel).await.unwrap();
+
+        assert_eq!(
+            *fx.channel.stocks_set.lock().unwrap(),
+            [(
+                "MLB1".to_owned(),
+                vec![ChannelStock {
+                    variation: None,
+                    available_quantity: 10,
+                }]
+            )]
+        );
+    });
+}
+
+#[test]
+fn an_order_cancelled_once_shipped_waits_for_the_owner_to_receive_it() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sold_fones("2000031", 2).await;
+        fx.channel_changes("2000031", |found| {
+            found.status = OrderStatus::Cancelled;
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Shipped;
+        });
+
+        let synced = fx.sync().await;
+
+        assert_eq!(synced.restocked, 0);
+        let kept = fx.order("2000031").await;
+        assert_eq!(kept.lines[0].back, back(2, 0, 0));
+        assert_eq!(kept.units_awaiting_return(), 2);
         assert_eq!(fx.units(fone()).await, 8);
+
+        let received = fx
+            .orders
+            .receive_return(kept.id, ReturnReceipt::BackInStock)
+            .await
+            .unwrap();
+
+        assert_eq!((received.units, received.restocked), (2, 2));
+        assert_eq!(fx.units(fone()).await, 10);
+        let history = fx.inventory.history(fone()).await.unwrap();
+        assert_eq!(
+            history[0].movement.reason,
+            MovementReason::SaleReturned { order: kept.id }
+        );
+        assert_eq!(fx.order("2000031").await.lines[0].back, back(0, 2, 0));
+        // Nothing comes back twice: not by asking again, not by a Sync.
+        assert!(matches!(
+            fx.orders
+                .receive_return(kept.id, ReturnReceipt::BackInStock)
+                .await,
+            Err(OrderError::NoReturnAwaiting)
+        ));
+        fx.sync().await;
+        assert_eq!(fx.units(fone()).await, 10);
+    });
+}
+
+#[test]
+fn a_return_of_part_of_a_delivered_order_waits_for_its_units_only() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sold_fones("2000032", 3).await;
+        fx.channel_changes("2000032", |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+            found.returns = vec![returning("R1", ReturnStatus::OnTheWay, "MLB1", 2)];
+        });
+
+        fx.sync().await;
+
+        let kept = fx.order("2000032").await;
+        assert_eq!(kept.sold.returns.len(), 1);
+        assert_eq!(kept.lines[0].back, back(2, 0, 0));
+
+        // They arrive damaged: the return closes, the stock stays.
+        let received = fx
+            .orders
+            .receive_return(kept.id, ReturnReceipt::Unsellable)
+            .await
+            .unwrap();
+        assert_eq!((received.units, received.restocked), (2, 0));
+        assert_eq!(fx.units(fone()).await, 7);
+        assert_eq!(fx.order("2000032").await.lines[0].back, back(0, 0, 2));
+
+        // The channel then says the return was delivered: still settled.
+        fx.channel_changes("2000032", |found| {
+            found.returns[0].status = ReturnStatus::Delivered;
+        });
+        fx.sync().await;
+        assert_eq!(fx.order("2000032").await.lines[0].back, back(0, 0, 2));
+    });
+}
+
+#[test]
+fn a_second_return_of_the_same_order_waits_for_its_own_units() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sold_fones("2000033", 3).await;
+        fx.channel_changes("2000033", |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+            found.returns = vec![returning("R1", ReturnStatus::Delivered, "MLB1", 1)];
+        });
+        fx.sync().await;
+        let id = fx.order("2000033").await.id;
+        fx.orders
+            .receive_return(id, ReturnReceipt::BackInStock)
+            .await
+            .unwrap();
+
+        fx.channel_changes("2000033", |found| {
+            found
+                .returns
+                .push(returning("R2", ReturnStatus::OnTheWay, "MLB1", 1));
+        });
+        fx.sync().await;
+
+        assert_eq!(fx.order("2000033").await.lines[0].back, back(1, 1, 0));
+        assert_eq!(fx.units(fone()).await, 8);
+    });
+}
+
+#[test]
+fn a_return_called_off_or_a_failed_delivery_changes_what_comes_back() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sold_fones("2000034", 2).await;
+        fx.channel_changes("2000034", |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+            found.returns = vec![returning("R1", ReturnStatus::OnTheWay, "MLB1", 2)];
+        });
+        fx.sync().await;
+        assert_eq!(fx.order("2000034").await.units_awaiting_return(), 2);
+
+        fx.channel_changes("2000034", |found| {
+            found.returns[0].status = ReturnStatus::Cancelled;
+        });
+        fx.sync().await;
+        assert_eq!(fx.order("2000034").await.units_awaiting_return(), 0);
+
+        // A shipment the carrier could not deliver comes back whole.
+        fx.sold_fones("2000035", 3).await;
+        fx.channel_changes("2000035", |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::NotDelivered;
+        });
+        fx.sync().await;
+        assert_eq!(fx.order("2000035").await.lines[0].back, back(3, 0, 0));
+        assert_eq!(fx.units(fone()).await, 5);
+    });
+}
+
+#[test]
+fn only_units_that_left_the_stock_come_back_to_it() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![fone_listing()]);
+        fx.listings.sync(&fx.channel).await.unwrap();
+        let id = fx.listings.listings().await.unwrap()[0].id;
+        fx.listings.link(id, fone()).await.unwrap();
+        fx.receive(fone(), 5).await;
+        let yesterday = fx.clock.now() - TimeDelta::days(1);
+        let mut before = order("2000036", yesterday, vec![sold("MLB1", None, 1)]);
+        before.shipment.as_mut().unwrap().status = ShipmentStatus::NotDelivered;
+        before.status = OrderStatus::Cancelled;
+        fx.channel.sells(before);
+
+        let synced = fx.sync().await;
+
+        // Sold before the first Sync: the ledger never took it, so nothing
+        // waits and nothing goes back.
+        assert_eq!(synced.restocked, 0);
+        let kept = fx.order("2000036").await;
+        assert_eq!(kept.units_awaiting_return(), 0);
+        assert!(matches!(
+            fx.orders
+                .receive_return(kept.id, ReturnReceipt::BackInStock)
+                .await,
+            Err(OrderError::NoReturnAwaiting)
+        ));
+        assert_eq!(fx.units(fone()).await, 5);
+    });
+}
+
+#[test]
+fn receiving_the_return_of_an_unknown_order_is_refused() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let unknown = RecordId::from_u128(77);
+        assert!(matches!(
+            fx.orders
+                .receive_return(unknown, ReturnReceipt::BackInStock)
+                .await,
+            Err(OrderError::UnknownOrder(order)) if order == unknown
+        ));
+    });
+}
+
+#[test]
+fn late_orders_and_those_close_to_their_time_stand_out() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let now = fx.later(1);
+        let due = |id: &str, hours: i64| {
+            let mut sale = order(id, now, vec![sold("MLB1", None, 1)]);
+            sale.shipment.as_mut().unwrap().dispatch_by = Some(now + TimeDelta::hours(hours));
+            sale
+        };
+        fx.channel.sells(due("2000040", 30));
+        fx.channel.sells(due("2000041", 20));
+        fx.channel.sells(due("2000042", -2));
+        let mut shipped = due("2000043", -5);
+        shipped.shipment.as_mut().unwrap().status = ShipmentStatus::Shipped;
+        fx.channel.sells(shipped);
+        let mut cancelled = due("2000044", -5);
+        cancelled.status = OrderStatus::Cancelled;
+        fx.channel.sells(cancelled);
+        fx.sync().await;
+
+        let alerts = fx.orders.dispatch_alerts().await.unwrap();
+
+        assert_eq!(
+            alerts
+                .iter()
+                .map(|alert| (alert.order.sold.id.as_str(), alert.due))
+                .collect::<Vec<_>>(),
+            [
+                ("2000042", DispatchDue::Late),
+                ("2000041", DispatchDue::Soon)
+            ]
+        );
+
+        // Warned two days ahead, the third one shows too.
+        fx.orders
+            .save_settings(OrderSettings {
+                warn_before_dispatch_hours: 48,
+                ..OrderSettings::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(fx.orders.dispatch_alerts().await.unwrap().len(), 3);
+
+        // Time passes: the one close is now late.
+        fx.clock.advance(TimeDelta::hours(21));
+        let alerts = fx.orders.dispatch_alerts().await.unwrap();
+        assert_eq!(
+            alerts.iter().map(|alert| alert.due).collect::<Vec<_>>(),
+            [DispatchDue::Late, DispatchDue::Late, DispatchDue::Soon]
+        );
+    });
+}
+
+#[test]
+fn the_label_of_an_order_waiting_to_ship_comes_as_a_pdf() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let kept = fx.sold_fones("2000050", 1).await;
+
+        let label = fx
+            .orders
+            .shipping_label(&fx.channel, kept.id)
+            .await
+            .unwrap();
+
+        assert_eq!(label.file_name, "etiqueta-2000050.pdf");
+        assert!(label.pdf.starts_with(b"%PDF-"));
+        assert_eq!(*fx.channel.labels_asked.lock().unwrap(), ["42000050"]);
+    });
+}
+
+#[test]
+fn an_order_not_waiting_to_ship_has_no_label() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let kept = fx.sold_fones("2000051", 1).await;
+        fx.channel_changes("2000051", |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Shipped;
+        });
+        fx.sync().await;
+
+        assert!(matches!(
+            fx.orders.shipping_label(&fx.channel, kept.id).await,
+            Err(OrderError::NoLabel)
+        ));
+        assert!(fx.channel.labels_asked.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_label_that_is_not_a_pdf_is_refused() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let kept = fx.sold_fones("2000052", 1).await;
+        *fx.channel.label_answer.lock().unwrap() = Some(b"<html>login</html>".to_vec());
+
+        assert!(matches!(
+            fx.orders.shipping_label(&fx.channel, kept.id).await,
+            Err(OrderError::Platform(PlatformError::Failed(_)))
+        ));
     });
 }
 
@@ -583,6 +953,7 @@ fn keeping_the_buyer_data_for_less_time_erases_it_at_once() {
             OrderSettings {
                 sync_every_minutes: 5,
                 keep_buyer_data_days: 90,
+                warn_before_dispatch_hours: 24,
             }
         );
         let at = fx.later(1);
@@ -595,6 +966,7 @@ fn keeping_the_buyer_data_for_less_time_erases_it_at_once() {
         let settings = OrderSettings {
             sync_every_minutes: 15,
             keep_buyer_data_days: 7,
+            warn_before_dispatch_hours: 6,
         };
         fx.orders.save_settings(settings).await.unwrap();
 
@@ -610,15 +982,23 @@ fn settings_out_of_range_are_refused() {
         for wrong in [
             OrderSettings {
                 sync_every_minutes: 0,
-                keep_buyer_data_days: 90,
+                ..OrderSettings::default()
             },
             OrderSettings {
                 sync_every_minutes: 61,
-                keep_buyer_data_days: 90,
+                ..OrderSettings::default()
             },
             OrderSettings {
-                sync_every_minutes: 5,
                 keep_buyer_data_days: 6,
+                ..OrderSettings::default()
+            },
+            OrderSettings {
+                warn_before_dispatch_hours: 0,
+                ..OrderSettings::default()
+            },
+            OrderSettings {
+                warn_before_dispatch_hours: 73,
+                ..OrderSettings::default()
             },
         ] {
             assert!(matches!(
@@ -704,6 +1084,93 @@ proptest! {
                 sales.iter().filter(|(_, cancelled)| !cancelled).count()
             );
             prop_assert_eq!(fx.orders.orders().await.unwrap().len(), sales.len());
+            Ok(())
+        })?;
+    }
+}
+
+/// What can happen to an Order after its units left the stock.
+#[derive(Debug, Clone, Copy)]
+enum AfterSale {
+    CancelBeforeShipping,
+    CancelOnceShipped,
+    FailedDelivery,
+    Return(u32),
+    Receive(bool),
+    Reread,
+}
+
+fn after_sale() -> impl Strategy<Value = AfterSale> {
+    prop_oneof![
+        Just(AfterSale::CancelBeforeShipping),
+        Just(AfterSale::CancelOnceShipped),
+        Just(AfterSale::FailedDelivery),
+        (1u32..4).prop_map(AfterSale::Return),
+        any::<bool>().prop_map(AfterSale::Receive),
+        Just(AfterSale::Reread),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// Whatever the channel and the owner do after a sale, in any order and
+    /// however often, no more units come back than left, and the stock is
+    /// what came in minus what left plus what came back.
+    #[test]
+    fn units_never_come_back_more_than_they_left(
+        units in 1u32..4,
+        events in prop::collection::vec(after_sale(), 1..8),
+    ) {
+        block_on(async {
+            let fx = Fixture::selling().await;
+            let id = fx.sold_fones("2000060", units).await.id;
+            let mut returns = 0;
+            for event in events {
+                match event {
+                    AfterSale::CancelBeforeShipping => fx.channel_changes("2000060", |found| {
+                        found.status = OrderStatus::Cancelled;
+                    }),
+                    AfterSale::CancelOnceShipped => fx.channel_changes("2000060", |found| {
+                        found.status = OrderStatus::Cancelled;
+                        found.shipment.as_mut().unwrap().status = ShipmentStatus::Shipped;
+                    }),
+                    AfterSale::FailedDelivery => fx.channel_changes("2000060", |found| {
+                        found.shipment.as_mut().unwrap().status = ShipmentStatus::NotDelivered;
+                    }),
+                    AfterSale::Return(quantity) => {
+                        returns += 1;
+                        let id = format!("R{returns}");
+                        fx.channel_changes("2000060", |found| {
+                            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+                            found
+                                .returns
+                                .push(returning(&id, ReturnStatus::OnTheWay, "MLB1", quantity));
+                        });
+                    }
+                    AfterSale::Receive(fit) => {
+                        let receipt = if fit {
+                            ReturnReceipt::BackInStock
+                        } else {
+                            ReturnReceipt::Unsellable
+                        };
+                        match fx.orders.receive_return(id, receipt).await {
+                            Ok(_) | Err(OrderError::NoReturnAwaiting) => {}
+                            Err(error) => panic!("{error}"),
+                        }
+                    }
+                    AfterSale::Reread => {}
+                }
+                fx.sync().await;
+            }
+            let kept = fx.order("2000060").await;
+            let line = kept.lines[0].back;
+            prop_assert!(line.restocked + line.unsellable <= units);
+            prop_assert!(line.awaiting + line.restocked + line.unsellable <= units);
+            prop_assert_eq!(
+                fx.units(fone()).await,
+                10 - i64::from(units) + i64::from(line.restocked)
+            );
             Ok(())
         })?;
     }

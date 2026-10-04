@@ -68,6 +68,14 @@ _Avoid_: pendências, validação (sozinho)
 Venda recebida num Sales Channel, com um ou mais itens e seu envio. Chega por Sync; cada item vendido do estoque próprio depois do primeiro Sync de Orders dá baixa uma vez, por um Stock Movement de saída ligado ao Order. Dos compradores o app guarda só o necessário para envio e suporte, pelo prazo que o Fernando escolhe.
 _Avoid_: venda (sozinho), pedido de compra
 
+**Return**:
+Volta de unidades de um Order ao Fernando: pela devolução que o comprador abre no Sales Channel, por um envio não entregue ou por um cancelamento depois do envio. As unidades só voltam ao estoque quando o Fernando confirma que chegaram, e ao confirmar ele diz se voltaram em condição de venda; um Order cancelado antes do envio devolve as unidades sozinho, no Sync. Cada unidade volta uma vez, ao custo com que saiu.
+_Avoid_: estorno (é dinheiro), troca
+
+**Dispatch Deadline**:
+Hora até a qual o Fernando precisa despachar um Order, informada pelo Sales Channel. O Order fica atrasado depois dela e com o prazo perto dentro do aviso escolhido nas configurações.
+_Avoid_: prazo de entrega (é do comprador), SLA
+
 **Fulfillment Mode**:
 De onde sai o item de um Order: `own_stock` (estoque local) ou `dropship` (o Supplier envia).
 _Avoid_: modalidade, tipo de venda

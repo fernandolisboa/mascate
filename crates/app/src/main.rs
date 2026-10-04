@@ -15,6 +15,7 @@ mod low_stock;
 mod mercado_livre;
 mod offers;
 mod opportunities;
+mod order_alerts;
 mod ordered_saves;
 mod orders;
 mod palette;

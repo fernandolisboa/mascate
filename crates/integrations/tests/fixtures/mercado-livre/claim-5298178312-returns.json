@@ -1,0 +1,50 @@
+{
+  "id": 57341011,
+  "last_updated": "2026-10-04T11:30:00.000-03:00",
+  "shipments": [
+    {
+      "shipment_id": 44200000001,
+      "status": "shipped",
+      "tracking_number": null,
+      "destination": {
+        "name": "seller_address",
+        "shipping_address": {
+          "address_id": 1351779578,
+          "address_line": "Rua das Flores 45",
+          "street_name": "Rua das Flores",
+          "street_number": "45",
+          "comment": null,
+          "zip_code": "01310000",
+          "city": { "id": "BR-SP-44", "name": "São Paulo" },
+          "state": { "id": "BR-SP", "name": "São Paulo" },
+          "country": { "id": "BR", "name": "Brasil" },
+          "neighborhood": { "id": null, "name": "Bela Vista" },
+          "municipality": { "id": null, "name": null }
+        }
+      },
+      "type": "return"
+    }
+  ],
+  "refund_at": "delivered",
+  "date_closed": null,
+  "resource_type": "order",
+  "date_created": "2026-10-03T09:12:00.000-03:00",
+  "claim_id": 5298178312,
+  "status_money": "retained",
+  "resource_id": 2000009876543500,
+  "orders": [
+    {
+      "order_id": 2000009876543500,
+      "item_id": "MLB4100000003",
+      "variation_id": 175000000031,
+      "context_type": "partial",
+      "total_quantity": "3.0",
+      "return_quantity": "2.0"
+    }
+  ],
+  "subtype": "return_partial",
+  "status": "shipped",
+  "related_entities": [],
+  "intermediate_check": false,
+  "resources": [{ "resource": "claim", "resource_id": "5298178312" }]
+}

@@ -6,7 +6,7 @@ mod valuation;
 
 pub use ledger::{
     Adjusted, AdjustmentKind, Exited, HOME_LOCATION, HistoryLine, Inventory, InventoryError,
-    LocationBalance, LowStock, MovementReason, NewEntry, NewExit, ProductStock, Stock,
+    LocationBalance, LowStock, MovementReason, NewEntry, NewExit, NewReturn, ProductStock, Stock,
     StockAdjustment, StockLocation, StockMovement,
 };
 pub use valuation::Valuation;

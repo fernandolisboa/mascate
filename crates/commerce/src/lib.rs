@@ -20,9 +20,10 @@ pub use listings::{
     ListingStatus, ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
 };
 pub use orders::{
-    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, FulfillmentMode, LineStock, Order,
-    OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync, Orders, Receiver, Shipment,
-    ShipmentStatus, StockShort,
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
+    DispatchDue, FulfillmentMode, LineStock, Order, OrderError, OrderLine, OrderSettings,
+    OrderStatus, OrderSync, Orders, Receiver, ReturnReceipt, ReturnReceived, ReturnStatus,
+    ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels, StockShort, UnitsBack,
 };
 pub use pricing::{
     CostSource, DraftPrice, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion,
@@ -59,5 +60,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         drafts::CREATE_DRAFTS,
         stock_mirror::ADD_STOCK_SENT,
         orders::CREATE_ORDERS,
+        orders::ADD_RETURNS,
     ],
 };

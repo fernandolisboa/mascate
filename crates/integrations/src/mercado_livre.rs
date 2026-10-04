@@ -33,6 +33,9 @@ const SITE: &str = "MLB";
 /// Answers are small JSON documents; anything bigger is not one.
 const MAX_ANSWER_BYTES: u64 = 2 * 1024 * 1024;
 
+/// A shipping label is a page or two of PDF; anything bigger is not one.
+const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
+
 /// Listings read per catalog product: the first page is enough for a price
 /// range, and `paging.total` still counts them all.
 const COMPETITORS_PAGE: u32 = 50;
@@ -93,6 +96,33 @@ impl MercadoLivre {
             request.call()
         })?;
         read_json(response)
+    }
+
+    /// The document Mercado Livre answers to `GET path` with `query`, in
+    /// the `accept` media type, such as a PDF.
+    fn get_bytes(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        accept: &str,
+    ) -> Result<Vec<u8>, PlatformError> {
+        let response = self.signed(path, |bearer| {
+            let mut request = self
+                .agent
+                .get(format!("{}{path}", self.api))
+                .header("Accept", accept)
+                .header("Authorization", bearer);
+            for (key, value) in query {
+                request = request.query(key, value);
+            }
+            request.call()
+        })?;
+        response
+            .into_body()
+            .into_with_config()
+            .limit(MAX_DOCUMENT_BYTES)
+            .read_to_vec()
+            .map_err(|error| PlatformError::Failed(error.to_string()))
     }
 
     /// `PUT path` with the JSON `body`; Mercado Livre's answer is not read.

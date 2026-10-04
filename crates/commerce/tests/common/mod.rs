@@ -12,7 +12,7 @@ use mascate_commerce::{
     AttributeValue, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction, ChannelCategory,
     ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelStock,
     ListingPublisher, ListingStatus, ListingToPublish, OrderStatus, PublishedListing, Receiver,
-    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, Variation,
+    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, Timestamp,
@@ -88,6 +88,10 @@ pub struct Channel {
     pub orders: Mutex<Vec<ChannelOrder>>,
     /// The time each read of Orders started from, in order.
     pub orders_asked: Mutex<Vec<Timestamp>>,
+    /// The shipments whose labels were asked for, in order.
+    pub labels_asked: Mutex<Vec<String>>,
+    /// What a label comes as, when not a small PDF.
+    pub label_answer: Mutex<Option<Vec<u8>>>,
 }
 
 impl Default for Channel {
@@ -113,6 +117,8 @@ impl Default for Channel {
             paused_by_seller: Mutex::default(),
             orders: Mutex::default(),
             orders_asked: Mutex::default(),
+            labels_asked: Mutex::default(),
+            label_answer: Mutex::default(),
         }
     }
 }
@@ -317,6 +323,19 @@ impl ChannelOrders for Channel {
     }
 }
 
+impl ShippingLabels for Channel {
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError> {
+        self.check()?;
+        self.labels_asked.lock().unwrap().push(shipment.to_owned());
+        Ok(self
+            .label_answer
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| format!("%PDF-1.4 label {shipment}").into_bytes()))
+    }
+}
+
 /// An Order paid at `at` for the lines given, shipped to Ana in Recife.
 pub fn order(id: &str, at: Timestamp, lines: Vec<ChannelOrderLine>) -> ChannelOrder {
     let total = Money::sum(
@@ -351,6 +370,7 @@ pub fn order(id: &str, at: Timestamp, lines: Vec<ChannelOrderLine>) -> ChannelOr
             status: ShipmentStatus::ReadyToShip,
             dispatch_by: Some(at + chrono::TimeDelta::days(1)),
         }),
+        returns: Vec::new(),
     }
 }
 
