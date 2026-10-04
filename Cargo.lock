@@ -4191,6 +4191,7 @@ dependencies = [
  "mascate-kernel",
  "mascate-marketing",
  "mascate-platform",
+ "tempfile",
  "tray-icon",
 ]
 

@@ -17,6 +17,7 @@ mod settings;
 mod shell;
 mod startup;
 mod tray;
+mod updates;
 
 use std::sync::Arc;
 
@@ -24,10 +25,11 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_integrations::Connections;
 use mascate_platform::{
-    Build, SystemSecretStore, process_environment, secret_store_for, system_user,
+    Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
+    secret_store_for, system_user,
 };
 
-use crate::backups::AppBackups;
+use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::connections::AppConnections;
 use crate::preferences::Preferences;
 use crate::reminders::AppReminders;
@@ -36,6 +38,17 @@ use crate::shell::Shell;
 use crate::tray::TrayCommand;
 
 fn main() {
+    let updater = startup::updater().map(Arc::new);
+    // A silent update left for this start: its installer runs once the app
+    // has exited, and opens the new version.
+    if let Some(Finish::RunInstaller(installer)) =
+        updater.as_ref().and_then(|updater| updater.take_staged())
+    {
+        match run_installer_after_exit(&installer) {
+            Ok(()) => return,
+            Err(error) => eprintln!("could not run the staged update: {error}"),
+        }
+    }
     let startup = startup::prepare();
     let secrets = secret_store_for(
         Build::CURRENT,
@@ -51,8 +64,11 @@ fn main() {
             let saved = started.appearance;
             (Some(started), saved, None)
         }
-        Err(problem) => (None, Default::default(), Some(SharedString::from(problem))),
+        Err(problem) => (None, Default::default(), Some(problem)),
     };
+    let problem_text = problem
+        .as_ref()
+        .map(|problem| SharedString::from(problem.message.clone()));
 
     // gpui-kit's default icon set; without it icons draw nothing.
     gpui_kit::application()
@@ -77,6 +93,31 @@ fn main() {
                     daily_failure: Default::default(),
                 });
                 backups::start_daily(cx);
+            } else if let Some(path) = problem
+                .as_ref()
+                .and_then(|problem| problem.database_path.clone())
+            {
+                cx.set_global(UnopenedDatabase(path));
+            }
+            if let Some(updater) = &updater {
+                let failed_to_migrate = problem
+                    .as_ref()
+                    .is_some_and(|problem| problem.failed_to_migrate);
+                updates::init(
+                    updater.clone(),
+                    started.as_ref().map(|started| started.database.clone()),
+                    started
+                        .as_ref()
+                        .map(|started| started.update_settings)
+                        .unwrap_or_default(),
+                    failed_to_migrate,
+                    cx,
+                );
+                if failed_to_migrate {
+                    updates::go_back(cx);
+                } else {
+                    updates::start_checking(cx);
+                }
             }
             appearance::init(saved.theme, cx);
             layout::show(saved.layout, cx);
@@ -86,7 +127,7 @@ fn main() {
                     // Closing the window only hides the app; "Sair" in the tray quits.
                     cx.set_quit_mode(QuitMode::Explicit);
                     cx.set_global(tray);
-                    let problem = problem.clone();
+                    let problem = problem_text.clone();
                     cx.spawn(async move |cx| {
                         while let Some(command) = commands.next().await {
                             cx.update(|cx| match command {
@@ -104,7 +145,7 @@ fn main() {
                 }
             }
 
-            show_home(problem, cx);
+            show_home(problem_text, cx);
         });
 }
 

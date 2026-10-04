@@ -185,7 +185,7 @@ fn a_database_from_an_older_version_is_backed_up_before_migrating() {
         let backup = opened.backup_before_migrating.unwrap();
         assert_eq!(
             fixture.backups_in(&fixture.default_folder()),
-            [backup.path.clone()]
+            std::slice::from_ref(&backup.path)
         );
         assert_eq!(dump(&backup.path).await, before);
         let mut rows = opened

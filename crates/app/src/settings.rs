@@ -1,6 +1,6 @@
 //! Settings screen: Connections (#5), the Restricted Features (#7), Backup
-//! (#6), then Appearance, which picks the layout (#41) and the interface
-//! theme (#39).
+//! (#6), Updates (#8), then Appearance, which picks the layout (#41) and
+//! the interface theme (#39).
 //! Later settings join it.
 
 use gpui_kit::assets::IconName;
@@ -22,6 +22,7 @@ use crate::palette::palette;
 use crate::parts::ScreenParts;
 use crate::preferences;
 use crate::restricted::RestrictedFeaturesSection;
+use crate::updates::UpdatesSection;
 
 fn theme_name(theme: UiTheme) -> &'static str {
     match theme {
@@ -97,6 +98,7 @@ pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     restricted: Entity<RestrictedFeaturesSection>,
     backup: Entity<BackupSection>,
+    updates: Entity<UpdatesSection>,
     /// The light and dark slots of "follow the system", kept while a fixed
     /// theme is on so following again restores them.
     follow_pair: (UiTheme, UiTheme),
@@ -138,6 +140,7 @@ impl SettingsScreen {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
             backup: cx.new(|cx| BackupSection::new(window, cx)),
+            updates: cx.new(UpdatesSection::new),
             follow_pair,
             light_theme,
             dark_theme,
@@ -549,6 +552,13 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Backup"))
                 .child(self.backup.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Atualizações"))
+                .child(self.updates.clone())
                 .into_any_element(),
         );
         parts.content.push(

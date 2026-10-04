@@ -1,7 +1,7 @@
 //! Settings › Backup (#6): where Backups go and how many stay, a Backup on
-//! demand, export, and restore. The daily Backup runs in the background
-//! while the app is open or in the tray. The rules live in the platform
-//! module.
+//! demand, export, and restore, also when the database does not open (#8).
+//! The daily Backup runs in the background while the app is open or in the
+//! tray. The rules live in the platform module.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,11 +15,16 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Entity, Global, PathPromptOptions, SharedString, Subscription, Window, div, px,
 };
-use mascate_platform::{Backup, BackupError, BackupSettings, Backups, MAX_KEEP, RestoreError};
+use mascate_platform::{
+    Backup, BackupError, BackupSettings, Backups, MAX_KEEP, RestoreError,
+    stage_restore_without_backup,
+};
 
 use crate::appearance::look;
 use crate::kit;
 use crate::ordered_saves::OrderedSaves;
+use crate::startup::MODULE_MIGRATIONS;
+use crate::updates;
 
 /// How often the app checks whether the daily Backup is due.
 const DAILY_CHECK: Duration = Duration::from_secs(60 * 60);
@@ -35,6 +40,11 @@ pub struct AppBackups {
 }
 
 impl Global for AppBackups {}
+
+/// The database file when it did not open: a restore can still replace it.
+pub struct UnopenedDatabase(pub PathBuf);
+
+impl Global for UnopenedDatabase {}
 
 /// Takes the daily Backup when due, now and every hour after, for as long
 /// as the app runs, window open or not.
@@ -335,20 +345,31 @@ impl BackupSection {
     }
 
     /// Checks and stages the confirmed file, then restarts the app, which
-    /// swaps it in before opening the database.
+    /// swaps it in before opening the database. A database that does not
+    /// open has no Backup taken first: it stays beside the restored one.
     fn restore(&mut self, cx: &mut Context<Self>) {
-        let (Some(file), Some(backups)) = (self.confirming.take(), Self::backups(cx)) else {
+        let Some(file) = self.confirming.take() else {
             return;
+        };
+        let backups = Self::backups(cx);
+        let unopened = cx
+            .try_global::<UnopenedDatabase>()
+            .map(|unopened| unopened.0.clone());
+        let staging = match (backups, unopened) {
+            (Some(backups), _) => cx
+                .background_executor()
+                .spawn(async move { backups.stage_restore(&file).await.map(|_| ()) }),
+            (None, Some(database)) => cx.background_executor().spawn(async move {
+                stage_restore_without_backup(&database, MODULE_MIGRATIONS, &file).await
+            }),
+            (None, None) => return,
         };
         self.busy = true;
         self.outcome = None;
-        let staging = cx
-            .background_executor()
-            .spawn(async move { backups.stage_restore(&file).await });
         cx.spawn(async move |this, cx| {
             let staged = staging.await;
             let _ = this.update(cx, |this, cx| match staged {
-                Ok(_) => cx.restart(),
+                Ok(()) => updates::restart(cx),
                 Err(error) => {
                     this.busy = false;
                     this.outcome = Some(Outcome::Failed(restore_refused(error).into()));
@@ -403,10 +424,19 @@ impl BackupSection {
                     .font_medium()
                     .child(format!("Restaurar {}?", file.display())),
             )
-            .child(div().text_sm().text_color(t.text2).child(
-                "O banco atual é substituído por este arquivo. Antes, o app faz um Backup \
-                 do banco atual; depois reinicia já com o arquivo restaurado.",
-            ))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(t.text2)
+                    .child(if cx.has_global::<AppBackups>() {
+                        "O banco atual é substituído por este arquivo. Antes, o app faz um \
+                     Backup do banco atual; depois reinicia já com o arquivo restaurado."
+                    } else {
+                        "O banco que não abriu é substituído por este arquivo e fica guardado \
+                     ao lado dele, como mascate.db.replaced; o app reinicia já com o arquivo \
+                     restaurado."
+                    }),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -441,10 +471,38 @@ impl Render for BackupSection {
              Senhas e chaves ficam no cofre do sistema e nunca entram no Backup.",
         );
         if cx.try_global::<AppBackups>().is_none() {
-            return v_flex().gap_3().child(intro).child(kit::error_notice(
-                "O banco de dados não abriu, então não há o que copiar.",
-                cx,
-            ));
+            let section = v_flex().gap_3().child(intro);
+            if !cx.has_global::<UnopenedDatabase>() {
+                return section.child(kit::error_notice(
+                    "O banco de dados não abriu, então não há o que copiar.",
+                    cx,
+                ));
+            }
+            return section
+                .child(kit::error_notice(
+                    "O banco de dados não abriu, então não há o que copiar. Dá para trocá-lo \
+                     por um Backup ou export do Mascate.",
+                    cx,
+                ))
+                .child(
+                    h_flex().child(
+                        Button::new("restore-database")
+                            .label("Restaurar…")
+                            .outline()
+                            .small()
+                            .disabled(self.blocked())
+                            .on_click(cx.listener(|this, _, _, cx| this.choose_restore(cx))),
+                    ),
+                )
+                .when_some(self.confirming.clone(), |section, file| {
+                    section.child(self.render_restore_confirmation(&file, cx))
+                })
+                .when_some(self.outcome.as_ref(), |section, outcome| {
+                    section.child(match outcome {
+                        Outcome::Done(text) => kit::success_notice(text.clone(), cx),
+                        Outcome::Failed(text) => kit::error_notice(text.clone(), cx),
+                    })
+                });
         }
 
         let label = |text: &'static str| {

@@ -7,12 +7,15 @@ use crate::backups;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::reminders::RemindersArea;
+use crate::updates::UpdateNotice;
 
-/// The first screen: what needs attention today, with the Reminders at its
-/// foot. Later slices feed it Orders, questions and low stock.
+/// The first screen: what needs attention today, a newer version of the
+/// app at its top and the Reminders at its foot. Later slices feed it
+/// Orders, questions and low stock.
 pub struct Home {
     /// Why the database is not ready, if it isn't.
     problem: Option<SharedString>,
+    update: Entity<UpdateNotice>,
     reminders: Entity<RemindersArea>,
 }
 
@@ -20,6 +23,7 @@ impl Home {
     pub fn new(problem: Option<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             problem,
+            update: cx.new(UpdateNotice::new),
             reminders: cx.new(RemindersArea::new),
         }
     }
@@ -37,6 +41,7 @@ impl Render for Home {
         };
         let mut parts = ScreenParts::new("Hoje");
         parts.notices.extend(backups::restore_notice(cx));
+        parts.content.push(self.update.clone().into_any_element());
         parts.content.push(
             v_flex()
                 .flex_1()
