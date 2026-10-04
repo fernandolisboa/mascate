@@ -49,6 +49,7 @@ pub use secrets::{
     Build, Environment, Secret, SecretStore, SecretStoreError, process_environment,
     secret_store_for,
 };
+pub use single_row::{load as load_single_row, save as save_single_row};
 pub use stored_row::{StoredRow, StoredValueError};
 pub use stored_time::{read_stored, stored};
 pub use system_secrets::SystemSecretStore;

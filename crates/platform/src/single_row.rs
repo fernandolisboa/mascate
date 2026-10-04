@@ -1,4 +1,5 @@
 //! Tables that hold one live row: an owner's choice saved over the last one.
+//! Every module with a setting of its own keeps it this way.
 
 use libsql::{Connection, Row, Value};
 use mascate_kernel::{Clock, IdGenerator, Record};
@@ -6,7 +7,7 @@ use mascate_kernel::{Clock, IdGenerator, Record};
 /// The live row's `columns`, or `None` before anything was saved, the
 /// table included: a database waiting for its migrations is read before
 /// they run.
-pub(crate) async fn load(
+pub async fn load(
     connection: &Connection,
     table: &'static str,
     columns: &[&'static str],
@@ -35,7 +36,7 @@ pub(crate) async fn load(
 /// Saves `values` into `columns` of the live row, creating it the first time.
 /// Each statement is atomic on its own, so two saves racing on a new database
 /// still leave one live row.
-pub(crate) async fn save(
+pub async fn save(
     connection: &Connection,
     clock: &dyn Clock,
     ids: &dyn IdGenerator,
