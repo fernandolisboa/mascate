@@ -21,6 +21,9 @@ pub const MIN_PICTURES: usize = 3;
 /// The picture files a Sales Channel takes.
 const PICTURE_EXTENSIONS: [&str; 3] = ["jpg", "jpeg", "png"];
 
+/// The biggest picture file a Sales Channel takes: 10 MB.
+pub const MAX_PICTURE_BYTES: u64 = 10 * 1024 * 1024;
+
 /// How a draft is kept in the Listings' status column until it is published.
 const DRAFT_STATUS: &str = "draft";
 
@@ -371,8 +374,9 @@ pub trait ListingPublisher: Send + Sync {
     /// The attributes of `category` the seller can fill.
     fn category_attributes(&self, category: &str) -> Result<Vec<CategoryAttribute>, PlatformError>;
 
-    /// Uploads the picture file at `path`; returns the channel's id for it.
-    fn upload_picture(&self, path: &Path) -> Result<String, PlatformError>;
+    /// Uploads a picture, `bytes` of the file `file_name`; returns the
+    /// channel's id for it.
+    fn upload_picture(&self, file_name: &str, bytes: &[u8]) -> Result<String, PlatformError>;
 
     /// What the channel's validator says of `listing`; nothing is created.
     fn validate(&self, listing: &ListingToPublish) -> Result<Vec<ChannelIssue>, PlatformError>;
@@ -881,7 +885,8 @@ impl Listings {
             .iter_mut()
             .filter(|picture| picture.uploaded.is_none())
         {
-            let uploaded = publisher.upload_picture(&picture.path)?;
+            let (file_name, bytes) = read_picture(&picture.path)?;
+            let uploaded = publisher.upload_picture(&file_name, &bytes)?;
             self.database
                 .connection()
                 .execute(
@@ -1144,6 +1149,28 @@ async fn pictures_of(on: &Connection, id: RecordId) -> Result<Vec<DraftPicture>,
         });
     }
     Ok(pictures)
+}
+
+/// The name and bytes of a picture file, if a Sales Channel takes its size.
+fn read_picture(path: &Path) -> Result<(String, Vec<u8>), ListingError> {
+    let unreadable = |reason: String| ListingError::Picture {
+        path: path.to_owned(),
+        reason,
+    };
+    let bytes = std::fs::metadata(path)
+        .map_err(|error| unreadable(error.to_string()))?
+        .len();
+    if bytes > MAX_PICTURE_BYTES {
+        return Err(unreadable(format!(
+            "{bytes} bytes, over the 10 MB a channel takes"
+        )));
+    }
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let bytes = std::fs::read(path).map_err(|error| unreadable(error.to_string()))?;
+    Ok((name, bytes))
 }
 
 /// A picture's path as stored. The Product's folder is the app's own, so

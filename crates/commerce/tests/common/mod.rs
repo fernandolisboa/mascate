@@ -5,7 +5,6 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex;
 
@@ -241,7 +240,8 @@ pub struct Publisher {
     pub describing: Mutex<Option<PlatformError>>,
     /// Fails every call while set.
     pub failure: Mutex<Option<PlatformError>>,
-    pub uploaded: Mutex<Vec<PathBuf>>,
+    /// Each picture's file name and bytes.
+    pub uploaded: Mutex<Vec<(String, Vec<u8>)>>,
     pub validated: Mutex<Vec<ListingToPublish>>,
     pub published: Mutex<Vec<ListingToPublish>>,
     pub described: Mutex<Vec<(String, String)>>,
@@ -324,10 +324,10 @@ impl ListingPublisher for Publisher {
             .ok_or(PlatformError::NotFound)
     }
 
-    fn upload_picture(&self, path: &Path) -> Result<String, PlatformError> {
+    fn upload_picture(&self, file_name: &str, bytes: &[u8]) -> Result<String, PlatformError> {
         self.check()?;
         let mut uploaded = self.uploaded.lock().unwrap();
-        uploaded.push(path.to_owned());
+        uploaded.push((file_name.to_owned(), bytes.to_vec()));
         Ok(format!("PIC-{}", uploaded.len()))
     }
 

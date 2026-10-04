@@ -4,6 +4,7 @@
 //! becomes one Listing per variation, since each sells its own Product.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use libsql::{Connection, Row, TransactionBehavior, params};
@@ -168,6 +169,8 @@ pub enum ListingError {
     Published(RecordId),
     #[error("the draft still lacks what its checklist blocks on")]
     Blocked(Vec<ChecklistItem>),
+    #[error("the picture {path} cannot go to the channel: {reason}")]
+    Picture { path: PathBuf, reason: String },
     #[error("draft {0} is published, but its description was not sent: {1}")]
     DescriptionNotSent(RecordId, PlatformError),
     #[error("a price is more than zero, in the Listing's currency")]

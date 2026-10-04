@@ -9,8 +9,8 @@ mod purchase_orders;
 pub use drafts::{
     AttributeValue, CategoryAttribute, CategoryPrediction, ChannelCategory, ChannelIssue, Check,
     ChecklistItem, Condition, DraftAttribute, DraftEdit, DraftPicture, DraftStart, ListingDraft,
-    ListingPublisher, ListingToPublish, MIN_PICTURES, PublishedListing, Requirement, is_blocked,
-    is_picture,
+    ListingPublisher, ListingToPublish, MAX_PICTURE_BYTES, MIN_PICTURES, PublishedListing,
+    Requirement, is_blocked, is_picture,
 };
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{

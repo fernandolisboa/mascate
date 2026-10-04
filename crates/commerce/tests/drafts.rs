@@ -12,8 +12,8 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
     ChannelIssue, ChannelListing, Check, ChecklistItem, Condition, DraftAttribute, DraftEdit,
-    DraftPicture, DraftStart, ListingDraft, ListingError, ListingStatus, Listings, Requirement,
-    is_blocked, is_picture,
+    DraftPicture, DraftStart, ListingDraft, ListingError, ListingStatus, Listings,
+    MAX_PICTURE_BYTES, Requirement, is_blocked, is_picture,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, ListingType, PlatformError};
@@ -52,6 +52,20 @@ impl Fixture {
         }
     }
 
+    /// The files `names` in the Product's folder, each holding its name.
+    fn files(&self, names: &[&str]) -> Vec<PathBuf> {
+        let folder = self._dir.path().join("produtos").join("FON-TWS-001");
+        std::fs::create_dir_all(&folder).unwrap();
+        names
+            .iter()
+            .map(|name| {
+                let path = folder.join(name);
+                std::fs::write(&path, name.as_bytes()).unwrap();
+                path
+            })
+            .collect()
+    }
+
     /// A draft of the earphones, with four files in their folder.
     async fn draft(&self) -> ListingDraft {
         self.listings
@@ -59,7 +73,7 @@ impl Fixture {
                 &product(7, "FON-TWS-001", "Fone Bluetooth TWS Lenovo"),
                 DraftStart {
                     available_quantity: 4,
-                    pictures: files(&["frente.jpg", "nota.pdf", "lado.PNG", "caixa.jpeg"]),
+                    pictures: self.files(&["frente.jpg", "nota.pdf", "lado.PNG", "caixa.jpeg"]),
                 },
                 &self.publisher,
             )
@@ -84,13 +98,6 @@ impl Fixture {
         self.clock.advance(TimeDelta::minutes(1));
         self.listings.publish(draft.id, &self.publisher).await
     }
-}
-
-fn files(names: &[&str]) -> Vec<PathBuf> {
-    names
-        .iter()
-        .map(|name| PathBuf::from(format!("/produtos/FON-TWS-001/{name}")))
-        .collect()
 }
 
 fn edit(draft: &ListingDraft) -> DraftEdit {
@@ -172,7 +179,10 @@ fn a_draft_starts_from_the_product_in_the_predicted_category_with_its_attributes
             ]
         );
         let pictures: Vec<_> = draft.pictures.iter().map(|p| p.path.clone()).collect();
-        assert_eq!(pictures, files(&["frente.jpg", "lado.PNG", "caixa.jpeg"]));
+        assert_eq!(
+            pictures,
+            fx.files(&["frente.jpg", "lado.PNG", "caixa.jpeg"])
+        );
         assert_eq!(fx.listings.drafts().await.unwrap(), [draft]);
     });
 }
@@ -239,7 +249,7 @@ fn the_checklist_blocks_on_what_is_missing_and_only_warns_on_the_rest() {
                 DraftEdit {
                     title: "  ".into(),
                     available_quantity: 0,
-                    pictures: files(&["frente.jpg", "lado.PNG"]),
+                    pictures: fx.files(&["frente.jpg", "lado.PNG"]),
                     ..edit(&draft)
                 },
             )
@@ -316,7 +326,7 @@ fn saving_keeps_the_edits_and_the_ids_of_pictures_already_uploaded() {
                     available_quantity: 2,
                     warranty: "3 meses".into(),
                     attributes: vec![value("MODEL", " LP40 "), value("UNKNOWN", "x")],
-                    pictures: files(&["caixa.jpeg", "nova.png", "frente.jpg", "nota.pdf"]),
+                    pictures: fx.files(&["caixa.jpeg", "nova.png", "frente.jpg", "nota.pdf"]),
                     ..edit(&draft)
                 },
             )
@@ -335,15 +345,15 @@ fn saving_keeps_the_edits_and_the_ids_of_pictures_already_uploaded() {
             saved.pictures,
             [
                 DraftPicture {
-                    path: files(&["caixa.jpeg"])[0].clone(),
+                    path: fx.files(&["caixa.jpeg"])[0].clone(),
                     uploaded: Some("PIC-3".into())
                 },
                 DraftPicture {
-                    path: files(&["nova.png"])[0].clone(),
+                    path: fx.files(&["nova.png"])[0].clone(),
                     uploaded: None
                 },
                 DraftPicture {
-                    path: files(&["frente.jpg"])[0].clone(),
+                    path: fx.files(&["frente.jpg"])[0].clone(),
                     uploaded: Some("PIC-1".into())
                 },
             ]
@@ -448,7 +458,14 @@ fn validating_uploads_the_pictures_once_and_adds_what_the_channel_says() {
                 (Check::Channel("Add more pictures".into()), false),
             ]
         );
-        assert_eq!(fx.publisher.uploaded.lock().unwrap().len(), 3);
+        assert_eq!(
+            *fx.publisher.uploaded.lock().unwrap(),
+            [
+                ("frente.jpg".to_owned(), b"frente.jpg".to_vec()),
+                ("lado.PNG".to_owned(), b"lado.PNG".to_vec()),
+                ("caixa.jpeg".to_owned(), b"caixa.jpeg".to_vec()),
+            ]
+        );
         assert_eq!(fx.publisher.publish_calls(), 0);
         let sent = fx.publisher.validated.lock().unwrap()[0].clone();
         assert_eq!(sent.pictures, ["PIC-1", "PIC-2", "PIC-3"]);
@@ -767,5 +784,35 @@ fn without_the_channel_no_draft_is_made() {
             Err(ListingError::Platform(PlatformError::NotConnected))
         ));
         assert!(fx.listings.drafts().await.unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_picture_gone_from_the_folder_or_too_big_stops_before_the_channel() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let draft = fx.ready().await;
+        let missing = draft.pictures[1].path.clone();
+        std::fs::remove_file(&missing).unwrap();
+
+        let refused = fx.listings.validate_draft(draft.id, &fx.publisher).await;
+
+        assert!(matches!(refused, Err(ListingError::Picture { path, .. }) if path == missing));
+        // The one before it went up and keeps its id.
+        assert_eq!(fx.publisher.uploaded.lock().unwrap().len(), 1);
+        assert_eq!(
+            fx.listings.draft(draft.id).await.unwrap().pictures[0].uploaded,
+            Some("PIC-1".into())
+        );
+
+        std::fs::File::create(&missing)
+            .unwrap()
+            .set_len(MAX_PICTURE_BYTES + 1)
+            .unwrap();
+        let too_big = fx.publish(&draft).await;
+
+        assert!(matches!(too_big, Err(ListingError::Picture { path, .. }) if path == missing));
+        assert_eq!(fx.publisher.uploaded.lock().unwrap().len(), 1);
+        assert_eq!(fx.publisher.publish_calls(), 0);
     });
 }
