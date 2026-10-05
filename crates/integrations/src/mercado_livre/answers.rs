@@ -408,10 +408,32 @@ pub(super) struct OrderItem {
 
 #[derive(Deserialize)]
 pub(super) struct PaymentAnswer {
+    /// The Mercado Pago's id of the payment.
+    pub id: Option<Number>,
     pub status: Option<String>,
     pub shipping_cost: Option<Number>,
     /// What went back to the buyer of the payment, shipping aside.
     pub transaction_amount_refunded: Option<Number>,
+}
+
+/// The Mercado Pago's `/v1/payments/{id}`: the payment with when its money
+/// is released.
+#[derive(Deserialize)]
+pub(super) struct WalletPaymentAnswer {
+    pub id: Number,
+    pub status: Option<String>,
+    pub currency_id: Option<String>,
+    pub transaction_amount: Option<Number>,
+    pub money_release_date: Option<String>,
+    /// `released` or `pending`.
+    pub money_release_status: Option<String>,
+    pub transaction_details: Option<TransactionDetails>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct TransactionDetails {
+    /// What the seller receives after the wallet's own fees.
+    pub net_received_amount: Option<Number>,
 }
 
 /// `/shipments/{id}/costs`: what the buyer and each seller pay.

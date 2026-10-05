@@ -4,8 +4,8 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_platform::{
-    Database, DuplicateKey, MIGRATIONS, Registry, Reminder, ReminderError, ReminderTopic,
-    Reminders, migrate,
+    Database, DuplicateKey, MIGRATIONS, Registry, Reminder, ReminderError, ReminderShows,
+    ReminderTopic, Reminders, migrate,
 };
 
 const CNPJ: Reminder = Reminder {
@@ -14,6 +14,7 @@ const CNPJ: Reminder = Reminder {
     title: "Vendas sem CNPJ",
     text: "Lembrete fiscal.",
     reappears_after_days: 30,
+    shows: ReminderShows::Always,
 };
 
 const LGPD: Reminder = Reminder {
@@ -22,6 +23,16 @@ const LGPD: Reminder = Reminder {
     title: "Dados de compradores",
     text: "Lembrete de LGPD.",
     reappears_after_days: 90,
+    shows: ReminderShows::Always,
+};
+
+const VOLUME: Reminder = Reminder {
+    key: "finance.sales_volume",
+    topic: ReminderTopic::Fiscal,
+    title: "Volume de vendas",
+    text: "Lembrete de volume.",
+    reappears_after_days: 30,
+    shows: ReminderShows::WhenRaised,
 };
 
 struct Fixture {
@@ -43,7 +54,7 @@ async fn fixture() -> Fixture {
         .unwrap();
     let reminders = Reminders::new(
         Arc::new(database),
-        Registry::new(&[&[CNPJ], &[LGPD]]).unwrap(),
+        Registry::new(&[&[CNPJ, VOLUME], &[LGPD]]).unwrap(),
         clock.clone(),
         Arc::new(SequentialIds::default()),
     );
@@ -64,7 +75,7 @@ fn every_reminder_shows_until_dismissed() {
         let Fixture { reminders, .. } = fixture().await;
 
         assert_eq!(
-            keys(&reminders.showing().await.unwrap()),
+            keys(&reminders.showing(&[]).await.unwrap()),
             [CNPJ.key, LGPD.key]
         );
     });
@@ -77,7 +88,7 @@ fn a_dismissed_reminder_hides_only_itself() {
 
         reminders.dismiss(CNPJ.key).await.unwrap();
 
-        assert_eq!(keys(&reminders.showing().await.unwrap()), [LGPD.key]);
+        assert_eq!(keys(&reminders.showing(&[]).await.unwrap()), [LGPD.key]);
     });
 }
 
@@ -91,14 +102,14 @@ fn a_dismissed_reminder_comes_back_when_its_interval_runs_out() {
         reminders.dismiss(LGPD.key).await.unwrap();
 
         clock.advance(TimeDelta::days(30) - TimeDelta::seconds(1));
-        assert!(reminders.showing().await.unwrap().is_empty());
+        assert!(reminders.showing(&[]).await.unwrap().is_empty());
 
         clock.advance(TimeDelta::seconds(1));
-        assert_eq!(keys(&reminders.showing().await.unwrap()), [CNPJ.key]);
+        assert_eq!(keys(&reminders.showing(&[]).await.unwrap()), [CNPJ.key]);
 
         clock.advance(TimeDelta::days(60));
         assert_eq!(
-            keys(&reminders.showing().await.unwrap()),
+            keys(&reminders.showing(&[]).await.unwrap()),
             [CNPJ.key, LGPD.key]
         );
     });
@@ -115,10 +126,10 @@ fn dismissing_again_counts_the_interval_from_the_last_dismissal() {
         reminders.dismiss(CNPJ.key).await.unwrap();
 
         clock.advance(TimeDelta::days(29));
-        assert!(!keys(&reminders.showing().await.unwrap()).contains(&CNPJ.key));
+        assert!(!keys(&reminders.showing(&[]).await.unwrap()).contains(&CNPJ.key));
 
         clock.advance(TimeDelta::days(1));
-        assert!(keys(&reminders.showing().await.unwrap()).contains(&CNPJ.key));
+        assert!(keys(&reminders.showing(&[]).await.unwrap()).contains(&CNPJ.key));
     });
 }
 
@@ -145,7 +156,7 @@ fn dismissals_survive_reopening_the_database() {
         open().await.dismiss(LGPD.key).await.unwrap();
 
         let reopened = open().await;
-        assert_eq!(keys(&reopened.showing().await.unwrap()), [CNPJ.key]);
+        assert_eq!(keys(&reopened.showing(&[]).await.unwrap()), [CNPJ.key]);
     });
 }
 
@@ -158,7 +169,7 @@ fn dismissing_an_unregistered_reminder_is_refused() {
             reminders.dismiss("finance.nowhere").await,
             Err(ReminderError::Unknown(key)) if key == "finance.nowhere"
         ));
-        assert_eq!(reminders.showing().await.unwrap().len(), 2);
+        assert_eq!(reminders.showing(&[]).await.unwrap().len(), 2);
     });
 }
 
@@ -173,4 +184,29 @@ fn two_modules_declaring_the_same_key_is_an_error() {
         Registry::new(&[&[CNPJ, LGPD], &[same_key]]).err(),
         Some(DuplicateKey(LGPD.key))
     );
+}
+
+#[test]
+fn a_reminder_that_shows_when_raised_shows_only_while_raised() {
+    block_on(async {
+        let Fixture {
+            reminders, clock, ..
+        } = fixture().await;
+
+        assert_eq!(
+            keys(&reminders.showing(&[]).await.unwrap()),
+            [CNPJ.key, LGPD.key]
+        );
+        assert_eq!(
+            keys(&reminders.showing(&[VOLUME.key]).await.unwrap()),
+            [CNPJ.key, VOLUME.key, LGPD.key]
+        );
+
+        reminders.dismiss(VOLUME.key).await.unwrap();
+        assert!(!keys(&reminders.showing(&[VOLUME.key]).await.unwrap()).contains(&VOLUME.key));
+
+        clock.advance(TimeDelta::days(30));
+        assert!(keys(&reminders.showing(&[VOLUME.key]).await.unwrap()).contains(&VOLUME.key));
+        assert!(!keys(&reminders.showing(&[]).await.unwrap()).contains(&VOLUME.key));
+    });
 }

@@ -767,3 +767,18 @@ fn a_listing_paused_from_the_app_is_paused_in_mercado_livre_and_on_screen() {
         );
     });
 }
+
+#[test]
+fn a_category_comes_with_its_own_name() {
+    let fake = Fake::connected();
+    fake.serve("/categories/MLB3697", "category-MLB3697.json");
+
+    let found = fake.adapter.category("MLB3697").unwrap();
+
+    assert_eq!(found.id, "MLB3697");
+    assert_eq!(found.name, "Fones de Ouvido");
+    assert_eq!(
+        fake.adapter.category("MLB1/../x"),
+        Err(PlatformError::NotFound)
+    );
+}

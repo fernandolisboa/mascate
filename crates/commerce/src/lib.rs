@@ -1,5 +1,5 @@
-//! Commerce: Listings and their drafts, prices and Promotions, Orders, Purchase Orders and
-//! shipping on each Sales Channel.
+//! Commerce: Listings and their drafts, prices and Promotions, Orders with their Fees and
+//! Money Releases, Purchase Orders and shipping on each Sales Channel.
 
 mod drafts;
 mod fees;
@@ -9,6 +9,7 @@ mod orders;
 mod pricing;
 mod promotions;
 mod purchase_orders;
+mod releases;
 mod stock_mirror;
 
 pub use drafts::{
@@ -18,8 +19,8 @@ pub use drafts::{
     Requirement, is_blocked, is_picture,
 };
 pub use fees::{
-    AdCost, BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, RealizedMargin, Sale,
-    SalesPeriod, SalesSummary,
+    AdCost, BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, LineMargin,
+    RealizedMargin, Sale, SalesPeriod, SalesSummary,
 };
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
@@ -46,9 +47,10 @@ pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
     PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
 };
+pub use releases::{ChannelPayments, PaymentRelease, ReleaseImport};
 pub use stock_mirror::{MirroredStock, StockMirror, StockNotSent, StockSend, StockSent};
 
-use mascate_platform::{ModuleMigrations, Reminder, ReminderTopic};
+use mascate_platform::{ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
 
 pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     key: "commerce.buyer_personal_data",
@@ -58,6 +60,7 @@ pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
            e suporte; o app guarda apenas o necessário para isso e apaga depois do prazo \
            escolhido em Configurações › Pedidos.",
     reappears_after_days: 90,
+    shows: ReminderShows::Always,
 };
 
 /// This module's Reminders.
@@ -76,5 +79,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         orders::ADD_RETURNS,
         fees::ADD_FEES,
         promotions::CREATE_PROMOTIONS,
+        listings::ADD_CATEGORY_NAMES,
+        releases::CREATE_MONEY_RELEASES,
     ],
 };

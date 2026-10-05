@@ -16,6 +16,7 @@ use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, Ui
 use crate::appearance::{self, color, look};
 use crate::backups::BackupSection;
 use crate::connections::ConnectionsSection;
+use crate::finance::FinanceSection;
 use crate::kit;
 use crate::layout;
 use crate::orders::OrderSettingsSection;
@@ -100,6 +101,7 @@ pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
     orders: Entity<OrderSettingsSection>,
+    finance: Entity<FinanceSection>,
     restricted: Entity<RestrictedFeaturesSection>,
     backup: Entity<BackupSection>,
     updates: Entity<UpdatesSection>,
@@ -144,6 +146,7 @@ impl SettingsScreen {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
+            finance: cx.new(|cx| FinanceSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
             backup: cx.new(|cx| BackupSection::new(window, cx)),
             updates: cx.new(UpdatesSection::new),
@@ -553,6 +556,13 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Pedidos"))
                 .child(self.orders.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Finanças"))
+                .child(self.finance.clone())
                 .into_any_element(),
         );
         parts.content.push(

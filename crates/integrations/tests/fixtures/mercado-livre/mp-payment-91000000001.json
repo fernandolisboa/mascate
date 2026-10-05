@@ -1,0 +1,29 @@
+{
+  "id": 91000000001,
+  "date_created": "2026-10-04T09:15:02.000-04:00",
+  "date_approved": "2026-10-04T09:15:04.000-04:00",
+  "operation_type": "regular_payment",
+  "payment_method_id": "account_money",
+  "payment_type_id": "account_money",
+  "status": "approved",
+  "status_detail": "accredited",
+  "currency_id": "BRL",
+  "transaction_amount": 179.8,
+  "transaction_amount_refunded": 0,
+  "money_release_date": "2026-10-18T09:15:04.000-04:00",
+  "money_release_status": "pending",
+  "money_release_schema": null,
+  "transaction_details": {
+    "net_received_amount": 171.17,
+    "total_paid_amount": 179.8,
+    "overpaid_amount": 0,
+    "installment_amount": 0
+  },
+  "fee_details": [
+    {
+      "type": "mercadopago_fee",
+      "fee_payer": "collector",
+      "amount": 8.63
+    }
+  ]
+}

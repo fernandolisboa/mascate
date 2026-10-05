@@ -4290,6 +4290,7 @@ dependencies = [
  "libsql",
  "mascate-kernel",
  "mascate-platform",
+ "proptest",
  "rust_decimal",
  "tempfile",
  "thiserror 2.0.21",

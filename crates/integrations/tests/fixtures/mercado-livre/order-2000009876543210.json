@@ -1,0 +1,33 @@
+{
+  "id": 2000009876543210,
+  "status": "paid",
+  "date_created": "2026-10-04T09:15:00.000-03:00",
+  "last_updated": "2026-10-04T09:20:00.000-03:00",
+  "currency_id": "BRL",
+  "total_amount": 179.8,
+  "paid_amount": 199.7,
+  "order_items": [],
+  "payments": [
+    {
+      "id": 91000000001,
+      "order_id": 2000009876543210,
+      "status": "approved",
+      "status_detail": "accredited",
+      "transaction_amount": 179.8,
+      "shipping_cost": 19.9,
+      "transaction_amount_refunded": 0,
+      "currency_id": "BRL",
+      "date_approved": "2026-10-04T09:15:04.000-03:00"
+    },
+    {
+      "id": 91000000009,
+      "order_id": 2000009876543210,
+      "status": "refunded",
+      "status_detail": "refunded",
+      "transaction_amount": 20.0,
+      "shipping_cost": 0,
+      "transaction_amount_refunded": 20.0,
+      "currency_id": "BRL"
+    }
+  ]
+}

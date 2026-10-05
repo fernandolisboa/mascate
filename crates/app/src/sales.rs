@@ -36,6 +36,14 @@ pub fn ever() -> Range<Timestamp> {
     Timestamp::MIN_UTC..Timestamp::MAX_UTC
 }
 
+/// When `day` starts by the computer's calendar.
+pub(crate) fn day_start(day: NaiveDate) -> Timestamp {
+    Local
+        .from_local_datetime(&day.and_time(chrono::NaiveTime::MIN))
+        .earliest()
+        .map_or(Timestamp::MIN_UTC, |at| at.with_timezone(&Utc))
+}
+
 /// The sales listed: one calendar month or all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Period {
@@ -58,17 +66,11 @@ impl Period {
     /// The period's time, by the computer's calendar.
     fn range(self, today: NaiveDate) -> Range<Timestamp> {
         let this_month = today.with_day(1).unwrap_or(today);
-        let start = |day: NaiveDate| {
-            Local
-                .from_local_datetime(&day.and_time(chrono::NaiveTime::MIN))
-                .earliest()
-                .map_or(Timestamp::MIN_UTC, |at| at.with_timezone(&Utc))
-        };
         let month_after = |day: NaiveDate| day.checked_add_months(Months::new(1)).unwrap_or(day);
         let month_before = |day: NaiveDate| day.checked_sub_months(Months::new(1)).unwrap_or(day);
         match self {
-            Period::ThisMonth => start(this_month)..start(month_after(this_month)),
-            Period::LastMonth => start(month_before(this_month))..start(this_month),
+            Period::ThisMonth => day_start(this_month)..day_start(month_after(this_month)),
+            Period::LastMonth => day_start(month_before(this_month))..day_start(this_month),
             Period::All => ever(),
         }
     }
@@ -576,7 +578,7 @@ fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn table_row(t: &Tokens) -> Div {
+pub(crate) fn table_row(t: &Tokens) -> Div {
     h_flex()
         .gap_3()
         .p_3()
@@ -723,7 +725,7 @@ fn margin_text(margin: &RealizedMargin) -> String {
 
 /// "R$ 32,10 (17,9%)", or the value alone when nothing was received to
 /// take a percent of.
-fn amount_text(margin: &Margin) -> String {
+pub(crate) fn amount_text(margin: &Margin) -> String {
     match margin.percent {
         Some(_) => format!(
             "{} ({})",
@@ -762,14 +764,14 @@ fn margin_tag(sale: &Sale, t: &Tokens) -> (Option<SharedString>, Hsla) {
     }
 }
 
-fn orders_text(count: usize) -> String {
+pub(crate) fn orders_text(count: usize) -> String {
     match count {
         1 => "1 pedido".into(),
         count => format!("{count} pedidos"),
     }
 }
 
-fn money_cell(text: impl Into<SharedString>) -> Div {
+pub(crate) fn money_cell(text: impl Into<SharedString>) -> Div {
     div()
         .w(px(100.))
         .flex_none()
@@ -777,7 +779,7 @@ fn money_cell(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-fn margin_cell() -> Div {
+pub(crate) fn margin_cell() -> Div {
     div().w(px(150.)).flex_none().text_right()
 }
 
