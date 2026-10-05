@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use chrono::{Datelike as _, Local, NaiveDate};
+use chrono::Local;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::select::Select;
@@ -21,7 +21,7 @@ use rust_decimal::Decimal;
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE, day, product_choice};
-use crate::forms::{Choice, Outcome, Picker, input, notice, picker, refill};
+use crate::forms::{Choice, Outcome, Picker, input, notice, parse_day, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
@@ -986,16 +986,6 @@ fn today() -> String {
     Local::now().format("%d/%m/%Y").to_string()
 }
 
-/// A day as the owner types it: `01/10/2026`, `1/10/26` or `2026-10-01`.
-fn parse_day(text: &str) -> Option<NaiveDate> {
-    let text = text.trim();
-    ["%d/%m/%Y", "%Y-%m-%d"]
-        .iter()
-        .find_map(|format| NaiveDate::parse_from_str(text, format).ok())
-        .filter(|date| date.year() >= 2000)
-        .or_else(|| NaiveDate::parse_from_str(text, "%d/%m/%y").ok())
-}
-
 /// Why a Purchase Order action failed, as the owner reads it.
 pub fn failure(error: &PurchaseOrderError) -> String {
     match error {
@@ -1064,17 +1054,6 @@ impl Render for PurchasesScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_days_as_brazilians_type_them() {
-        let first_of_october = NaiveDate::from_ymd_opt(2026, 10, 1);
-        assert_eq!(parse_day("01/10/2026"), first_of_october);
-        assert_eq!(parse_day(" 1/10/2026 "), first_of_october);
-        assert_eq!(parse_day("1/10/26"), first_of_october);
-        assert_eq!(parse_day("2026-10-01"), first_of_october);
-        assert_eq!(parse_day("31/02/2026"), None);
-        assert_eq!(parse_day("10/2026"), None);
-    }
 
     #[test]
     fn an_amount_reads_back_as_typed() {

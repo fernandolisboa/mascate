@@ -1,6 +1,7 @@
 //! Settings › Preços e margens (#19): the tax rate every margin uses (story
-//! 73) and the target margin of every Product without one of its own, which
-//! Price Suggestions start from. The rules live in Finance and Commerce.
+//! 73), the target margin of every Product without one of its own, which
+//! Price Suggestions start from, and the minimum margin no Promotion may go
+//! below (#26). The rules live in Finance and Commerce.
 
 use std::sync::Arc;
 
@@ -9,13 +10,16 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, Global, Window, div, px};
-use mascate_commerce::{Pricing, PricingError};
+use mascate_catalog::Catalog;
+use mascate_commerce::{PriceAssumptions, Pricing, PricingError};
 use mascate_finance::Taxes;
 use mascate_kernel::Percentage;
 use rust_decimal::Decimal;
 
 use crate::appearance::look;
+use crate::catalog;
 use crate::forms::{Outcome, input, notice, percent_text};
+use crate::promotions::{self, promotions};
 
 /// The tax rate setting, shared by every screen that works out a margin.
 pub struct AppTaxes(pub Arc<Taxes>);
@@ -35,6 +39,21 @@ pub fn pricing(cx: &App) -> Option<Arc<Pricing>> {
     cx.try_global::<AppPricing>().map(|app| app.0.clone())
 }
 
+/// The tax from Finanças and the shipping estimate from Oportunidades.
+pub async fn assumptions(catalog: &Catalog, taxes: &Taxes) -> Result<PriceAssumptions, String> {
+    Ok(PriceAssumptions {
+        tax: taxes
+            .rate()
+            .await
+            .map_err(|error| format!("Não consegui ler o imposto nas configurações: {error}"))?,
+        estimated_shipping: catalog
+            .discovery_settings()
+            .await
+            .map_err(|error| catalog::failure(&error))?
+            .estimated_shipping,
+    })
+}
+
 /// A target margin as the owner typed it: from 0 up to, not including, 100%.
 pub fn parse_target(text: &str) -> Option<Percentage> {
     Percentage::parse(text).filter(|margin| margin.percent() < Decimal::ONE_HUNDRED)
@@ -51,6 +70,7 @@ pub fn target_failure(error: &PricingError) -> String {
 pub struct PricingSection {
     tax: Entity<InputState>,
     target: Entity<InputState>,
+    minimum: Entity<InputState>,
     busy: bool,
     outcome: Option<Outcome>,
 }
@@ -60,6 +80,7 @@ impl PricingSection {
         let section = Self {
             tax: input("0", window, cx),
             target: input("20", window, cx),
+            minimum: input("10", window, cx),
             busy: false,
             outcome: None,
         };
@@ -68,7 +89,9 @@ impl PricingSection {
     }
 
     fn load(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(taxes), Some(pricing)) = (taxes(cx), pricing(cx)) else {
+        let (Some(taxes), Some(pricing), Some(promotions)) =
+            (taxes(cx), pricing(cx), promotions(cx))
+        else {
             return;
         };
         let reading = cx.background_executor().spawn(async move {
@@ -77,18 +100,25 @@ impl PricingSection {
                 .default_target_margin()
                 .await
                 .map_err(|error| error.to_string())?;
-            Ok::<_, String>((tax, target))
+            let minimum = promotions
+                .minimum_margin()
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((tax, target, minimum))
         });
         cx.spawn_in(window, async move |this, cx| {
             let read = reading.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 match read {
-                    Ok((tax, target)) => {
+                    Ok((tax, target, minimum)) => {
                         this.tax.update(cx, |input, cx| {
                             input.set_value(percent_text(tax), window, cx)
                         });
                         this.target.update(cx, |input, cx| {
                             input.set_value(percent_text(target), window, cx)
+                        });
+                        this.minimum.update(cx, |input, cx| {
+                            input.set_value(percent_text(minimum), window, cx)
                         });
                     }
                     Err(error) => {
@@ -104,15 +134,18 @@ impl PricingSection {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
-        let (Some(taxes), Some(pricing)) = (taxes(cx), pricing(cx)) else {
+        let (Some(taxes), Some(pricing), Some(promotions)) =
+            (taxes(cx), pricing(cx), promotions(cx))
+        else {
             return;
         };
         let tax = Percentage::parse(&self.tax.read(cx).value());
         let target = parse_target(&self.target.read(cx).value());
-        let (Some(tax), Some(target)) = (tax, target) else {
+        let minimum = parse_target(&self.minimum.read(cx).value());
+        let (Some(tax), Some(target), Some(minimum)) = (tax, target, minimum) else {
             self.outcome = Some(Outcome::Failed(
-                "Digite o imposto de 0 a 100% e a margem alvo de 0 até menos de 100% (ex.: 6 \
-                 ou 12,5)."
+                "Digite o imposto de 0 a 100% e as margens de 0 até menos de 100% (ex.: 6 ou \
+                 12,5)."
                     .into(),
             ));
             cx.notify();
@@ -128,7 +161,11 @@ impl PricingSection {
             pricing
                 .save_default_target_margin(target)
                 .await
-                .map_err(|error| target_failure(&error))
+                .map_err(|error| target_failure(&error))?;
+            promotions
+                .save_minimum_margin(minimum)
+                .await
+                .map_err(|error| promotions::failure(&error, None, &[]))
         });
         cx.spawn(async move |this, cx| {
             let saved = saving.await;
@@ -137,9 +174,11 @@ impl PricingSection {
                 this.outcome = Some(match saved {
                     Ok(()) => Outcome::Done(
                         format!(
-                            "Salvo: imposto de {} em todas as margens e margem alvo padrão de {}.",
+                            "Salvo: imposto de {} em todas as margens, margem alvo padrão de {} e \
+                             margem mínima de {} em promoções.",
                             tax.to_pt_br(),
-                            target.to_pt_br()
+                            target.to_pt_br(),
+                            minimum.to_pt_br()
                         )
                         .into(),
                     ),
@@ -159,7 +198,7 @@ impl Render for PricingSection {
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .w(px(180.))
+                .w(px(220.))
                 .child(div().text_sm().font_medium().child(label))
                 .child(Input::new(input).small())
         };
@@ -174,7 +213,8 @@ impl Render for PricingSection {
                 "O imposto sai de cada venda em todos os cálculos de margem: Oportunidades, \
                  sugestão de preço e simulador. Fica em 0% enquanto não houver CNPJ. A margem \
                  alvo padrão vale para todo produto sem margem alvo própria (na ficha do \
-                 produto); a sugestão de preço parte dela.",
+                 produto); a sugestão de preço parte dela. A margem mínima em promoções \
+                 bloqueia qualquer desconto, campanha ou cupom que deixe a venda abaixo dela.",
             ))
             .child(
                 h_flex()
@@ -183,6 +223,7 @@ impl Render for PricingSection {
                     .items_end()
                     .child(field("Imposto (%)", &self.tax))
                     .child(field("Margem alvo padrão (%)", &self.target))
+                    .child(field("Margem mínima em promoções (%)", &self.minimum))
                     .child(
                         Button::new("save-pricing")
                             .label("Salvar")

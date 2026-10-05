@@ -1,6 +1,7 @@
 //! Form pieces the screens share: text fields, pickers of records and the
 //! outcome of the last action.
 
+use chrono::{Datelike as _, NaiveDate};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::SelectState;
@@ -76,7 +77,39 @@ pub fn percent_text(rate: Percentage) -> String {
     rate.percent().normalize().to_string().replace('.', ",")
 }
 
+/// A day as the owner types it: `01/10/2026`, `1/10/26` or `2026-10-01`.
+pub fn parse_day(text: &str) -> Option<NaiveDate> {
+    let text = text.trim();
+    ["%d/%m/%Y", "%Y-%m-%d"]
+        .iter()
+        .find_map(|format| NaiveDate::parse_from_str(text, format).ok())
+        .filter(|date| date.year() >= 2000)
+        .or_else(|| NaiveDate::parse_from_str(text, "%d/%m/%y").ok())
+}
+
+/// "05/10/2026": a day as the owner types it back.
+pub fn day_text(day: NaiveDate) -> String {
+    day.format("%d/%m/%Y").to_string()
+}
+
 /// "20,00": an amount as the owner types it.
 pub fn amount_text(amount: Money) -> String {
     format!("{:.2}", amount.rounded().amount()).replace('.', ",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_days_as_brazilians_type_them() {
+        let first_of_october = NaiveDate::from_ymd_opt(2026, 10, 1);
+        assert_eq!(parse_day("01/10/2026"), first_of_october);
+        assert_eq!(parse_day(" 1/10/2026 "), first_of_october);
+        assert_eq!(parse_day("1/10/26"), first_of_october);
+        assert_eq!(parse_day("2026-10-01"), first_of_october);
+        assert_eq!(parse_day("31/02/2026"), None);
+        assert_eq!(parse_day("10/2026"), None);
+        assert_eq!(day_text(first_of_october.unwrap()), "01/10/2026");
+    }
 }

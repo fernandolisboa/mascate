@@ -163,13 +163,16 @@ fn the_sellers_campaigns_and_coupons_come_from_every_page_with_each_coupons_term
 #[test]
 fn a_listings_promotions_are_the_ones_running_or_about_to_with_their_prices() {
     let fake = Fake::connected();
-    fake.server
-        .serve(ITEM, 200, fixture("seller-promotions-item-MLB4100000001.json"));
+    fake.server.serve(
+        ITEM,
+        200,
+        fixture("seller-promotions-item-MLB4100000001.json"),
+    );
 
     let offers = fake.adapter.offers("MLB4100000001").unwrap();
 
-    let offer = |kind, promotion: Option<&str>, name: &str, status, price: Option<&str>| {
-        ChannelOffer {
+    let offer =
+        |kind, promotion: Option<&str>, name: &str, status, price: Option<&str>| ChannelOffer {
             listing: "MLB4100000001".into(),
             kind,
             promotion: promotion.map(str::to_owned),
@@ -178,8 +181,7 @@ fn a_listings_promotions_are_the_ones_running_or_about_to_with_their_prices() {
             price: price.map(brl),
             starts: None,
             ends: None,
-        }
-    };
+        };
     let days = |offer: ChannelOffer, starts, ends| ChannelOffer {
         starts: Some(starts),
         ends: Some(ends),
@@ -251,10 +253,17 @@ fn a_listing_in_no_promotion_may_answer_not_found() {
 #[test]
 fn a_campaign_goes_with_its_days_from_midnight_and_comes_back_with_its_id() {
     let fake = Fake::connected();
-    fake.server
-        .serve_method("POST", CREATE, 200, fixture("seller-promotion-created.json"));
+    fake.server.serve_method(
+        "POST",
+        CREATE,
+        200,
+        fixture("seller-promotion-created.json"),
+    );
 
-    let created = fake.adapter.create(&campaign("Semana do \"fone\"")).unwrap();
+    let created = fake
+        .adapter
+        .create(&campaign("Semana do \"fone\""))
+        .unwrap();
 
     assert_eq!(
         fake.sent("POST", CREATE),
@@ -283,8 +292,12 @@ fn a_campaign_goes_with_its_days_from_midnight_and_comes_back_with_its_id() {
 #[test]
 fn a_coupon_goes_with_its_terms_in_reais() {
     let fake = Fake::connected();
-    fake.server
-        .serve_method("POST", CREATE, 200, fixture("seller-promotion-created.json"));
+    fake.server.serve_method(
+        "POST",
+        CREATE,
+        200,
+        fixture("seller-promotion-created.json"),
+    );
     let amount = CouponTerms {
         discount: CouponDiscount::Amount(brl("19.999")),
         minimum_purchase: brl("100"),
@@ -510,12 +523,16 @@ fn an_id_that_is_not_mercado_livres_never_reaches_a_path_or_a_body() {
         Err(PlatformError::NotFound)
     );
     assert_eq!(
-        fake.adapter.end("C-MLB1/../x", PromotionKind::SellerCampaign),
+        fake.adapter
+            .end("C-MLB1/../x", PromotionKind::SellerCampaign),
         Err(PlatformError::NotFound)
     );
     assert_eq!(
-        fake.adapter
-            .leave("MLB1", PromotionKind::Coupon, Some("C-MLB1&promotion_type=DEAL")),
+        fake.adapter.leave(
+            "MLB1",
+            PromotionKind::Coupon,
+            Some("C-MLB1&promotion_type=DEAL")
+        ),
         Err(PlatformError::NotFound)
     );
     assert_eq!(
