@@ -35,6 +35,18 @@
           "ratingStar": "0",
           "shopId": 770011223,
           "shopName": "Casa Clara"
+        },
+        {
+          "itemId": "55667788990",
+          "productName": "Suporte de Celular para Mesa",
+          "productLink": "https://shopee.com.br.example.net/product/770011223/55667788990",
+          "priceMin": "12.00",
+          "priceMax": "12.00",
+          "sales": 1,
+          "commissionRate": "0.08",
+          "ratingStar": "4.2",
+          "shopId": "770011223",
+          "shopName": "Casa Clara"
         }
       ],
       "pageInfo": {

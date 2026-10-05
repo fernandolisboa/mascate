@@ -9,9 +9,9 @@ consultados em 05/10/2026, além de `docs/platform-integrations.md`. O regressio
 
 | Arquivo | Recurso | Origem |
 |---|---|---|
-| `product-offers.json` | `POST /graphql` com `productOfferV2` (`nodes` e `pageInfo.hasNextPage`): item simples, item com faixa de preço (variações) e item sem `priceMin` | Get Product Offer List (v2) |
+| `product-offers.json` | `POST /graphql` com `productOfferV2` (`nodes` e `pageInfo.hasNextPage`): item simples, item com faixa de preço (variações), item sem `priceMin` e item com ids em texto e um link que só parece da Shopee | Get Product Offer List (v2) |
 | `product-offers-end.json` | a página seguinte, com o mesmo item de novo e `hasNextPage: false` | Get Product Offer List (v2) |
-| `shop-offers.json` | `POST /graphql` com `shopOfferV2`: loja com `originalLink` e nota, e loja sem os dois | Get Shop Offer List (v2) |
+| `shop-offers.json` | `POST /graphql` com `shopOfferV2`: loja com `originalLink` e nota, e loja sem nota com link em `http` (o app só abre `https` da Shopee e usa a página da loja) | Get Shop Offer List (v2) |
 | `error-10020.json` | erro de identidade (`Invalid Signature`) | Lista de códigos de erro |
 | `error-10030.json` | limite de requisições (`Rate limit exceeded`) | Lista de códigos de erro |
 | `error-10035.json` | conta sem acesso à Open API | Lista de códigos de erro |

@@ -173,7 +173,7 @@ impl OfferSource for ShopeeAffiliates {
         }
         if let Some(shop) = search.shop.as_deref() {
             let shop = shop.trim();
-            if shop.is_empty() || !shop.bytes().all(|b| b.is_ascii_digit()) {
+            if !number(shop) {
                 return Err(PlatformError::Refused(
                     "a loja precisa ser um número".into(),
                 ));
@@ -213,7 +213,7 @@ impl OfferSource for ShopeeAffiliates {
             ),
         )?;
         Ok(Found {
-            items: found.nodes.into_iter().map(ShopNode::shop).collect(),
+            items: found.nodes.into_iter().filter_map(ShopNode::shop).collect(),
             more: found.page_info.has_next_page,
         })
     }
@@ -257,7 +257,7 @@ fn category_id(text: &str) -> Option<u64> {
             .next()?,
         None => text,
     };
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+    if !number(id) {
         return None;
     }
     id.parse().ok()
@@ -336,8 +336,12 @@ struct ProductNode {
 }
 
 impl ProductNode {
-    /// The offer, unless its lowest price is missing or unreadable.
+    /// The offer, unless its ids are not numbers or its lowest price is
+    /// missing or unreadable.
     fn offer(self) -> Option<FoundOffer> {
+        if !number(&self.item_id) || !number(&self.shop_id) {
+            return None;
+        }
         let price = brl(self.price_min.as_deref()?)?;
         let highest_price = self
             .price_max
@@ -345,9 +349,15 @@ impl ProductNode {
             .and_then(brl)
             .filter(|highest| highest.amount() >= price.amount())
             .unwrap_or(price);
+        let link = shopee_page(&self.product_link).unwrap_or_else(|| {
+            format!(
+                "https://shopee.com.br/product/{}/{}",
+                self.shop_id, self.item_id
+            )
+        });
         Some(FoundOffer {
             shop: FoundShop {
-                link: format!("https://shopee.com.br/shop/{}", self.shop_id),
+                link: shop_page(&self.shop_id),
                 id: self.shop_id,
                 name: self.shop_name,
                 commission: None,
@@ -355,7 +365,7 @@ impl ProductNode {
             },
             id: self.item_id,
             title: self.product_name,
-            link: self.product_link,
+            link,
             price,
             highest_price,
             sales: self.sales,
@@ -377,17 +387,40 @@ struct ShopNode {
 }
 
 impl ShopNode {
-    fn shop(self) -> FoundShop {
-        FoundShop {
+    /// The shop, unless its id is not a number.
+    fn shop(self) -> Option<FoundShop> {
+        if !number(&self.shop_id) {
+            return None;
+        }
+        Some(FoundShop {
             link: self
                 .original_link
-                .unwrap_or_else(|| format!("https://shopee.com.br/shop/{}", self.shop_id)),
+                .as_deref()
+                .and_then(shopee_page)
+                .unwrap_or_else(|| shop_page(&self.shop_id)),
             id: self.shop_id,
             name: self.shop_name,
             commission: rate(self.commission_rate.as_deref()),
             rating: stars(self.rating_star.as_deref()),
-        }
+        })
     }
+}
+
+fn number(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `link`, when it opens a page of Shopee Brasil over HTTPS: the app opens
+/// these links, so one from an answer must never point anywhere else.
+fn shopee_page(link: &str) -> Option<String> {
+    let rest = link.trim().strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
+    (host == "shopee.com.br" || host.ends_with(".shopee.com.br")).then(|| link.trim().to_owned())
+}
+
+/// The page of the shop `id`; `productOfferV2` brings no link to it.
+fn shop_page(id: &str) -> String {
+    format!("https://shopee.com.br/shop/{id}")
 }
 
 /// Shopee's Int64 ids, which a client may also see as strings.

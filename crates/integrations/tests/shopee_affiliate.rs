@@ -142,7 +142,7 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
 
     assert!(found.more);
     // The third item has no price, so it is no offer.
-    assert_eq!(found.items.len(), 2);
+    assert_eq!(found.items.len(), 3);
     let fone = &found.items[0];
     assert_eq!(fone.id, "22334455667");
     assert_eq!(
@@ -165,6 +165,14 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
     assert_eq!(luminaria.price, brl("45.50"));
     assert_eq!(luminaria.highest_price, brl("59.90"));
     assert_eq!(luminaria.commission, Some(percent("6")));
+    // A link that only looks like Shopee's never reaches the screen; the
+    // item's own page takes its place. Ids may come as text.
+    let suporte = &found.items[2];
+    assert_eq!(suporte.id, "55667788990");
+    assert_eq!(
+        suporte.link,
+        "https://shopee.com.br/product/770011223/55667788990"
+    );
     assert_eq!(s.shopee.source(), ProductSource::ShopeeAffiliate);
 }
 
@@ -350,7 +358,7 @@ fn a_rate_limit_that_lifts_answers_after_the_pause_with_a_fresh_signature() {
 
     let found = shopee.search_offers(&fone_search()).unwrap();
 
-    assert_eq!(found.items.len(), 2);
+    assert_eq!(found.items.len(), 3);
     let timestamps: Vec<String> = s
         .server
         .received()
@@ -435,7 +443,7 @@ fn found_offers_kept_twice_are_supplier_offers_once() {
             .await
             .unwrap();
 
-        assert_eq!(kept.added, 2);
+        assert_eq!(kept.added, 3);
         assert_eq!(
             kept_again,
             KeptOffers {
@@ -445,7 +453,7 @@ fn found_offers_kept_twice_are_supplier_offers_once() {
             }
         );
         assert!(second.items[0].kept.is_some());
-        assert_eq!(catalog.offers().await.unwrap().len(), 2);
+        assert_eq!(catalog.offers().await.unwrap().len(), 3);
         let names: Vec<String> = catalog
             .suppliers()
             .await
