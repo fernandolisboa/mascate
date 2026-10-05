@@ -1,0 +1,25 @@
+{
+  "data": {
+    "shopOfferV2": {
+      "nodes": [
+        {
+          "shopId": 339216014,
+          "shopName": "Loja Fones Oficial",
+          "originalLink": "https://shopee.com.br/lojafonesoficial",
+          "commissionRate": "0.05",
+          "ratingStar": "4.8"
+        },
+        {
+          "shopId": 880044556,
+          "shopName": "Áudio Express",
+          "commissionRate": "0.03"
+        }
+      ],
+      "pageInfo": {
+        "page": 1,
+        "limit": 20,
+        "hasNextPage": false
+      }
+    }
+  }
+}

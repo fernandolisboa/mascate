@@ -38,6 +38,8 @@ mod restricted;
 mod sales;
 mod settings;
 mod shell;
+mod shopee;
+mod shopee_search;
 mod startup;
 mod stock;
 mod stock_mirror;
@@ -48,7 +50,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui_kit::*;
-use mascate_integrations::{Connections, MercadoLivre};
+use mascate_integrations::{Connections, MercadoLivre, ShopeeAffiliates};
 use mascate_kernel::SystemClock;
 use mascate_platform::{
     Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
@@ -73,6 +75,7 @@ use crate::reminders::AppReminders;
 use crate::reputation::AppReputation;
 use crate::restricted::AppFlags;
 use crate::shell::Shell;
+use crate::shopee::AppShopee;
 use crate::stock::AppInventory;
 use crate::stock_mirror::AppStockMirror;
 use crate::tray::TrayCommand;
@@ -101,10 +104,17 @@ fn main() {
         process_environment(),
     );
     let connections = Arc::new(Connections::new(secrets.clone()));
+    let user_agent = format!("Mascate/{}", env!("CARGO_PKG_VERSION"));
+    let shopee = Arc::new(ShopeeAffiliates::new(
+        &shopee::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let mercado_livre = Arc::new(
         MercadoLivre::new(
             &mercado_livre::api_url(Build::CURRENT, &process_environment()),
-            &format!("Mascate/{}", env!("CARGO_PKG_VERSION")),
+            &user_agent,
             secrets,
             Arc::new(SystemClock),
         )
@@ -141,6 +151,7 @@ fn main() {
             ));
             cx.set_global(AppConnections(connections));
             cx.set_global(AppMercadoLivre(mercado_livre));
+            cx.set_global(AppShopee(shopee));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),

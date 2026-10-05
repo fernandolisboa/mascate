@@ -21,19 +21,23 @@ pub fn adapter(cx: &App) -> Option<Arc<MercadoLivre>> {
 /// Where the app reaches Mercado Livre: its API or, in a development build
 /// only, the URL in `MASCATE_ML_API_URL`, for a local fake server.
 pub fn api_url(build: Build, environment: &Environment) -> String {
-    local_fake(build, environment)
+    local_fake(build, environment, FAKE_API_URL)
         .unwrap_or_else(|| mascate_integrations::MERCADO_LIVRE_API_URL.to_owned())
 }
 
 /// Where the app reads Mercado Pago's payments: its API or, in a
 /// development build, the same local fake server as Mercado Livre.
 pub fn payments_api_url(build: Build, environment: &Environment) -> String {
-    local_fake(build, environment)
+    local_fake(build, environment, FAKE_API_URL)
         .unwrap_or_else(|| mascate_integrations::MERCADO_PAGO_API_URL.to_owned())
 }
 
-fn local_fake(build: Build, environment: &Environment) -> Option<String> {
-    match (build, environment("MASCATE_ML_API_URL")) {
+const FAKE_API_URL: &str = "MASCATE_ML_API_URL";
+
+/// The URL in the environment variable `variable`, in a development build
+/// only: a local fake server standing in for a Platform.
+pub fn local_fake(build: Build, environment: &Environment, variable: &str) -> Option<String> {
+    match (build, environment(variable)) {
         (Build::Development, Some(url)) if !url.trim().is_empty() => Some(url.trim().to_owned()),
         _ => None,
     }

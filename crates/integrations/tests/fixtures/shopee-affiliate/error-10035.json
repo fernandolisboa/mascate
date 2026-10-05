@@ -1,0 +1,11 @@
+{
+  "errors": [
+    {
+      "message": "error [10035]: You currently do not have access to the Shopee Affiliate Open API Platform",
+      "extensions": {
+        "code": 10035,
+        "message": "You currently do not have access to the Shopee Affiliate Open API Platform. Please contact us to request access or learn more."
+      }
+    }
+  ]
+}

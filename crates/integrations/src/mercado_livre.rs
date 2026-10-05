@@ -43,9 +43,6 @@ pub const PAYMENTS_API_URL: &str = "https://api.mercadopago.com";
 /// Mercado Livre Brasil, the only site the app sells on.
 const SITE: &str = "MLB";
 
-/// Answers are small JSON documents; anything bigger is not one.
-const MAX_ANSWER_BYTES: u64 = 2 * 1024 * 1024;
-
 /// A shipping label is a page or two of PDF; anything bigger is not one.
 const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
 
@@ -463,17 +460,7 @@ impl DemandSource for MercadoLivre {
 fn read_json<T: DeserializeOwned>(
     response: ureq::http::Response<ureq::Body>,
 ) -> Result<T, PlatformError> {
-    let bytes = response
-        .into_body()
-        .into_with_config()
-        .limit(MAX_ANSWER_BYTES)
-        .read_to_vec()
-        .map_err(|error| PlatformError::Failed(error.to_string()))?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        PlatformError::Failed(format!(
-            "Mercado Livre answered something unexpected: {error}"
-        ))
-    })
+    crate::answers::read_json(response, "Mercado Livre")
 }
 
 /// What an unsuccessful answer to a request for `path` means.
