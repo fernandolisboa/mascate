@@ -14,11 +14,11 @@ use futures::executor::block_on;
 use mascate_commerce::{
     ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions, CouponDiscount, CouponTerms,
     DiscountPlan, Listing, ListingStatus, Listings, OfferToJoin, PriceAssumptions, PromotionError,
-    PromotionKind, PromotionPlan, PromotionStatus, Promotions, channel_day,
+    PromotionKind, PromotionPlan, PromotionStatus, Promotions,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, MovementReason, NewEntry};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, Percentage, PlatformError, RecordId};
+use mascate_kernel::{Currency, Money, Percentage, PlatformError, RecordId, channel_day};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;

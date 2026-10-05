@@ -130,7 +130,7 @@ impl Money {
         format!("{sign}{} {grouped},{fraction}", self.currency.symbol())
     }
 
-    fn same_currency(&self, other: Money) -> Result<(), CurrencyMismatch> {
+    pub(crate) fn same_currency(&self, other: Money) -> Result<(), CurrencyMismatch> {
         if self.currency == other.currency {
             Ok(())
         } else {

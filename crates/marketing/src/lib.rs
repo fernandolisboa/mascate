@@ -1,10 +1,16 @@
 //! Marketing: Listing quality, questions, reputation, Promotions and Ads cost.
 
+mod ads;
 mod quality;
 mod questions;
 mod replies;
 mod reputation;
 
+pub use ads::{
+    ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
+    AdsSync, AdsSyncState, AdvertisedListing, CampaignAds, CampaignStatus, ChannelAd, ChannelAds,
+    ChannelCampaign, ProductAds, ProductRoas,
+};
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
     QualityError, QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
@@ -50,5 +56,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         quality::CREATE_LISTING_QUALITY,
         questions::CREATE_QUESTIONS,
         reputation::CREATE_REPUTATION,
+        ads::CREATE_PRODUCT_ADS,
     ],
 };

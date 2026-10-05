@@ -8,8 +8,8 @@ use std::sync::Arc;
 use libsql::params;
 use mascate_inventory::{Inventory, InventoryError};
 use mascate_kernel::{
-    Clock, CurrencyMismatch, IdGenerator, ListingType, Margin, Money, Percentage, PlatformError,
-    Record, RecordId, shipping_paid_by_seller,
+    BreakEven, Clock, CurrencyMismatch, IdGenerator, ListingType, Margin, Money, Percentage,
+    PlatformError, Record, RecordId, shipping_paid_by_seller,
 };
 use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
@@ -538,21 +538,14 @@ impl Pricing {
             margin: minimum,
             own: false,
         };
-        let mut costs = Vec::new();
-        let mut worst: Option<(PriceScenario, PriceBreakdown, RecordId)> = None;
-        for sibling in self.open_variations(&asked).await? {
-            let product = sibling.product.ok_or(PricingError::NotLinked(sibling.id))?;
-            let cost = self.cost(product).await?;
-            let scenario = sale(price, fee, cost, assumptions);
-            let breakdown = scenario.breakdown()?;
-            if worst.is_none_or(|(_, least, _)| {
-                breakdown.margin.amount.amount() < least.margin.amount.amount()
-            }) {
-                worst = Some((scenario, breakdown, product));
-            }
-            costs.push((product, cost, target));
-        }
-        let (sale, breakdown, product) = worst.ok_or(PricingError::Closed)?;
+        let (worst, costs) = self
+            .worst_variation(&asked, price, fee, assumptions)
+            .await?;
+        let (sale, breakdown, product) = worst;
+        let costs: Vec<(RecordId, Money, TargetMargin)> = costs
+            .into_iter()
+            .map(|(product, cost)| (product, cost, target))
+            .collect();
         let lowest = match settle(
             channel,
             (&category, listing_type),
@@ -574,6 +567,54 @@ impl Pricing {
     }
 
     /// The Average Cost of a unit of `product`.
+    /// The least ROAS at which Product Ads pay for themselves on `listing`
+    /// at today's price: from the margin one unit keeps before Ads, after
+    /// the channel's sale fee, shipping, the tax and the Average Cost, in
+    /// the open variation that keeps the least. Nothing is sent to the
+    /// channel.
+    pub async fn break_even(
+        &self,
+        listing: RecordId,
+        channel: &dyn SalesChannel,
+        assumptions: PriceAssumptions,
+    ) -> Result<BreakEven, PricingError> {
+        let asked = self.listings.listing(listing).await?;
+        let (category, listing_type) = fee_basis(&asked)?;
+        let price = asked.listed.price;
+        let fee = channel.sale_fee(&category, price, listing_type)?;
+        let ((_, before_ads, _), _) = self
+            .worst_variation(&asked, price, fee, assumptions)
+            .await?;
+        Ok(BreakEven::of(before_ads.margin))
+    }
+
+    /// One unit sold at `price` in each open variation of `listing`, with
+    /// no Ads: the one that keeps the least margin, and each variation's
+    /// Product with its cost.
+    async fn worst_variation(
+        &self,
+        listing: &Listing,
+        price: Money,
+        fee: SaleFee,
+        assumptions: PriceAssumptions,
+    ) -> Result<WorstVariation, PricingError> {
+        let mut costs = Vec::new();
+        let mut worst: Option<(PriceScenario, PriceBreakdown, RecordId)> = None;
+        for sibling in self.open_variations(listing).await? {
+            let product = sibling.product.ok_or(PricingError::NotLinked(sibling.id))?;
+            let cost = self.cost(product).await?;
+            let scenario = sale(price, fee, cost, assumptions);
+            let breakdown = scenario.breakdown()?;
+            if worst.is_none_or(|(_, least, _)| {
+                breakdown.margin.amount.amount() < least.margin.amount.amount()
+            }) {
+                worst = Some((scenario, breakdown, product));
+            }
+            costs.push((product, cost));
+        }
+        Ok((worst.ok_or(PricingError::Closed)?, costs))
+    }
+
     async fn cost(&self, product: RecordId) -> Result<Money, PricingError> {
         self.inventory
             .average_cost(product)
@@ -595,6 +636,13 @@ impl Pricing {
             .collect())
     }
 }
+
+/// The sale of the variation that keeps the least margin, its breakdown
+/// and Product, and each variation's Product with its cost.
+type WorstVariation = (
+    (PriceScenario, PriceBreakdown, RecordId),
+    Vec<(RecordId, Money)>,
+);
 
 /// What the channel needs to tell its fee: the listing's category and type.
 /// A closed listing sells no more, so it has no price to work out.

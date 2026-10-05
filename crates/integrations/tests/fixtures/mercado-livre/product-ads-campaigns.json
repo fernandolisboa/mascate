@@ -1,0 +1,42 @@
+{
+  "paging": {
+    "offset": 0,
+    "limit": 50,
+    "total": 3
+  },
+  "results": [
+    {
+      "id": 351,
+      "name": "Fones",
+      "status": "active",
+      "budget": 30,
+      "currency_id": "BRL",
+      "strategy": "PROFITABILITY",
+      "acos_target": 20,
+      "channel": "marketplace",
+      "date_created": "2026-09-01T10:00:00.000-03:00",
+      "last_updated": "2026-10-01T08:15:00.000-03:00"
+    },
+    {
+      "id": 352,
+      "name": "Cabos",
+      "status": "paused",
+      "budget": 10,
+      "currency_id": "BRL",
+      "strategy": "VISIBILITY",
+      "acos_target": 35,
+      "channel": "marketplace",
+      "date_created": "2026-09-10T14:30:00.000-03:00",
+      "last_updated": "2026-09-28T19:00:00.000-03:00"
+    },
+    {
+      "id": 353,
+      "status": "draft",
+      "budget": 5,
+      "currency_id": "BRL",
+      "channel": "marketplace",
+      "date_created": "2026-10-04T09:00:00.000-03:00",
+      "last_updated": "2026-10-04T09:00:00.000-03:00"
+    }
+  ]
+}

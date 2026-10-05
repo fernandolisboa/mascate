@@ -18,8 +18,8 @@ pub use drafts::{
     Requirement, is_blocked, is_picture,
 };
 pub use fees::{
-    BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, RealizedMargin, Sale,
-    SalesSummary,
+    AdCost, BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, RealizedMargin, Sale,
+    SalesPeriod, SalesSummary,
 };
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
@@ -40,7 +40,7 @@ pub use promotions::{
     ChannelOffer, ChannelPromotion, ChannelPromotions, ConfirmedPromotion, CouponDiscount,
     CouponTerms, DiscountPlan, Offer, OfferToJoin, PROMOTIONS_REFRESH_MINUTES, Promotion,
     PromotionCheck, PromotionError, PromotionKind, PromotionPlan, PromotionRequest,
-    PromotionStatus, PromotionSync, Promotions, channel_day,
+    PromotionStatus, PromotionSync, Promotions,
 };
 pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,

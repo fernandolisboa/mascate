@@ -1,0 +1,16 @@
+{
+  "paging": {
+    "offset": 0,
+    "last_item_id": null,
+    "total": 0,
+    "limit": 50
+  },
+  "results": [],
+  "metrics_summary": {
+    "clicks": 0,
+    "prints": 0,
+    "cost": 0,
+    "total_amount": 0,
+    "units_quantity": 0
+  }
+}

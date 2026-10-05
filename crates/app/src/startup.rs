@@ -7,7 +7,7 @@ use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, St
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
-use mascate_marketing::{ListingQuality, Questions, ReplyTemplates, Reputation};
+use mascate_marketing::{ListingQuality, ProductAds, Questions, ReplyTemplates, Reputation};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
@@ -54,6 +54,7 @@ pub struct Started {
     pub quality: Arc<ListingQuality>,
     pub questions: Arc<Questions>,
     pub reputation: Arc<Reputation>,
+    pub product_ads: Arc<ProductAds>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
@@ -256,6 +257,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let product_ads = ProductAds::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let reply_templates = ReplyTemplates::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -285,6 +291,7 @@ pub fn prepare() -> Outcome {
                 quality: Arc::new(quality),
                 questions: Arc::new(questions),
                 reputation: Arc::new(reputation),
+                product_ads: Arc::new(product_ads),
                 reply_templates: Arc::new(reply_templates),
                 taxes: Arc::new(taxes),
                 backup_settings,
@@ -362,8 +369,9 @@ mod tests {
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
     use mascate_marketing::{
-        ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
-        ListedItem, ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
+        AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelQuality,
+        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, ListedItem,
+        ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
         QuestionStatus, Rating, ReputationColor, ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
@@ -517,6 +525,34 @@ mod tests {
                     at: sample_question().asked_at,
                 }],
             })
+        }
+    }
+
+    /// One campaign advertising the sample listing, R$ 2,50 a day.
+    struct SampleAds;
+
+    impl ChannelAds for SampleAds {
+        fn account(&self) -> Result<Option<String>, PlatformError> {
+            Ok(Some("1".into()))
+        }
+
+        fn campaigns(&self, _: &str) -> Result<Vec<ChannelCampaign>, PlatformError> {
+            Ok(vec![ChannelCampaign {
+                id: "1".into(),
+                name: "Campanha de exemplo".into(),
+                status: CampaignStatus::Active,
+            }])
+        }
+
+        fn ads_on(&self, _: &str, _: chrono::NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
+            Ok(vec![ChannelAd {
+                listing: sample_listing().id,
+                campaign: Some("1".into()),
+                metrics: AdMetrics {
+                    cost: Money::new(rust_decimal::Decimal::new(250, 2), Currency::Brl),
+                    ..AdMetrics::zero(Currency::Brl)
+                },
+            }])
         }
     }
 
@@ -728,6 +764,10 @@ mod tests {
             .sync(&SamplePromotions)
             .await
             .unwrap();
+            ProductAds::new(database.clone(), clock.clone(), ids.clone())
+                .sync(&SampleAds)
+                .await
+                .unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -1032,6 +1072,19 @@ mod tests {
                 let offers = promotions.offers().await.unwrap();
                 assert_eq!(offers.len(), 1, "{name}");
                 assert_eq!(offers[0].listed.listing, sample_listing().id, "{name}");
+                // Product Ads arrived after 0.2.0 too, read in the next Sync.
+                let ads = ProductAds::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                ads.sync(&SampleAds).await.unwrap();
+                let costs = ads.costs().await.unwrap();
+                assert!(!costs.is_empty(), "{name}");
+                assert!(
+                    costs.iter().all(|day| day.listing == sample_listing().id),
+                    "{name}"
+                );
             });
         }
     }

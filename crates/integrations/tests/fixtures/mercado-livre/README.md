@@ -55,6 +55,9 @@ conta de vendedor do Fernando.
 | `seller-promotions-item-MLB4100000001.json`, `error-404-seller-promotions.json` | `GET /seller-promotions/items/{id}?app_version=v2` com desconto individual, campanha, cupom, convite (`candidate`) e oferta relâmpago, e um anúncio sem promoções (404) | Gerenciar ofertas |
 | `seller-promotion-created.json` | `POST /seller-promotions/promotions?app_version=v2` (e a resposta do `PUT` da mesma campanha) | Campanhas do vendedor |
 | `seller-promotion-item-joined.json`, `error-400-promotion.json` | `POST /seller-promotions/items/{id}?app_version=v2` e o preço recusado (400, `ERROR_CREDIBILITY_DISCOUNTED_PRICE`) | Desconto individual; Campanhas tradicionais |
+| `advertisers-pads.json`, `advertisers-empty.json` | `GET /advertising/advertisers?product_id=PADS` com `Api-Version: 1`: o anunciante do vendedor, e um vendedor sem Product Ads | Product Ads (leitura): Consultar anunciante |
+| `product-ads-campaigns.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/campaigns/search` com `api-version: 2`: campanha ativa, pausada e uma sem nome | Product Ads (leitura): Buscar campanhas de anunciante |
+| `product-ads-ads-2026-10-03.json`, `product-ads-ads-2026-10-03-end.json`, `product-ads-ads-empty.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/ads/search?date_from=...&date_to=...&metrics=...` com `api-version: 2` de um dia, em duas páginas (`offset`), e um dia sem anúncios | Product Ads (leitura): Métricas de anúncios |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -194,3 +197,20 @@ recursos vizinhos (conferir no regression pass):
   formato real das datas e da paginação, se o prazo de 14 e 31 dias conta o primeiro e o último
   dia, se o Mercado Livre cobra a tarifa sobre o preço antes ou depois do cupom, e os campos
   `min_discounted_price`/`suggested_discounted_price` que ele devolve para os convites.
+- Product Ads (#27): a consulta do anunciante, a busca de campanhas e a busca de anúncios seguem as
+  páginas "Product Ads (leitura)" e "Product Ads para catálogo e user products (leitura)",
+  consultadas em 05/10/2026: o anunciante vem de `advertisers[]` (`advertiser_id`, `site_id`), e
+  cada anúncio da busca traz `item_id`, `campaign_id`, os dados do anúncio e as métricas pedidas em
+  `metrics` (`clicks`, `prints`, `cost`, `direct_amount`, `indirect_amount`, `total_amount`,
+  `units_quantity`), com `metrics_summary` do período, que o app não lê. O app pede um dia por vez
+  (`date_from` igual a `date_to`) para guardar o custo de cada anúncio por dia. A página mostra o
+  exemplo diário agregado (`aggregation_type=DAILY`) e a lista de campos da busca por anúncio, mas
+  não um exemplo completo dela: o formato foi completado por esses campos. A venda atribuída é
+  `total_amount` (diretas e indiretas, como o ROAS do painel); sem ele, o app soma
+  `direct_amount` e `indirect_amount`. A primeira página do dia foi cortada em dois anúncios para
+  exercitar a paginação. A API não manda moeda: o app usa reais (MLB). Um vendedor sem Product Ads
+  pode receber a lista vazia ou 404; o app trata os dois como sem conta. Ids, nomes e valores são
+  inventados. Conferir no regression pass: o formato real da busca por anúncio, se ela aceita um
+  dia só, quantos dias depois do clique uma venda ainda é atribuída (o app relê os últimos 7),
+  quanto tempo para trás a API responde (o app lê 62 dias no primeiro Sync), e a resposta para um
+  vendedor sem Product Ads.

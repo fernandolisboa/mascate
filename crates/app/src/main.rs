@@ -1,6 +1,7 @@
 // Release builds on Windows run without a console window behind the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ads;
 mod appearance;
 mod backups;
 mod catalog;
@@ -52,6 +53,7 @@ use mascate_platform::{
     secret_store_for, system_user,
 };
 
+use crate::ads::AppProductAds;
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -151,6 +153,7 @@ fn main() {
                 });
                 cx.set_global(AppReputation(started.reputation.clone()));
                 cx.set_global(AppPromotions(started.promotions.clone()));
+                cx.set_global(AppProductAds(started.product_ads.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

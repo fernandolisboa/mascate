@@ -1,0 +1,41 @@
+{
+  "paging": {
+    "offset": 2,
+    "last_item_id": null,
+    "total": 3,
+    "limit": 50
+  },
+  "results": [
+    {
+      "item_id": "MLB4100000002",
+      "campaign_id": 352,
+      "price": 29.9,
+      "title": "Cabo USB-C 2 m",
+      "status": "active",
+      "has_discount": false,
+      "catalog_listing": false,
+      "logistic_type": "drop_off",
+      "listing_type_id": "gold_special",
+      "domain_id": "MLB-USB_CABLES",
+      "date_created": "2026-09-10T14:35:00.000-03:00",
+      "buy_box_winner": false,
+      "channel": "marketplace",
+      "metrics": {
+        "clicks": 8,
+        "prints": 320,
+        "cost": 3.3,
+        "cpc": 0.41,
+        "direct_amount": 29.9,
+        "indirect_amount": 0,
+        "units_quantity": 1
+      }
+    }
+  ],
+  "metrics_summary": {
+    "clicks": 39,
+    "prints": 1560,
+    "cost": 15.7,
+    "total_amount": 179.8,
+    "units_quantity": 2
+  }
+}
