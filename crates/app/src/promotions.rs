@@ -211,6 +211,22 @@ struct Blocked {
     check: PromotionCheck,
 }
 
+/// Why a Promotion was not checked: the margin guard refused it, or
+/// something else went wrong.
+enum NotPrepared {
+    Below(Box<PromotionCheck>),
+    Failed(String),
+}
+
+impl NotPrepared {
+    fn from(error: PromotionError, listing: Option<RecordId>, products: &[Product]) -> Self {
+        match error {
+            PromotionError::BelowMinimum(check) => NotPrepared::Below(check),
+            error => NotPrepared::Failed(failure(&error, listing, products)),
+        }
+    }
+}
+
 /// An "Encerrar" waiting for its confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ending {
@@ -590,7 +606,8 @@ impl PromotionsScreen {
         let name = value(&self.fields.name).trim().to_owned();
         let unlocks = self.unlocked();
         let days = days_text(starts, ends);
-        type Preparing = Task<Result<PromotionRequest, PromotionError>>;
+        let products = self.products.clone();
+        type Preparing = Task<Result<PromotionRequest, NotPrepared>>;
         let (preparing, summary, listing): (Preparing, String, Option<RecordId>) = match form {
             Form::New(PromotionKind::PriceDiscount) => {
                 let Some(listing) = self.picked_listing(cx) else {
@@ -618,10 +635,11 @@ impl PromotionsScreen {
                     cx.background_executor().spawn(async move {
                         let assumptions = pricing::assumptions(&catalog, &taxes)
                             .await
-                            .map_err(PromotionError::Unreadable)?;
+                            .map_err(NotPrepared::Failed)?;
                         promotions
                             .prepare_discount(plan, unlocks, channel.as_ref(), assumptions)
                             .await
+                            .map_err(|error| NotPrepared::from(error, Some(id), &products))
                     }),
                     summary,
                     Some(id),
@@ -660,7 +678,9 @@ impl PromotionsScreen {
                     ends,
                     coupon,
                 };
-                let prepared = promotions.prepare_promotion(plan, unlocks);
+                let prepared = promotions
+                    .prepare_promotion(plan, unlocks)
+                    .map_err(|error| NotPrepared::from(error, None, &products));
                 (Task::ready(prepared), summary, None)
             }
             Form::Edit(id) => {
@@ -670,7 +690,10 @@ impl PromotionsScreen {
                 let summary = format!("{kind} “{name}” passa a valer de {days}.");
                 (
                     cx.background_executor().spawn(async move {
-                        promotions.prepare_change(id, &name, starts, ends).await
+                        promotions
+                            .prepare_change(id, &name, starts, ends)
+                            .await
+                            .map_err(|error| NotPrepared::from(error, None, &products))
                     }),
                     summary,
                     None,
@@ -709,7 +732,7 @@ impl PromotionsScreen {
                     cx.background_executor().spawn(async move {
                         let assumptions = pricing::assumptions(&catalog, &taxes)
                             .await
-                            .map_err(PromotionError::Unreadable)?;
+                            .map_err(NotPrepared::Failed)?;
                         promotions
                             .prepare_join(
                                 id,
@@ -720,6 +743,7 @@ impl PromotionsScreen {
                                 assumptions,
                             )
                             .await
+                            .map_err(|error| NotPrepared::from(error, Some(listing), &products))
                     }),
                     summary,
                     Some(listing),
@@ -745,13 +769,11 @@ impl PromotionsScreen {
                             listing,
                         })
                     }
-                    Err(PromotionError::BelowMinimum(check)) => {
+                    Err(NotPrepared::Below(check)) => {
                         this.blocked = Some(Blocked { check: *check })
                     }
-                    Err(error) => {
-                        this.form_outcome = Some(Outcome::Failed(
-                            failure(&error, listing, &this.products).into(),
-                        ))
+                    Err(NotPrepared::Failed(error)) => {
+                        this.form_outcome = Some(Outcome::Failed(error.into()))
                     }
                 }
                 cx.notify();
@@ -987,7 +1009,7 @@ impl PromotionsScreen {
             Form::New(PromotionKind::PriceDiscount) => {
                 row = row
                     .child(listing_field())
-                    .child(field("Preço na promoção (R$)", &fields.price, 160.))
+                    .child(field("Preço na promoção (R$)", &fields.price, 190.))
                     .child(field("Primeiro dia", &fields.starts, 130.))
                     .child(field("Último dia", &fields.ends, 130.));
             }
@@ -1000,7 +1022,7 @@ impl PromotionsScreen {
             Form::Join(_) => {
                 row = row.child(listing_field());
                 if kind == Some(PromotionKind::SellerCampaign) {
-                    row = row.child(field("Preço na campanha (R$)", &fields.price, 160.));
+                    row = row.child(field("Preço na campanha (R$)", &fields.price, 190.));
                 }
             }
         }

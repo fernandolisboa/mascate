@@ -719,6 +719,15 @@ mod tests {
                 .sync(&SampleReputation, &[sample_listing().id])
                 .await
                 .unwrap();
+            Promotions::new(
+                database.clone(),
+                inventory.clone(),
+                clock.clone(),
+                ids.clone(),
+            )
+            .sync(&SamplePromotions)
+            .await
+            .unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
