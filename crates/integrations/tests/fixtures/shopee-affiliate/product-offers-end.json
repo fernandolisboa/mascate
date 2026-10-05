@@ -1,0 +1,25 @@
+{
+  "data": {
+    "productOfferV2": {
+      "nodes": [
+        {
+          "itemId": 22334455667,
+          "productName": "Fone de Ouvido Bluetooth TWS Sem Fio com Case Carregador",
+          "productLink": "https://shopee.com.br/product/339216014/22334455667",
+          "priceMin": "29.90",
+          "priceMax": "29.90",
+          "sales": 12400,
+          "commissionRate": "0.1",
+          "ratingStar": "4.9",
+          "shopId": 339216014,
+          "shopName": "Loja Fones Oficial"
+        }
+      ],
+      "pageInfo": {
+        "page": 2,
+        "limit": 20,
+        "hasNextPage": false
+      }
+    }
+  }
+}

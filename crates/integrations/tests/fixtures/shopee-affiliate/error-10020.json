@@ -1,0 +1,11 @@
+{
+  "errors": [
+    {
+      "message": "error [10020]: Invalid Signature",
+      "extensions": {
+        "code": 10020,
+        "message": "Invalid Signature"
+      }
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "data": {
+    "productOfferV2": {
+      "nodes": [
+        {
+          "itemId": 22334455667,
+          "productName": "Fone de Ouvido Bluetooth TWS Sem Fio com Case Carregador",
+          "productLink": "https://shopee.com.br/product/339216014/22334455667",
+          "priceMin": "29.90",
+          "priceMax": "29.90",
+          "sales": 12400,
+          "commissionRate": "0.1",
+          "ratingStar": "4.9",
+          "shopId": 339216014,
+          "shopName": "Loja Fones Oficial"
+        },
+        {
+          "itemId": 11223344556,
+          "productName": "Luminária LED de Mesa Articulada 3 Cores",
+          "productLink": "https://shopee.com.br/product/770011223/11223344556",
+          "priceMin": "45.5",
+          "priceMax": "59.9",
+          "sales": 830,
+          "commissionRate": "0.06",
+          "ratingStar": "4.7",
+          "shopId": 770011223,
+          "shopName": "Casa Clara"
+        },
+        {
+          "itemId": 99001122334,
+          "productName": "Capa para Celular sem preço informado",
+          "productLink": "https://shopee.com.br/product/770011223/99001122334",
+          "sales": 0,
+          "commissionRate": "0.08",
+          "ratingStar": "0",
+          "shopId": 770011223,
+          "shopName": "Casa Clara"
+        },
+        {
+          "itemId": "55667788990",
+          "productName": "Suporte de Celular para Mesa",
+          "productLink": "https://shopee.com.br.example.net/product/770011223/55667788990",
+          "priceMin": "12.00",
+          "priceMax": "12.00",
+          "sales": 1,
+          "commissionRate": "0.08",
+          "ratingStar": "4.2",
+          "shopId": "770011223",
+          "shopName": "Casa Clara"
+        }
+      ],
+      "pageInfo": {
+        "page": 1,
+        "limit": 20,
+        "hasNextPage": true
+      }
+    }
+  }
+}

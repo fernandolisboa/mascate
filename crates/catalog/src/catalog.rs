@@ -11,23 +11,27 @@ use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored}
 
 use crate::{InvalidLink, InvalidSku, OfferLink, Sku};
 
-/// Where Supplier Offers come from. Only the owner's own typing for now;
-/// Platform APIs join as their adapters land.
+/// Where Supplier Offers come from: the owner's own typing, or a Platform's
+/// catalog searched through its adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProductSource {
     Manual,
+    /// The Shopee Affiliate Open API (#12).
+    ShopeeAffiliate,
 }
 
 impl ProductSource {
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             ProductSource::Manual => "manual",
+            ProductSource::ShopeeAffiliate => "shopee_affiliate",
         }
     }
 
     fn from_code(code: &str) -> Option<Self> {
         match code {
             "manual" => Some(ProductSource::Manual),
+            "shopee_affiliate" => Some(ProductSource::ShopeeAffiliate),
             _ => None,
         }
     }

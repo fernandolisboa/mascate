@@ -1,6 +1,7 @@
-//! Ofertas (#9): Supplier Offers typed by hand, each link with its price
-//! history, and the step from an offer to a Product. Manual registration is
-//! a Product Source of its own, not a stand-in for the Shopee API.
+//! Ofertas (#9): Supplier Offers typed by hand or kept from a search on
+//! Shopee (#12), each link with its price history, and the step from an
+//! offer to a Product. Manual registration is a Product Source of its own,
+//! not a stand-in for the Shopee API.
 
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use crate::forms::{Choice, Outcome, Picker, input, notice, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
+use crate::shopee_search::{OffersKept, ShopeeSearch};
 
 /// Asks the window to show a Product's sheet.
 pub struct OpenProduct(pub RecordId);
@@ -32,6 +34,7 @@ enum Step {
 }
 
 pub struct OffersScreen {
+    shopee: Entity<ShopeeSearch>,
     link: Entity<InputState>,
     title: Entity<InputState>,
     price: Entity<InputState>,
@@ -69,16 +72,23 @@ impl OffersScreen {
         let product_sku = input("SKU", window, cx);
         let supplier = picker(window, cx);
         let product_pick = picker(window, cx);
-        let subscriptions = vec![cx.subscribe_in(
-            &new_supplier,
-            window,
-            |this, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.add_supplier(window, cx);
-                }
-            },
-        )];
+        let shopee = cx.new(|cx| ShopeeSearch::new(window, cx));
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &new_supplier,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.add_supplier(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(&shopee, window, |this, _, _: &OffersKept, window, cx| {
+                this.refresh_offers(window, cx);
+            }),
+        ];
         let mut screen = Self {
+            shopee,
             link,
             title,
             price,
@@ -98,12 +108,18 @@ impl OffersScreen {
             outcome: None,
             _subscriptions: subscriptions,
         };
-        screen.refresh(window, cx);
+        screen.refresh_offers(window, cx);
         screen
     }
 
-    /// Reads the catalog again, as when the screen comes into view.
+    /// Reads the catalog and the Shopee Connection again, as when the
+    /// screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shopee.update(cx, |shopee, cx| shopee.refresh(cx));
+        self.refresh_offers(window, cx);
+    }
+
+    fn refresh_offers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(None) }, |_, _: (), _, _| {});
     }
 
@@ -692,6 +708,7 @@ impl Render for OffersScreen {
                 .notices
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         }
+        parts.content.push(self.shopee.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         parts.content.push(
             v_flex()
@@ -699,9 +716,9 @@ impl Render for OffersScreen {
                 .child(kit::section_heading("Ofertas registradas"))
                 .when(self.histories.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma oferta ainda. Cole o link de um produto que você achou, com \
-                         preço e frete; registrar o mesmo link de novo guarda o histórico de \
-                         preço.",
+                        "Nenhuma oferta ainda. Guarde uma da busca na Shopee ou cole o link de \
+                         um produto que você achou, com preço e frete; registrar o mesmo link de \
+                         novo guarda o histórico de preço.",
                     ))
                 })
                 .children((0..self.histories.len()).map(|index| self.render_history(index, cx)))

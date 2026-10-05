@@ -1,0 +1,11 @@
+{
+  "errors": [
+    {
+      "message": "error [10030]: Rate limit exceeded",
+      "extensions": {
+        "code": 10030,
+        "message": "Rate limit exceeded"
+      }
+    }
+  ]
+}
