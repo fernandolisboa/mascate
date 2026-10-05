@@ -1,16 +1,20 @@
 //! The Reminders on the home screen (#7): fiscal and legal notes in a
-//! quiet corner, each dismissable until its interval runs out.
+//! quiet corner, each dismissable until its interval runs out. Some show
+//! only while raised, like the sales volume one (#28); each Order Sync
+//! checks again.
 
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Global, SharedString, Window, div};
+use gpui_kit::{AnyElement, Global, SharedString, Subscription, Window, div};
 use mascate_platform::{Reminder, ReminderError, ReminderTopic, Reminders};
 
 use crate::appearance::look;
+use crate::finance::{self, VolumeSources};
 use crate::kit;
+use crate::orders::OrderSyncs;
 
 /// The app's Reminders; absent when the database did not open.
 pub struct AppReminders(pub Arc<Reminders>);
@@ -29,17 +33,24 @@ pub struct RemindersArea {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     error: Option<SharedString>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl RemindersArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
         let mut area = Self {
             showing: Vec::new(),
             reads: 0,
             error: None,
+            _subscriptions: subscriptions,
         };
-        area.run(cx, |_| async { Ok(()) });
+        area.refresh(cx);
         area
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.run(cx, |_| async { Ok(()) });
     }
 
     fn dismiss(&mut self, key: &'static str, cx: &mut Context<Self>) {
@@ -61,11 +72,13 @@ impl RemindersArea {
             return;
         };
         let reminders = app.0.clone();
+        let sources = VolumeSources::of(cx);
         self.reads += 1;
         let read = self.reads;
         let working = cx.background_executor().spawn(async move {
             let outcome = change(reminders.clone()).await;
-            (outcome, reminders.showing().await)
+            let raised = finance::raised_reminders(sources).await;
+            (outcome, reminders.showing(&raised).await)
         });
         cx.spawn(async move |this, cx| {
             let (outcome, showing) = working.await;

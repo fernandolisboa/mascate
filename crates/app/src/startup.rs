@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
 use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror};
-use mascate_finance::Taxes;
+use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_marketing::{ListingQuality, ProductAds, Questions, ReplyTemplates, Reputation};
@@ -57,6 +57,7 @@ pub struct Started {
     pub product_ads: Arc<ProductAds>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub taxes: Arc<Taxes>,
+    pub sales_volume: Arc<SalesVolume>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
@@ -272,6 +273,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let sales_volume = SalesVolume::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
             Ok::<_, Box<dyn std::error::Error>>(Started {
@@ -294,6 +300,7 @@ pub fn prepare() -> Outcome {
                 product_ads: Arc::new(product_ads),
                 reply_templates: Arc::new(reply_templates),
                 taxes: Arc::new(taxes),
+                sales_volume: Arc::new(sales_volume),
                 backup_settings,
                 update_settings,
                 restore,
@@ -362,8 +369,8 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
-        ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions, ChannelStock,
-        ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin, PromotionKind,
+        ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
+        ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin, PromotionKind,
         PromotionPlan, PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
@@ -438,6 +445,13 @@ mod tests {
 
         fn activate(&self, _: &str) -> Result<(), PlatformError> {
             Err(PlatformError::NotFound)
+        }
+
+        fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError> {
+            Ok(ChannelCategory {
+                id: id.into(),
+                name: "Categoria de exemplo".into(),
+            })
         }
     }
 
@@ -859,7 +873,7 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                let showing = reminders.showing().await.unwrap();
+                let showing = reminders.showing(&[]).await.unwrap();
                 assert!(
                     showing
                         .iter()
@@ -1085,6 +1099,27 @@ mod tests {
                     costs.iter().all(|day| day.listing == sample_listing().id),
                     "{name}"
                 );
+                // Category names and the sales volume limit arrived after
+                // 0.2.0 too: the next listing Sync names the categories.
+                let listings = Listings::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                listings.sync(&SampleChannel).await.unwrap();
+                assert_eq!(
+                    listings.category_names().await.unwrap()["MLB1000"],
+                    "Categoria de exemplo",
+                    "{name}"
+                );
+                let volume = SalesVolume::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                let limit = Money::new(90_000.into(), Currency::Brl);
+                volume.save_limit(limit).await.unwrap();
+                assert_eq!(volume.limit().await.unwrap(), limit, "{name}");
             });
         }
     }

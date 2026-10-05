@@ -12,9 +12,10 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    AdCost, BilledOrder, ChannelFee, ChannelReturn, FeeImport, FeeKind, Listings, NewPurchaseLine,
-    NewPurchaseOrder, OrderStatus, Orders, PurchaseOrders, RealizedMargin, Receiving,
-    ReturnReceipt, ReturnStatus, ReturnedItem, Sale, SalesPeriod, SalesSummary, ShipmentStatus,
+    AdCost, BilledOrder, ChannelFee, ChannelOrderLine, ChannelReturn, FeeImport, FeeKind, Listings,
+    NewPurchaseLine, NewPurchaseOrder, OrderStatus, Orders, PurchaseOrders, RealizedMargin,
+    Receiving, ReturnReceipt, ReturnStatus, ReturnedItem, Sale, SalesPeriod, SalesSummary,
+    ShipmentStatus,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -727,4 +728,42 @@ proptest! {
             Ok(())
         })?;
     }
+}
+
+#[test]
+fn each_line_takes_a_share_of_the_order_by_value_and_its_own_cost() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let at = fx.later(1);
+        let capa = ChannelOrderLine {
+            unit_price: brl("29.90"),
+            sale_fee: Some(brl("4.19")),
+            ..sold("MLB9", None, 1)
+        };
+        fx.channel
+            .sells(order("O1", at, vec![sold("MLB1", None, 1), capa]));
+        fx.sync().await;
+        let ads = [ad("MLB1", 10, 4, "11.98")];
+
+        let period = fx.orders.sales(percent("6"), ever(), &ads).await.unwrap();
+
+        let sale = sale_of(&period, "O1");
+        let [fone, capa] = &sale.lines[..] else {
+            panic!("{:?}", sale.lines);
+        };
+        assert_eq!((fone.item.as_str(), fone.units), ("MLB1", 1));
+        assert_eq!(fone.revenue, brl("89.90"));
+        assert_eq!(capa.revenue, brl("29.90"));
+        // The fone's units left the stock at R$ 20,00; the capa's listing is
+        // not among the Listings, so its units never did.
+        assert_eq!(fone.cost, Some(brl("20.00")));
+        assert_eq!(capa.cost, None);
+        let total = |pick: fn(&mascate_commerce::LineMargin) -> Money| {
+            Money::sum(Currency::Brl, sale.lines.iter().map(pick)).unwrap()
+        };
+        assert_eq!(total(|line| line.revenue), sale.margin.revenue);
+        assert_eq!(total(|line| line.fees), sale.margin.fees_total());
+        assert_eq!(total(|line| line.tax), sale.margin.tax);
+        assert_eq!(fone.tax.rounded(), brl("5.39"));
+    });
 }

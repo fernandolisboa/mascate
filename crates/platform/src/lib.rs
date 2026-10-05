@@ -48,7 +48,7 @@ pub use registry::{DuplicateKey, Registered, Registry};
 pub use releases::{
     Installer, MANIFEST_NAME, RELEASES_PAGE, Release, ReleaseChannel, ReleaseError, Target, Version,
 };
-pub use reminders::{Reminder, ReminderError, ReminderTopic, Reminders};
+pub use reminders::{Reminder, ReminderError, ReminderShows, ReminderTopic, Reminders};
 pub use secrets::{
     Build, Environment, Secret, SecretStore, SecretStoreError, process_environment,
     secret_store_for,

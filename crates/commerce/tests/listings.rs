@@ -624,3 +624,69 @@ fn a_price_the_channel_refuses_leaves_the_listing_as_it_was() {
         assert_eq!(fx.find("MLB1", None).await.listed.price, brl("89.90"));
     });
 }
+
+#[test]
+fn each_category_is_named_once_from_the_channel() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel
+            .categories
+            .lock()
+            .unwrap()
+            .insert("MLB1055".into(), "Capas".into());
+        let capa = ChannelListing {
+            category: Some("MLB1055".into()),
+            ..listing("MLB3", "Capa de celular")
+        };
+        let gone = ChannelListing {
+            category: Some("MLB0000".into()),
+            ..listing("MLB4", "Categoria extinta")
+        };
+        fx.channel.has(vec![
+            listing("MLB1", "Fone Bluetooth TWS"),
+            listing("MLB2", "Fone com fio"),
+            capa,
+            gone,
+        ]);
+
+        fx.sync().await;
+        fx.sync().await;
+
+        let names = fx.listings.category_names().await.unwrap();
+        assert_eq!(
+            names.get("MLB3697").map(String::as_str),
+            Some("Fones de Ouvido")
+        );
+        assert_eq!(names.get("MLB1055").map(String::as_str), Some("Capas"));
+        assert_eq!(names.get("MLB0000"), None);
+        // Known names are not asked again; the one the channel lacks is.
+        assert_eq!(
+            *fx.channel.categories_asked.lock().unwrap(),
+            ["MLB3697", "MLB1055", "MLB0000", "MLB0000"]
+        );
+    });
+}
+
+#[test]
+fn a_category_the_channel_fails_to_name_fails_the_sync_and_keeps_nothing() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![listing("MLB1", "Fone Bluetooth TWS")]);
+        fx.sync().await;
+        let capa = ChannelListing {
+            category: Some("MLB1055".into()),
+            ..listing("MLB3", "Capa de celular")
+        };
+        fx.channel
+            .has(vec![listing("MLB1", "Fone Bluetooth TWS"), capa]);
+        *fx.channel.category_failure.lock().unwrap() = Some(PlatformError::RateLimited);
+
+        let failed = fx.listings.sync(&fx.channel).await;
+
+        assert!(matches!(
+            failed,
+            Err(ListingError::Platform(PlatformError::RateLimited))
+        ));
+        assert_eq!(fx.all().await.len(), 1);
+    });
+}

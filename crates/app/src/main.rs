@@ -6,7 +6,9 @@ mod appearance;
 mod backups;
 mod catalog;
 mod connections;
+mod dashboard;
 mod drafts;
+mod finance;
 mod forms;
 mod home;
 mod kit;
@@ -57,6 +59,7 @@ use crate::ads::AppProductAds;
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
+use crate::finance::AppSalesVolume;
 use crate::listings::AppListings;
 use crate::mercado_livre::AppMercadoLivre;
 use crate::orders::AppOrders;
@@ -98,12 +101,18 @@ fn main() {
         process_environment(),
     );
     let connections = Arc::new(Connections::new(secrets.clone()));
-    let mercado_livre = Arc::new(MercadoLivre::new(
-        &mercado_livre::api_url(Build::CURRENT, &process_environment()),
-        &format!("Mascate/{}", env!("CARGO_PKG_VERSION")),
-        secrets,
-        Arc::new(SystemClock),
-    ));
+    let mercado_livre = Arc::new(
+        MercadoLivre::new(
+            &mercado_livre::api_url(Build::CURRENT, &process_environment()),
+            &format!("Mascate/{}", env!("CARGO_PKG_VERSION")),
+            secrets,
+            Arc::new(SystemClock),
+        )
+        .with_payments_api(&mercado_livre::payments_api_url(
+            Build::CURRENT,
+            &process_environment(),
+        )),
+    );
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())
         .into();
@@ -140,6 +149,7 @@ fn main() {
                 cx.set_global(AppReminders(started.reminders.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
+                cx.set_global(AppSalesVolume(started.sales_volume.clone()));
                 cx.set_global(AppPricing(started.pricing.clone()));
                 cx.set_global(AppInventory(started.inventory.clone()));
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));

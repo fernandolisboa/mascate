@@ -3,14 +3,15 @@
 //! that follows the app's, and pausing and reactivating.
 
 use mascate_commerce::{
-    ChannelListing, ChannelStock, ListingStatus, SaleFee, SalesChannel, Variation,
+    ChannelCategory, ChannelListing, ChannelStock, ListingStatus, SaleFee, SalesChannel, Variation,
 };
 use mascate_kernel::{ListingType, Money, Percentage, PlatformError};
 use rust_decimal::Decimal;
 
 use super::MercadoLivre;
 use super::answers::{
-    Attribute, ItemVariationIds, MultigetEntry, SellerItem, SellerItems, UserAnswer, decimal, money,
+    Attribute, CategoryAnswer, ItemVariationIds, MultigetEntry, SellerItem, SellerItems,
+    UserAnswer, decimal, money,
 };
 
 /// Listings per page of the seller's listings; the most Mercado Livre allows.
@@ -211,6 +212,14 @@ impl SalesChannel for MercadoLivre {
             &format!("/items/{}", path_id(id)?),
             r#"{"status":"active"}"#,
         )
+    }
+
+    fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError> {
+        let found: CategoryAnswer = self.get(&format!("/categories/{}", path_id(id)?), &[])?;
+        Ok(ChannelCategory {
+            id: found.id,
+            name: found.name,
+        })
     }
 }
 

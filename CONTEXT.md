@@ -108,6 +108,14 @@ _Avoid_: lucro, margem (sozinho)
 Margem de um Order já vendido: o que o comprador pagou e não recebeu de volta, menos as Fees, o imposto, a parte do custo de Product Ads que cabe ao Order e o custo com que as unidades saíram do estoque (as que voltaram à prateleira saem do custo). Enquanto o Sales Channel não fatura o Order, é provisória: as Fees são as que o Order informa.
 _Avoid_: lucro, margem (sozinho)
 
+**Money Release**:
+Momento em que o dinheiro de um pagamento de Order fica livre para saque no Mercado Pago. Antes disso o valor está a liberar, com ou sem data; o valor é o que o vendedor recebe do pagamento.
+_Avoid_: Release (sozinho, que é a versão do app), repasse, saque
+
+**Sales Volume**:
+Receita das vendas dos últimos 12 meses, comparada a um limite que o Fernando configura (padrão: o teto anual do MEI). Passar do limite levanta um Reminder de formalização e não bloqueia nada.
+_Avoid_: faturamento (no código), teto
+
 ## Estoque
 
 **Stock Location**:
@@ -225,7 +233,7 @@ Funcionalidade construída e testada, mas desativada por padrão porque a lei ou
 _Avoid_: feature bloqueada, funcionalidade ilegal
 
 **Reminder**:
-Aviso fiscal ou jurídico que aparece no app sem bloquear nada.
+Aviso fiscal ou jurídico que aparece no app sem bloquear nada. Uns aparecem sempre; outros só enquanto a condição deles vale, como o de Sales Volume.
 _Avoid_: bloqueio, alerta legal
 
 **Backup**:

@@ -18,6 +18,16 @@ pub enum ReminderTopic {
     Legal,
 }
 
+/// When a Reminder shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReminderShows {
+    /// Until dismissed, and again once the dismissal runs out.
+    Always,
+    /// Only while the module that declares it says it applies, as when
+    /// sales pass a limit; dismissed, it waits out its interval like any.
+    WhenRaised,
+}
+
 /// A note shown to the owner as it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reminder {
@@ -28,6 +38,7 @@ pub struct Reminder {
     pub text: &'static str,
     /// Days a dismissal lasts before the Reminder shows again.
     pub reappears_after_days: u16,
+    pub shows: ReminderShows,
 }
 
 impl Registered for Reminder {
@@ -83,8 +94,9 @@ impl Reminders {
     }
 
     /// The Reminders to show now, in declaration order: those never
-    /// dismissed and those whose last dismissal has run out.
-    pub async fn showing(&self) -> Result<Vec<Reminder>, ReminderError> {
+    /// dismissed and those whose last dismissal has run out, of the ones
+    /// that always show and the `raised` ones (keys) that show when raised.
+    pub async fn showing(&self, raised: &[&str]) -> Result<Vec<Reminder>, ReminderError> {
         let mut rows = self
             .database
             .connection()
@@ -104,6 +116,9 @@ impl Reminders {
             .all()
             .iter()
             .copied()
+            .filter(|reminder| {
+                reminder.shows == ReminderShows::Always || raised.contains(&reminder.key)
+            })
             .filter(|reminder| {
                 // A dismissal time that cannot be read counts as none: a
                 // Reminder that shows too often beats one that never does.

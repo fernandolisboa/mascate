@@ -198,11 +198,31 @@ impl RealizedMargin {
     }
 }
 
-/// An Order with what it left.
+/// One line of a sale with its share of what the Order left: the revenue,
+/// Fees and tax split by the line's value, and the cost its own units left
+/// the stock with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineMargin {
+    /// The channel's id of the listing sold.
+    pub item: String,
+    /// The channel's id of the variation sold, when the listing has them.
+    pub variation: Option<String>,
+    pub units: u32,
+    pub revenue: Money,
+    /// Every Fee, Product Ads included.
+    pub fees: Money,
+    pub tax: Money,
+    /// `None` when its units never left the ledger.
+    pub cost: Option<Money>,
+}
+
+/// An Order with what it left, in all and line by line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sale {
     pub order: Order,
     pub margin: RealizedMargin,
+    /// The Order's lines in its order; they add up to `margin`.
+    pub lines: Vec<LineMargin>,
 }
 
 /// The sales of a period, and what Product Ads cost in it that no sale
@@ -391,17 +411,23 @@ impl Orders {
             .into_iter()
             .filter(|order| sold.contains(&order.sold.ordered_at))
             .map(|order| {
+                let costs = line_costs(&order, &exits);
                 let mut margin = realized_margin(
                     &order,
                     billed.remove(&order.id),
                     shipping.get(&order.id).copied(),
-                    &exits,
+                    &costs,
                     tax,
                 )?;
                 if let Some(&share) = placed.get(&order.id) {
                     margin.take_ads(share)?;
                 }
-                Ok(Sale { order, margin })
+                let lines = line_margins(&order, &margin, costs)?;
+                Ok(Sale {
+                    order,
+                    margin,
+                    lines,
+                })
             })
             .collect::<Result<_, OrderError>>()?;
         Ok(SalesPeriod {
@@ -621,14 +647,80 @@ impl RealizedMargin {
     }
 }
 
+/// What each line's units cost when they left the stock, in the Order's
+/// line order.
+fn line_costs(order: &Order, exits: &BTreeMap<RecordId, StockMovement>) -> Vec<Option<Money>> {
+    let cancelled = order.sold.status == OrderStatus::Cancelled;
+    order
+        .lines
+        .iter()
+        .map(|line| line_cost(line, cancelled, exits))
+        .collect()
+}
+
+/// Each line's share of `margin`: the revenue, Fees and tax split by the
+/// lines' value, the last line taking what the split leaves so the shares
+/// add up exactly; the cost each line's own.
+fn line_margins(
+    order: &Order,
+    margin: &RealizedMargin,
+    costs: Vec<Option<Money>>,
+) -> Result<Vec<LineMargin>, CurrencyMismatch> {
+    let values: Vec<Decimal> = order
+        .lines
+        .iter()
+        .map(|line| line.sold.unit_price.amount() * Decimal::from(line.sold.quantity))
+        .collect();
+    let revenue = split_exactly(margin.revenue, &values)?;
+    let fees = split_exactly(margin.fees_total(), &values)?;
+    let tax = split_exactly(margin.tax, &values)?;
+    Ok(order
+        .lines
+        .iter()
+        .zip(costs)
+        .enumerate()
+        .map(|(at, (line, cost))| LineMargin {
+            item: line.sold.item.clone(),
+            variation: line.sold.variation.clone(),
+            units: line.sold.quantity,
+            revenue: revenue[at],
+            fees: fees[at],
+            tax: tax[at],
+            cost,
+        })
+        .collect())
+}
+
+/// `amount` in shares proportional to `values` (equal ones when they add up
+/// to nothing), at full precision; the last share is what the others leave.
+fn split_exactly(amount: Money, values: &[Decimal]) -> Result<Vec<Money>, CurrencyMismatch> {
+    let total: Decimal = values.iter().sum();
+    let mut shares: Vec<Money> = values
+        .iter()
+        .map(|value| {
+            let share = if total.is_zero() {
+                amount.amount() / Decimal::from(values.len())
+            } else {
+                amount.amount() * value / total
+            };
+            Money::new(share, amount.currency())
+        })
+        .collect();
+    if let Some((last, others)) = shares.split_last_mut() {
+        let taken = Money::sum(amount.currency(), others.iter().copied())?;
+        *last = amount.checked_sub(taken)?;
+    }
+    Ok(shares)
+}
+
 /// The Realized Margin of `order`, from its `billed` Fees when the channel
 /// has billed it, otherwise from what it reports; its `shipping` share; and
-/// the cost its units left the ledger with.
+/// the `costs` its lines left the ledger with.
 fn realized_margin(
     order: &Order,
     billed: Option<Vec<Fee>>,
     shipping: Option<Money>,
-    exits: &BTreeMap<RecordId, StockMovement>,
+    costs: &[Option<Money>],
     tax: Percentage,
 ) -> Result<RealizedMargin, OrderError> {
     let sold = &order.sold;
@@ -652,10 +744,9 @@ fn realized_margin(
         None => reported_fees(order, shipped, shipping)?,
     };
     let tax = tax.of(revenue);
-    let cost = order
-        .lines
+    let cost = costs
         .iter()
-        .map(|line| line_cost(line, cancelled, exits))
+        .copied()
         .collect::<Option<Vec<Money>>>()
         .map(|costs| Money::sum(currency, costs))
         .transpose()?;

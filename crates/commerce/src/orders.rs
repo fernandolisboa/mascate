@@ -1467,8 +1467,9 @@ async fn insert_order(
 }
 
 /// Writes what the channel reports over an Order. Buyer data once erased
-/// stays erased. A changed Order has its Fees asked for again, since a
-/// cancellation or a refund brings the channel's reversals.
+/// stays erased. A changed Order has its Fees and its Money Releases asked
+/// for again, since a cancellation or a refund brings the channel's
+/// reversals.
 async fn write_order(
     on: &Connection,
     id: RecordId,
@@ -1489,7 +1490,7 @@ async fn write_order(
              receiver_state = CASE WHEN buyer_data_erased_at IS NULL THEN ?17 END,
              receiver_zip_code = CASE WHEN buyer_data_erased_at IS NULL THEN ?18 END,
              refunded = ?19, shipment_seller_cost = ?20, fees_checked_at = NULL,
-             synced_at = ?21, updated_at = ?21
+             releases_checked_at = NULL, synced_at = ?21, updated_at = ?21
          WHERE id = ?22",
         values,
     )

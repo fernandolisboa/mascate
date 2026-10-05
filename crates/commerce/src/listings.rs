@@ -15,7 +15,7 @@ use mascate_kernel::{
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
-use crate::{ChecklistItem, SaleFee};
+use crate::{ChannelCategory, ChecklistItem, SaleFee};
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,6 +126,9 @@ pub trait SalesChannel: Send + Sync {
 
     /// Puts the paused listing `id` back on sale.
     fn activate(&self, id: &str) -> Result<(), PlatformError>;
+
+    /// The channel's category `id`, with its name.
+    fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError>;
 }
 
 /// A listing of the owner's, as last synced, with the Product it sells.
@@ -253,6 +256,22 @@ pub(crate) const CREATE_LISTINGS: Migration = Migration {
     CREATE INDEX commerce_listings_by_product ON commerce_listings (product_id);",
 };
 
+pub(crate) const ADD_CATEGORY_NAMES: Migration = Migration {
+    version: 10,
+    name: "add the names of the channel's categories",
+    risky: false,
+    sql: "CREATE TABLE commerce_channel_categories (
+        id             TEXT PRIMARY KEY,
+        ml_category_id TEXT NOT NULL,
+        name           TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL,
+        deleted_at     TEXT
+    );
+    CREATE UNIQUE INDEX commerce_channel_categories_by_ml_id
+        ON commerce_channel_categories (ml_category_id) WHERE deleted_at IS NULL;",
+};
+
 const LISTING_COLUMNS: &str = "id, ml_item_id, ml_variation_id, variation_name, title, price,
      currency, available_quantity, status, link, listing_type, category_id, seller_sku,
      product_id, synced_at
@@ -278,7 +297,8 @@ impl Listings {
     /// before that are no longer either, so a listing paused, closed or held
     /// for review in the channel shows it here. Each listing is kept by the
     /// channel's id, so a second Sync with the same answers changes nothing;
-    /// the Product a Listing is linked to always stays.
+    /// the Product a Listing is linked to always stays. The name of each
+    /// category is asked once, the first time a listing is in it.
     pub async fn sync(&self, channel: &dyn SalesChannel) -> Result<ListingSync, ListingError> {
         let mut wanted = channel.listing_ids()?;
         let mut seen: HashSet<String> = wanted.iter().cloned().collect();
@@ -295,6 +315,22 @@ impl Listings {
         let mut fresh: BTreeMap<(String, Option<String>), ChannelListing> = BTreeMap::new();
         for listing in reported {
             fresh.insert(key_of(&listing), listing);
+        }
+        let named = self.category_names().await?;
+        let mut categories: Vec<ChannelCategory> = Vec::new();
+        for id in fresh
+            .values()
+            .filter_map(|listing| listing.category.as_ref())
+        {
+            if named.contains_key(id) || categories.iter().any(|found| &found.id == id) {
+                continue;
+            }
+            match channel.category(id) {
+                Ok(category) => categories.push(category),
+                // A category the channel no longer has stays without a name.
+                Err(PlatformError::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
 
         let now = self.clock.now();
@@ -371,8 +407,43 @@ impl Listings {
                 )
                 .await?;
         }
+        for category in &categories {
+            transaction
+                .execute(
+                    "INSERT INTO commerce_channel_categories
+                         (id, ml_category_id, name, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?4)
+                     ON CONFLICT (ml_category_id) WHERE deleted_at IS NULL DO NOTHING",
+                    params![
+                        self.ids.next_id().to_string(),
+                        category.id.clone(),
+                        category.name.clone(),
+                        stored(now)
+                    ],
+                )
+                .await?;
+        }
         transaction.commit().await?;
         Ok(report)
+    }
+
+    /// The name of each category of the channel a listing was synced in, by
+    /// the channel's id.
+    pub async fn category_names(&self) -> Result<BTreeMap<String, String>, ListingError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT ml_category_id, name FROM commerce_channel_categories
+                 WHERE deleted_at IS NULL",
+                (),
+            )
+            .await?;
+        let mut names = BTreeMap::new();
+        while let Some(row) = rows.next().await? {
+            names.insert(row.get(0)?, row.get(1)?);
+        }
+        Ok(names)
     }
 
     /// When the listings were last synced; `None` before the first Sync.

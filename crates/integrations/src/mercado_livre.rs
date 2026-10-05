@@ -10,6 +10,7 @@ mod ads;
 mod answers;
 mod billing;
 mod orders;
+mod payments;
 mod promotions;
 mod publisher;
 mod quality;
@@ -35,6 +36,10 @@ use tokens::Tokens;
 /// The API every request goes to, unless a test points elsewhere.
 pub const API_URL: &str = "https://api.mercadolibre.com";
 
+/// The Mercado Pago's API, which reports the payments of the owner's
+/// Orders with the same login (ADR 0026).
+pub const PAYMENTS_API_URL: &str = "https://api.mercadopago.com";
+
 /// Mercado Livre Brasil, the only site the app sells on.
 const SITE: &str = "MLB";
 
@@ -55,6 +60,7 @@ const SEARCH_LIMIT: u32 = 5;
 pub struct MercadoLivre {
     agent: ureq::Agent,
     api: String,
+    payments_api: String,
     tokens: Tokens,
 }
 
@@ -69,8 +75,16 @@ impl MercadoLivre {
         Self {
             agent: http_agent(api, user_agent, Duration::from_secs(30)),
             api: api.trim_end_matches('/').to_owned(),
+            payments_api: PAYMENTS_API_URL.to_owned(),
             tokens: Tokens::new(store, clock),
         }
+    }
+
+    /// The same, asking the Mercado Pago's API at `api` instead, as a test
+    /// or a development build pointing at a fake server does.
+    pub fn with_payments_api(mut self, api: &str) -> Self {
+        self.payments_api = api.trim_end_matches('/').to_owned();
+        self
     }
 
     /// The JSON answer to `GET path` with `query`.

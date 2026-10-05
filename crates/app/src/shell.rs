@@ -3,6 +3,7 @@ use gpui_kit::{Entity, SharedString, Subscription, Window};
 use mascate_kernel::RecordId;
 
 use crate::appearance;
+use crate::dashboard::DashboardScreen;
 use crate::drafts::StartDraft;
 use crate::home::Home;
 use crate::layout;
@@ -42,6 +43,7 @@ pub struct Shell {
     promotions: Entity<PromotionsScreen>,
     orders: Entity<OrdersScreen>,
     sales: Entity<SalesScreen>,
+    dashboard: Entity<DashboardScreen>,
     purchases: Entity<PurchasesScreen>,
     stock: Entity<StockScreen>,
     settings: Entity<SettingsScreen>,
@@ -66,6 +68,7 @@ impl Shell {
         let promotions = cx.new(|cx| PromotionsScreen::new(window, cx));
         let orders = cx.new(|cx| OrdersScreen::new(window, cx));
         let sales = cx.new(|cx| SalesScreen::new(window, cx));
+        let dashboard = cx.new(|cx| DashboardScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
         let stock = cx.new(|cx| StockScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
@@ -168,6 +171,7 @@ impl Shell {
             promotions,
             orders,
             sales,
+            dashboard,
             purchases,
             stock,
             settings,
@@ -213,6 +217,7 @@ impl Shell {
                             .update(cx, |promotions, cx| promotions.refresh(window, cx)),
                         Place::Orders => shell.orders.update(cx, OrdersScreen::refresh),
                         Place::Sales => shell.sales.update(cx, SalesScreen::refresh),
+                        Place::Dashboard => shell.dashboard.update(cx, DashboardScreen::refresh),
                         Place::Purchases => shell
                             .purchases
                             .update(cx, |purchases, cx| purchases.refresh(window, cx)),
@@ -244,6 +249,7 @@ impl Render for Shell {
             Place::Promotions => self.promotions.clone().into_any_element(),
             Place::Orders => self.orders.clone().into_any_element(),
             Place::Sales => self.sales.clone().into_any_element(),
+            Place::Dashboard => self.dashboard.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),
             Place::Stock => self.stock.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),

@@ -214,3 +214,5 @@ recursos vizinhos (conferir no regression pass):
   dia só, quantos dias depois do clique uma venda ainda é atribuída (o app relê os últimos 7),
   quanto tempo para trás a API responde (o app lê 62 dias no primeiro Sync), e a resposta para um
   vendedor sem Product Ads.
+| `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
+| `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |

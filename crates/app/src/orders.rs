@@ -170,6 +170,9 @@ pub fn sync_now(cx: &mut App) -> Option<Task<Result<Option<Round>, String>>> {
         if let Err(error) = orders.import_fees(channel.as_ref()).await {
             eprintln!("could not read the Orders' Fees: {error}");
         }
+        if let Err(error) = orders.import_releases(channel.as_ref()).await {
+            eprintln!("could not read the Orders' Money Releases: {error}");
+        }
         if let Err(error) = mirror.send(channel.as_ref()).await {
             eprintln!("could not send the listings' stock: {error}");
         }

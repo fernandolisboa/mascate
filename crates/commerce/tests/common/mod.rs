@@ -11,9 +11,9 @@ use std::sync::Mutex;
 use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
     ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
-    ChannelOrders, ChannelStock, ListingPublisher, ListingStatus, ListingToPublish, OrderStatus,
-    PublishedListing, Receiver, Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus,
-    ShippingLabels, Variation,
+    ChannelOrders, ChannelPayments, ChannelStock, ListingPublisher, ListingStatus,
+    ListingToPublish, OrderStatus, PaymentRelease, PublishedListing, Receiver, Requirement,
+    SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, Timestamp,
@@ -97,6 +97,16 @@ pub struct Channel {
     pub billed: Mutex<Vec<BilledOrder>>,
     /// The Orders each read of the billing asked about, in order.
     pub billing_asked: Mutex<Vec<Vec<String>>>,
+    /// The name of each category the channel has, by id.
+    pub categories: Mutex<HashMap<String, String>>,
+    /// The categories whose names were asked for, in order.
+    pub categories_asked: Mutex<Vec<String>>,
+    /// Fails only naming a category while set.
+    pub category_failure: Mutex<Option<PlatformError>>,
+    /// The wallet's payments, as it reports them now.
+    pub payments: Mutex<Vec<PaymentRelease>>,
+    /// The Orders each read of the wallet asked about, in order.
+    pub payments_asked: Mutex<Vec<Vec<String>>>,
 }
 
 impl Default for Channel {
@@ -126,6 +136,14 @@ impl Default for Channel {
             label_answer: Mutex::default(),
             billed: Mutex::default(),
             billing_asked: Mutex::default(),
+            categories: Mutex::new(HashMap::from([(
+                "MLB3697".to_owned(),
+                "Fones de Ouvido".to_owned(),
+            )])),
+            categories_asked: Mutex::default(),
+            category_failure: Mutex::default(),
+            payments: Mutex::default(),
+            payments_asked: Mutex::default(),
         }
     }
 }
@@ -312,6 +330,31 @@ impl SalesChannel for Channel {
         self.paused_by_seller.lock().unwrap().remove(id);
         self.change(id, |listing| listing.status = ListingStatus::Active);
         Ok(())
+    }
+
+    fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError> {
+        self.check()?;
+        self.categories_asked.lock().unwrap().push(id.to_owned());
+        if let Some(error) = self.category_failure.lock().unwrap().clone() {
+            return Err(error);
+        }
+        let name = self.categories.lock().unwrap().get(id).cloned();
+        Ok(category(id, &name.ok_or(PlatformError::NotFound)?))
+    }
+}
+
+impl ChannelPayments for Channel {
+    fn releases(&self, orders: &[String]) -> Result<Vec<PaymentRelease>, PlatformError> {
+        self.check()?;
+        self.payments_asked.lock().unwrap().push(orders.to_vec());
+        Ok(self
+            .payments
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|payment| orders.contains(&payment.order))
+            .cloned()
+            .collect())
     }
 }
 
