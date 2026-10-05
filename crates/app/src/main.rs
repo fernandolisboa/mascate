@@ -28,6 +28,8 @@ mod quality;
 mod question_alerts;
 mod questions;
 mod reminders;
+mod reputation;
+mod reputation_alerts;
 mod restricted;
 mod sales;
 mod settings;
@@ -61,6 +63,7 @@ use crate::purchases::AppPurchaseOrders;
 use crate::quality::AppQuality;
 use crate::questions::AppQuestions;
 use crate::reminders::AppReminders;
+use crate::reputation::AppReputation;
 use crate::restricted::AppFlags;
 use crate::shell::Shell;
 use crate::stock::AppInventory;
@@ -144,6 +147,7 @@ fn main() {
                     questions: started.questions.clone(),
                     templates: started.reply_templates.clone(),
                 });
+                cx.set_global(AppReputation(started.reputation.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

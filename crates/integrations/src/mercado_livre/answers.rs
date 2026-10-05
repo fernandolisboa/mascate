@@ -590,3 +590,93 @@ pub(super) struct QuestionReply {
     pub text: Option<String>,
     pub date_created: Option<String>,
 }
+
+/// The part of `/users/me` that holds the seller's Reputation.
+#[derive(Deserialize)]
+pub(super) struct UserReputationAnswer {
+    pub seller_reputation: Option<SellerReputationAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SellerReputationAnswer {
+    /// Such as `5_green`; `null` until the seller has sales enough.
+    pub level_id: Option<String>,
+    /// The color without the protection, such as `red`.
+    pub real_level: Option<String>,
+    pub protection_end_date: Option<String>,
+    pub transactions: Option<TransactionsAnswer>,
+    pub metrics: Option<ReputationMetricsAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct TransactionsAnswer {
+    pub completed: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReputationMetricsAnswer {
+    pub sales: Option<SalesMetricAnswer>,
+    pub claims: Option<RateMetricAnswer>,
+    pub delayed_handling_time: Option<RateMetricAnswer>,
+    pub cancellations: Option<RateMetricAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SalesMetricAnswer {
+    /// Such as `60 days`.
+    pub period: Option<String>,
+    pub completed: Option<u32>,
+}
+
+/// A rate as a fraction of the period's sales, with the real one apart
+/// while a protection holds it at zero.
+#[derive(Deserialize)]
+pub(super) struct RateMetricAnswer {
+    pub rate: Option<Number>,
+    pub value: Option<u32>,
+    pub excluded: Option<ExcludedAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ExcludedAnswer {
+    pub real_rate: Option<Number>,
+    pub real_value: Option<u32>,
+}
+
+/// A page of `/reviews/item/{id}`.
+#[derive(Deserialize)]
+pub(super) struct ReviewsAnswer {
+    pub paging: Option<ReviewsPaging>,
+    #[serde(default)]
+    pub reviews: Vec<ReviewAnswer>,
+    pub rating_levels: Option<RatingLevels>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReviewsPaging {
+    pub total: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReviewAnswer {
+    pub id: Number,
+    pub date_created: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    /// From 1 to 5 stars.
+    pub rate: Option<u8>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct RatingLevels {
+    #[serde(default)]
+    pub one_star: u32,
+    #[serde(default)]
+    pub two_star: u32,
+    #[serde(default)]
+    pub three_star: u32,
+    #[serde(default)]
+    pub four_star: u32,
+    #[serde(default)]
+    pub five_star: u32,
+}

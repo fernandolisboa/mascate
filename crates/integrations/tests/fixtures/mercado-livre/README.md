@@ -48,6 +48,8 @@ conta de vendedor do Fernando.
 | `questions-search-unanswered.json`, `questions-search-unanswered-end.json`, `questions-search-empty.json` | `GET /questions/search?seller_id=...&status=UNANSWERED&api_version=4&sort_fields=date_created&sort_types=ASC` em duas páginas (`offset`), e uma busca sem perguntas | Gerenciamento de perguntas e respostas |
 | `question-13001000001.json`, `question-13001000004-banned.json`, `error-404-question.json` | `GET /questions/{id}?api_version=4` de uma pergunta respondida, de uma removida (`BANNED`, texto vazio) e de uma que não existe mais (404) | Gerenciamento de perguntas e respostas |
 | `answer-posted.json`, `error-400-answer.json` | `POST /answers` com `question_id` e `text` (200) e o corpo recusado (400, `invalid_post_body`) | Gerenciamento de perguntas e respostas (Responder; Referência de códigos de erro) |
+| `users-me-reputation.json` | `GET /users/me` de um vendedor protegido, com `seller_reputation` (`level_id`, `real_level`, `protection_end_date`, `transactions`, `metrics` com `excluded`) | Reputação de vendedores; Recuperação de reputação |
+| `reviews-MLB4100000001.json`, `reviews-MLB4100000001-end.json`, `reviews-MLB4100000003.json`, `error-404-reviews.json` | `GET /reviews/item/{id}?limit=50&offset=...` em duas páginas com avaliações baixas, uma página só com notas altas, e um anúncio sem avaliações (404) | Opiniões de produtos |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -149,3 +151,19 @@ recursos vizinhos (conferir no regression pass):
   API. Ids, textos e compradores são inventados. Conferir no regression pass: a busca com `status`
   e ordenação juntos, o erro de responder uma pergunta já respondida, se a moderação aceita links
   do Mercado Livre na resposta e se `UNDER_REVIEW` volta a `UNANSWERED`.
+- Reputação e avaliações (#25): `users-me-reputation.json` segue o exemplo de `seller_reputation` da
+  página de reputação (o mesmo recurso de `GET /users/{id}`, lido em `/users/me`), com os números de
+  um vendedor novo e protegido: a página diz que, durante a proteção, as taxas contadas ficam em
+  zero e as reais vêm em `excluded` (`real_rate` como fração, `real_value` em vendas), que são as
+  que o app guarda. `level_id` vem como `5_green` e `real_level` como `yellow`; o app lê as cores
+  com ou sem o número. Os limites de cada cor (reclamações 2%, cancelamentos 1,5% e atrasos 10% para
+  a verde; 4,5%, 3,5% e 18% para a amarela; 8%, 4% e 22% para a laranja) vêm da tabela "Limites para
+  cada variável" do MLB, que não tem coluna para a verde-clara. As páginas de avaliações seguem o
+  exemplo de `/reviews/item/{id}` (`reviews[]` com `id`, `date_created`, `status`, `title`,
+  `content`, `rate`, `rating_average` e `rating_levels` de `one_star` a `five_star`); o exemplo
+  traz `paging` vazio, e o app lê `paging.total` como nas outras buscas. O app só pagina enquanto
+  faltam avaliações de 3 estrelas ou menos que `rating_levels` contou. O corpo do 404 é inventado
+  no formato de erro da API. Textos, ids e datas são inventados. Conferir no regression pass: os
+  limites reais de cada cor, o requisito de Product Ads (amarela e vendas mínimas), se Promoções
+  exige a verde ou aceita a verde-clara, se anúncios de catálogo precisam de `catalog_product_id`
+  para trazer as avaliações e se um anúncio sem avaliações responde 404 ou uma página vazia.

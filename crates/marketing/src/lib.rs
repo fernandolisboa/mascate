@@ -3,6 +3,7 @@
 mod quality;
 mod questions;
 mod replies;
+mod reputation;
 
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
@@ -16,6 +17,12 @@ pub use replies::{
     ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,
     PRODUCT_VARIABLE, QuestionSettings, ReplyProblem, ReplyTemplate, ReplyTemplates,
     TEMPLATE_NAME_MAX_CHARS, check_answer, contact_in,
+};
+pub use reputation::{
+    ArrivedReview, ChannelReputation, ChannelReview, LOW_RATING, ListingReviews, LowReview,
+    MetricReading, MetricStanding, PRODUCT_ADS_MIN_SALES, ProductReviews, REFRESH_MINUTES,
+    Reputation, ReputationColor, ReputationError, ReputationMetric, ReputationSource,
+    ReputationStanding, ReputationSync, ReviewedItem, SellerTool,
 };
 
 use mascate_platform::{Flag, FlagKind, ModuleMigrations, Phase};
@@ -39,5 +46,9 @@ pub const FLAGS: &[Flag] = &[AUTO_ANSWER_QUESTIONS];
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "marketing",
-    migrations: &[quality::CREATE_LISTING_QUALITY, questions::CREATE_QUESTIONS],
+    migrations: &[
+        quality::CREATE_LISTING_QUALITY,
+        questions::CREATE_QUESTIONS,
+        reputation::CREATE_REPUTATION,
+    ],
 };

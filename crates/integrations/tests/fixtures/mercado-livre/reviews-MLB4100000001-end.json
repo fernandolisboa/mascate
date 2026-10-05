@@ -1,0 +1,38 @@
+{
+  "paging": {
+    "total": 3,
+    "offset": 2,
+    "limit": 2
+  },
+  "reviews": [
+    {
+      "id": 52001000003,
+      "reviewable_object": {
+        "id": "MLB4100000001",
+        "type": "item"
+      },
+      "date_created": "2026-10-04T18:05:10Z",
+      "status": "published",
+      "title": "Razoável",
+      "content": "Bom pelo preço, mas o case risca fácil.",
+      "rate": 3,
+      "valorization": 0,
+      "likes": 0,
+      "dislikes": 0,
+      "reviewer_id": 0,
+      "buying_date": "2026-09-20T04:00:00Z",
+      "relevance": 40,
+      "forbidden_words": 0
+    }
+  ],
+  "rating_average": 3.3,
+  "rating_levels": {
+    "one_star": 0,
+    "two_star": 1,
+    "three_star": 1,
+    "four_star": 0,
+    "five_star": 1
+  },
+  "helpful_reviews": {},
+  "attributes": []
+}

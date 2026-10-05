@@ -7,7 +7,7 @@ use mascate_commerce::{Listings, Orders, Pricing, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
-use mascate_marketing::{ListingQuality, Questions, ReplyTemplates};
+use mascate_marketing::{ListingQuality, Questions, ReplyTemplates, Reputation};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
@@ -52,6 +52,7 @@ pub struct Started {
     pub orders: Arc<Orders>,
     pub quality: Arc<ListingQuality>,
     pub questions: Arc<Questions>,
+    pub reputation: Arc<Reputation>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
@@ -243,6 +244,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let reputation = Reputation::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let reply_templates = ReplyTemplates::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -270,6 +276,7 @@ pub fn prepare() -> Outcome {
                 orders: Arc::new(orders),
                 quality: Arc::new(quality),
                 questions: Arc::new(questions),
+                reputation: Arc::new(reputation),
                 reply_templates: Arc::new(reply_templates),
                 taxes: Arc::new(taxes),
                 backup_settings,
@@ -346,8 +353,9 @@ mod tests {
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
     use mascate_marketing::{
-        ChannelQuality, ChannelQuestion, ChannelQuestions, ListedItem, NewReplyTemplate,
-        QualityLevel, QualitySource, QuestionStatus, Rating,
+        ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
+        ListedItem, ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
+        QuestionStatus, Rating, ReputationColor, ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
@@ -464,6 +472,42 @@ mod tests {
 
         fn answer(&self, _: &str, _: &str) -> Result<(), PlatformError> {
             Ok(())
+        }
+    }
+
+    fn sample_reputation() -> ChannelReputation {
+        ChannelReputation {
+            color: Some(ReputationColor::Yellow),
+            real_color: None,
+            protected_until: None,
+            period_days: Some(60),
+            sales: 12,
+            transactions: 12,
+            claims: MetricReading::NONE,
+            cancellations: MetricReading::NONE,
+            delayed_handling: MetricReading::NONE,
+        }
+    }
+
+    /// A yellow seller with one low Review on every listing.
+    struct SampleReputation;
+
+    impl ReputationSource for SampleReputation {
+        fn reputation(&self) -> Result<ChannelReputation, PlatformError> {
+            Ok(sample_reputation())
+        }
+
+        fn reviews(&self, _: &str) -> Result<ListingReviews, PlatformError> {
+            Ok(ListingReviews {
+                stars: [0, 1, 0, 0, 2],
+                low: vec![ChannelReview {
+                    id: "52001000002".into(),
+                    rating: 2,
+                    title: "Parou de carregar".into(),
+                    text: String::new(),
+                    at: sample_question().asked_at,
+                }],
+            })
         }
     }
 
@@ -618,6 +662,10 @@ mod tests {
                 .unwrap();
             ReplyTemplates::new(database.clone(), clock.clone(), ids.clone())
                 .create(sample_template())
+                .await
+                .unwrap();
+            Reputation::new(database.clone(), clock.clone(), ids.clone())
+                .sync(&SampleReputation, &[sample_listing().id])
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -894,6 +942,19 @@ mod tests {
                     templates.create(sample_template()).await.unwrap();
                 }
                 assert_eq!(templates.templates().await.unwrap().len(), 1, "{name}");
+                // The Reputation and the Reviews arrived after 0.2.0 too.
+                let reputation = Reputation::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                reputation
+                    .sync(&SampleReputation, &[sample_listing().id])
+                    .await
+                    .unwrap();
+                let standing = reputation.standing().await.unwrap().unwrap();
+                assert_eq!(standing.reputation, sample_reputation(), "{name}");
+                assert_eq!(reputation.low_reviews().await.unwrap().len(), 1, "{name}");
             });
         }
     }
