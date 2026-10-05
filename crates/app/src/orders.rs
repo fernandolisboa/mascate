@@ -41,6 +41,7 @@ use crate::mercado_livre;
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::purchases::units_text;
+use crate::questions;
 use crate::sales;
 use crate::stock::product_label;
 use crate::stock_mirror;
@@ -91,7 +92,8 @@ pub fn failure(error: &OrderError) -> String {
 
 /// Erases the buyer data past its time, then runs an Order Sync now and
 /// every few minutes after, for as long as the app runs, window open or
-/// not. The first one covers the time the app was closed.
+/// not, each followed by a Sync of the buyers' questions (#24). The first
+/// one covers the time the app was closed.
 pub fn start_polling(cx: &mut App) {
     let Some(orders) = orders(cx) else {
         return;
@@ -110,6 +112,10 @@ pub fn start_polling(cx: &mut App) {
             if let Some(round) = cx.update(sync_now) {
                 let outcome = round.await;
                 cx.update(|cx| finished(&outcome, cx));
+            }
+            if let Some(round) = cx.update(questions::sync_now) {
+                let outcome = round.await;
+                cx.update(|cx| questions::finished(&outcome, cx));
             }
             let reading = orders.clone();
             let every = executor

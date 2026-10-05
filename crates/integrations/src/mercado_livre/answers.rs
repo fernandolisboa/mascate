@@ -2,7 +2,8 @@
 
 use std::str::FromStr;
 
-use mascate_kernel::{Currency, Money};
+use chrono::{DateTime, Utc};
+use mascate_kernel::{Currency, Money, Timestamp};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -24,6 +25,20 @@ pub(super) fn decimal(number: &Option<Number>) -> Option<Decimal> {
     Decimal::from_str(&text)
         .or_else(|_| Decimal::from_scientific(&text))
         .ok()
+}
+
+/// An id Mercado Livre sends as a JSON number, as text.
+pub(super) fn whole_id(number: &Number) -> String {
+    number.to_string()
+}
+
+/// A time as Mercado Livre writes it, such as
+/// `2026-10-04T10:30:00.000-03:00`.
+pub(super) fn time(text: &str) -> Option<Timestamp> {
+    DateTime::parse_from_rfc3339(text)
+        .or_else(|_| DateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f%z"))
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
 }
 
 #[derive(Deserialize)]
@@ -545,4 +560,33 @@ pub(super) struct RuleWordings {
 #[derive(Deserialize)]
 pub(super) struct VisitsAnswer {
     pub total_visits: u32,
+}
+
+/// A page of `/questions/search` with `api_version=4`.
+#[derive(Deserialize)]
+pub(super) struct QuestionSearch {
+    #[serde(default)]
+    pub total: u32,
+    #[serde(default)]
+    pub questions: Vec<QuestionAnswer>,
+}
+
+/// A question as `/questions/search` and `/questions/{id}` describe it.
+#[derive(Deserialize)]
+pub(super) struct QuestionAnswer {
+    pub id: Number,
+    pub item_id: String,
+    pub status: String,
+    /// Empty when Mercado Livre removed it.
+    #[serde(default)]
+    pub text: Option<String>,
+    pub date_created: String,
+    pub answer: Option<QuestionReply>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct QuestionReply {
+    #[serde(default)]
+    pub text: Option<String>,
+    pub date_created: Option<String>,
 }

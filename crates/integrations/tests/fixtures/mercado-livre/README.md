@@ -45,6 +45,9 @@ conta de vendedor do Fernando.
 | `shipment-label-44100000001.pdf` | `GET /shipment_labels?shipment_ids=...&response_type=pdf` | Mercado Envios 2 (Imprimir etiquetas) |
 | `item-MLB4100000001-performance.json`, `error-404-performance.json` | `GET /item/{id}/performance` com regras pendentes e concluídas, e o item ainda sem qualidade calculada (404) | Qualidade das publicações |
 | `item-MLB4100000001-visits.json` | `GET /items/{id}/visits/time_window?last=30&unit=day` | Visitas |
+| `questions-search-unanswered.json`, `questions-search-unanswered-end.json`, `questions-search-empty.json` | `GET /questions/search?seller_id=...&status=UNANSWERED&api_version=4&sort_fields=date_created&sort_types=ASC` em duas páginas (`offset`), e uma busca sem perguntas | Gerenciamento de perguntas e respostas |
+| `question-13001000001.json`, `question-13001000004-banned.json`, `error-404-question.json` | `GET /questions/{id}?api_version=4` de uma pergunta respondida, de uma removida (`BANNED`, texto vazio) e de uma que não existe mais (404) | Gerenciamento de perguntas e respostas |
+| `answer-posted.json`, `error-400-answer.json` | `POST /answers` com `question_id` e `text` (200) e o corpo recusado (400, `invalid_post_body`) | Gerenciamento de perguntas e respostas (Responder; Referência de códigos de erro) |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -131,3 +134,18 @@ recursos vizinhos (conferir no regression pass):
   of the item" acontece com anúncios próprios, e se a janela de visitas sem `ending` termina hoje.
   `item-*-visits.json` segue o exemplo da página de Visitas, sem o detalhe por dia, que o app não
   lê.
+- Perguntas (#24): a busca segue o exemplo de `/my/received_questions/search` da documentação
+  (`total`, `limit`, `questions[]` com `id`, `item_id`, `seller_id`, `status`, `text`,
+  `date_created`, `answer` com `text`, `status` e `date_created`, e `from.id`), que a página de
+  perguntas descreve como o mesmo formato de `/questions/search` com `api_version=4`. Os valores de
+  `available_filters` (os status `ANSWERED`, `BANNED`, `CLOSED_UNANSWERED`, `DELETED`, `DISABLED`,
+  `UNANSWERED` e `UNDER_REVIEW`) vêm da mesma página; os filtros `status`, `sort_fields` e
+  `sort_types` estão descritos, mas a página não mostra uma busca com todos juntos. A primeira
+  página foi cortada em duas perguntas para exercitar a paginação (o app soma o que veio, não o
+  `limit`). A página diz que perguntas e respostas `BANNED` voltam com texto vazio e que o limite
+  de uma resposta é 2.000 caracteres. O corpo de sucesso de `POST /answers` não é lido (o próximo
+  Sync lê a pergunta); o exemplo segue o recurso de pergunta. O texto de `error-400-answer.json` é
+  inventado com o código `invalid_post_body` da tabela de erros, e o 404 segue o formato de erro da
+  API. Ids, textos e compradores são inventados. Conferir no regression pass: a busca com `status`
+  e ordenação juntos, o erro de responder uma pergunta já respondida, se a moderação aceita links
+  do Mercado Livre na resposta e se `UNDER_REVIEW` volta a `UNANSWERED`.

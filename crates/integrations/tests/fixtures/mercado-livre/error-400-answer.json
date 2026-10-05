@@ -1,0 +1,6 @@
+{
+  "message": "Error validating question_id and text",
+  "error": "invalid_post_body",
+  "status": 400,
+  "cause": []
+}

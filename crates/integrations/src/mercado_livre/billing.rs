@@ -5,8 +5,7 @@
 //! warns against asking again for Orders already processed.
 
 use super::MercadoLivre;
-use super::answers::{BillingAnswer, BillingDetail, decimal};
-use super::orders::whole_id;
+use super::answers::{BillingAnswer, BillingDetail, decimal, whole_id};
 use super::sales_channel::path_id;
 use mascate_commerce::{BilledOrder, ChannelBilling, ChannelFee, FeeKind};
 use mascate_kernel::{Currency, Money, PlatformError};

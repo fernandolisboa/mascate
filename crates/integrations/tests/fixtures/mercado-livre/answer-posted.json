@@ -1,0 +1,13 @@
+{
+  "id": 13001000002,
+  "seller_id": 1234567,
+  "item_id": "MLB4100000003",
+  "status": "ANSWERED",
+  "text": "Tem a camiseta no tamanho G na cor preta?",
+  "date_created": "2026-10-04T10:40:47.000-03:00",
+  "answer": {
+    "text": "Olá! Temos sim, no tamanho G na cor preta.",
+    "status": "ACTIVE",
+    "date_created": "2026-10-04T12:03:00.000-03:00"
+  }
+}

@@ -17,6 +17,8 @@ use crate::preferences;
 use crate::products::ProductsScreen;
 use crate::purchases::PurchasesScreen;
 use crate::quality::QualityScreen;
+use crate::question_alerts::OpenQuestions;
+use crate::questions::QuestionsScreen;
 use crate::sales::SalesScreen;
 use crate::settings::SettingsScreen;
 use crate::stock::StockScreen;
@@ -32,6 +34,7 @@ pub struct Shell {
     products: Entity<ProductsScreen>,
     listings: Entity<ListingsScreen>,
     quality: Entity<QualityScreen>,
+    questions: Entity<QuestionsScreen>,
     orders: Entity<OrdersScreen>,
     sales: Entity<SalesScreen>,
     purchases: Entity<PurchasesScreen>,
@@ -53,6 +56,7 @@ impl Shell {
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
         let listings = cx.new(|cx| ListingsScreen::new(window, cx));
         let quality = cx.new(|cx| QualityScreen::new(window, cx));
+        let questions = cx.new(|cx| QuestionsScreen::new(window, cx));
         let orders = cx.new(|cx| OrdersScreen::new(window, cx));
         let sales = cx.new(|cx| SalesScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
@@ -111,6 +115,15 @@ impl Shell {
                 },
             ),
             cx.subscribe_in(
+                &home.read(cx).question_alerts.clone(),
+                window,
+                |shell, _, _: &OpenQuestions, _, cx| {
+                    shell.questions.update(cx, QuestionsScreen::refresh);
+                    shell.place = Place::Questions;
+                    cx.notify();
+                },
+            ),
+            cx.subscribe_in(
                 &home.read(cx).order_alerts.clone(),
                 window,
                 |shell, _, _: &OpenOrders, _, cx| {
@@ -134,6 +147,7 @@ impl Shell {
             products,
             listings,
             quality,
+            questions,
             orders,
             sales,
             purchases,
@@ -174,6 +188,7 @@ impl Shell {
                             .listings
                             .update(cx, |listings, cx| listings.refresh(window, cx)),
                         Place::Quality => shell.quality.update(cx, QualityScreen::refresh),
+                        Place::Questions => shell.questions.update(cx, QuestionsScreen::refresh),
                         Place::Orders => shell.orders.update(cx, OrdersScreen::refresh),
                         Place::Sales => shell.sales.update(cx, SalesScreen::refresh),
                         Place::Purchases => shell
@@ -202,6 +217,7 @@ impl Render for Shell {
             Place::Products => self.products.clone().into_any_element(),
             Place::Listings => self.listings.clone().into_any_element(),
             Place::Quality => self.quality.clone().into_any_element(),
+            Place::Questions => self.questions.clone().into_any_element(),
             Place::Orders => self.orders.clone().into_any_element(),
             Place::Sales => self.sales.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),
