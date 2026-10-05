@@ -105,7 +105,7 @@ Margem prevista de uma Opportunity ou Listing antes de vender.
 _Avoid_: lucro, margem (sozinho)
 
 **Realized Margin**:
-Margem de um Order já vendido: o que o comprador pagou e não recebeu de volta, menos as Fees, o imposto e o custo com que as unidades saíram do estoque (as que voltaram à prateleira saem do custo). Enquanto o Sales Channel não fatura o Order, é provisória: as Fees são as que o Order informa.
+Margem de um Order já vendido: o que o comprador pagou e não recebeu de volta, menos as Fees, o imposto, a parte do custo de Product Ads que cabe ao Order e o custo com que as unidades saíram do estoque (as que voltaram à prateleira saem do custo). Enquanto o Sales Channel não fatura o Order, é provisória: as Fees são as que o Order informa.
 _Avoid_: lucro, margem (sozinho)
 
 ## Estoque
@@ -201,6 +201,18 @@ _Avoid_: margem alvo, margem de segurança
 **Margin Guard**:
 Conferência que bloqueia uma Promotion quando a margem de uma unidade, no pior caso, fica abaixo da Minimum Margin, mostrando a conta e o menor preço que a mantém. O pior caso é o menor preço do Listing enquanto as Promotions dele correm, depois do cupom que tira mais: um comprador leva só esse Listing, nas menos unidades que a compra mínima pede, e o desconto inteiro cai nelas. Conta a variação de menor margem. Não há como forçar.
 _Avoid_: trava (no código), validação de preço
+
+**Product Ads**:
+Anúncio pago do Mercado Livre que destaca um Listing nas buscas, pago por clique. O app só lê: o custo, as vendas atribuídas, os cliques e as impressões de cada anúncio por dia, uma vez por dia. O custo de um Listing num mês entra na Realized Margin dos Orders dele nesse mês, dividido pelo valor de cada venda; o de um mês sem venda fica à parte no resumo. Exige a Reputation que libera Product Ads; sem ela, a seção fica escondida.
+_Avoid_: Ads (sozinho, no código), anúncio patrocinado, publicidade
+
+**ROAS**:
+Vendas atribuídas pelo Sales Channel a um anúncio de Product Ads, diretas e indiretas, para cada real investido nele: 4,25x é R$ 4,25 vendidos por R$ 1 de custo.
+_Avoid_: retorno, ROI (é outra conta)
+
+**Break-even ROAS**:
+Menor ROAS em que o anúncio de um Product não dá prejuízo: 1 ÷ a margem antes de Product Ads, ao preço de hoje, na variação de menor margem. Sem margem antes de Ads, não existe e qualquer ROAS dá prejuízo. Na tela, "ROAS de equilíbrio".
+_Avoid_: ROAS mínimo, ROAS alvo
 
 **Sales Event**:
 Data comercial do calendário (9.9, 11.11, Black Friday) usada para planejar Promotions e Offer Posts.

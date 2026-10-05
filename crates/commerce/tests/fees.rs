@@ -12,13 +12,13 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    BilledOrder, ChannelFee, ChannelReturn, FeeImport, FeeKind, Listings, NewPurchaseLine,
+    AdCost, BilledOrder, ChannelFee, ChannelReturn, FeeImport, FeeKind, Listings, NewPurchaseLine,
     NewPurchaseOrder, OrderStatus, Orders, PurchaseOrders, RealizedMargin, Receiving,
-    ReturnReceipt, ReturnStatus, ReturnedItem, Sale, SalesSummary, ShipmentStatus,
+    ReturnReceipt, ReturnStatus, ReturnedItem, Sale, SalesPeriod, SalesSummary, ShipmentStatus,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, Currency, Money, Percentage, RecordId, Timestamp};
+use mascate_kernel::{Clock, Currency, Money, Percentage, RecordId, Timestamp, channel_day_start};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
@@ -173,9 +173,10 @@ impl Fixture {
 
     async fn margin(&self, id: &str, tax: &str) -> RealizedMargin {
         self.orders
-            .sales(percent(tax), ever())
+            .sales(percent(tax), ever(), &[])
             .await
             .unwrap()
+            .sales
             .into_iter()
             .find(|sale| sale.order.sold.id == id)
             .unwrap()
@@ -465,9 +466,10 @@ fn sales_are_the_orders_sold_within_the_period_newest_first_and_add_up() {
         let to = fx.later(1);
         fx.sell("O4", 1).await;
 
-        let sales = fx.orders.sales(percent("0"), from..to).await.unwrap();
+        let sales = fx.orders.sales(percent("0"), from..to, &[]).await.unwrap();
 
         let ids: Vec<&str> = sales
+            .sales
             .iter()
             .map(|sale| sale.order.sold.id.as_str())
             .collect();
@@ -493,7 +495,7 @@ fn a_summary_leaves_sales_without_a_cost_out_of_the_margin() {
         fx.channel.sells(before);
         fx.sell("O1", 1).await;
 
-        let sales = fx.orders.sales(percent("0"), ever()).await.unwrap();
+        let sales = fx.orders.sales(percent("0"), ever(), &[]).await.unwrap();
         let summary = SalesSummary::of(&sales, Currency::Brl).unwrap();
 
         assert_eq!(summary.orders, 2);
@@ -504,12 +506,171 @@ fn a_summary_leaves_sales_without_a_cost_out_of_the_margin() {
     });
 }
 
+fn ad(listing: &str, month: u32, day: u32, cost: &str) -> AdCost {
+    AdCost {
+        listing: listing.into(),
+        day: NaiveDate::from_ymd_opt(2026, month, day).unwrap(),
+        cost: brl(cost),
+    }
+}
+
+fn sale_of<'a>(period: &'a SalesPeriod, id: &str) -> &'a Sale {
+    period
+        .sales
+        .iter()
+        .find(|sale| sale.order.sold.id == id)
+        .unwrap()
+}
+
+#[test]
+fn a_listings_ads_in_a_month_split_across_its_sales_that_month_by_value() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sell("O1", 1).await;
+        fx.sell("O2", 2).await;
+        let ads = [ad("MLB1", 10, 1, "10.00"), ad("MLB1", 10, 3, "20.00")];
+
+        let period = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+
+        let one = &sale_of(&period, "O1").margin;
+        let two = &sale_of(&period, "O2").margin;
+        // R$ 30 split 89,90 to 179,80.
+        assert_eq!(one.fees_of(FeeKind::Ads), brl("10.00"));
+        assert_eq!(two.fees_of(FeeKind::Ads), brl("20.00"));
+        assert_eq!(one.channel_fees(), brl("34.04"));
+        // 89,90 − 12,59 − 21,45 − 20,00 − 10,00.
+        assert_eq!(amount_of(one), brl("25.86"));
+        assert!(period.unplaced_ads.is_empty());
+        let summary = SalesSummary::of(&period, Currency::Brl).unwrap();
+        assert_eq!(summary.ads, brl("30.00"));
+        assert_eq!(summary.unplaced_ads, brl("0"));
+        assert_eq!(summary.fees, brl("80.67"));
+    });
+}
+
+#[test]
+fn ads_in_a_month_without_a_sale_stay_apart_and_count_in_their_period() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sell("O1", 1).await;
+        let ads = [
+            ad("MLB1", 9, 20, "15.00"),
+            ad("MLB9", 10, 2, "5.00"),
+            ad("MLB1", 10, 2, "8.00"),
+        ];
+        let october = channel_day_start(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap())
+            ..channel_day_start(NaiveDate::from_ymd_opt(2026, 11, 1).unwrap());
+
+        let all = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+        let this_month = fx.orders.sales(percent("0"), october, &ads).await.unwrap();
+
+        assert_eq!(
+            sale_of(&all, "O1").margin.fees_of(FeeKind::Ads),
+            brl("8.00")
+        );
+        assert_eq!(all.unplaced_ads, [ads[0].clone(), ads[1].clone()]);
+        assert_eq!(this_month.unplaced_ads, [ads[1].clone()]);
+        let summary = SalesSummary::of(&this_month, Currency::Brl).unwrap();
+        assert_eq!(summary.ads, brl("13.00"));
+        assert_eq!(summary.unplaced_ads, brl("5.00"));
+        // O1's 89,90 − 12,59 − 21,45 − 20,00 − 8,00, less the R$ 5 no sale took.
+        assert_eq!(summary.margin.unwrap().amount, brl("22.86"));
+    });
+}
+
+#[test]
+fn a_cancelled_order_takes_no_ads() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sell("O1", 1).await;
+        let at = fx.later(1);
+        let mut cancelled = order("O2", at, vec![sold("MLB1", None, 3)]);
+        cancelled.status = OrderStatus::Cancelled;
+        fx.channel.sells(cancelled);
+        fx.sync().await;
+
+        let period = fx
+            .orders
+            .sales(percent("0"), ever(), &[ad("MLB1", 10, 4, "12.00")])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sale_of(&period, "O1").margin.fees_of(FeeKind::Ads),
+            brl("12.00")
+        );
+        assert_eq!(
+            sale_of(&period, "O2").margin.fees_of(FeeKind::Ads),
+            brl("0")
+        );
+    });
+}
+
+#[test]
+fn ads_only_ever_come_from_the_caller() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        fx.sell("O1", 1).await;
+        let ads = [ad("MLB1", 10, 4, "7.77")];
+
+        let with = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+        let again = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+        let without = fx.orders.sales(percent("0"), ever(), &[]).await.unwrap();
+
+        assert_eq!(with, again);
+        assert_eq!(
+            sale_of(&without, "O1").margin.fees_of(FeeKind::Ads),
+            brl("0")
+        );
+    });
+}
+
 fn margin_of(sale: &Sale) -> Money {
     sale.margin.margin.unwrap().amount
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
+
+    /// However Product Ads fall across listings and months, the sales'
+    /// shares and what no sale took add up to exactly what the Ads cost.
+    #[test]
+    fn every_cent_of_ads_is_placed_once(
+        sales in prop::collection::vec(1u32..4, 0..4),
+        ads in prop::collection::vec((any::<bool>(), 9u32..=10, 1u32..=28, 1i64..5000), 1..8),
+    ) {
+        block_on(async {
+            let fx = Fixture::selling().await;
+            for (index, units) in sales.iter().enumerate() {
+                fx.sell(&format!("O{index}"), *units).await;
+            }
+            let ads: Vec<AdCost> = ads
+                .iter()
+                .map(|(other, month, day, cents)| AdCost {
+                    listing: if *other { "MLB9" } else { "MLB1" }.into(),
+                    day: NaiveDate::from_ymd_opt(2026, *month, *day).unwrap(),
+                    cost: Money::new(Decimal::new(*cents, 2), Currency::Brl),
+                })
+                .collect();
+
+            let period = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+
+            let spent = Money::sum(Currency::Brl, ads.iter().map(|ad| ad.cost)).unwrap();
+            let summary = SalesSummary::of(&period, Currency::Brl).unwrap();
+            prop_assert_eq!(summary.ads, spent);
+            for sale in &period.sales {
+                let margin = &sale.margin;
+                let expected = margin
+                    .revenue
+                    .checked_sub(margin.fees_total())
+                    .and_then(|left| left.checked_sub(margin.tax))
+                    .and_then(|left| left.checked_sub(margin.cost.unwrap()))
+                    .unwrap();
+                prop_assert_eq!(margin_of(sale), expected);
+            }
+            Ok(())
+        })?;
+    }
 
     /// Whatever was sold, billed and taxed, each margin is the revenue less
     /// every Fee, the tax and the cost, the Fees by kind add up to all of
@@ -539,10 +700,10 @@ proptest! {
             fx.import().await;
             let tax = Percentage::new(Decimal::from(tax)).unwrap();
 
-            let found = fx.orders.sales(tax, ever()).await.unwrap();
+            let found = fx.orders.sales(tax, ever(), &[]).await.unwrap();
 
             let mut total = brl("0");
-            for sale in &found {
+            for sale in &found.sales {
                 let margin = &sale.margin;
                 let expected = margin
                     .revenue

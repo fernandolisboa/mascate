@@ -1,10 +1,12 @@
 //! What every Platform has in common, whichever role it plays: how a call
 //! to it fails, how a Sales Channel exposes a listing, when the seller pays
-//! for shipping and which links open Mercado Livre itself.
+//! for shipping, which day it is there and which links open Mercado Livre
+//! itself.
 
+use chrono::{NaiveDate, NaiveTime, TimeDelta};
 use rust_decimal::Decimal;
 
-use crate::Money;
+use crate::{Money, Timestamp};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlatformError {
@@ -85,4 +87,19 @@ pub fn mercado_livre_link(link: &str) -> bool {
     ["mercadolivre.com.br", "mercadolibre.com"]
         .iter()
         .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+/// Hours Brasília time is behind UTC: Mercado Livre Brasil counts its days
+/// there (a Promotion's, a day of Product Ads), and Brazil has had no
+/// daylight saving since 2019.
+const CHANNEL_HOURS_BEHIND_UTC: i64 = 3;
+
+/// The day it is on the Sales Channel at `at`.
+pub fn channel_day(at: Timestamp) -> NaiveDate {
+    (at - TimeDelta::hours(CHANNEL_HOURS_BEHIND_UTC)).date_naive()
+}
+
+/// When `day` starts on the Sales Channel.
+pub fn channel_day_start(day: NaiveDate) -> Timestamp {
+    day.and_time(NaiveTime::MIN).and_utc() + TimeDelta::hours(CHANNEL_HOURS_BEHIND_UTC)
 }

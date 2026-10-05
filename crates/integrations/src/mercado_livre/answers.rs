@@ -726,3 +726,52 @@ pub(super) struct ItemPromotionAnswer {
     pub start_date: Option<String>,
     pub finish_date: Option<String>,
 }
+
+/// `/advertising/advertisers?product_id=PADS`: the accounts the user can
+/// see in Product Ads.
+#[derive(Deserialize)]
+pub(super) struct AdvertisersAnswer {
+    #[serde(default)]
+    pub advertisers: Vec<AdvertiserAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdvertiserAnswer {
+    pub advertiser_id: Number,
+    pub site_id: Option<String>,
+}
+
+/// A page of `/advertising/{site}/advertisers/{id}/product_ads/...` search.
+#[derive(Deserialize)]
+pub(super) struct AdsSearchAnswer<T> {
+    #[serde(default = "Vec::new")]
+    pub results: Vec<T>,
+    pub paging: Option<Paging>,
+}
+
+/// A Product Ads campaign.
+#[derive(Deserialize)]
+pub(super) struct AdCampaignAnswer {
+    pub id: Number,
+    pub name: Option<String>,
+    pub status: Option<String>,
+}
+
+/// An ad, with its metrics in the dates asked.
+#[derive(Deserialize)]
+pub(super) struct AdAnswer {
+    pub item_id: String,
+    pub campaign_id: Option<Number>,
+    pub metrics: Option<AdMetricsAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdMetricsAnswer {
+    pub clicks: Option<Number>,
+    pub prints: Option<Number>,
+    pub cost: Option<Number>,
+    pub direct_amount: Option<Number>,
+    pub indirect_amount: Option<Number>,
+    pub total_amount: Option<Number>,
+    pub units_quantity: Option<Number>,
+}

@@ -30,6 +30,7 @@ use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{RecordId, Timestamp};
 use mascate_platform::default_owner_folder;
 
+use crate::ads;
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
 use crate::connections::AppConnections;
@@ -127,6 +128,10 @@ pub fn start_polling(cx: &mut App) {
             if let Some(round) = cx.update(|cx| promotions::sync_now(cx, false)) {
                 let outcome = round.await;
                 cx.update(|cx| promotions::finished(&outcome, cx));
+            }
+            if let Some(round) = cx.update(|cx| ads::sync_now(cx, false)) {
+                let outcome = round.await;
+                cx.update(|cx| ads::finished(&outcome, cx));
             }
             let reading = orders.clone();
             let every = executor
@@ -355,8 +360,12 @@ pub struct OrdersScreen {
 
 impl OrdersScreen {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        // A Sync in the background brings Orders this screen has not read.
-        let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
+        // A Sync in the background brings Orders this screen has not read,
+        // and one of Product Ads their share of what the ads cost.
+        let subscriptions = vec![
+            cx.observe_global::<OrderSyncs>(Self::refresh),
+            cx.observe_global::<ads::AdsSyncs>(Self::refresh),
+        ];
         let mut screen = Self {
             orders: Vec::new(),
             margins: BTreeMap::new(),
@@ -382,6 +391,7 @@ impl OrdersScreen {
             return;
         };
         let connections = cx.global::<AppConnections>().0.clone();
+        let product_ads = ads::product_ads(cx);
         self.reads += 1;
         let read = self.reads;
         let reading = cx.background_executor().spawn(async move {
@@ -389,11 +399,13 @@ impl OrdersScreen {
                 .rate()
                 .await
                 .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
+            let ad_costs = ads::costs(product_ads.as_deref()).await?;
             Ok::<_, String>(Snapshot {
                 sales: orders
-                    .sales(tax, sales::ever())
+                    .sales(tax, sales::ever(), &ad_costs)
                     .await
-                    .map_err(|e| failure(&e))?,
+                    .map_err(|e| failure(&e))?
+                    .sales,
                 products: catalog.products().await.map_err(|e| catalog::failure(&e))?,
                 last_sync: orders.last_sync().await.map_err(|e| failure(&e))?,
                 settings: orders.settings().await.map_err(|e| failure(&e))?,

@@ -2,7 +2,9 @@
 //! top, and the margin of one Order Fee by Fee, which Pedidos shows in each
 //! Order too. Fees come from Mercado Livre's billing after each Order Sync;
 //! until it bills an Order, its margin shows as provisional. The rules live
-//! in Commerce (ADR 0020).
+//! in Commerce (ADR 0020). Product Ads (#27) take their share of each sale
+//! and, while the Reputation unlocks them, show each Product's ROAS against
+//! its break-even (ADR 0025).
 
 use std::ops::Range;
 
@@ -11,17 +13,23 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Hsla, SharedString, Subscription, Window, div, px};
-use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesSummary};
+use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesPeriod, SalesSummary};
 use mascate_kernel::{Currency, Margin, Money, Timestamp};
+use mascate_marketing::{AdMetrics, AdsReport, AdsSyncState, ProductRoas, SellerTool};
 
+use crate::ads::{self, AdsSyncs, ReportSources};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
+use crate::connections::AppConnections;
 use crate::forms::{Outcome, notice};
 use crate::kit;
 use crate::layout;
+use crate::listings::listings;
+use crate::mercado_livre;
 use crate::orders::{self, OrderSyncs, sold_text};
 use crate::parts::ScreenParts;
 use crate::pricing;
+use crate::reputation::reputation;
 
 /// Every sale, whenever it was.
 pub fn ever() -> Range<Timestamp> {
@@ -66,9 +74,29 @@ impl Period {
     }
 }
 
+/// What the Product Ads section shows.
+enum AdsView {
+    /// The Reputation does not unlock Product Ads, or was never read.
+    Locked,
+    Reading,
+    Read {
+        report: AdsReport,
+        last_sync: Option<AdsSyncState>,
+    },
+    Failed(String),
+}
+
+/// What one read of the screen brings.
+struct Snapshot {
+    sold: SalesPeriod,
+    ads_unlocked: bool,
+    last_ads_sync: Option<AdsSyncState>,
+}
+
 pub struct SalesScreen {
     period: Period,
-    sales: Vec<Sale>,
+    sold: SalesPeriod,
+    ads: AdsView,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -77,11 +105,19 @@ pub struct SalesScreen {
 
 impl SalesScreen {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        // Each Order Sync brings new Orders and, after it, their Fees.
-        let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
+        // Each Order Sync brings new Orders and, after it, their Fees; each
+        // Sync of Product Ads, what the ads cost.
+        let subscriptions = vec![
+            cx.observe_global::<OrderSyncs>(Self::refresh),
+            cx.observe_global::<AdsSyncs>(Self::refresh),
+        ];
         let mut screen = Self {
             period: Period::ThisMonth,
-            sales: Vec::new(),
+            sold: SalesPeriod {
+                sales: Vec::new(),
+                unplaced_ads: Vec::new(),
+            },
+            ads: AdsView::Locked,
             reads: 0,
             outcome: None,
             _subscriptions: subscriptions,
@@ -96,6 +132,8 @@ impl SalesScreen {
         let (Some(orders), Some(taxes)) = (orders::orders(cx), pricing::taxes(cx)) else {
             return;
         };
+        let product_ads = ads::product_ads(cx);
+        let reputation = reputation(cx);
         let sold = self.period.range(Local::now().date_naive());
         self.reads += 1;
         let read = self.reads;
@@ -104,10 +142,26 @@ impl SalesScreen {
                 .rate()
                 .await
                 .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
-            orders
-                .sales(tax, sold)
-                .await
-                .map_err(|e| orders::failure(&e))
+            let ad_costs = ads::costs(product_ads.as_deref()).await?;
+            let ads_unlocked = match &reputation {
+                Some(reputation) => ads::unlocked(reputation).await? == Some(true),
+                None => false,
+            };
+            let last_ads_sync = match &product_ads {
+                Some(product_ads) => product_ads
+                    .last_sync()
+                    .await
+                    .map_err(|e| ads::failure(&e))?,
+                None => None,
+            };
+            Ok::<_, String>(Snapshot {
+                sold: orders
+                    .sales(tax, sold, &ad_costs)
+                    .await
+                    .map_err(|e| orders::failure(&e))?,
+                ads_unlocked,
+                last_ads_sync,
+            })
         });
         cx.spawn(async move |this, cx| {
             let read_back = reading.await;
@@ -116,12 +170,66 @@ impl SalesScreen {
                     return;
                 }
                 match read_back {
-                    Ok(sales) => {
-                        this.sales = sales;
+                    Ok(snapshot) => {
+                        this.sold = snapshot.sold;
                         this.outcome = None;
+                        if snapshot.ads_unlocked {
+                            this.read_ads(snapshot.last_ads_sync, cx);
+                        } else {
+                            this.ads = AdsView::Locked;
+                        }
                     }
                     Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sums up the period's Product Ads by campaign and by Product, each
+    /// against its break-even on Mercado Livre's sale fees.
+    fn read_ads(&mut self, last_sync: Option<AdsSyncState>, cx: &mut Context<Self>) {
+        let (Some(ads), Some(listings), Some(catalog), Some(pricing), Some(taxes)) = (
+            ads::product_ads(cx),
+            listings(cx),
+            catalog::catalog(cx),
+            pricing::pricing(cx),
+            pricing::taxes(cx),
+        ) else {
+            return;
+        };
+        let connected = cx
+            .global::<AppConnections>()
+            .0
+            .state(mascate_integrations::Connection::MercadoLivre)
+            == mascate_integrations::ConnectionState::Connected;
+        let sources = ReportSources {
+            ads,
+            listings,
+            catalog,
+            pricing,
+            taxes,
+            channel: mercado_livre::adapter(cx).filter(|_| connected),
+        };
+        let during = self.period.range(Local::now().date_naive());
+        let read = self.reads;
+        if !matches!(self.ads, AdsView::Read { .. }) {
+            self.ads = AdsView::Reading;
+        }
+        let working = cx
+            .background_executor()
+            .spawn(async move { ads::report(&sources, during).await });
+        cx.spawn(async move |this, cx| {
+            let report = working.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.reads != read {
+                    return;
+                }
+                this.ads = match report {
+                    Ok(report) => AdsView::Read { report, last_sync },
+                    Err(error) => AdsView::Failed(error),
+                };
                 cx.notify();
             });
         })
@@ -153,7 +261,7 @@ impl SalesScreen {
 
     fn render_summary(&self, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
-        let summary = match SalesSummary::of(&self.sales, Currency::Brl) {
+        let summary = match SalesSummary::of(&self.sold, Currency::Brl) {
             Ok(summary) => summary,
             Err(error) => {
                 return kit::error_notice(format!("Vendas em moedas diferentes: {error}"), cx)
@@ -197,6 +305,14 @@ impl SalesScreen {
                 orders_text(summary.without_cost)
             ));
         }
+        if !summary.unplaced_ads.amount().is_zero() {
+            caveats.push(format!(
+                "{} de Product Ads em anúncios que não venderam no mês: entram na margem do \
+                 período, fora dos pedidos.",
+                summary.unplaced_ads.to_pt_br()
+            ));
+        }
+        let shows_ads = !summary.ads.amount().is_zero();
         v_flex()
             .gap_2()
             .child(
@@ -206,6 +322,7 @@ impl SalesScreen {
                     .child(figure("Pedidos", summary.orders.to_string()))
                     .child(figure("Receita", summary.revenue.to_pt_br()))
                     .child(figure("Tarifas", summary.fees.to_pt_br()))
+                    .children(shows_ads.then(|| figure("Product Ads", summary.ads.to_pt_br())))
                     .child(figure("Imposto", summary.tax.to_pt_br()))
                     .child(figure("Custo", summary.cost.to_pt_br()))
                     .child(wide_figure("Margem realizada", margin, 260.)),
@@ -220,7 +337,8 @@ impl SalesScreen {
 
     fn render_table(&self, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
-        if self.sales.is_empty() {
+        let sales = &self.sold.sales;
+        if sales.is_empty() {
             return div()
                 .text_sm()
                 .text_color(t.text2)
@@ -230,6 +348,9 @@ impl SalesScreen {
                 )
                 .into_any_element();
         }
+        let shows_ads = sales
+            .iter()
+            .any(|sale| !sale.margin.fees_of(FeeKind::Ads).amount().is_zero());
         let header = h_flex()
             .gap_3()
             .px_3()
@@ -239,10 +360,11 @@ impl SalesScreen {
             .child(div().flex_1().child("Pedido"))
             .child(money_cell("Receita"))
             .child(money_cell("Tarifas"))
+            .children(shows_ads.then(|| money_cell("Product Ads")))
             .child(money_cell("Imposto"))
             .child(money_cell("Custo"))
             .child(margin_cell().child("Margem"));
-        let rows = self.sales.iter().map(|sale| {
+        let rows = sales.iter().map(|sale| {
             let order = &sale.order;
             let margin = &sale.margin;
             let (tag, ink) = margin_tag(sale, &t);
@@ -280,7 +402,8 @@ impl SalesScreen {
                         ),
                 )
                 .child(money_cell(margin.revenue.to_pt_br()))
-                .child(money_cell(margin.fees_total().to_pt_br()))
+                .child(money_cell(margin.channel_fees().to_pt_br()))
+                .children(shows_ads.then(|| money_cell(margin.fees_of(FeeKind::Ads).to_pt_br())))
                 .child(money_cell(margin.tax.to_pt_br()))
                 .child(money_cell(cost_text(margin)))
                 .child(
@@ -297,6 +420,190 @@ impl SalesScreen {
             .children(rows)
             .into_any_element()
     }
+}
+
+impl SalesScreen {
+    /// Product Ads in the period: hidden, with why, until the Reputation
+    /// unlocks them; then each Product's ROAS against its break-even, and
+    /// each campaign.
+    fn render_ads(&self, cx: &App) -> AnyElement {
+        let t = look(cx).tokens;
+        let note = |text: String| div().text_sm().text_color(t.text2).child(text);
+        let body = match &self.ads {
+            AdsView::Locked => note(format!(
+                "O Product Ads libera com {}. Até lá esta seção fica oculta; quando a reputação \
+                 chegar lá, ela mostra o custo, as vendas atribuídas e o ROAS de cada produto, e \
+                 o custo entra na margem de cada venda. Acompanhe em Reputação.",
+                SellerTool::ProductAds.requirement()
+            ))
+            .into_any_element(),
+            AdsView::Reading => {
+                note("Calculando o ROAS de cada produto…".into()).into_any_element()
+            }
+            AdsView::Failed(error) => kit::error_notice(error.clone(), cx).into_any_element(),
+            AdsView::Read { report, last_sync } => self.render_report(report, *last_sync, cx),
+        };
+        v_flex()
+            .gap_3()
+            .child(kit::section_heading("Product Ads"))
+            .child(body)
+            .into_any_element()
+    }
+
+    fn render_report(
+        &self,
+        report: &AdsReport,
+        last_sync: Option<AdsSyncState>,
+        cx: &App,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        let read = match last_sync {
+            Some(last) if !last.account => format!(
+                "O Mercado Livre não tem uma conta de Product Ads para você (lido em {}). \
+                 Campanhas se criam no painel do Mercado Livre.",
+                catalog::day_and_time(last.at)
+            ),
+            Some(last) => format!(
+                "Lido uma vez por dia, até ontem; último Sync: {}. Campanhas se criam e mudam no \
+                 painel do Mercado Livre.",
+                catalog::day_and_time(last.at)
+            ),
+            None => "O Product Ads é lido uma vez por dia depois do Sync de pedidos.".into(),
+        };
+        let mut column = v_flex()
+            .gap_3()
+            .child(div().text_sm().text_color(t.text2).child(read));
+        let Some(total) = &report.total else {
+            return column
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(t.text2)
+                        .child("Nenhum anúncio patrocinado com custo neste período."),
+                )
+                .into_any_element();
+        };
+        column = column.child(
+            div()
+                .text_sm()
+                .child(format!("No período: {}.", metrics_text(total))),
+        );
+        let header = h_flex()
+            .gap_3()
+            .px_3()
+            .text_xs()
+            .text_color(t.text2)
+            .child(div().flex_1().child("Produto"))
+            .child(money_cell("Investimento"))
+            .child(money_cell("Vendas atribuídas"))
+            .child(money_cell("ROAS real"))
+            .child(money_cell("ROAS de equilíbrio"))
+            .child(margin_cell().child(""));
+        let products = report.products.iter().map(|row| product_row(row, &t, cx));
+        column = column
+            .child(v_flex().gap_2().child(header).children(products))
+            .child(div().text_xs().text_color(t.text2).child(
+                "ROAS real: vendas atribuídas pelo Mercado Livre (diretas e indiretas, como no \
+                     painel) para cada real investido. ROAS de equilíbrio: 1 ÷ a margem antes de \
+                     Ads, ao preço de hoje, na variação de menor margem; abaixo dele o anúncio dá \
+                     prejuízo.",
+            ));
+        if !report.campaigns.is_empty() {
+            let header = h_flex()
+                .gap_3()
+                .px_3()
+                .text_xs()
+                .text_color(t.text2)
+                .child(div().flex_1().child("Campanha"))
+                .child(money_cell("Investimento"))
+                .child(money_cell("Cliques"))
+                .child(money_cell("Vendas atribuídas"))
+                .child(money_cell("ROAS"));
+            let rows = report.campaigns.iter().map(|campaign| {
+                let name = match &campaign.campaign {
+                    Some(found) => format!("{} · {}", found.name, found.status.name()),
+                    None => format!("Campanha {} · encerrada", campaign.id),
+                };
+                table_row(&t)
+                    .child(div().flex_1().min_w_0().truncate().child(name))
+                    .child(money_cell(campaign.metrics.cost.to_pt_br()))
+                    .child(money_cell(campaign.metrics.clicks.to_string()))
+                    .child(money_cell(campaign.metrics.attributed.to_pt_br()))
+                    .child(money_cell(roas_text(&campaign.metrics)))
+            });
+            column = column.child(v_flex().gap_2().child(header).children(rows));
+        }
+        column.into_any_element()
+    }
+}
+
+/// One Product's ads, marked when they lose money.
+fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
+    let (verdict, ink) = if row.loses() {
+        ("dá prejuízo", t.danger)
+    } else if row.break_even.is_none() {
+        ("equilíbrio desconhecido", t.text2)
+    } else {
+        ("se paga", t.text2)
+    };
+    table_row(t)
+        .when(row.loses(), |row| row.border_color(t.danger))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .font_medium()
+                .child(row.name.clone()),
+        )
+        .child(money_cell(row.metrics.cost.to_pt_br()))
+        .child(money_cell(row.metrics.attributed.to_pt_br()))
+        .child(
+            money_cell(roas_text(&row.metrics))
+                .font_semibold()
+                .text_color(if row.loses() { t.danger } else { t.text }),
+        )
+        .child(money_cell(
+            row.break_even
+                .map_or_else(|| "–".to_owned(), |least| least.to_pt_br()),
+        ))
+        .child(
+            margin_cell()
+                .flex()
+                .justify_end()
+                .child(kit::tag(verdict, ink, cx)),
+        )
+        .into_any_element()
+}
+
+fn table_row(t: &Tokens) -> Div {
+    h_flex()
+        .gap_3()
+        .p_3()
+        .items_center()
+        .rounded(t.radius_lg)
+        .border(t.border_width)
+        .border_color(t.frame)
+        .bg(t.surface)
+        .text_sm()
+}
+
+/// "R$ 41,00 investidos, R$ 210,00 em vendas atribuídas, ROAS 5,12x, 59
+/// cliques".
+fn metrics_text(metrics: &AdMetrics) -> String {
+    format!(
+        "{} investidos, {} em vendas atribuídas, ROAS {}, {} cliques",
+        metrics.cost.to_pt_br(),
+        metrics.attributed.to_pt_br(),
+        roas_text(metrics),
+        metrics.clicks
+    )
+}
+
+fn roas_text(metrics: &AdMetrics) -> String {
+    metrics
+        .roas()
+        .map_or_else(|| "–".to_owned(), |roas| roas.to_pt_br())
 }
 
 impl Render for SalesScreen {
@@ -316,13 +623,14 @@ impl Render for SalesScreen {
         parts.content.push(
             v_flex()
                 .gap_3()
-                .child(kit::section_heading(match self.sales.len() {
+                .child(kit::section_heading(match self.sold.sales.len() {
                     1 => "1 venda".to_owned(),
                     count => format!("{count} vendas"),
                 }))
                 .child(self.render_table(cx))
                 .into_any_element(),
         );
+        parts.content.push(self.render_ads(cx));
         layout::screen(parts, cx)
     }
 }
@@ -340,6 +648,7 @@ pub fn margin_detail(margin: &RealizedMargin, cx: &App) -> AnyElement {
         (FeeKind::SaleFee, "tarifa de venda"),
         (FeeKind::Shipping, "frete"),
         (FeeKind::Other, "outras tarifas"),
+        (FeeKind::Ads, "Product Ads"),
     ] {
         if margin.fees.iter().any(|fee| fee.kind == kind) {
             parts.push(format!("{name} {}", margin.fees_of(kind).to_pt_br()));

@@ -13,7 +13,7 @@ use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_inventory::Inventory;
 use mascate_kernel::{
     Clock, Currency, CurrencyMismatch, IdGenerator, Money, Percentage, PlatformError, RecordId,
-    Timestamp,
+    Timestamp, channel_day,
 };
 use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
@@ -31,10 +31,6 @@ const DEFAULT_MINIMUM_MARGIN: Decimal = Decimal::from_parts(10, 0, 0, false, 0);
 
 /// Minutes between two reads of the Promotions, after the first.
 pub const PROMOTIONS_REFRESH_MINUTES: i64 = 60;
-
-/// Hours Brasília time is behind UTC: Mercado Livre Brasil counts a
-/// Promotion's days there, and Brazil has had no daylight saving since 2019.
-const CHANNEL_HOURS_BEHIND_UTC: i64 = 3;
 
 pub(crate) const CREATE_PROMOTIONS: Migration = Migration {
     version: 9,
@@ -96,11 +92,6 @@ const SETTINGS_TABLE: &str = "commerce_promotion_settings";
 const SETTINGS_COLUMNS: &[&str] = &["minimum_margin"];
 const SYNCS_TABLE: &str = "commerce_promotion_syncs";
 const SYNCS_COLUMNS: &[&str] = &["synced_at"];
-
-/// The day it is on the Sales Channel at `at`.
-pub fn channel_day(at: Timestamp) -> NaiveDate {
-    (at - TimeDelta::hours(CHANNEL_HOURS_BEHIND_UTC)).date_naive()
-}
 
 /// What sort of Promotion it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -4,16 +4,19 @@
 //! the price the buyer kept paid, minus the Fees, the tax and the cost the
 //! units left the ledger with (ADR 0019): the same rule as the Estimated
 //! Margin (`Margin::of`). Until the billing has the Order, its Fees are the
-//! ones the Order itself reports and the margin is provisional.
+//! ones the Order itself reports and the margin is provisional. What
+//! Product Ads cost (#27) comes from the caller, by listing and day, and is
+//! split across the month's sales of each listing by value (ADR 0025).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use chrono::TimeDelta;
+use chrono::{Datelike, NaiveDate, TimeDelta};
 use libsql::{Connection, TransactionBehavior, params};
 use mascate_inventory::StockMovement;
 use mascate_kernel::{
     Currency, CurrencyMismatch, Margin, Money, Percentage, PlatformError, RecordId, Timestamp,
+    channel_day, channel_day_start,
 };
 use mascate_platform::{Migration, StoredRow, stored};
 use rust_decimal::Decimal;
@@ -62,16 +65,24 @@ pub enum FeeKind {
     Shipping,
     /// Anything else the channel bills on the sale.
     Other,
+    /// The sale's share of what Product Ads cost its listing that month.
+    Ads,
 }
 
 impl FeeKind {
-    const ALL: [FeeKind; 3] = [FeeKind::SaleFee, FeeKind::Shipping, FeeKind::Other];
+    const ALL: [FeeKind; 4] = [
+        FeeKind::SaleFee,
+        FeeKind::Shipping,
+        FeeKind::Other,
+        FeeKind::Ads,
+    ];
 
     fn code(self) -> &'static str {
         match self {
             FeeKind::SaleFee => "sale_fee",
             FeeKind::Shipping => "shipping",
             FeeKind::Other => "other",
+            FeeKind::Ads => "ads",
         }
     }
 
@@ -107,6 +118,16 @@ pub trait ChannelBilling: Send + Sync {
     /// Order the channel has not billed yet is left out, or comes without
     /// charges.
     fn billed_fees(&self, orders: &[String]) -> Result<Vec<BilledOrder>, PlatformError>;
+}
+
+/// What Product Ads cost on one listing in one day of the Sales Channel,
+/// as the caller read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdCost {
+    /// The channel's id of the listing.
+    pub listing: String,
+    pub day: NaiveDate,
+    pub cost: Money,
 }
 
 /// A Fee that came out of a sale.
@@ -154,6 +175,11 @@ impl RealizedMargin {
         self.sum_fees(|_| true)
     }
 
+    /// The Fees the channel charges: every one but Product Ads.
+    pub fn channel_fees(&self) -> Money {
+        self.sum_fees(|fee| fee.kind != FeeKind::Ads)
+    }
+
     /// The Fees of one kind together.
     pub fn fees_of(&self, kind: FeeKind) -> Money {
         self.sum_fees(|fee| fee.kind == kind)
@@ -179,16 +205,30 @@ pub struct Sale {
     pub margin: RealizedMargin,
 }
 
+/// The sales of a period, and what Product Ads cost in it that no sale
+/// took: a listing's ads in a month it sold nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SalesPeriod {
+    pub sales: Vec<Sale>,
+    pub unplaced_ads: Vec<AdCost>,
+}
+
 /// Several sales together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SalesSummary {
     pub orders: usize,
     pub revenue: Money,
+    /// What the channel charged: the Fees but Product Ads.
     pub fees: Money,
+    /// What Product Ads cost: the sales' shares and what no sale took.
+    pub ads: Money,
+    /// What Product Ads cost that no sale took.
+    pub unplaced_ads: Money,
     pub tax: Money,
     /// The cost of the sales that have one.
     pub cost: Money,
-    /// The margin of the sales that have a cost; `None` when none has.
+    /// The margin of the sales that have a cost, less the Product Ads no
+    /// sale took; `None` with neither.
     pub margin: Option<Margin>,
     /// Sales whose Fees the channel has not billed yet.
     pub provisional: usize,
@@ -197,7 +237,8 @@ pub struct SalesSummary {
 }
 
 impl SalesSummary {
-    pub fn of(sales: &[Sale], currency: Currency) -> Result<Self, CurrencyMismatch> {
+    pub fn of(period: &SalesPeriod, currency: Currency) -> Result<Self, CurrencyMismatch> {
+        let sales = &period.sales;
         let total = |pick: &dyn Fn(&RealizedMargin) -> Money, sales: &[&Sale]| {
             Money::sum(currency, sales.iter().map(|sale| pick(&sale.margin)))
         };
@@ -206,7 +247,8 @@ impl SalesSummary {
             .iter()
             .filter(|sale| sale.margin.cost.is_some())
             .collect();
-        let margin = if costed.is_empty() {
+        let unplaced_ads = Money::sum(currency, period.unplaced_ads.iter().map(|ad| ad.cost))?;
+        let margin = if costed.is_empty() && unplaced_ads.amount().is_zero() {
             None
         } else {
             Some(Margin::of(
@@ -215,13 +257,16 @@ impl SalesSummary {
                     total(&RealizedMargin::fees_total, &costed)?,
                     total(&|m| m.tax, &costed)?,
                     total(&|m| m.cost.unwrap_or(Money::zero(currency)), &costed)?,
+                    unplaced_ads,
                 ],
             )?)
         };
         Ok(Self {
             orders: sales.len(),
             revenue: total(&|m| m.revenue, &all)?,
-            fees: total(&RealizedMargin::fees_total, &all)?,
+            fees: total(&RealizedMargin::channel_fees, &all)?,
+            ads: total(&|m| m.fees_of(FeeKind::Ads), &all)?.checked_add(unplaced_ads)?,
+            unplaced_ads,
             tax: total(&|m| m.tax, &all)?,
             cost: total(&|m| m.cost.unwrap_or(Money::zero(currency)), &costed)?,
             margin,
@@ -312,12 +357,17 @@ impl Orders {
     }
 
     /// The Orders sold within `sold`, newest first, each with its Realized
-    /// Margin at the tax rate `tax`.
+    /// Margin at the tax rate `tax`, and the `ads` (what Product Ads cost,
+    /// by listing and day) of the days within `sold` that no sale took.
+    /// Each listing's Ads in a month of the channel are split across the
+    /// listing's sales that month that were not cancelled, by their value,
+    /// whatever `sold` is; a month without such a sale keeps its Ads apart.
     pub async fn sales(
         &self,
         tax: Percentage,
         sold: Range<Timestamp>,
-    ) -> Result<Vec<Sale>, OrderError> {
+        ads: &[AdCost],
+    ) -> Result<SalesPeriod, OrderError> {
         let orders = self.orders().await?;
         let mut billed = read_fees(self.database.connection()).await?;
         let exits: Vec<RecordId> = orders
@@ -336,20 +386,31 @@ impl Orders {
             .map(|movement| (movement.id, movement))
             .collect();
         let shipping = shipping_shares(&orders);
-        orders
+        let (placed, unplaced_ads) = place_ads(&orders, ads)?;
+        let sales = orders
             .into_iter()
             .filter(|order| sold.contains(&order.sold.ordered_at))
             .map(|order| {
-                let margin = realized_margin(
+                let mut margin = realized_margin(
                     &order,
                     billed.remove(&order.id),
                     shipping.get(&order.id).copied(),
                     &exits,
                     tax,
                 )?;
+                if let Some(&share) = placed.get(&order.id) {
+                    margin.take_ads(share)?;
+                }
                 Ok(Sale { order, margin })
             })
-            .collect()
+            .collect::<Result<_, OrderError>>()?;
+        Ok(SalesPeriod {
+            sales,
+            unplaced_ads: unplaced_ads
+                .into_iter()
+                .filter(|ad| sold.contains(&channel_day_start(ad.day)))
+                .collect(),
+        })
     }
 
     /// Writes the channel's charges over an Order's: each by its id, and
@@ -478,6 +539,86 @@ fn shipping_shares(orders: &[Order]) -> BTreeMap<RecordId, Money> {
         }
     }
     shares
+}
+
+/// A listing in a month of the Sales Channel.
+type ListingMonth<'a> = (&'a str, i32, u32);
+
+fn month_of(day: NaiveDate) -> (i32, u32) {
+    (day.year(), day.month())
+}
+
+/// Each Order's share of `ads`: a listing's Ads in a month of the channel,
+/// split across the lines that sold it that month, in Orders not
+/// cancelled, by their value. The Ads of a listing and month without such
+/// a line are left over, day by day.
+fn place_ads(
+    orders: &[Order],
+    ads: &[AdCost],
+) -> Result<(BTreeMap<RecordId, Money>, Vec<AdCost>), CurrencyMismatch> {
+    let mut spent: BTreeMap<ListingMonth, Vec<&AdCost>> = BTreeMap::new();
+    for ad in ads {
+        let (year, month) = month_of(ad.day);
+        spent
+            .entry((ad.listing.as_str(), year, month))
+            .or_default()
+            .push(ad);
+    }
+    let mut sold: BTreeMap<ListingMonth, Vec<(RecordId, Decimal)>> = BTreeMap::new();
+    for order in orders {
+        if order.sold.status == OrderStatus::Cancelled {
+            continue;
+        }
+        let (year, month) = month_of(channel_day(order.sold.ordered_at));
+        for line in &order.lines {
+            sold.entry((line.sold.item.as_str(), year, month))
+                .or_default()
+                .push((
+                    order.id,
+                    line.sold.unit_price.amount() * Decimal::from(line.sold.quantity),
+                ));
+        }
+    }
+    let mut placed: BTreeMap<RecordId, Money> = BTreeMap::new();
+    let mut unplaced = Vec::new();
+    for (key, days) in spent {
+        let Some(lines) = sold.get(&key) else {
+            unplaced.extend(days.into_iter().cloned());
+            continue;
+        };
+        let currency = days[0].cost.currency();
+        let cost = Money::sum(currency, days.iter().map(|ad| ad.cost))?;
+        let values: Vec<Decimal> = lines.iter().map(|(_, value)| *value).collect();
+        for ((order, _), share) in lines.iter().zip(split_by_value(cost, &values)) {
+            let taken = match placed.get(order) {
+                Some(&earlier) => earlier.checked_add(share)?,
+                None => share,
+            };
+            placed.insert(*order, taken);
+        }
+    }
+    Ok((placed, unplaced))
+}
+
+impl RealizedMargin {
+    /// Takes the sale's `share` of Product Ads as a Fee, out of the margin.
+    fn take_ads(&mut self, share: Money) -> Result<(), CurrencyMismatch> {
+        if share.amount().is_zero() {
+            return Ok(());
+        }
+        self.fees.push(Fee {
+            kind: FeeKind::Ads,
+            description: None,
+            amount: share,
+        });
+        if let Some(cost) = self.cost {
+            self.margin = Some(Margin::of(
+                self.revenue,
+                &[self.fees_total(), self.tax, cost],
+            )?);
+        }
+        Ok(())
+    }
 }
 
 /// The Realized Margin of `order`, from its `billed` Fees when the channel

@@ -25,11 +25,11 @@ use mascate_catalog::Product;
 use mascate_commerce::{
     CouponDiscount, CouponTerms, DiscountPlan, Listing, ListingStatus, Offer, Promotion,
     PromotionCheck, PromotionError, PromotionKind, PromotionPlan, PromotionRequest,
-    PromotionStatus, PromotionSync, Promotions, channel_day,
+    PromotionStatus, PromotionSync, Promotions,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{
-    Currency, Money, Percentage, PlatformError, RecordId, Timestamp, parse_amount,
+    Currency, Money, Percentage, PlatformError, RecordId, Timestamp, channel_day, parse_amount,
 };
 use mascate_marketing::SellerTool;
 

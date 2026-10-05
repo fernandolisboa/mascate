@@ -1,0 +1,79 @@
+{
+  "paging": {
+    "offset": 0,
+    "last_item_id": null,
+    "total": 3,
+    "limit": 50
+  },
+  "results": [
+    {
+      "item_id": "MLB4100000001",
+      "campaign_id": 351,
+      "price": 89.9,
+      "title": "Fone de Ouvido Bluetooth TWS",
+      "status": "active",
+      "has_discount": false,
+      "catalog_listing": false,
+      "logistic_type": "drop_off",
+      "listing_type_id": "gold_special",
+      "domain_id": "MLB-HEADPHONES",
+      "date_created": "2026-09-01T10:05:00.000-03:00",
+      "buy_box_winner": false,
+      "channel": "marketplace",
+      "thumbnail": "http://http2.mlstatic.com/D_123456-MLB0000000001_092026-I.jpg",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000001-fone-de-ouvido-bluetooth-tws-_JM",
+      "metrics": {
+        "clicks": 31,
+        "prints": 1240,
+        "ctr": 0.025,
+        "cost": 12.4,
+        "cpc": 0.4,
+        "acos": 0.0689,
+        "direct_amount": 89.9,
+        "indirect_amount": 89.9,
+        "total_amount": 179.8,
+        "units_quantity": 2,
+        "roas": 14.5
+      }
+    },
+    {
+      "item_id": "MLB4100000003",
+      "campaign_id": 351,
+      "price": 59.9,
+      "title": "Fone de Ouvido com Fio P2",
+      "status": "paused",
+      "has_discount": false,
+      "catalog_listing": false,
+      "logistic_type": "drop_off",
+      "listing_type_id": "gold_special",
+      "domain_id": "MLB-HEADPHONES",
+      "date_created": "2026-09-02T11:00:00.000-03:00",
+      "buy_box_winner": false,
+      "channel": "marketplace",
+      "metrics": {
+        "clicks": 0,
+        "prints": 0,
+        "ctr": 0,
+        "cost": 0,
+        "cpc": 0,
+        "acos": 0,
+        "direct_amount": 0,
+        "indirect_amount": 0,
+        "total_amount": 0,
+        "units_quantity": 0,
+        "roas": 0
+      }
+    }
+  ],
+  "metrics_summary": {
+    "clicks": 39,
+    "prints": 1560,
+    "cost": 15.7,
+    "acos": 0.0873,
+    "direct_amount": 89.9,
+    "indirect_amount": 89.9,
+    "total_amount": 179.8,
+    "units_quantity": 2,
+    "roas": 11.45
+  }
+}

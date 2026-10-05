@@ -7,9 +7,9 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use mascate_commerce::{
     ChannelOffer, ChannelPromotion, ChannelPromotions, CouponDiscount, CouponTerms, OfferToJoin,
-    PromotionKind, PromotionPlan, PromotionStatus, channel_day,
+    PromotionKind, PromotionPlan, PromotionStatus,
 };
-use mascate_kernel::{Currency, Money, Percentage, PlatformError};
+use mascate_kernel::{Currency, Money, Percentage, PlatformError, channel_day};
 use serde_json::Value;
 
 use super::MercadoLivre;

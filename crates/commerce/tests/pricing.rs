@@ -16,7 +16,7 @@ use mascate_commerce::{
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, MovementReason, NewEntry};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, Percentage, PlatformError, RecordId};
+use mascate_kernel::{BreakEven, Currency, Money, Percentage, PlatformError, RecordId};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
@@ -607,6 +607,61 @@ fn the_simulator_starts_from_todays_sale_of_the_listing() {
         );
         assert!(matches!(unlinked, Err(PricingError::NotLinked(id)) if id == listed[1].id));
         assert!(fx.channel.prices_set.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn the_break_even_roas_is_the_price_over_the_margin_before_ads_of_the_worst_variation() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let base = priced("MLB1", "99.90");
+        let listed = fx
+            .listed(vec![
+                (variation(&base, "11", "Cor: Preto"), Some(1)),
+                (variation(&base, "12", "Cor: Branco"), Some(2)),
+                (priced("MLB2", "50"), Some(3)),
+            ])
+            .await;
+        fx.stock(1, 1, "35").await;
+        fx.stock(2, 1, "50").await;
+        fx.stock(3, 1, "50").await;
+
+        let break_even = fx
+            .pricing
+            .break_even(listed[0].id, &fx.channel, assumptions())
+            .await
+            .unwrap();
+        let losing = fx
+            .pricing
+            .break_even(listed[2].id, &fx.channel, assumptions())
+            .await
+            .unwrap();
+
+        // Product 2 keeps R$ 99,90 − 13,99 − 20 − 5,99 − 50 = R$ 9,92 before
+        // Ads: R$ 99,90 / 9,92.
+        let BreakEven::At(least) = break_even else {
+            panic!("expected a break-even ROAS, got {break_even:?}");
+        };
+        assert_eq!(least.ratio().round_dp(6), Decimal::new(10_070_565, 6));
+        assert_eq!(break_even.to_pt_br(), "10,07x");
+        // R$ 50 of cost on a R$ 50 sale leaves nothing for Ads.
+        assert_eq!(losing, BreakEven::Never);
+        assert!(fx.channel.prices_set.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_product_never_stocked_has_no_break_even_roas() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let listed = fx.listed(vec![(priced("MLB1", "89.90"), Some(1))]).await;
+
+        let found = fx
+            .pricing
+            .break_even(listed[0].id, &fx.channel, assumptions())
+            .await;
+
+        assert!(matches!(found, Err(PricingError::NoCost(n)) if n == product(1)));
     });
 }
 
