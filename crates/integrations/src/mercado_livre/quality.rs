@@ -2,7 +2,7 @@
 //! pending actions of `/item/{id}/performance`, which replaced `/health`,
 //! and the visits of `/items/{id}/visits/time_window`.
 
-use mascate_kernel::PlatformError;
+use mascate_kernel::{PlatformError, mercado_livre_link};
 use mascate_marketing::{ActionKind, ChannelQuality, QualityAction, QualityLevel, QualitySource};
 use rust_decimal::prelude::ToPrimitive;
 
@@ -74,7 +74,7 @@ fn action(rule: &PerformanceRule, goal: Option<&str>) -> QualityAction {
             .to_owned(),
         link: wordings
             .and_then(|w| w.link.as_deref())
-            .filter(|link| on_mercado_livre(link))
+            .filter(|link| mercado_livre_link(link))
             .map(str::to_owned),
     }
 }
@@ -82,22 +82,6 @@ fn action(rule: &PerformanceRule, goal: Option<&str>) -> QualityAction {
 /// `text` with something besides blanks, trimmed.
 fn worded(text: Option<&str>) -> Option<&str> {
     text.map(str::trim).filter(|text| !text.is_empty())
-}
-
-/// Whether `link` opens a Mercado Livre page over HTTPS: the panel opens
-/// it in the browser, so nothing else from an answer is trusted.
-fn on_mercado_livre(link: &str) -> bool {
-    let Some(rest) = link.strip_prefix("https://") else {
-        return false;
-    };
-    let host = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    ["mercadolivre.com.br", "mercadolibre.com"]
-        .iter()
-        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
 /// The level by Mercado Livre's own name for it or, failing that, by the

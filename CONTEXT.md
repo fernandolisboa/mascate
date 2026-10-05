@@ -174,6 +174,14 @@ _Avoid_: copy (sozinho), descrição
 Nota de 0 a 100 e nível (Básica, Satisfatória, Profissional) que o Sales Channel dá a um Listing publicado, com as ações que ele diz faltar, cada uma com o link para corrigir no canal. As que derrubam a nota são problemas; as outras, sugestões. O painel põe primeiro os Listings com algo pendente que mais venderam e receberam visitas nos últimos 30 dias. Variações do mesmo anúncio dividem a mesma nota.
 _Avoid_: saúde do anúncio, health, score (sozinho), Checklist (é do rascunho)
 
+**Question**:
+Pergunta de um comprador num Listing publicado, lida do Sales Channel com o status (sem resposta, respondida, encerrada sem resposta, em análise, removida) e o tempo de espera. Na caixa, as sem resposta ficam em cima, a que espera há mais tempo primeiro. Cada pergunta é respondida uma vez, só depois que o Fernando confere e confirma o texto final, que o app guarda com ela; contato e link para fora do canal nunca saem numa resposta.
+_Avoid_: mensagem, dúvida, pós-venda (é mensagem de Order)
+
+**Reply Template**:
+Resposta pronta do Fernando para uma Question comum, com as variáveis `{produto}` (nome do Product do Listing) e `{prazo}` (o prazo de despacho em dias úteis). Preenche a resposta, que o Fernando ainda edita e confirma antes de enviar.
+_Avoid_: resposta automática, macro, template (no código, `ReplyTemplate`)
+
 **Promotion**:
 Desconto, campanha ou cupom do vendedor num Sales Channel.
 _Avoid_: campanha (sozinho), oferta

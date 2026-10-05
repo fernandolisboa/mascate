@@ -1,10 +1,21 @@
 //! Marketing: Listing quality, questions, reputation, Promotions and Ads cost.
 
 mod quality;
+mod questions;
+mod replies;
 
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
     QualityError, QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
+};
+pub use questions::{
+    AnswerRequest, ChannelAnswer, ChannelQuestion, ChannelQuestions, ConfirmedAnswer, Question,
+    QuestionError, QuestionStatus, QuestionSync, Questions, SentAnswer,
+};
+pub use replies::{
+    ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,
+    PRODUCT_VARIABLE, QuestionSettings, ReplyProblem, ReplyTemplate, ReplyTemplates,
+    TEMPLATE_NAME_MAX_CHARS, check_answer, contact_in,
 };
 
 use mascate_platform::{Flag, FlagKind, ModuleMigrations, Phase};
@@ -28,5 +39,5 @@ pub const FLAGS: &[Flag] = &[AUTO_ANSWER_QUESTIONS];
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "marketing",
-    migrations: &[quality::CREATE_LISTING_QUALITY],
+    migrations: &[quality::CREATE_LISTING_QUALITY, questions::CREATE_QUESTIONS],
 };

@@ -1,6 +1,6 @@
 //! What every Platform has in common, whichever role it plays: how a call
-//! to it fails, how a Sales Channel exposes a listing and when the seller
-//! pays for shipping.
+//! to it fails, how a Sales Channel exposes a listing, when the seller pays
+//! for shipping and which links open Mercado Livre itself.
 
 use rust_decimal::Decimal;
 
@@ -68,4 +68,21 @@ pub fn shipping_paid_by_seller(sale_price: Money, estimate: Money) -> Money {
     } else {
         Money::zero(sale_price.currency())
     }
+}
+
+/// Whether `link` opens a Mercado Livre page over HTTPS. The app opens
+/// links that come in a Platform's answers and lets the owner's own answers
+/// carry links only when they pass this.
+pub fn mercado_livre_link(link: &str) -> bool {
+    let Some(rest) = link.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    ["mercadolivre.com.br", "mercadolibre.com"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }

@@ -7,7 +7,7 @@ use mascate_commerce::{Listings, Orders, Pricing, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
-use mascate_marketing::ListingQuality;
+use mascate_marketing::{ListingQuality, Questions, ReplyTemplates};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
@@ -51,6 +51,8 @@ pub struct Started {
     pub stock_mirror: Arc<StockMirror>,
     pub orders: Arc<Orders>,
     pub quality: Arc<ListingQuality>,
+    pub questions: Arc<Questions>,
+    pub reply_templates: Arc<ReplyTemplates>,
     pub taxes: Arc<Taxes>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
@@ -236,6 +238,16 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let questions = Questions::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
+            let reply_templates = ReplyTemplates::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -257,6 +269,8 @@ pub fn prepare() -> Outcome {
                 stock_mirror: Arc::new(stock_mirror),
                 orders: Arc::new(orders),
                 quality: Arc::new(quality),
+                questions: Arc::new(questions),
+                reply_templates: Arc::new(reply_templates),
                 taxes: Arc::new(taxes),
                 backup_settings,
                 update_settings,
@@ -331,7 +345,10 @@ mod tests {
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
-    use mascate_marketing::{ChannelQuality, ListedItem, QualityLevel, QualitySource, Rating};
+    use mascate_marketing::{
+        ChannelQuality, ChannelQuestion, ChannelQuestions, ListedItem, NewReplyTemplate,
+        QualityLevel, QualitySource, QuestionStatus, Rating,
+    };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
@@ -417,6 +434,43 @@ mod tests {
 
         fn visits(&self, _: &str, _: u32) -> Result<u32, PlatformError> {
             Ok(7)
+        }
+    }
+
+    fn sample_question() -> ChannelQuestion {
+        ChannelQuestion {
+            id: "13001000001".into(),
+            listing: sample_listing().id,
+            text: "Funciona com iPhone?".into(),
+            status: QuestionStatus::Unanswered,
+            asked_at: chrono::DateTime::parse_from_rfc3339("2026-10-04T08:15:02-03:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            answer: None,
+        }
+    }
+
+    /// One buyer waiting for an answer.
+    struct SampleQuestions;
+
+    impl ChannelQuestions for SampleQuestions {
+        fn unanswered(&self) -> Result<Vec<ChannelQuestion>, PlatformError> {
+            Ok(vec![sample_question()])
+        }
+
+        fn question(&self, _: &str) -> Result<Option<ChannelQuestion>, PlatformError> {
+            Ok(Some(sample_question()))
+        }
+
+        fn answer(&self, _: &str, _: &str) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    fn sample_template() -> NewReplyTemplate {
+        NewReplyTemplate {
+            name: "Prazo de envio".into(),
+            text: "O {produto} sai em até {prazo}.".into(),
         }
     }
 
@@ -556,6 +610,14 @@ mod tests {
             listings.link(listing.id, product.id).await.unwrap();
             ListingQuality::new(database.clone(), clock.clone(), ids.clone())
                 .sync(&SampleQuality, &[sample_listing().id])
+                .await
+                .unwrap();
+            Questions::new(database.clone(), clock.clone(), ids.clone())
+                .sync(&SampleQuestions)
+                .await
+                .unwrap();
+            ReplyTemplates::new(database.clone(), clock.clone(), ids.clone())
+                .create(sample_template())
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -812,6 +874,26 @@ mod tests {
                     .await
                     .unwrap();
                 assert_eq!(panel[0].rating, Rating::Rated(sample_quality()), "{name}");
+                // Questions and reply templates arrived after 0.2.0 as well.
+                let questions = Questions::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                questions.sync(&SampleQuestions).await.unwrap();
+                let inbox = questions.inbox().await.unwrap();
+                assert_eq!(inbox.len(), 1, "{name}");
+                assert_eq!(inbox[0].asked, sample_question(), "{name}");
+                let templates = ReplyTemplates::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                // A sample written after 0.2.0 already has the template.
+                if templates.templates().await.unwrap().is_empty() {
+                    templates.create(sample_template()).await.unwrap();
+                }
+                assert_eq!(templates.templates().await.unwrap().len(), 1, "{name}");
             });
         }
     }

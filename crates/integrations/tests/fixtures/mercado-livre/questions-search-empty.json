@@ -1,0 +1,21 @@
+{
+  "total": 0,
+  "limit": 50,
+  "questions": [],
+  "filters": {
+    "limit": 50,
+    "offset": 0,
+    "is_admin": false,
+    "sorts": [],
+    "caller": 1234567,
+    "seller": "1234567",
+    "status": "UNANSWERED"
+  },
+  "available_filters": [],
+  "available_sorts": [
+    "item_id",
+    "from_id",
+    "date_created",
+    "seller_id"
+  ]
+}

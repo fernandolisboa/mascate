@@ -1,0 +1,20 @@
+{
+  "date_created": "2026-10-04T08:15:02.000-03:00",
+  "item_id": "MLB4100000001",
+  "seller_id": 1234567,
+  "status": "ANSWERED",
+  "text": "Boa tarde, o fone funciona com iPhone?",
+  "tags": [],
+  "id": 13001000001,
+  "deleted_from_listing": false,
+  "hold": false,
+  "answer": {
+    "text": "Olá! Funciona sim, com qualquer celular com Bluetooth.",
+    "status": "ACTIVE",
+    "date_created": "2026-10-04T09:02:31.069-03:00"
+  },
+  "from": {
+    "id": 98765001,
+    "answered_questions": 3
+  }
+}

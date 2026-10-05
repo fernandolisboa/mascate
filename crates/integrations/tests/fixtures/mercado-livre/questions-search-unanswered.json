@@ -1,0 +1,82 @@
+{
+  "total": 3,
+  "limit": 50,
+  "questions": [
+    {
+      "date_created": "2026-10-04T08:15:02.000-03:00",
+      "item_id": "MLB4100000001",
+      "seller_id": 1234567,
+      "status": "UNANSWERED",
+      "text": "Boa tarde, o fone funciona com iPhone?",
+      "tags": [],
+      "id": 13001000001,
+      "deleted_from_listing": false,
+      "hold": false,
+      "answer": null,
+      "from": {
+        "id": 98765001
+      }
+    },
+    {
+      "date_created": "2026-10-04T10:40:47.000-03:00",
+      "item_id": "MLB4100000003",
+      "seller_id": 1234567,
+      "status": "UNANSWERED",
+      "text": "Tem a camiseta no tamanho G na cor preta?",
+      "tags": [],
+      "id": 13001000002,
+      "deleted_from_listing": false,
+      "hold": false,
+      "answer": null,
+      "from": {
+        "id": 98765002
+      }
+    }
+  ],
+  "filters": {
+    "limit": 50,
+    "offset": 0,
+    "is_admin": false,
+    "sorts": [
+      {
+        "order_type": "ASC",
+        "field": "date_created"
+      }
+    ],
+    "caller": 1234567,
+    "seller": "1234567",
+    "status": "UNANSWERED"
+  },
+  "available_filters": [
+    {
+      "id": "item",
+      "name": "Item",
+      "type": "text"
+    },
+    {
+      "id": "from",
+      "name": "From user id",
+      "type": "number"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "text",
+      "values": [
+        "ANSWERED",
+        "BANNED",
+        "CLOSED_UNANSWERED",
+        "DELETED",
+        "DISABLED",
+        "UNANSWERED",
+        "UNDER_REVIEW"
+      ]
+    }
+  ],
+  "available_sorts": [
+    "item_id",
+    "from_id",
+    "date_created",
+    "seller_id"
+  ]
+}

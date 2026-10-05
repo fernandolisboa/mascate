@@ -5,7 +5,7 @@
 //! label of a shipment, from `/shipment_labels`. Of the buyer it keeps only
 //! what shipping and support need.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::SecondsFormat;
 use std::str::FromStr;
 
 use mascate_commerce::{
@@ -20,7 +20,7 @@ use serde_json::{Number, Value};
 use super::MercadoLivre;
 use super::answers::{
     Attribute, OrderAnswer, OrderItemAnswer, OrderSearch, ReturnAnswer, ShipmentAnswer,
-    ShipmentCostsAnswer, UserAnswer, decimal, money,
+    ShipmentCostsAnswer, UserAnswer, decimal, money, time, whole_id,
 };
 use super::sales_channel::{listing_type, path_id};
 
@@ -288,20 +288,6 @@ fn variation_name(attributes: &[Attribute]) -> Option<String> {
         })
         .collect();
     (!parts.is_empty()).then(|| parts.join(" · "))
-}
-
-/// An id Mercado Livre sends as a JSON number, as text.
-pub(super) fn whole_id(number: &Number) -> String {
-    number.to_string()
-}
-
-/// A time as Mercado Livre writes it, such as
-/// `2026-10-04T10:30:00.000-03:00`.
-fn time(text: &str) -> Option<Timestamp> {
-    DateTime::parse_from_rfc3339(text)
-        .or_else(|_| DateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f%z"))
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
 }
 
 /// A time for a search filter, in UTC as the documentation writes them.

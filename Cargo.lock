@@ -4351,6 +4351,7 @@ dependencies = [
  "libsql",
  "mascate-kernel",
  "mascate-platform",
+ "proptest",
  "tempfile",
  "thiserror 2.0.21",
 ]

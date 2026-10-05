@@ -1,0 +1,15 @@
+{
+  "date_created": "2026-10-03T21:07:44.000-03:00",
+  "item_id": "MLB4100000001",
+  "seller_id": 1234567,
+  "status": "BANNED",
+  "text": "",
+  "tags": [],
+  "id": 13001000004,
+  "deleted_from_listing": false,
+  "hold": false,
+  "answer": null,
+  "from": {
+    "id": 98765004
+  }
+}

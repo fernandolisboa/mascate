@@ -1,0 +1,42 @@
+{
+  "total": 3,
+  "limit": 50,
+  "questions": [
+    {
+      "date_created": "2026-10-04T11:58:10.000-03:00",
+      "item_id": "MLB4100000001",
+      "seller_id": 1234567,
+      "status": "UNANSWERED",
+      "text": "Qual o prazo de envio para Curitiba?",
+      "tags": [],
+      "id": 13001000003,
+      "deleted_from_listing": false,
+      "hold": false,
+      "answer": null,
+      "from": {
+        "id": 98765003
+      }
+    }
+  ],
+  "filters": {
+    "limit": 50,
+    "offset": 2,
+    "is_admin": false,
+    "sorts": [
+      {
+        "order_type": "ASC",
+        "field": "date_created"
+      }
+    ],
+    "caller": 1234567,
+    "seller": "1234567",
+    "status": "UNANSWERED"
+  },
+  "available_filters": [],
+  "available_sorts": [
+    "item_id",
+    "from_id",
+    "date_created",
+    "seller_id"
+  ]
+}
