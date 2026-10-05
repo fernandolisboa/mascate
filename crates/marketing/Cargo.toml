@@ -12,6 +12,7 @@ chrono.workspace = true
 libsql.workspace = true
 mascate-kernel.workspace = true
 mascate-platform.workspace = true
+rust_decimal.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

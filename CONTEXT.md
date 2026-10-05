@@ -182,6 +182,14 @@ _Avoid_: mensagem, dúvida, pós-venda (é mensagem de Order)
 Resposta pronta do Fernando para uma Question comum, com as variáveis `{produto}` (nome do Product do Listing) e `{prazo}` (o prazo de despacho em dias úteis). Preenche a resposta, que o Fernando ainda edita e confirma antes de enviar.
 _Avoid_: resposta automática, macro, template (no código, `ReplyTemplate`)
 
+**Reputation**:
+Cor que o Sales Channel dá ao Fernando como vendedor (vermelha, laranja, amarela, verde-clara, verde), medida por reclamações, cancelamentos e despachos com atraso sobre as vendas do período (60 dias, ou 365 com poucas vendas). O app mostra cada métrica contra o limite da verde, em pontos e em vendas que ainda cabem. Enquanto o canal protege um vendedor novo, a cor fica protegida e o app mostra as métricas reais. A Reputation libera Promotions (verde) e Product Ads (amarela e um mínimo de vendas), e o app avisa uma vez quando cada um fica disponível.
+_Avoid_: termômetro, nível (sozinho), qualificação
+
+**Review**:
+Avaliação de 1 a 5 estrelas que um comprador deixa num Listing, com título e texto. A nota média é somada por Product, juntando os Listings dele; uma Review de 3 estrelas ou menos é baixa e fica em Hoje até o Fernando marcar que viu.
+_Avoid_: opinião (é o nome da API), comentário, nota (sozinho)
+
 **Promotion**:
 Desconto, campanha ou cupom do vendedor num Sales Channel.
 _Avoid_: campanha (sozinho), oferta

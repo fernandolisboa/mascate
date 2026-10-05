@@ -1,0 +1,54 @@
+{
+  "id": 1234567,
+  "nickname": "MASCATE_TESTE",
+  "registration_date": "2026-09-01T10:00:00.000-03:00",
+  "country_id": "BR",
+  "site_id": "MLB",
+  "user_type": "normal",
+  "seller_reputation": {
+    "level_id": "5_green",
+    "power_seller_status": null,
+    "real_level": "yellow",
+    "protection_end_date": "2026-11-30T00:00:00.000-03:00",
+    "transactions": {
+      "canceled": 2,
+      "completed": 66,
+      "period": "historic",
+      "ratings": {
+        "negative": 0.03,
+        "neutral": 0.05,
+        "positive": 0.92
+      },
+      "total": 68
+    },
+    "metrics": {
+      "sales": {
+        "period": "60 days",
+        "completed": 64
+      },
+      "claims": {
+        "period": "60 days",
+        "rate": 0,
+        "value": 0,
+        "excluded": {
+          "real_value": 2,
+          "real_rate": 0.0312
+        }
+      },
+      "delayed_handling_time": {
+        "period": "60 days",
+        "rate": 0.0469,
+        "value": 3
+      },
+      "cancellations": {
+        "period": "60 days",
+        "rate": 0,
+        "value": 0,
+        "excluded": {
+          "real_value": 1,
+          "real_rate": 0.0156
+        }
+      }
+    }
+  }
+}

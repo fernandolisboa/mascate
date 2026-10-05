@@ -121,32 +121,11 @@ pub(crate) async fn product_names(
     listings: &Listings,
     catalog: &Catalog,
 ) -> Result<BTreeMap<String, String>, String> {
-    let products: BTreeMap<RecordId, String> = catalog
-        .products()
-        .await
-        .map_err(|e| catalog::failure(&e))?
+    Ok(listings::listing_products(listings, catalog)
+        .await?
         .into_iter()
-        .map(|product| (product.id, product.name))
-        .collect();
-    let mut names = BTreeMap::new();
-    let mut linked = std::collections::HashSet::new();
-    for listing in listings
-        .listings()
-        .await
-        .map_err(|e| listings::failure(&e))?
-    {
-        let id = listing.listed.id;
-        match listing.product.and_then(|product| products.get(&product)) {
-            Some(name) if linked.insert(id.clone()) => {
-                names.insert(id, name.clone());
-            }
-            Some(_) => {}
-            None => {
-                names.entry(id).or_insert(listing.listed.title);
-            }
-        }
-    }
-    Ok(names)
+        .map(|(id, sold)| (id, sold.name))
+        .collect())
 }
 
 /// Runs a Sync of questions off the UI thread. `Ok(None)` when the

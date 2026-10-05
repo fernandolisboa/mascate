@@ -1,0 +1,57 @@
+{
+  "paging": {
+    "total": 3,
+    "offset": 0,
+    "limit": 2
+  },
+  "reviews": [
+    {
+      "id": 52001000001,
+      "reviewable_object": {
+        "id": "MLB4100000001",
+        "type": "item"
+      },
+      "date_created": "2026-10-01T14:12:29Z",
+      "status": "published",
+      "title": "Ótimo som",
+      "content": "Som limpo e bateria dura o dia todo.",
+      "rate": 5,
+      "valorization": 0,
+      "likes": 0,
+      "dislikes": 0,
+      "reviewer_id": 0,
+      "buying_date": "2026-09-20T04:00:00Z",
+      "relevance": 71,
+      "forbidden_words": 0
+    },
+    {
+      "id": 52001000002,
+      "reviewable_object": {
+        "id": "MLB4100000001",
+        "type": "item"
+      },
+      "date_created": "2026-10-03T09:40:00Z",
+      "status": "published",
+      "title": "Parou de carregar",
+      "content": "O lado esquerdo parou de carregar depois de uma semana.",
+      "rate": 2,
+      "valorization": 0,
+      "likes": 0,
+      "dislikes": 0,
+      "reviewer_id": 0,
+      "buying_date": "2026-09-20T04:00:00Z",
+      "relevance": 64,
+      "forbidden_words": 0
+    }
+  ],
+  "rating_average": 3.3,
+  "rating_levels": {
+    "one_star": 0,
+    "two_star": 1,
+    "three_star": 1,
+    "four_star": 0,
+    "five_star": 1
+  },
+  "helpful_reviews": {},
+  "attributes": []
+}

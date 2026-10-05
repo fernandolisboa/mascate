@@ -52,6 +52,50 @@ pub(crate) fn listings(cx: &App) -> Option<Arc<Listings>> {
     cx.try_global::<AppListings>().map(|app| app.0.clone())
 }
 
+/// What a listing sells, as the screens that name it by Product see it.
+pub(crate) struct ListingProduct {
+    /// The Product a variation is linked to, the first one found.
+    pub product: Option<RecordId>,
+    /// That Product's name, else the listing's title.
+    pub name: String,
+    /// Whether any variation is still active or paused.
+    pub open: bool,
+}
+
+/// What each listing sells, by the channel's id.
+pub(crate) async fn listing_products(
+    listings: &Listings,
+    catalog: &Catalog,
+) -> Result<std::collections::BTreeMap<String, ListingProduct>, String> {
+    let products: std::collections::BTreeMap<RecordId, String> = catalog
+        .products()
+        .await
+        .map_err(|e| catalog::failure(&e))?
+        .into_iter()
+        .map(|product| (product.id, product.name))
+        .collect();
+    let mut sold = std::collections::BTreeMap::new();
+    for listing in listings.listings().await.map_err(|e| failure(&e))? {
+        let open = listing.listed.status != ListingStatus::Closed;
+        let linked = listing
+            .product
+            .and_then(|product| Some((product, products.get(&product)?.clone())));
+        let entry = sold
+            .entry(listing.listed.id)
+            .or_insert_with(|| ListingProduct {
+                product: None,
+                name: listing.listed.title,
+                open: false,
+            });
+        entry.open |= open;
+        if let (None, Some((product, name))) = (entry.product, linked) {
+            entry.product = Some(product);
+            entry.name = name;
+        }
+    }
+    Ok(sold)
+}
+
 /// The step a listing to link is in, below it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
