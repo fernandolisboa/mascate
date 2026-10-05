@@ -430,6 +430,7 @@ impl DashboardScreen {
             .child(
                 h_flex()
                     .flex_wrap()
+                    .items_stretch()
                     .gap_3()
                     .child(figure("Receita", summary.revenue.to_pt_br(), &t))
                     .child(

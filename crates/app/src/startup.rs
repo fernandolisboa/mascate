@@ -1099,6 +1099,27 @@ mod tests {
                     costs.iter().all(|day| day.listing == sample_listing().id),
                     "{name}"
                 );
+                // Category names and the sales volume limit arrived after
+                // 0.2.0 too: the next listing Sync names the categories.
+                let listings = Listings::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                listings.sync(&SampleChannel).await.unwrap();
+                assert_eq!(
+                    listings.category_names().await.unwrap()["MLB1000"],
+                    "Categoria de exemplo",
+                    "{name}"
+                );
+                let volume = SalesVolume::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                let limit = Money::new(90_000.into(), Currency::Brl);
+                volume.save_limit(limit).await.unwrap();
+                assert_eq!(volume.limit().await.unwrap(), limit, "{name}");
             });
         }
     }

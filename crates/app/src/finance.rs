@@ -205,7 +205,7 @@ impl Render for FinanceSection {
                     .child(
                         v_flex()
                             .gap_1()
-                            .w(px(220.))
+                            .w(px(260.))
                             .child(
                                 div()
                                     .text_sm()
