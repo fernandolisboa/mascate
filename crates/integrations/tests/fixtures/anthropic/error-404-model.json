@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "not_found_error",
+    "message": "model: claude-sonnet-9"
+  },
+  "request_id": "req_011CSHoEeqs5C35K2UUqR7G0"
+}

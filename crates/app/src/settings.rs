@@ -19,6 +19,7 @@ use crate::connections::ConnectionsSection;
 use crate::finance::FinanceSection;
 use crate::kit;
 use crate::layout;
+use crate::listing_copy::CopySettingsSection;
 use crate::orders::OrderSettingsSection;
 use crate::palette::palette;
 use crate::parts::ScreenParts;
@@ -100,6 +101,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
+    copy: Entity<CopySettingsSection>,
     orders: Entity<OrderSettingsSection>,
     finance: Entity<FinanceSection>,
     restricted: Entity<RestrictedFeaturesSection>,
@@ -145,6 +147,7 @@ impl SettingsScreen {
         Self {
             connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
+            copy: cx.new(|cx| CopySettingsSection::new(window, cx)),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
             finance: cx.new(|cx| FinanceSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
@@ -549,6 +552,18 @@ impl Render for SettingsScreen {
                 .gap_3()
                 .child(div().text_xl().font_semibold().child("Preços e margens"))
                 .child(self.pricing.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xl()
+                        .font_semibold()
+                        .child("Títulos e descrições com IA"),
+                )
+                .child(self.copy.clone())
                 .into_any_element(),
         );
         parts.content.push(

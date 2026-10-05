@@ -13,6 +13,7 @@ mod forms;
 mod home;
 mod kit;
 mod layout;
+mod listing_copy;
 mod listings;
 mod low_stock;
 mod mercado_livre;
@@ -50,7 +51,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui_kit::*;
-use mascate_integrations::{Connections, MercadoLivre, ShopeeAffiliates};
+use mascate_integrations::{Anthropic, Connections, MercadoLivre, ShopeeAffiliates};
 use mascate_kernel::SystemClock;
 use mascate_platform::{
     Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
@@ -62,6 +63,7 @@ use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
 use crate::finance::AppSalesVolume;
+use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
 use crate::mercado_livre::AppMercadoLivre;
 use crate::orders::AppOrders;
@@ -110,6 +112,11 @@ fn main() {
         &user_agent,
         secrets.clone(),
         Arc::new(SystemClock),
+    ));
+    let anthropic = Arc::new(Anthropic::new(
+        &listing_copy::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
     ));
     let mercado_livre = Arc::new(
         MercadoLivre::new(
@@ -168,6 +175,10 @@ fn main() {
                 cx.set_global(AppStockMirror(started.stock_mirror.clone()));
                 cx.set_global(AppOrders(started.orders.clone()));
                 cx.set_global(AppQuality(started.quality.clone()));
+                cx.set_global(AppListingCopy {
+                    copy: started.listing_copy.clone(),
+                    writer: anthropic.clone(),
+                });
                 cx.set_global(AppQuestions {
                     questions: started.questions.clone(),
                     templates: started.reply_templates.clone(),

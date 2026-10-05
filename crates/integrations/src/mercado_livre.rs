@@ -1,14 +1,15 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
 //! login, reports demand to the catalog, the owner's listings and
-//! Promotions to commerce and their quality, questions, Reputation, Reviews
-//! and Product Ads to marketing, publishes drafts and reads the owner's
-//! Orders (ADR 0013). Only official endpoints; it writes on the owner's
+//! Promotions to commerce and their quality, questions, Reputation,
+//! Reviews, Product Ads and a category's limits and trends to marketing,
+//! publishes drafts and reads the owner's Orders (ADR 0013). Only official endpoints; it writes on the owner's
 //! click (a listing's price, its status, a draft, a confirmed answer or
 //! Promotion) and the stock that follows the app's (ADR 0017).
 
 mod ads;
 mod answers;
 mod billing;
+mod copy;
 mod orders;
 mod payments;
 mod promotions;

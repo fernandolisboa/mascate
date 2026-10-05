@@ -1,6 +1,7 @@
-//! Marketing: Listing quality, questions, reputation, Promotions and Ads cost.
+//! Marketing: Listing quality, questions, reputation, Promotions, Ads cost and Listing Copy.
 
 mod ads;
+mod copy;
 mod quality;
 mod questions;
 mod replies;
@@ -10,6 +11,11 @@ pub use ads::{
     ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
     AdsSync, AdsSyncState, AdvertisedListing, CampaignAds, CampaignStatus, ChannelAd, ChannelAds,
     ChannelCampaign, ProductAds, ProductRoas,
+};
+pub use copy::{
+    BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, CopyBrief, CopyChannel, CopyError, CopyField,
+    CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, GeneratedCopy,
+    ListingCopy, MODEL_MAX_CHARS, WrittenCopy, check_copy,
 };
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
@@ -57,5 +63,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         questions::CREATE_QUESTIONS,
         reputation::CREATE_REPUTATION,
         ads::CREATE_PRODUCT_ADS,
+        copy::CREATE_COPY_SETTINGS,
     ],
 };

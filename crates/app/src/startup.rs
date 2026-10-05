@@ -7,7 +7,9 @@ use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, St
 use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
-use mascate_marketing::{ListingQuality, ProductAds, Questions, ReplyTemplates, Reputation};
+use mascate_marketing::{
+    ListingCopy, ListingQuality, ProductAds, Questions, ReplyTemplates, Reputation,
+};
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
     OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
@@ -52,6 +54,7 @@ pub struct Started {
     pub orders: Arc<Orders>,
     pub promotions: Arc<Promotions>,
     pub quality: Arc<ListingQuality>,
+    pub listing_copy: Arc<ListingCopy>,
     pub questions: Arc<Questions>,
     pub reputation: Arc<Reputation>,
     pub product_ads: Arc<ProductAds>,
@@ -248,6 +251,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let listing_copy = ListingCopy::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let questions = Questions::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -295,6 +303,7 @@ pub fn prepare() -> Outcome {
                 orders: Arc::new(orders),
                 promotions: Arc::new(promotions),
                 quality: Arc::new(quality),
+                listing_copy: Arc::new(listing_copy),
                 questions: Arc::new(questions),
                 reputation: Arc::new(reputation),
                 product_ads: Arc::new(product_ads),
@@ -377,8 +386,8 @@ mod tests {
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
     use mascate_marketing::{
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelQuality,
-        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, ListedItem,
-        ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
+        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
+        ListedItem, ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
         QuestionStatus, Rating, ReputationColor, ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
@@ -1120,6 +1129,28 @@ mod tests {
                 let limit = Money::new(90_000.into(), Currency::Brl);
                 volume.save_limit(limit).await.unwrap();
                 assert_eq!(volume.limit().await.unwrap(), limit, "{name}");
+                // The Listing Copy model arrived after 0.2.0: the default
+                // until the owner picks another.
+                let copy = ListingCopy::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert_eq!(
+                    copy.settings().await.unwrap(),
+                    CopySettings::default(),
+                    "{name}"
+                );
+                copy.save_settings(CopySettings {
+                    model: "claude-opus-5-5".into(),
+                })
+                .await
+                .unwrap();
+                assert_eq!(
+                    copy.settings().await.unwrap().model,
+                    "claude-opus-5-5",
+                    "{name}"
+                );
             });
         }
     }

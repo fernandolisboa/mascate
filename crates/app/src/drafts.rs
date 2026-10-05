@@ -2,7 +2,8 @@
 //! Product with the category Mercado Livre predicts, the category's
 //! attributes, pictures from the Product's folder and the suggested price;
 //! the checklist of what is missing, Mercado Livre's validator, and
-//! publishing, only on the owner's click.
+//! publishing, only on the owner's click. Title and description can be
+//! written with AI (#17) into the fields, for the owner to review.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,11 +23,13 @@ use mascate_commerce::{
     MIN_PICTURES, PricingError, Requirement, is_blocked, is_picture,
 };
 use mascate_kernel::{ListingType, Money, RecordId, parse_amount};
+use mascate_marketing::{BriefAttribute, CopyBrief, GeneratedCopy};
 
 use crate::appearance::look;
 use crate::catalog::{self, product_choice};
 use crate::forms::{Outcome, Picker, amount_text, input, notice, picker, refill};
 use crate::kit;
+use crate::listing_copy;
 use crate::listings;
 use crate::mercado_livre;
 use crate::pricing;
@@ -66,6 +69,10 @@ struct Editor {
     predictions: Option<Vec<CategoryPrediction>>,
     /// The checklist with Mercado Livre's validator, until the next change.
     validated: Option<Vec<ChecklistItem>>,
+    /// The last title and description written with AI, as it came.
+    written: Option<GeneratedCopy>,
+    /// How the last writing with AI went, shown by its button.
+    writing: Option<Outcome>,
 }
 
 pub struct DraftsSection {
@@ -334,6 +341,8 @@ impl DraftsSection {
             price_suggestion: None,
             predictions: None,
             validated: None,
+            written: None,
+            writing: None,
         });
         self.read_folder_and_price(id, window, cx);
         cx.notify();
@@ -663,6 +672,91 @@ impl DraftsSection {
                     .into(),
                 ));
                 this.open(moved.id, window, cx);
+            },
+        );
+    }
+
+    /// Writes a title and a description with AI from the Product, its
+    /// Supplier Offers and the category's attributes as typed, and puts them
+    /// in the fields. Nothing is saved: the owner reviews first.
+    fn write_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(channel), Some((copy, writer)), Some(editor)) = (
+            mercado_livre::adapter(cx),
+            listing_copy::listing_copy(cx),
+            self.editor.as_ref(),
+        ) else {
+            return;
+        };
+        let Some(draft) = self.draft(editor.draft) else {
+            return;
+        };
+        let Some(category) = draft.category.clone() else {
+            return;
+        };
+        let attributes: Vec<BriefAttribute> = draft
+            .attributes
+            .iter()
+            .zip(&editor.attributes)
+            .map(|(attribute, (_, field))| BriefAttribute {
+                name: attribute.name.clone(),
+                value: field.read(cx).value().to_string(),
+            })
+            .collect();
+        let product = draft.product;
+        let condition = editor.condition.name().to_owned();
+        self.outcome = None;
+        if let Some(editor) = self.editor.as_mut() {
+            editor.writing = None;
+        }
+        self.run(
+            window,
+            cx,
+            move |_, catalog| async move {
+                let name = catalog
+                    .product(product)
+                    .await
+                    .map_err(|e| catalog::failure(&e))?
+                    .name;
+                let offers = catalog
+                    .product_offers(product)
+                    .await
+                    .map_err(|e| catalog::failure(&e))?
+                    .into_iter()
+                    .map(|history| history.latest.title)
+                    .collect();
+                let brief = CopyBrief {
+                    product: name,
+                    offers,
+                    category: category.id,
+                    category_name: category.name,
+                    condition,
+                    attributes,
+                };
+                let written = copy.write(channel.as_ref(), writer.as_ref(), &brief).await;
+                Ok(Some(written.map_err(|e| listing_copy::failure(&e))))
+            },
+            |this, written: Result<GeneratedCopy, String>, window, cx| {
+                let Some(editor) = this.editor.as_mut() else {
+                    return;
+                };
+                editor.writing = Some(match written {
+                    Ok(written) => {
+                        editor.title.update(cx, |field, cx| {
+                            field.set_value(written.title.clone(), window, cx)
+                        });
+                        editor.description.update(cx, |field, cx| {
+                            field.set_value(written.description.clone(), window, cx)
+                        });
+                        editor.validated = None;
+                        editor.written = Some(written);
+                        Outcome::Done(
+                            "Título e descrição escritos com IA. Revise e edite antes de salvar; \
+                             nada vai ao Mercado Livre sem o seu clique em publicar."
+                                .into(),
+                        )
+                    }
+                    Err(error) => Outcome::Failed(error.into()),
+                });
             },
         );
     }
@@ -1082,6 +1176,13 @@ impl DraftsSection {
             }));
 
         let can_publish = !self.busy && self.connected(cx);
+        let title_count = match &editor.written {
+            Some(written) => format!(
+                "{title_length} de {} caracteres",
+                written.rules.max_title_chars
+            ),
+            None => format!("{title_length} caracteres"),
+        };
         v_flex()
             .gap_3()
             .pt_3()
@@ -1091,15 +1192,14 @@ impl DraftsSection {
                 v_flex()
                     .gap_1()
                     .child(
-                        h_flex().gap_2().child(label("Título")).child(
-                            div()
-                                .text_xs()
-                                .text_color(t.text2)
-                                .child(format!("{title_length} caracteres")),
-                        ),
+                        h_flex()
+                            .gap_2()
+                            .child(label("Título"))
+                            .child(div().text_xs().text_color(t.text2).child(title_count)),
                     )
                     .child(Input::new(&editor.title).small()),
             )
+            .child(self.render_writing(editor, draft, cx))
             .child(category)
             .child(kind)
             .child(
@@ -1173,6 +1273,60 @@ impl DraftsSection {
             .into_any_element()
     }
 
+    /// The button that writes title and description with AI, and what
+    /// it needs or what the last text carried.
+    fn render_writing(
+        &self,
+        editor: &Editor,
+        draft: &ListingDraft,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        let off = listing_copy::writing_off(&listing_copy::anthropic_state(cx))
+            .map(str::to_owned)
+            .or_else(|| {
+                (!self.connected(cx)).then(|| {
+                    "Conecte a conta do Mercado Livre em Configurações › Conexões: o limite do \
+                     título e os termos em alta vêm da categoria."
+                        .to_owned()
+                })
+            })
+            .or_else(|| {
+                draft.category.is_none().then(|| {
+                    "Escolha a categoria antes de gerar: o limite do título e os termos em alta \
+                     vêm dela."
+                        .to_owned()
+                })
+            });
+        let hint = match (&off, &editor.written) {
+            (Some(off), _) => off.clone(),
+            (None, Some(written)) => written_text(written),
+            (None, None) => "A IA escreve com o nome do produto, os títulos das ofertas e a ficha \
+                             técnica abaixo, e o texto entra nos campos para você revisar."
+                .to_owned(),
+        };
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex().child(
+                    Button::new("write-copy")
+                        .label(if editor.written.is_some() {
+                            "Gerar de novo com IA"
+                        } else {
+                            "Gerar título e descrição com IA"
+                        })
+                        .outline()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(self.busy || off.is_some())
+                        .on_click(cx.listener(|this, _, window, cx| this.write_copy(window, cx))),
+                ),
+            )
+            .child(div().text_xs().text_color(t.text2).child(hint))
+            .children(editor.writing.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element()
+    }
+
     fn set_type(&mut self, listing_type: ListingType, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.as_mut() {
             editor.listing_type = listing_type;
@@ -1233,6 +1387,32 @@ fn edit_of(draft: &ListingDraft) -> DraftEdit {
 }
 
 /// "89,90"; empty for no price yet.
+/// What the last text written with AI carried, for the owner reviewing it.
+fn written_text(written: &GeneratedCopy) -> String {
+    let limit = format!(
+        "Limite do título nesta categoria: {} caracteres.",
+        written.rules.max_title_chars
+    );
+    let trends = if written.trends_in_title.is_empty() {
+        if written.trends.is_empty() {
+            "O Mercado Livre não informou termos em alta nesta categoria.".to_owned()
+        } else {
+            "Nenhum termo em alta da categoria descreve este produto no título.".to_owned()
+        }
+    } else {
+        format!(
+            "Termos em alta no título: {}.",
+            written.trends_in_title.join(", ")
+        )
+    };
+    let cut = if written.title_cut {
+        " O título veio longo duas vezes e foi cortado na última palavra que cabe; confira."
+    } else {
+        ""
+    };
+    format!("{limit} {trends}{cut}")
+}
+
 fn price_text(price: Money) -> String {
     if price.amount().is_zero() {
         String::new()
