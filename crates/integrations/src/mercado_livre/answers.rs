@@ -59,6 +59,8 @@ pub(super) struct ErrorAnswer {
 
 #[derive(Deserialize)]
 pub(super) struct ErrorCause {
+    /// `error_message` in the promotions API.
+    #[serde(alias = "error_message")]
     pub message: Option<String>,
     /// `error` or `warning`.
     #[serde(rename = "type")]
@@ -679,4 +681,48 @@ pub(super) struct RatingLevels {
     pub four_star: u32,
     #[serde(default)]
     pub five_star: u32,
+}
+
+/// A page of `/seller-promotions/users/{id}`: the seller's campaigns,
+/// coupons and the channel's invitations.
+#[derive(Deserialize)]
+pub(super) struct SellerPromotionsAnswer {
+    #[serde(default)]
+    pub results: Vec<SellerPromotionAnswer>,
+    pub paging: Option<Paging>,
+}
+
+/// A campaign or coupon, from the seller's list or read alone.
+#[derive(Deserialize)]
+pub(super) struct SellerPromotionAnswer {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub status: Option<String>,
+    pub name: Option<String>,
+    pub start_date: Option<String>,
+    pub finish_date: Option<String>,
+    /// A coupon's `FIXED_AMOUNT` or `FIXED_PERCENTAGE`.
+    pub sub_type: Option<String>,
+    pub fixed_amount: Option<Number>,
+    pub fixed_percentage: Option<Number>,
+    pub min_purchase_amount: Option<Number>,
+    pub max_purchase_amount: Option<Number>,
+    pub budget: Option<Number>,
+}
+
+/// One Promotion a listing is in, or invited to, from
+/// `/seller-promotions/items/{id}`.
+#[derive(Deserialize)]
+pub(super) struct ItemPromotionAnswer {
+    /// The Promotion's id; a price discount has none of its own.
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub status: Option<String>,
+    pub name: Option<String>,
+    /// What a buyer pays during it; 0 for a coupon and an invitation.
+    pub price: Option<Number>,
+    pub start_date: Option<String>,
+    pub finish_date: Option<String>,
 }

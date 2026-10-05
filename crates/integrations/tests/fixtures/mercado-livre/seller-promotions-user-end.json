@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "id": "C-MLB1090",
+      "type": "SELLER_COUPON_CAMPAIGN",
+      "sub_type": "FIXED_PERCENTAGE",
+      "status": "started",
+      "start_date": "2026-10-04T03:00:00Z",
+      "finish_date": "2026-10-19T02:59:59Z",
+      "name": "Dez por cento",
+      "fixed_percentage": 10,
+      "min_purchase_amount": 50,
+      "max_purchase_amount": 15,
+      "budget": 500
+    }
+  ],
+  "paging": {
+    "offset": 4,
+    "limit": 50,
+    "total": 5
+  }
+}

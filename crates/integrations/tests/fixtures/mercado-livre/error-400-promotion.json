@@ -1,0 +1,11 @@
+{
+  "message": "Errors: ERROR_CREDIBILITY_DISCOUNTED_PRICE - The discounted price is not credible.",
+  "error": "bad_request",
+  "status": 400,
+  "cause": [
+    {
+      "error_code": "ERROR_CREDIBILITY_DISCOUNTED_PRICE",
+      "error_message": "The discounted price is not credible."
+    }
+  ]
+}

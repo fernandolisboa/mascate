@@ -1,0 +1,53 @@
+[
+  {
+    "type": "PRICE_DISCOUNT",
+    "status": "started",
+    "price": 79.9,
+    "original_price": 89.9,
+    "name": "",
+    "start_date": "2026-10-04T03:00:00Z",
+    "finish_date": "2026-10-11T02:59:59Z"
+  },
+  {
+    "id": "C-MLB360923",
+    "type": "SELLER_CAMPAIGN",
+    "status": "pending",
+    "price": 84.9,
+    "original_price": 89.9,
+    "name": "Semana do fone",
+    "start_date": "2026-10-12T03:00:00Z",
+    "finish_date": "2026-10-19T02:59:59Z"
+  },
+  {
+    "id": "C-MLB1081",
+    "type": "SELLER_COUPON_CAMPAIGN",
+    "status": "pending",
+    "price": 0,
+    "original_price": 0,
+    "name": "Cupom de outubro",
+    "start_date": "2026-10-10T03:00:00Z",
+    "finish_date": "2026-11-01T02:59:59Z"
+  },
+  {
+    "id": "P-MLB1806019",
+    "type": "DEAL",
+    "status": "candidate",
+    "price": 0,
+    "original_price": 89.9,
+    "name": "HOTSALE",
+    "min_discounted_price": 62.93,
+    "max_discounted_price": 85.4,
+    "suggested_discounted_price": 80.91
+  },
+  {
+    "id": "P-MLB1806020",
+    "type": "LIGHTNING",
+    "status": "started",
+    "price": 74.9,
+    "original_price": 89.9,
+    "name": "Oferta relâmpago",
+    "start_date": "2026-10-05T13:00:00Z",
+    "finish_date": "2026-10-05T19:00:00Z",
+    "offer_id": "MLB4100000001-9eafadd4-16d2-49ae-b272-9a7a34585cb8"
+  }
+]
