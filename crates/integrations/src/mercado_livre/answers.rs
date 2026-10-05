@@ -73,6 +73,22 @@ pub(super) struct CategoryAnswer {
     pub name: String,
     #[serde(default)]
     pub path_from_root: Vec<CategoryRef>,
+    #[serde(default)]
+    pub settings: CategorySettings,
+}
+
+/// A category's limits on a listing; any of them can be missing.
+#[derive(Deserialize, Default)]
+pub(super) struct CategorySettings {
+    pub max_title_length: Option<usize>,
+    pub max_description_length: Option<usize>,
+}
+
+/// One of `/trends/{site}/{category}`: a term buyers search, with the
+/// search's link, which the app does not use.
+#[derive(Deserialize)]
+pub(super) struct Trend {
+    pub keyword: String,
 }
 
 #[derive(Deserialize)]

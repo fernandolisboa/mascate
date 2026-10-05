@@ -11,6 +11,8 @@ conta de vendedor do Fernando.
 | `token-invalid-grant.json` | o mesmo, com refresh token já usado (400) | Autenticação e autorização |
 | `categories.json` | `GET /sites/MLB/categories` | Categorias e atributos |
 | `category-MLB3697.json` | `GET /categories/{id}` (`path_from_root`) | Categorias e atributos |
+| `category-MLB196208.json` | `GET /categories/{id}` com `settings.max_title_length` e `settings.max_description_length` (Listing Copy, #17) | Categorias e atributos |
+| `trends-MLB196208.json`, `error-404-trends.json` | `GET /trends/MLB/{category_id}`: termos em alta (`keyword`, `url`) e uma categoria sem tendências (404) | Tendências |
 | `highlights-MLB1000.json` | `GET /highlights/MLB/category/{id}` | Mais vendidos no Mercado Livre |
 | `product-MLB19615318.json` | `GET /products/{id}` (`buy_box_winner`) | Buscador de produtos |
 | `user-product-MLBU3013800008.json` | `GET /user-products/{id}` | Preço por variação |
@@ -216,3 +218,10 @@ recursos vizinhos (conferir no regression pass):
   vendedor sem Product Ads.
 | `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
 | `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |
+- Listing Copy (#17): a página de categorias mostra `settings` com `max_title_length` e
+  `max_description_length` num exemplo `MLA`; os valores de `category-MLB196208.json` (60 e
+  50.000) são os usuais no MLB e foram escritos à mão. Sem eles (como em `category-MLB3697.json`),
+  o app usa 60 e 50.000. A página de tendências diz que a resposta é uma lista de até 50 objetos com
+  `keyword` e `url`; a lista aqui é inventada e mais curta. O corpo do 404 de uma categoria sem
+  tendências segue o formato de erro da API; conferir no regression pass se a categoria sem
+  tendências responde 404 ou uma lista vazia e se `/trends` pede o token do vendedor.

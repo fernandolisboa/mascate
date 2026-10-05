@@ -39,7 +39,7 @@ pub use flags::{
     ConfirmedTurnOn, Flag, FlagChange, FlagError, FlagKind, FlagStatus, Flags, Phase,
     TurnOnRequest, system_user,
 };
-pub use http::http_agent;
+pub use http::{http_agent, slow_http_agent};
 pub use migrations::{
     AppliedMigration, Migration, MigrationError, MigrationId, ModuleMigrations, migrate,
 };

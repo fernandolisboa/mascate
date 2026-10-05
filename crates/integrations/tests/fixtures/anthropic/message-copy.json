@@ -1,0 +1,25 @@
+{
+  "id": "msg_01HRf9yNTVb7cF3kQqWe2xZp",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "EqQBCkgIARABGAIiQL9v0Ae3oQ"
+    },
+    {
+      "type": "text",
+      "text": "{\"title\": \"Fone De Ouvido Bluetooth Sem Fio Lenovo LP40 TWS Branco\", \"description\": \"Fone de ouvido sem fio Lenovo LP40 para o dia a dia, com estojo de carga.\\n\\n- Conexão Bluetooth 5.0\\n- Modelo TWS, um fone em cada ouvido\\n- Cor branca\\n\\nNa caixa: 2 fones, estojo de carga e cabo USB.\"}"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 812,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 431
+  }
+}

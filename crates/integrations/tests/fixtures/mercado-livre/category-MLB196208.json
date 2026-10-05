@@ -1,0 +1,60 @@
+{
+  "id": "MLB196208",
+  "name": "Fones de Ouvido Bluetooth",
+  "picture": "https://http2.mlstatic.com/storage/categories-api/images/fones-bluetooth.png",
+  "permalink": "https://www.mercadolivre.com.br/c/eletronicos-audio-e-video",
+  "total_items_in_this_category": 84120,
+  "path_from_root": [
+    {
+      "id": "MLB1000",
+      "name": "Eletrônicos, Áudio e Vídeo"
+    },
+    {
+      "id": "MLB3835",
+      "name": "Áudio"
+    },
+    {
+      "id": "MLB3697",
+      "name": "Fones de Ouvido"
+    },
+    {
+      "id": "MLB196208",
+      "name": "Fones de Ouvido Bluetooth"
+    }
+  ],
+  "children_categories": [],
+  "attribute_types": "attributes",
+  "settings": {
+    "adult_content": false,
+    "buying_allowed": true,
+    "buying_modes": [
+      "buy_it_now"
+    ],
+    "currencies": [
+      "BRL"
+    ],
+    "item_conditions": [
+      "new",
+      "used",
+      "not_specified"
+    ],
+    "listing_allowed": true,
+    "max_description_length": 50000,
+    "max_pictures_per_item": 12,
+    "max_pictures_per_item_var": 10,
+    "max_sub_title_length": 70,
+    "max_title_length": 60,
+    "max_variations_allowed": 100,
+    "minimum_price": 8,
+    "minimum_price_currency": "BRL",
+    "price": "required",
+    "seller_contact": "not_allowed",
+    "show_contact_information": false,
+    "stock": "required",
+    "status": "enabled"
+  },
+  "channels_settings": [],
+  "meta_categ_id": null,
+  "attributable": false,
+  "date_created": "2018-04-25T08:12:56.000Z"
+}
