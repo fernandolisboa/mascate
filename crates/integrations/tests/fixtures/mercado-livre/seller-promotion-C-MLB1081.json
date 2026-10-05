@@ -1,0 +1,14 @@
+{
+  "id": "C-MLB1081",
+  "type": "SELLER_COUPON_CAMPAIGN",
+  "sub_type": "FIXED_AMOUNT",
+  "status": "pending",
+  "start_date": "2026-10-10T00:00:00",
+  "finish_date": "2026-10-31T23:59:59",
+  "name": "Cupom de outubro",
+  "fixed_amount": 20,
+  "min_purchase_amount": 100,
+  "budget": 1000,
+  "remaining_budget": 1000,
+  "coupon_code": "MASCATETESTE20"
+}

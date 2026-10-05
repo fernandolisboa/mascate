@@ -50,6 +50,11 @@ conta de vendedor do Fernando.
 | `answer-posted.json`, `error-400-answer.json` | `POST /answers` com `question_id` e `text` (200) e o corpo recusado (400, `invalid_post_body`) | Gerenciamento de perguntas e respostas (Responder; Referência de códigos de erro) |
 | `users-me-reputation.json` | `GET /users/me` de um vendedor protegido, com `seller_reputation` (`level_id`, `real_level`, `protection_end_date`, `transactions`, `metrics` com `excluded`) | Reputação de vendedores; Recuperação de reputação |
 | `reviews-MLB4100000001.json`, `reviews-MLB4100000001-end.json`, `reviews-MLB4100000003.json`, `error-404-reviews.json` | `GET /reviews/item/{id}?limit=50&offset=...` em duas páginas com avaliações baixas, uma página só com notas altas, e um anúncio sem avaliações (404) | Opiniões de produtos |
+| `seller-promotions-user.json`, `seller-promotions-user-end.json` | `GET /seller-promotions/users/{id}?app_version=v2` em duas páginas: campanha do vendedor, cupom sem os termos, convite do Mercado Livre, campanha encerrada e cupom percentual com os termos | Gerenciar ofertas; Campanhas do vendedor; Cupons do vendedor |
+| `seller-promotion-C-MLB1081.json` | `GET /seller-promotions/promotions/{id}?promotion_type=SELLER_COUPON_CAMPAIGN&app_version=v2` (os termos do cupom) | Cupons do vendedor |
+| `seller-promotions-item-MLB4100000001.json`, `error-404-seller-promotions.json` | `GET /seller-promotions/items/{id}?app_version=v2` com desconto individual, campanha, cupom, convite (`candidate`) e oferta relâmpago, e um anúncio sem promoções (404) | Gerenciar ofertas |
+| `seller-promotion-created.json` | `POST /seller-promotions/promotions?app_version=v2` (e a resposta do `PUT` da mesma campanha) | Campanhas do vendedor |
+| `seller-promotion-item-joined.json`, `error-400-promotion.json` | `POST /seller-promotions/items/{id}?app_version=v2` e o preço recusado (400, `ERROR_CREDIBILITY_DISCOUNTED_PRICE`) | Desconto individual; Campanhas tradicionais |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -167,3 +172,25 @@ recursos vizinhos (conferir no regression pass):
   limites reais de cada cor, o requisito de Product Ads (amarela e vendas mínimas), se Promoções
   exige a verde ou aceita a verde-clara, se anúncios de catálogo precisam de `catalog_product_id`
   para trazer as avaliações e se um anúncio sem avaliações responde 404 ou uma página vazia.
+- Promoções do vendedor (#26): os recursos seguem as páginas de desconto individual, campanhas do
+  vendedor, cupons do vendedor e gerenciar ofertas, todas com `app_version=v2`. Criar campanha manda
+  `promotion_type`, `name`, `sub_type` (`FLEXIBLE_PERCENTAGE`) e os dias como `AAAA-MM-DDT00:00:00`
+  (a página diz que o Mercado Livre conta o primeiro dia desde a meia-noite e o último até
+  23:59:59, como mostra a resposta do `PUT`); cupom manda `FIXED_AMOUNT` com `fixed_amount` ou
+  `FIXED_PERCENTAGE` com `fixed_percentage` e `max_purchase_amount`, mais `min_purchase_amount` e
+  `budget`, sem código (visível a todos). Entrar numa promoção é `POST /seller-promotions/items/{id}`
+  com `deal_price` e os dias (desconto individual), `promotion_id` e `deal_price` (campanha) ou só
+  `promotion_id` (cupom); sair é `DELETE` com `promotion_type` e, numa campanha ou cupom,
+  `promotion_id`; encerrar é `DELETE /seller-promotions/promotions/{id}` com `promotion_type`. As
+  listas trazem datas com fuso (`...T03:00:00Z`) e as respostas de criar e mudar trazem a data local
+  (`...T00:00:00`); o app lê as duas no horário de Brasília. A página mostra a paginação da lista do
+  vendedor (`paging.offset`, `limit`, `total`), mas não uma segunda página: `offset` e `limit` na
+  segunda são do formato das outras buscas. A página de gerenciar ofertas não mostra `id`,
+  `start_date` e `finish_date` no exemplo do item; foram completados pelos campos da lista do
+  vendedor. Os termos de um cupom vêm na lista quando o Mercado Livre os manda, ou do recurso do
+  cupom. A API não manda moeda: o app usa reais (MLB). Erros de promoções trazem `error_message`
+  em `cause`. Ids, nomes, preços e datas são inventados. Conferir no regression pass: se Promoções
+  aceita a verde-clara, se a lista do vendedor traz campanhas e cupons próprios (ou só convites), o
+  formato real das datas e da paginação, se o prazo de 14 e 31 dias conta o primeiro e o último
+  dia, se o Mercado Livre cobra a tarifa sobre o preço antes ou depois do cupom, e os campos
+  `min_discounted_price`/`suggested_discounted_price` que ele devolve para os convites.

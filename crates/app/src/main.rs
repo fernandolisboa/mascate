@@ -23,6 +23,7 @@ mod parts;
 mod preferences;
 mod pricing;
 mod products;
+mod promotions;
 mod purchases;
 mod quality;
 mod question_alerts;
@@ -59,6 +60,7 @@ use crate::mercado_livre::AppMercadoLivre;
 use crate::orders::AppOrders;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
+use crate::promotions::AppPromotions;
 use crate::purchases::AppPurchaseOrders;
 use crate::quality::AppQuality;
 use crate::questions::AppQuestions;
@@ -148,6 +150,7 @@ fn main() {
                     templates: started.reply_templates.clone(),
                 });
                 cx.set_global(AppReputation(started.reputation.clone()));
+                cx.set_global(AppPromotions(started.promotions.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     settings: started.backup_settings.clone(),

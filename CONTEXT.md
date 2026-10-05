@@ -191,8 +191,16 @@ Avaliação de 1 a 5 estrelas que um comprador deixa num Listing, com título e 
 _Avoid_: opinião (é o nome da API), comentário, nota (sozinho)
 
 **Promotion**:
-Desconto, campanha ou cupom do vendedor num Sales Channel.
+Preço menor por alguns dias num Sales Channel: o desconto de um Listing (até 14 dias), a campanha do vendedor com os Listings que ele põe nela (até 14 dias), o cupom do vendedor tirado no checkout de compras acima de um mínimo (até 31 dias), ou a campanha do canal em que o Listing entrou pelo próprio canal (só mostrada). Os dias contam no horário de Brasília, o primeiro e o último incluídos. Exige a Reputation que libera Promotions e passa pela Margin Guard; só vai ao canal quando o Fernando confirma.
 _Avoid_: campanha (sozinho), oferta
+
+**Minimum Margin**:
+Menor margem, em percentual do preço de venda, que uma Promotion pode deixar numa venda; 10% até o Fernando mudar em Configurações. É diferente da Target Margin: a alvo é onde o preço quer chegar, a mínima é o piso que nenhuma Promotion fura.
+_Avoid_: margem alvo, margem de segurança
+
+**Margin Guard**:
+Conferência que bloqueia uma Promotion quando a margem de uma unidade, no pior caso, fica abaixo da Minimum Margin, mostrando a conta e o menor preço que a mantém. O pior caso é o menor preço do Listing enquanto as Promotions dele correm, depois do cupom que tira mais: um comprador leva só esse Listing, nas menos unidades que a compra mínima pede, e o desconto inteiro cai nelas. Conta a variação de menor margem. Não há como forçar.
+_Avoid_: trava (no código), validação de preço
 
 **Sales Event**:
 Data comercial do calendário (9.9, 11.11, Black Friday) usada para planejar Promotions e Offer Posts.

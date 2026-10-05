@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, Orders, Pricing, PurchaseOrders, StockMirror};
+use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror};
 use mascate_finance::Taxes;
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -50,6 +50,7 @@ pub struct Started {
     pub pricing: Arc<Pricing>,
     pub stock_mirror: Arc<StockMirror>,
     pub orders: Arc<Orders>,
+    pub promotions: Arc<Promotions>,
     pub quality: Arc<ListingQuality>,
     pub questions: Arc<Questions>,
     pub reputation: Arc<Reputation>,
@@ -234,6 +235,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let promotions = Promotions::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let quality = ListingQuality::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -274,6 +281,7 @@ pub fn prepare() -> Outcome {
                 pricing: Arc::new(pricing),
                 stock_mirror: Arc::new(stock_mirror),
                 orders: Arc::new(orders),
+                promotions: Arc::new(promotions),
                 quality: Arc::new(quality),
                 questions: Arc::new(questions),
                 reputation: Arc::new(reputation),
@@ -347,8 +355,9 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
-        ChannelListing, ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder,
-        PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
+        ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions, ChannelStock,
+        ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin, PromotionKind,
+        PromotionPlan, PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
@@ -511,6 +520,48 @@ mod tests {
         }
     }
 
+    /// The sample listing with a price discount, and nothing else.
+    struct SamplePromotions;
+
+    impl ChannelPromotions for SamplePromotions {
+        fn promotions(&self) -> Result<Vec<ChannelPromotion>, PlatformError> {
+            Ok(Vec::new())
+        }
+
+        fn offers(&self, listing: &str) -> Result<Vec<ChannelOffer>, PlatformError> {
+            Ok(vec![ChannelOffer {
+                listing: listing.into(),
+                kind: PromotionKind::PriceDiscount,
+                promotion: None,
+                name: "Desconto".into(),
+                status: PromotionStatus::Started,
+                price: Some(Money::new(55.into(), Currency::Brl)),
+                starts: None,
+                ends: None,
+            }])
+        }
+
+        fn create(&self, _: &PromotionPlan) -> Result<ChannelPromotion, PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn change(&self, _: &str, _: &PromotionPlan) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn end(&self, _: &str, _: PromotionKind) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn join(&self, _: &str, _: &OfferToJoin) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn leave(&self, _: &str, _: PromotionKind, _: Option<&str>) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+    }
+
     fn sample_template() -> NewReplyTemplate {
         NewReplyTemplate {
             name: "Prazo de envio".into(),
@@ -668,6 +719,15 @@ mod tests {
                 .sync(&SampleReputation, &[sample_listing().id])
                 .await
                 .unwrap();
+            Promotions::new(
+                database.clone(),
+                inventory.clone(),
+                clock.clone(),
+                ids.clone(),
+            )
+            .sync(&SamplePromotions)
+            .await
+            .unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -955,6 +1015,23 @@ mod tests {
                 let standing = reputation.standing().await.unwrap().unwrap();
                 assert_eq!(standing.reputation, sample_reputation(), "{name}");
                 assert_eq!(reputation.low_reviews().await.unwrap().len(), 1, "{name}");
+                // Promotions arrived after 0.2.0 as well: the minimum margin
+                // starts at its default and the next Sync reads them.
+                let promotions = Promotions::new(
+                    database.clone(),
+                    inventory.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert_eq!(
+                    promotions.minimum_margin().await.unwrap(),
+                    Percentage::new(10.into()).unwrap(),
+                    "{name}"
+                );
+                promotions.sync(&SamplePromotions).await.unwrap();
+                let offers = promotions.offers().await.unwrap();
+                assert_eq!(offers.len(), 1, "{name}");
+                assert_eq!(offers[0].listed.listing, sample_listing().id, "{name}");
             });
         }
     }

@@ -217,6 +217,27 @@ pub struct PriceSuggestion {
     pub current: PriceScenario,
 }
 
+/// One unit of a listing sold at a price, in the variation that keeps the
+/// least margin there, against a minimum margin: what guards a Promotion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarginCheck {
+    pub sale: PriceScenario,
+    pub breakdown: PriceBreakdown,
+    /// The Product that variation sells.
+    pub product: RecordId,
+    pub minimum: Percentage,
+    /// The lowest price, in whole cents, at which every open variation
+    /// keeps the minimum; `None` when no price does.
+    pub lowest: Option<Money>,
+}
+
+impl MarginCheck {
+    /// Whether the margin is at least the minimum share of the sale price.
+    pub fn passes(&self) -> bool {
+        self.breakdown.margin.amount.amount() >= self.minimum.of(self.breakdown.sale_price).amount()
+    }
+}
+
 /// Where the unit cost of a draft's price came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CostSource {
@@ -496,6 +517,62 @@ impl Pricing {
         Ok(sale(price, fee, cost, assumptions))
     }
 
+    /// One unit of `listing` sold at `price`, in each open variation, with
+    /// the channel's fee there: the variation that keeps the least margin,
+    /// and the lowest price at which every one keeps `minimum`. Nothing is
+    /// sent to the channel.
+    pub async fn check_margin(
+        &self,
+        listing: RecordId,
+        price: Money,
+        minimum: Percentage,
+        channel: &dyn SalesChannel,
+        assumptions: PriceAssumptions,
+    ) -> Result<MarginCheck, PricingError> {
+        let asked = self.listings.listing(listing).await?;
+        let (category, listing_type) = fee_basis(&asked)?;
+        // The channel prices nothing below a cent.
+        let price = Money::new(price.amount().max(CENT), price.currency());
+        let fee = channel.sale_fee(&category, price, listing_type)?;
+        let target = TargetMargin {
+            margin: minimum,
+            own: false,
+        };
+        let mut costs = Vec::new();
+        let mut worst: Option<(PriceScenario, PriceBreakdown, RecordId)> = None;
+        for sibling in self.open_variations(&asked).await? {
+            let product = sibling.product.ok_or(PricingError::NotLinked(sibling.id))?;
+            let cost = self.cost(product).await?;
+            let scenario = sale(price, fee, cost, assumptions);
+            let breakdown = scenario.breakdown()?;
+            if worst.is_none_or(|(_, least, _)| {
+                breakdown.margin.amount.amount() < least.margin.amount.amount()
+            }) {
+                worst = Some((scenario, breakdown, product));
+            }
+            costs.push((product, cost, target));
+        }
+        let (sale, breakdown, product) = worst.ok_or(PricingError::Closed)?;
+        let lowest = match settle(
+            channel,
+            (&category, listing_type),
+            (price, fee),
+            &costs,
+            assumptions,
+        ) {
+            Ok(settled) => Some(settled.price),
+            Err(PricingError::Unreachable) => None,
+            Err(error) => return Err(error),
+        };
+        Ok(MarginCheck {
+            sale,
+            breakdown,
+            product,
+            minimum,
+            lowest,
+        })
+    }
+
     /// The Average Cost of a unit of `product`.
     async fn cost(&self, product: RecordId) -> Result<Money, PricingError> {
         self.inventory
@@ -599,7 +676,7 @@ fn sale(
 }
 
 /// A target margin leaves room for every Fee and the cost: under 100%.
-fn check_target(margin: Percentage) -> Result<(), PricingError> {
+pub(crate) fn check_target(margin: Percentage) -> Result<(), PricingError> {
     if margin.percent() < Decimal::ONE_HUNDRED {
         Ok(())
     } else {

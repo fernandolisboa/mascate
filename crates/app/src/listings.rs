@@ -21,8 +21,8 @@ use gpui_kit::{
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
-    MirroredStock, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError,
-    SaleFee, StockSend, SuggestedBy,
+    MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
+    StockSend, SuggestedBy,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Money, Percentage, RecordId, Timestamp, parse_amount};
@@ -710,16 +710,7 @@ impl ListingsScreen {
             suggestion: None,
         });
         let reading = cx.background_executor().spawn(async move {
-            let assumptions = PriceAssumptions {
-                tax: taxes.rate().await.map_err(|error| {
-                    format!("Não consegui ler o imposto nas configurações: {error}")
-                })?,
-                estimated_shipping: catalog
-                    .discovery_settings()
-                    .await
-                    .map_err(|error| catalog::failure(&error))?
-                    .estimated_shipping,
-            };
+            let assumptions = pricing::assumptions(&catalog, &taxes).await?;
             let today = pricing.today(listing, channel.as_ref(), assumptions).await;
             let suggestion = match today {
                 Ok(_) => Some(
@@ -1729,7 +1720,7 @@ pub(crate) fn failure(error: &ListingError) -> String {
 
 /// "R$ 91,67 − tarifa R$ 12,83 − frete R$ 20,00 − …": where the money of a
 /// sale goes.
-fn breakdown_line(sale: &PriceBreakdown, cx: &App) -> gpui_kit::Div {
+pub(crate) fn breakdown_line(sale: &PriceBreakdown, cx: &App) -> gpui_kit::Div {
     let t = look(cx).tokens;
     div().text_xs().text_color(t.text2).child(format!(
         "{} − tarifa {} − frete {} − Ads {} − imposto {} − custo {} = margem {} ({})",
@@ -1745,7 +1736,11 @@ fn breakdown_line(sale: &PriceBreakdown, cx: &App) -> gpui_kit::Div {
 }
 
 /// Why a listing has no price to work out, as the owner reads it.
-fn price_failure(error: &PricingError, listing: RecordId, products: &[Product]) -> String {
+pub(crate) fn price_failure(
+    error: &PricingError,
+    listing: RecordId,
+    products: &[Product],
+) -> String {
     let sku = |id: RecordId| {
         products
             .iter()

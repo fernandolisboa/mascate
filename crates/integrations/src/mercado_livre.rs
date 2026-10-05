@@ -1,13 +1,15 @@
 //! Mercado Livre's adapter: the seller API answers with the Connection's
-//! login, reports demand to the catalog, the owner's listings to commerce
-//! and their quality, questions, Reputation and Reviews to marketing,
-//! publishes drafts and reads the owner's Orders (ADR 0013). Only official endpoints; it writes on the
-//! owner's click (a listing's price, its status, a draft, a confirmed
-//! answer) and the stock that follows the app's (ADR 0017).
+//! login, reports demand to the catalog, the owner's listings and
+//! Promotions to commerce and their quality, questions, Reputation and
+//! Reviews to marketing, publishes drafts and reads the owner's Orders (ADR
+//! 0013). Only official endpoints; it writes on the owner's click (a
+//! listing's price, its status, a draft, a confirmed answer or Promotion)
+//! and the stock that follows the app's (ADR 0017).
 
 mod answers;
 mod billing;
 mod orders;
+mod promotions;
 mod publisher;
 mod quality;
 mod questions;
@@ -162,6 +164,22 @@ impl MercadoLivre {
                 .header("Content-Type", "application/json")
                 .header("Authorization", bearer)
                 .send(body)
+        })?;
+        Ok(())
+    }
+
+    /// `DELETE path` with `query`; Mercado Livre's answer is not read.
+    fn delete(&self, path: &str, query: &[(&str, &str)]) -> Result<(), PlatformError> {
+        self.signed(path, |bearer| {
+            let mut request = self
+                .agent
+                .delete(format!("{}{path}", self.api))
+                .header("Accept", "application/json")
+                .header("Authorization", bearer);
+            for (key, value) in query {
+                request = request.query(key, value);
+            }
+            request.call()
         })?;
         Ok(())
     }

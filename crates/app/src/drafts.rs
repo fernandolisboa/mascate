@@ -19,7 +19,7 @@ use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     AttributeValue, CatalogProduct, CategoryPrediction, Check, ChecklistItem, Condition,
     CostSource, DraftEdit, DraftPrice, DraftStart, Listing, ListingDraft, ListingError, Listings,
-    MIN_PICTURES, PriceAssumptions, PricingError, Requirement, is_blocked, is_picture,
+    MIN_PICTURES, PricingError, Requirement, is_blocked, is_picture,
 };
 use mascate_kernel::{ListingType, Money, RecordId, parse_amount};
 
@@ -237,7 +237,7 @@ impl DraftsSection {
                     .map_err(|e| failure(&e))?;
                 // The suggested price, when there is one, is where the
                 // draft starts; the owner changes it at will.
-                let assumptions = assumptions(&catalog, &taxes).await?;
+                let assumptions = pricing::assumptions(&catalog, &taxes).await?;
                 let offer = catalog
                     .cheapest_offer(product)
                     .await
@@ -364,7 +364,7 @@ impl DraftsSection {
                 })
                 .unwrap_or_default();
             let price = async {
-                let assumptions = assumptions(&catalog, &taxes).await?;
+                let assumptions = pricing::assumptions(&catalog, &taxes).await?;
                 let offer = catalog
                     .cheapest_offer(draft.product)
                     .await
@@ -1230,24 +1230,6 @@ fn edit_of(draft: &ListingDraft) -> DraftEdit {
         attributes: Vec::new(),
         pictures: draft.pictures.iter().map(|p| p.path.clone()).collect(),
     }
-}
-
-/// The tax from Finanças and the shipping estimate from Oportunidades.
-async fn assumptions(
-    catalog: &Catalog,
-    taxes: &mascate_finance::Taxes,
-) -> Result<PriceAssumptions, String> {
-    Ok(PriceAssumptions {
-        tax: taxes
-            .rate()
-            .await
-            .map_err(|error| format!("Não consegui ler o imposto nas configurações: {error}"))?,
-        estimated_shipping: catalog
-            .discovery_settings()
-            .await
-            .map_err(|error| catalog::failure(&error))?
-            .estimated_shipping,
-    })
 }
 
 /// "89,90"; empty for no price yet.
