@@ -1,4 +1,5 @@
-//! Commerce: Listings and their drafts, Orders, Purchase Orders and shipping on each Sales Channel.
+//! Commerce: Listings and their drafts, prices and Promotions, Orders, Purchase Orders and
+//! shipping on each Sales Channel.
 
 mod drafts;
 mod fees;
@@ -6,6 +7,7 @@ mod freight;
 mod listings;
 mod orders;
 mod pricing;
+mod promotions;
 mod purchase_orders;
 mod stock_mirror;
 
@@ -31,8 +33,14 @@ pub use orders::{
     ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels, StockShort, UnitsBack,
 };
 pub use pricing::{
-    CostSource, DraftPrice, PriceAssumptions, PriceBreakdown, PriceScenario, PriceSuggestion,
-    Pricing, PricingError, SaleFee, TargetMargin,
+    CostSource, DraftPrice, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,
+    PriceSuggestion, Pricing, PricingError, SaleFee, TargetMargin,
+};
+pub use promotions::{
+    ChannelOffer, ChannelPromotion, ChannelPromotions, ConfirmedPromotion, CouponDiscount,
+    CouponTerms, DiscountPlan, Offer, OfferToJoin, PROMOTIONS_REFRESH_MINUTES, Promotion,
+    PromotionCheck, PromotionError, PromotionKind, PromotionPlan, PromotionRequest,
+    PromotionStatus, PromotionSync, Promotions, channel_day,
 };
 pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,
@@ -67,5 +75,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         orders::CREATE_ORDERS,
         orders::ADD_RETURNS,
         fees::ADD_FEES,
+        promotions::CREATE_PROMOTIONS,
     ],
 };
