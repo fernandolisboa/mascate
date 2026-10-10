@@ -7,7 +7,7 @@ Local desktop app (Rust + GPUI) for a solo online-selling business: product disc
 - `CONTEXT.md`: domain glossary. Use its terms verbatim in code, issues and PRs; read it before naming anything.
 - `docs/adr/`: architecture decisions. Read the relevant ADR before touching the area it covers; record a new ADR when a structural decision is made.
 - `docs/prd.md`: the plan (phases 1-3), user stories, implementation and testing decisions. Read "Implementation Decisions" and "Testing Decisions" before implementing a slice.
-- `docs/commerce-integrations.md` section 5: module boundaries. `docs/credentials.html`: secrets and dev env var names.
+- `docs/commerce-integrations.md` section 5: module boundaries. `docs/credentials.html`: secrets and dev env var names; its phase 1 section is generated from `crates/app/src/credential_guides.rs` (ADR 0029).
 - GitHub: PRD is issue #3, with sub-issues as slices. Issue #4 is the app skeleton; its comments (and #15) hold the GPUI dependency policy.
 
 ## Working with the owner

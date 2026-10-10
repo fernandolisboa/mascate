@@ -4,7 +4,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Div, Hsla, SharedString, div, px};
+use gpui_kit::{App, Div, Hsla, SharedString, Stateful, div, px};
 
 use crate::appearance::look;
 
@@ -78,4 +78,25 @@ pub fn tag(text: impl Into<SharedString>, ink: Hsla, cx: &App) -> Div {
         .text_xs()
         .text_color(ink)
         .child(text.into())
+}
+
+/// A link to a page on the web, opened in the system browser.
+pub fn external_link(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    url: impl Into<String>,
+    cx: &App,
+) -> Stateful<Div> {
+    let url = url.into();
+    div()
+        .id(id.into())
+        .flex()
+        .gap_1()
+        .items_center()
+        .text_xs()
+        .text_color(look(cx).tokens.accent_text)
+        .cursor_pointer()
+        .child(label.into())
+        .child(Icon::new(IconName::ExternalLink).size(px(12.)))
+        .on_click(move |_, _, cx| cx.open_url(&url))
 }

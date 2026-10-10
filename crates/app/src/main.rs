@@ -6,6 +6,7 @@ mod appearance;
 mod backups;
 mod catalog;
 mod connections;
+mod credential_guides;
 mod dashboard;
 mod drafts;
 mod finance;

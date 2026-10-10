@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Global, Hsla, SharedString, Window, div, px};
+use gpui_kit::{AnyElement, App, Global, Hsla, SharedString, Window, div};
 use mascate_commerce::{ListingStatus, Listings, Orders};
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::Timestamp;
@@ -317,11 +317,11 @@ impl QualityScreen {
                                     .text_color(t.text2)
                                     .child(facts.join(" · "))
                                     .children(listed.link.clone().map(|link| {
-                                        external_link(
+                                        kit::external_link(
                                             format!("open-{index}"),
                                             "Abrir no Mercado Livre",
                                             link,
-                                            &t,
+                                            cx,
                                         )
                                     })),
                             ),
@@ -418,29 +418,10 @@ fn render_action(row: usize, at: usize, action: &QualityAction, cx: &App) -> Any
                 .text_sm()
                 .child(action.text.clone())
                 .children(action.link.clone().map(|link| {
-                    external_link(format!("fix-{row}-{at}"), action.label.clone(), link, &t)
+                    kit::external_link(format!("fix-{row}-{at}"), action.label.clone(), link, cx)
                 })),
         )
         .into_any_element()
-}
-
-fn external_link(
-    id: String,
-    label: impl Into<SharedString>,
-    link: String,
-    t: &Tokens,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    div()
-        .id(SharedString::from(id))
-        .flex()
-        .gap_1()
-        .items_center()
-        .text_xs()
-        .text_color(t.accent_text)
-        .cursor_pointer()
-        .child(label.into())
-        .child(Icon::new(IconName::ExternalLink).size(px(12.)))
-        .on_click(move |_, _, cx| cx.open_url(&link))
 }
 
 fn muted(text: impl Into<SharedString>, t: &Tokens) -> AnyElement {

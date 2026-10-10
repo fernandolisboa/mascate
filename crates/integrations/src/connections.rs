@@ -80,7 +80,7 @@ impl Connection {
 
     /// Shopee approves Open API access by hand and it can take weeks, so
     /// having no credentials yet is the normal state, not a missing setup.
-    fn awaits_approval_without_credentials(self) -> bool {
+    pub fn awaits_approval_without_credentials(self) -> bool {
         self == Connection::ShopeeAffiliates
     }
 }
