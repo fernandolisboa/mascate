@@ -60,7 +60,6 @@ fn sidebar(nav: Navigation, cx: &App) -> AnyElement {
         .bg(t.surface)
         .border_r(t.border_width)
         .border_color(t.border)
-        .child(brand(cx))
         .children(Place::MAIN.map(row))
         .child(div().flex_1())
         .child(
@@ -72,19 +71,6 @@ fn sidebar(nav: Navigation, cx: &App) -> AnyElement {
                 .children(Place::PINNED.map(row)),
         )
         .into_any_element()
-}
-
-fn brand(cx: &App) -> impl IntoElement {
-    let t = look(cx).tokens;
-    h_flex()
-        .gap_2()
-        .px_2()
-        .pt_1()
-        .pb_3()
-        .text_base()
-        .font_weight(gpui_kit::FontWeight::BOLD)
-        .child(div().size(px(18.)).rounded(t.radius).bg(t.accent))
-        .child("Mascate")
 }
 
 pub(super) fn screen(parts: ScreenParts, cx: &App) -> AnyElement {

@@ -61,15 +61,6 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
         .bg(t.surface)
         .border_b(t.border_width)
         .border_color(t.border)
-        .child(
-            h_flex()
-                .gap_2()
-                .mr_3()
-                .text_sm()
-                .font_weight(gpui_kit::FontWeight::BOLD)
-                .child(div().size(px(14.)).rounded(t.radius).bg(t.accent))
-                .child("Mascate"),
-        )
         .children(Place::MAIN.map(tab))
         .child(div().flex_1())
         .children(Place::PINNED.map(tab))
