@@ -4,6 +4,7 @@
 //! Later settings join it.
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Icon, IndexPath, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -15,7 +16,7 @@ use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, Ui
 
 use crate::appearance::{self, color, look};
 use crate::backups::BackupSection;
-use crate::connections::ConnectionsSection;
+use crate::connections::{ConnectionsSection, connection_name};
 use crate::finance::FinanceSection;
 use crate::kit;
 use crate::layout;
@@ -129,23 +130,27 @@ impl SettingsScreen {
         };
         let light_theme = select(ThemeMode::Light, light);
         let dark_theme = select(ThemeMode::Dark, dark);
-        let subscriptions = [&light_theme, &dark_theme]
-            .map(|select| {
-                cx.subscribe_in(
-                    select,
-                    window,
-                    move |this, _, event: &SelectEvent<SearchableVec<ThemeChoice>>, window, cx| {
-                        let SelectEvent::Confirm(Some(theme)) = event else {
-                            return;
-                        };
-                        let (light, dark) = this.following().follow_pair_with(*theme);
-                        this.set_theme(UiThemePreference::FollowSystem { light, dark }, window, cx);
-                    },
-                )
-            })
-            .into();
+        let subscriptions = [&light_theme, &dark_theme].map(|select| {
+            cx.subscribe_in(
+                select,
+                window,
+                move |this, _, event: &SelectEvent<SearchableVec<ThemeChoice>>, window, cx| {
+                    let SelectEvent::Confirm(Some(theme)) = event else {
+                        return;
+                    };
+                    let (light, dark) = this.following().follow_pair_with(*theme);
+                    this.set_theme(UiThemePreference::FollowSystem { light, dark }, window, cx);
+                },
+            )
+        });
+        let connections = cx.new(|cx| ConnectionsSection::new(window, cx));
+        // Opening a Connection's guide shows it alone on the screen.
+        let subscriptions = subscriptions
+            .into_iter()
+            .chain([cx.observe(&connections, |_, _, cx| cx.notify())])
+            .collect();
         Self {
-            connections: cx.new(|cx| ConnectionsSection::new(window, cx)),
+            connections,
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
             copy: cx.new(|cx| CopySettingsSection::new(window, cx)),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
@@ -534,6 +539,28 @@ impl SettingsScreen {
 
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(connection) = self.connections.read(cx).open_guide() {
+            let mut parts = ScreenParts::new(format!(
+                "Como conseguir as chaves: {}",
+                connection_name(connection)
+            ));
+            let connections = self.connections.clone();
+            parts.actions.push(
+                Button::new("back-to-settings")
+                    .label("Configurações")
+                    .icon(IconName::ArrowLeft)
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, cx| {
+                        connections.update(cx, |connections, cx| connections.close_guide(cx))
+                    })
+                    .into_any_element(),
+            );
+            parts
+                .content
+                .push(self.connections.clone().into_any_element());
+            return layout::screen(parts, cx);
+        }
         let mut parts = ScreenParts::new("Configurações");
         parts.notices.extend(
             self.error

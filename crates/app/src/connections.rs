@@ -1,18 +1,22 @@
 //! Settings › Conexões (#5): each Connection with its state, where the owner
 //! pastes its keys or removes them. The keys go to the system secret store
-//! through the integrations module; this screen never keeps them.
+//! through the integrations module; this screen never keeps them. Each
+//! Connection also opens its own guide (#65): how to get the keys on the
+//! Platform, step by step, ending in the same fields.
 
 use std::sync::Arc;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div};
+use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
 use mascate_integrations::{Connection, ConnectionState, Connections, Credential};
 use mascate_platform::Build;
 
 use crate::appearance::look;
+use crate::credential_guides::guide;
 use crate::kit;
 
 /// The app's Connections, shared by every screen that needs them.
@@ -20,7 +24,7 @@ pub struct AppConnections(pub Arc<Connections>);
 
 impl Global for AppConnections {}
 
-fn connection_name(connection: Connection) -> &'static str {
+pub(crate) fn connection_name(connection: Connection) -> &'static str {
     match connection {
         Connection::MercadoLivre => "Mercado Livre",
         Connection::ShopeeAffiliates => "Shopee Afiliados",
@@ -28,7 +32,7 @@ fn connection_name(connection: Connection) -> &'static str {
     }
 }
 
-fn connection_purpose(connection: Connection) -> &'static str {
+pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
     match connection {
         Connection::MercadoLivre => "Conta de vendedor: anúncios, pedidos e estoque.",
         Connection::ShopeeAffiliates => {
@@ -89,6 +93,8 @@ struct Card {
 pub struct ConnectionsSection {
     connections: Arc<Connections>,
     cards: Vec<Card>,
+    /// The card whose guide is open in place of the list.
+    guide: Option<usize>,
 }
 
 impl ConnectionsSection {
@@ -114,11 +120,25 @@ impl ConnectionsSection {
                 error: None,
             })
             .collect();
-        let mut section = Self { connections, cards };
+        let mut section = Self {
+            connections,
+            cards,
+            guide: None,
+        };
         for index in 0..section.cards.len() {
             section.refresh(index, window, cx);
         }
         section
+    }
+
+    /// The Connection whose guide is open, if any.
+    pub fn open_guide(&self) -> Option<Connection> {
+        self.guide.map(|index| self.cards[index].connection)
+    }
+
+    pub fn close_guide(&mut self, cx: &mut Context<Self>) {
+        self.guide = None;
+        cx.notify();
     }
 
     fn refresh(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -223,15 +243,10 @@ impl ConnectionsSection {
         cx.notify();
     }
 
-    fn render_card(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// The fields where the Connection's keys are pasted.
+    fn fields(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let card = &self.cards[index];
-        let connection = card.connection;
-        let stored_any = card
-            .snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.stored.iter().any(|&stored| stored));
-
         let fields = card.inputs.iter().map(|(credential, input)| {
             let mut field = Input::new(input).small();
             if !is_identifier(*credential) {
@@ -254,14 +269,36 @@ impl ConnectionsSection {
                 )
                 .child(field.disabled(card.busy))
         });
+        h_flex()
+            .flex_wrap()
+            .gap_3()
+            .children(fields)
+            .into_any_element()
+    }
 
-        let needs_login = connection == Connection::MercadoLivre
-            && card.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.state == ConnectionState::NotConfigured
-                    && snapshot.stored.iter().all(|&stored| stored)
-            });
+    /// What went wrong reading the Connection or with the last write.
+    fn problems(&self, index: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let card = &self.cards[index];
+        let failed = match card.snapshot.as_ref().map(|s| &s.state) {
+            Some(ConnectionState::Failed { reason }) => Some(SharedString::from(reason.clone())),
+            _ => None,
+        };
+        failed
+            .into_iter()
+            .chain(card.error.clone())
+            .map(|text| kit::error_notice(text, cx).into_any_element())
+            .collect()
+    }
 
-        let actions = h_flex()
+    /// Save, and remove once something is stored, with its confirmation.
+    fn actions(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let card = &self.cards[index];
+        let stored_any = card
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.stored.iter().any(|&stored| stored));
+        h_flex()
             .gap_2()
             .child(
                 Button::new(("save", index))
@@ -311,6 +348,41 @@ impl ConnectionsSection {
                             cx.notify();
                         })),
                 )
+            })
+            .into_any_element()
+    }
+
+    /// The Connection's name, what it is for and its state.
+    fn heading(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let card = &self.cards[index];
+        let connection = card.connection;
+        h_flex()
+            .gap_3()
+            .justify_between()
+            .items_start()
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .child(div().font_medium().child(connection_name(connection)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(t.text2)
+                            .child(connection_purpose(connection)),
+                    ),
+            )
+            .child(state_tag(card.snapshot.as_ref().map(|s| &s.state), cx))
+            .into_any_element()
+    }
+
+    fn render_card(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let card = &self.cards[index];
+        let needs_login = card.connection == Connection::MercadoLivre
+            && card.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.state == ConnectionState::NotConfigured
+                    && snapshot.stored.iter().all(|&stored| stored)
             });
 
         v_flex()
@@ -320,44 +392,115 @@ impl ConnectionsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.surface)
+            .child(self.heading(index, cx))
             .child(
-                h_flex()
-                    .gap_3()
-                    .justify_between()
-                    .items_start()
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .child(div().font_medium().child(connection_name(connection)))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(t.text2)
-                                    .child(connection_purpose(connection)),
-                            ),
-                    )
-                    .child(state_tag(card.snapshot.as_ref().map(|s| &s.state), cx)),
+                h_flex().child(
+                    Button::new(("guide", index))
+                        .label("Como conseguir as chaves")
+                        .icon(IconName::Info)
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.guide = Some(index);
+                            cx.notify();
+                        })),
+                ),
             )
-            .child(h_flex().flex_wrap().gap_3().children(fields))
+            .child(self.fields(index, cx))
             .when(needs_login, |card| {
                 card.child(div().text_xs().text_color(t.text2).child(
                     "Chaves salvas. Falta entrar na sua conta de vendedor, o que chega numa \
                      próxima versão com o botão Conectar.",
                 ))
             })
-            .when_some(
-                match card.snapshot.as_ref().map(|s| &s.state) {
-                    Some(ConnectionState::Failed { reason }) => {
-                        Some(SharedString::from(reason.clone()))
-                    }
-                    _ => None,
-                },
-                |card, reason| card.child(kit::error_notice(reason, cx)),
-            )
-            .when_some(card.error.clone(), |card, error| {
-                card.child(kit::error_notice(error, cx))
+            .children(self.problems(index, cx))
+            .child(self.actions(index, cx))
+            .into_any_element()
+    }
+
+    /// One Connection's guide: numbered steps on the Platform, each with
+    /// the page it happens on, then pasting into the same fields as the card.
+    fn render_guide(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let connection = self.cards[index].connection;
+        let guide = guide(connection);
+        let saved = self.cards[index]
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.stored.iter().all(|&stored| stored));
+        let number = |n: usize| {
+            div()
+                .flex_none()
+                .size(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border(t.border_width)
+                .border_color(t.accent)
+                .text_xs()
+                .font_medium()
+                .text_color(t.accent_text)
+                .child(n.to_string())
+        };
+        let steps = guide.steps.iter().enumerate().map(|(at, step)| {
+            h_flex()
+                .gap_3()
+                .items_start()
+                .child(number(at + 1))
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .gap_1()
+                        .pt(px(2.))
+                        .text_sm()
+                        .child(step.text)
+                        .children(step.link.map(|link| {
+                            kit::external_link(
+                                SharedString::from(format!("guide-link-{at}")),
+                                link.label,
+                                link.url,
+                                cx,
+                            )
+                        })),
+                )
+                .into_any_element()
+        });
+        let steps: Vec<AnyElement> = steps.collect();
+        let paste = h_flex()
+            .gap_3()
+            .items_start()
+            .child(number(guide.steps.len() + 1))
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_3()
+                    .pt(px(2.))
+                    .child(div().text_sm().child(
+                        "Cole nos campos abaixo e clique em Salvar. As chaves vão para o cofre \
+                         do sistema.",
+                    ))
+                    .child(self.fields(index, cx))
+                    .children(self.problems(index, cx))
+                    .child(self.actions(index, cx)),
+            );
+
+        v_flex()
+            .gap_4()
+            .p_4()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.surface)
+            .child(self.heading(index, cx))
+            .children(steps)
+            .child(paste)
+            .when(saved, |page| {
+                page.child(kit::success_notice("Tudo salvo no cofre do sistema.", cx))
             })
-            .child(actions)
+            .children(guide.then.map(|then| kit::info_notice(then, cx)))
             .into_any_element()
     }
 }
@@ -378,6 +521,9 @@ fn state_tag(state: Option<&ConnectionState>, cx: &App) -> AnyElement {
 
 impl Render for ConnectionsSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(index) = self.guide {
+            return self.render_guide(index, cx);
+        }
         let t = look(cx).tokens;
         let cards: Vec<AnyElement> = (0..self.cards.len())
             .map(|index| self.render_card(index, cx))
@@ -397,5 +543,6 @@ impl Render for ConnectionsSection {
                 ))
             })
             .children(cards)
+            .into_any_element()
     }
 }
