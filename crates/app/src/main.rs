@@ -45,6 +45,7 @@ mod shopee_search;
 mod startup;
 mod stock;
 mod stock_mirror;
+mod title_bar;
 mod tray;
 mod updates;
 
@@ -263,10 +264,14 @@ fn show_home(problem: Option<SharedString>, cx: &mut App) {
         return;
     }
     let options = WindowOptions {
+        // Mascate draws the title bar in the interface theme (`title_bar`);
+        // the system keeps the title for the taskbar.
         titlebar: Some(TitlebarOptions {
             title: Some("Mascate".into()),
+            appears_transparent: true,
             ..Default::default()
         }),
+        app_owns_titlebar_drag: true,
         window_bounds: Some(WindowBounds::centered(size(px(1100.), px(720.)), cx)),
         app_id: Some("mascate".into()),
         ..Default::default()

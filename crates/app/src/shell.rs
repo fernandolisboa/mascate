@@ -1,5 +1,6 @@
+use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{Entity, SharedString, Subscription, Window};
+use gpui_kit::{Entity, SharedString, Subscription, Window, div};
 use mascate_kernel::RecordId;
 
 use crate::appearance;
@@ -26,6 +27,7 @@ use crate::reputation_alerts::OpenReputation;
 use crate::sales::SalesScreen;
 use crate::settings::SettingsScreen;
 use crate::stock::StockScreen;
+use crate::title_bar;
 
 /// The main window: the navigation and the current screen; where each goes
 /// is the layout's ([`crate::layout`]).
@@ -235,7 +237,7 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let navigation = self.navigation(cx);
         let screen = match self.place {
             Place::Today => self.home.clone().into_any_element(),
@@ -254,6 +256,15 @@ impl Render for Shell {
             Place::Stock => self.stock.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),
         };
-        layout::shell(navigation, screen, cx)
+        v_flex()
+            .size_full()
+            .child(title_bar::title_bar(window, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(layout::shell(navigation, screen, cx)),
+            )
     }
 }
