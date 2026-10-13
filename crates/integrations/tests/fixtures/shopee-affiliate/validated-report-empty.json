@@ -1,0 +1,12 @@
+{
+  "data": {
+    "validatedReport": {
+      "nodes": [],
+      "pageInfo": {
+        "limit": 500,
+        "hasNextPage": false,
+        "scrollId": ""
+      }
+    }
+  }
+}

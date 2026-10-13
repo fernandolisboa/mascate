@@ -729,6 +729,48 @@ fn a_platform_payout_links_a_commission_once_it_is_known_and_a_reversal_still_co
 }
 
 #[test]
+fn a_payout_a_platform_reports_outside_a_sync_is_kept_once_by_its_key() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        fixture.eduzz.reports(
+            vec![sale("S1", brl("40.00")), sale("S2", brl("10.00"))],
+            Vec::new(),
+        );
+        fixture.sync().await;
+        let validated = transfer("V1", brl("47.50"), &["S1", "S2", "unknown"]);
+
+        let first = fixture
+            .affiliate
+            .record_platform_payouts(AffiliatePlatform::Eduzz, std::slice::from_ref(&validated))
+            .await
+            .unwrap();
+        let again = fixture
+            .affiliate
+            .record_platform_payouts(AffiliatePlatform::Eduzz, &[validated])
+            .await
+            .unwrap();
+
+        assert_eq!(first.added, 1);
+        assert_eq!(again.unchanged, 1);
+        let all = fixture
+            .affiliate
+            .payouts(Timestamp::MIN_UTC..Timestamp::MAX_UTC)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].manual);
+        assert_eq!(all[0].covers.len(), 2);
+        assert!(
+            all[0]
+                .covers
+                .iter()
+                .all(|commission| commission.status == CommissionStatus::Paid)
+        );
+        assert_eq!(all[0].difference(), brl("-2.50"));
+    });
+}
+
+#[test]
 fn a_commission_the_owner_paid_stays_paid_when_the_platform_calls_it_approved_again() {
     block_on(async {
         let fixture = Fixture::new().await;

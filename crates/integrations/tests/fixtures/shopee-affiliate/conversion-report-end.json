@@ -1,0 +1,152 @@
+{
+  "data": {
+    "conversionReport": {
+      "nodes": [
+        {
+          "purchaseTime": 1788609600,
+          "clickTime": 1788609000,
+          "conversionId": 81726354003,
+          "totalCommission": "6.00",
+          "netCommission": "6.00",
+          "utmContent": "whatsapp-grupo---",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260905MNOP3456",
+              "orderStatus": "CANCELLED",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": 44556677889,
+                  "modelId": 200003,
+                  "itemName": "Relógio Smartwatch D20",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 0,
+                  "itemTotalCommission": "6.00",
+                  "refundAmount": "0",
+                  "fraudStatus": "UNVERIFIED",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "purchaseTime": 1788868800,
+          "clickTime": 1788868200,
+          "conversionId": "81726354004",
+          "totalCommission": "3.00",
+          "netCommission": "3.00",
+          "utmContent": "",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260908QRST7890",
+              "orderStatus": "COMPLETED",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": "55667788990",
+                  "modelId": "210004",
+                  "itemName": "Mouse Sem Fio",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 1790337600,
+                  "itemTotalCommission": "3.00",
+                  "refundAmount": "0",
+                  "fraudStatus": "FRAUD",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "purchaseTime": 1789041600,
+          "clickTime": 1789041000,
+          "conversionId": 81726354005,
+          "totalCommission": "1.50",
+          "netCommission": "1.50",
+          "utmContent": "",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260910UVWX1234",
+              "orderStatus": "COMPLETED",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": 66778899001,
+                  "modelId": 0,
+                  "itemName": "Recarga de Celular R$ 30",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 1789041600,
+                  "itemTotalCommission": "1.50",
+                  "refundAmount": "5.00",
+                  "fraudStatus": "VERIFIED",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "purchaseTime": 1789214400,
+          "clickTime": 1789213800,
+          "conversionId": 81726354006,
+          "totalCommission": "0",
+          "netCommission": "0",
+          "utmContent": "",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260912YZAB5678",
+              "orderStatus": "PENDING",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": 77889900112,
+                  "modelId": 0,
+                  "itemName": "Item sem comissão",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 0,
+                  "refundAmount": "0",
+                  "fraudStatus": "UNVERIFIED",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "pageInfo": {
+        "limit": 500,
+        "hasNextPage": false,
+        "scrollId": "c2Nyb2xsLTI6Z2hpamts"
+      }
+    }
+  }
+}
