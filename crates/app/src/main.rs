@@ -38,6 +38,7 @@ mod preferences;
 mod pricing;
 mod product_links;
 mod products;
+mod promotion_rules;
 mod promotions;
 mod purchases;
 mod quality;
