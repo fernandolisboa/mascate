@@ -1,7 +1,9 @@
 //! Buscar na Shopee (#12), on the Ofertas screen: searches the Shopee
 //! Affiliate Open API for items or shops and keeps the chosen items as
-//! Supplier Offers. Off, with the reason, while the Connection waits for
-//! Shopee's approval; registering offers by hand keeps working below it.
+//! Supplier Offers. "Criar link" on an item asks Shopee for its short link
+//! tagged with a Promotion Channel's marking (#100), with the item's link
+//! as found. Off, with the reason, while the Connection waits for Shopee's
+//! approval; registering offers by hand keeps working below it.
 
 use std::sync::Arc;
 
@@ -9,19 +11,26 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Entity, EventEmitter, Subscription, Window, div, px};
+use gpui_kit::{AnyElement, ClipboardItem, Entity, EventEmitter, Subscription, Window, div, px};
+use mascate_affiliate::AffiliatePlatform;
 use mascate_catalog::{
     Catalog, CatalogError, FoundOffer, FoundShop, KeptOffers, OfferOrder, OfferSearch, OfferSource,
     ProductSource, SearchedOffer,
 };
 use mascate_integrations::{Connection, ConnectionState};
+use mascate_marketing::PromotionChannel;
 use rust_decimal::Decimal;
 
+use crate::affiliate::affiliate;
+use crate::affiliate_links::{
+    create_on_platform, created_text, link_failure, tagger, warning_text,
+};
 use crate::appearance::look;
 use crate::catalog;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
+use crate::promotion_channels::promotion_channels;
 use crate::shopee;
 
 /// Tells the Ofertas screen that offers were kept, so it reads them again.
@@ -37,6 +46,19 @@ enum Mode {
 enum Results {
     Items(Vec<SearchedOffer>),
     Shops(Vec<FoundShop>),
+}
+
+/// "Criar link" opened on one found item.
+struct LinkPanel {
+    /// The item's id at Shopee.
+    item: String,
+    channels: Vec<PromotionChannel>,
+    busy: bool,
+    outcome: Option<Outcome>,
+    /// What the link created breaks or may break.
+    warnings: Vec<String>,
+    /// The short link created, for "Copiar".
+    tagged: Option<String>,
 }
 
 pub struct ShopeeSearch {
@@ -56,6 +78,7 @@ pub struct ShopeeSearch {
     /// Numbers each search, so a slow one never lands over a newer one.
     searches: u64,
     outcome: Option<Outcome>,
+    link: Option<LinkPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -89,6 +112,7 @@ impl ShopeeSearch {
             busy: false,
             searches: 0,
             outcome: None,
+            link: None,
             _subscriptions: subscriptions,
         };
         search.refresh(cx);
@@ -231,6 +255,205 @@ impl ShopeeSearch {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Opens "Criar link" under `item`, reading the Promotion Channels.
+    fn open_link(&mut self, item: String, cx: &mut Context<Self>) {
+        let Some(channels) = promotion_channels(cx) else {
+            return;
+        };
+        self.link = Some(LinkPanel {
+            item: item.clone(),
+            channels: Vec::new(),
+            busy: true,
+            outcome: None,
+            warnings: Vec::new(),
+            tagged: None,
+        });
+        let reading = cx
+            .background_executor()
+            .spawn(async move { channels.channels().await });
+        cx.spawn(async move |this, cx| {
+            let read = reading.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(panel) = this.link.as_mut().filter(|panel| panel.item == item) else {
+                    return;
+                };
+                panel.busy = false;
+                match read {
+                    Ok(channels) => panel.channels = channels,
+                    Err(error) => {
+                        panel.outcome = Some(Outcome::Failed(
+                            format!("Não consegui ler os canais de divulgação: {error}").into(),
+                        ))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Creates the short link of `offer` for `channel`.
+    fn create_link(
+        &mut self,
+        offer: FoundOffer,
+        channel: PromotionChannel,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(affiliate), Some(tagger)) =
+            (affiliate(cx), tagger(AffiliatePlatform::Shopee, cx))
+        else {
+            return;
+        };
+        let Some(panel) = self.link.as_mut() else {
+            return;
+        };
+        panel.busy = true;
+        panel.outcome = None;
+        panel.warnings.clear();
+        panel.tagged = None;
+        let item = offer.id.clone();
+        let name = channel.name.clone();
+        let working = cx.background_executor().spawn(async move {
+            create_on_platform(
+                &affiliate,
+                tagger.as_ref(),
+                offer.title,
+                offer.link,
+                &channel,
+            )
+            .await
+        });
+        cx.spawn(async move |this, cx| {
+            let created = working.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(panel) = this.link.as_mut().filter(|panel| panel.item == item) else {
+                    return;
+                };
+                panel.busy = false;
+                match created {
+                    Ok(created) => {
+                        panel.outcome = Some(Outcome::Done(created_text(&created, &name).into()));
+                        panel.warnings = created.warnings.iter().map(warning_text).collect();
+                        panel.tagged = Some(created.link.tagged);
+                    }
+                    Err(error) => {
+                        panel.outcome = Some(Outcome::Failed(
+                            link_failure(Some(AffiliatePlatform::Shopee), &error).into(),
+                        ))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn copy_link(&mut self, link: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(link));
+        if let Some(panel) = self.link.as_mut() {
+            panel.outcome = Some(Outcome::Done("Link copiado.".into()));
+        }
+        cx.notify();
+    }
+
+    fn render_link_panel(&self, offer: &FoundOffer, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let panel = self.link.as_ref().filter(|panel| panel.item == offer.id)?;
+        let t = look(cx).tokens;
+        let chips: Vec<AnyElement> = panel
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(index, channel)| {
+                let (offer, channel) = (offer.clone(), channel.clone());
+                Button::new(("shopee-link-channel", index))
+                    .label(channel.name.clone())
+                    .outline()
+                    .small()
+                    .disabled(panel.busy)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.create_link(offer.clone(), channel.clone(), cx)
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        Some(
+            v_flex()
+                .gap_2()
+                .p_3()
+                .rounded(t.radius_lg)
+                .border(t.border_width)
+                .border_color(t.border)
+                .bg(t.raised)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_medium()
+                        .child("Criar link de afiliado"),
+                )
+                .child(div().text_xs().text_color(t.text2).child(
+                    "Escolha o canal onde vai divulgar: a Shopee devolve o link curto com a \
+                     marcação dele, que volta em cada venda.",
+                ))
+                .child(if chips.is_empty() && !panel.busy {
+                    div()
+                        .text_sm()
+                        .text_color(t.text2)
+                        .child("Nenhum canal ainda: crie um em Divulgação.")
+                        .into_any_element()
+                } else {
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(chips)
+                        .into_any_element()
+                })
+                .children(panel.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+                .children(
+                    panel
+                        .warnings
+                        .iter()
+                        .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
+                )
+                .children(panel.tagged.clone().map(|tagged| {
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .truncate()
+                                .child(tagged.clone()),
+                        )
+                        .child(
+                            Button::new("copy-shopee-link")
+                                .label("Copiar")
+                                .primary()
+                                .small()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.copy_link(tagged.clone(), cx)
+                                })),
+                        )
+                }))
+                .child(
+                    h_flex().child(
+                        Button::new("close-shopee-link")
+                            .label("Fechar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.link = None;
+                                cx.notify();
+                            })),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     fn show_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
@@ -379,41 +602,61 @@ impl ShopeeSearch {
                 .on_click(cx.listener(move |this, _, _, cx| this.keep(vec![offer.clone()], cx)))
                 .into_any_element()
         };
-        h_flex()
-            .gap_3()
-            .items_start()
-            .justify_between()
+        let linkable = tagger(AffiliatePlatform::Shopee, cx).is_some();
+        let opened = self
+            .link
+            .as_ref()
+            .is_some_and(|panel| panel.item == found.id);
+        let item_id = found.id.clone();
+        let create_link = (linkable && !opened).then(|| {
+            Button::new(("open-shopee-link", index))
+                .label("Criar link")
+                .ghost()
+                .small()
+                .on_click(cx.listener(move |this, _, _, cx| this.open_link(item_id.clone(), cx)))
+        });
+        let panel = self.render_link_panel(found, cx);
+        v_flex()
+            .gap_2()
             .p_3()
             .rounded(t.radius_lg)
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.surface)
             .child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_0p5()
-                    .child(div().font_medium().child(found.title.clone()))
-                    .child(div().text_xs().text_color(t.text2).child(facts.join(" · ")))
+                h_flex()
+                    .gap_3()
+                    .items_start()
+                    .justify_between()
                     .child(
-                        div()
-                            .id(("shopee-item-link", index))
-                            .text_xs()
-                            .text_color(t.accent_text)
-                            .truncate()
-                            .cursor_pointer()
-                            .child(link.clone())
-                            .on_click(move |_, _, cx| cx.open_url(&link)),
+                        v_flex()
+                            .min_w_0()
+                            .flex_1()
+                            .gap_0p5()
+                            .child(div().font_medium().child(found.title.clone()))
+                            .child(div().text_xs().text_color(t.text2).child(facts.join(" · ")))
+                            .child(
+                                div()
+                                    .id(("shopee-item-link", index))
+                                    .text_xs()
+                                    .text_color(t.accent_text)
+                                    .truncate()
+                                    .cursor_pointer()
+                                    .child(link.clone())
+                                    .on_click(move |_, _, cx| cx.open_url(&link)),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_none()
+                            .items_end()
+                            .gap_1()
+                            .child(div().font_semibold().child(price))
+                            .child(action)
+                            .children(create_link),
                     ),
             )
-            .child(
-                v_flex()
-                    .flex_none()
-                    .items_end()
-                    .gap_1()
-                    .child(div().font_semibold().child(price))
-                    .child(action),
-            )
+            .children(panel)
             .into_any_element()
     }
 

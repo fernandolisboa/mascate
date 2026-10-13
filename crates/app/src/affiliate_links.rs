@@ -1,9 +1,10 @@
 //! Links de afiliado on the Afiliação screen (#99): for each Program whose
-//! Platform tags links through the URL, its Affiliate Links per Promotion
+//! Platform the app tags links of, its Affiliate Links per Promotion
 //! Channel with "Copiar", and "Criar link" to tag a pasted link with a
 //! channel's marking (or, on Amazon, the tracking id the owner created for
-//! it). The Program's rules are checked first: what only warns is shown,
-//! a Restricted Feature that is off refuses (ADR 0031).
+//! it). Shopee's link is the short link its API gives (#100). The Program's
+//! rules are checked first: what only warns is shown, a Restricted Feature
+//! that is off refuses (ADR 0031).
 
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ClipboardItem, Entity, Global, Subscription, Window, div, px};
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform, CreatedLink, LinkTagger,
-    NewAffiliateLink, Program, PromotedProduct, Promotion, Reach, RuleWarning,
+    NewAffiliateLink, Program, PromotedProduct, Promotion, Reach, ReportedProgram, RuleWarning,
 };
 use mascate_kernel::RecordId;
 use mascate_marketing::{ChannelKind, PromotionChannel};
@@ -26,6 +27,7 @@ use crate::kit;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::{practice_name, standing_name};
 use crate::sales::table_row;
+use crate::shopee;
 
 /// The Platforms whose links the app tags, each through its adapter. Each
 /// Platform's slice adds its tagger here.
@@ -33,7 +35,7 @@ pub struct LinkTaggers(pub Vec<Arc<dyn LinkTagger>>);
 
 impl Global for LinkTaggers {}
 
-fn tagger(platform: AffiliatePlatform, cx: &App) -> Option<Arc<dyn LinkTagger>> {
+pub(crate) fn tagger(platform: AffiliatePlatform, cx: &App) -> Option<Arc<dyn LinkTagger>> {
     cx.try_global::<LinkTaggers>()?
         .0
         .iter()
@@ -55,6 +57,61 @@ pub(crate) fn promotion(channel: &PromotionChannel) -> Promotion {
         },
         keywords: channel.keywords.clone(),
         ..Promotion::default()
+    }
+}
+
+/// Creates the link of `product` at `pasted` for `channel`, with the
+/// channel's marking, on the one Program of `tagger`'s Platform: Shopee
+/// Afiliados, from a found offer.
+pub(crate) async fn create_on_platform(
+    affiliate: &Affiliate,
+    tagger: &dyn LinkTagger,
+    product: String,
+    pasted: String,
+    channel: &PromotionChannel,
+) -> Result<CreatedLink, AffiliateError> {
+    let program = affiliate
+        .program_of(tagger)
+        .await?
+        .ok_or(AffiliateError::NoSuchProgram)?;
+    affiliate
+        .create_link(
+            &NewAffiliateLink {
+                program: program.id,
+                product,
+                pasted,
+                channel: channel.id,
+                tag: channel.default_tag.clone(),
+                promotion: promotion(channel),
+            },
+            tagger,
+        )
+        .await
+}
+
+/// What creating a link for `channel` gave, as the owner reads it.
+pub(crate) fn created_text(created: &CreatedLink, channel: &str) -> String {
+    if created.existed {
+        format!(
+            "{} já tinha link para {channel}: é o mesmo de antes.",
+            created.link.product
+        )
+    } else {
+        format!(
+            "Link de {} para {channel} criado com a marcação {}. Use \"Copiar\" para divulgar.",
+            created.link.product, created.link.tag
+        )
+    }
+}
+
+/// Why creating a link on `platform` failed, as the owner reads it: the
+/// Platform's own words when its API tags the link.
+pub(crate) fn link_failure(platform: Option<AffiliatePlatform>, error: &AffiliateError) -> String {
+    match (platform, error) {
+        (Some(AffiliatePlatform::Shopee), AffiliateError::Platform(error)) => {
+            shopee::link_failure(error)
+        }
+        _ => failure(error),
     }
 }
 
@@ -194,7 +251,10 @@ impl AffiliateLinksSection {
                 }
                 match changed {
                     Ok(value) => done(this, value, window, cx),
-                    Err(error) => this.form = Some(Outcome::Failed(failure(&error).into())),
+                    Err(error) => {
+                        let platform = this.creating_platform();
+                        this.form = Some(Outcome::Failed(link_failure(platform, &error).into()))
+                    }
                 }
                 cx.notify();
             });
@@ -231,6 +291,34 @@ impl AffiliateLinksSection {
         self.warnings.clear();
         self.form = None;
         cx.notify();
+    }
+
+    /// Opens "Criar link" on the one Program of `tagger`'s Platform,
+    /// creating it when no Conversion brought it yet.
+    fn open_platform(
+        &mut self,
+        tagger: Arc<dyn LinkTagger>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run(
+            window,
+            cx,
+            move |affiliate| async move { affiliate.program_of(tagger.as_ref()).await },
+            |this, program: Option<Program>, window, cx| {
+                if let Some(program) = program {
+                    this.open(program.id, None, window, cx);
+                }
+            },
+        );
+    }
+
+    fn creating_platform(&self) -> Option<AffiliatePlatform> {
+        let creating = self.creating?;
+        self.programs
+            .iter()
+            .find(|program| program.id == creating)
+            .map(|program| program.platform)
     }
 
     fn pick_channel(&mut self, channel: RecordId, window: &mut Window, cx: &mut Context<Self>) {
@@ -290,21 +378,7 @@ impl AffiliateLinksSection {
             move |affiliate| async move { affiliate.create_link(&new, tagger.as_ref()).await },
             move |this, created: CreatedLink, window, cx| {
                 this.warnings = created.warnings.iter().map(warning_text).collect();
-                this.outcome = Some(Outcome::Done(
-                    if created.existed {
-                        format!(
-                            "{} já tinha link para {}: é o mesmo de antes.",
-                            created.link.product, channel.name
-                        )
-                    } else {
-                        format!(
-                            "Link de {} para {} criado com a marcação {}. Use \"Copiar\" para \
-                             divulgar.",
-                            created.link.product, channel.name, created.link.tag
-                        )
-                    }
-                    .into(),
-                ));
+                this.outcome = Some(Outcome::Done(created_text(&created, &channel.name).into()));
                 if this.warnings.is_empty() {
                     this.creating = None;
                 }
@@ -424,6 +498,7 @@ impl AffiliateLinksSection {
             })
             .collect::<Vec<_>>();
         let amazon = program.platform == AffiliatePlatform::Amazon;
+        let shopee = program.platform == AffiliatePlatform::Shopee;
         v_flex()
             .gap_3()
             .ml_6()
@@ -456,13 +531,23 @@ impl AffiliateLinksSection {
                             .into_any_element()
                     }),
             )
-            .child(field("Link de afiliado", &self.pasted).child(
-                div().text_xs().text_color(t.text2).child(format!(
-                    "O link que a {} dá na sua área de afiliado. O app só acrescenta a \
-                     marcação do canal; o resto fica como está.",
-                    program.platform.name()
-                )),
-            ))
+            .child(if shopee {
+                field("Link do produto ou da loja na Shopee", &self.pasted).child(
+                    div().text_xs().text_color(t.text2).child(
+                        "O app pede à Shopee o link curto de afiliado, com a marcação do canal, \
+                         e manda o link colado como está. Em Ofertas › Buscar na Shopee, \
+                         \"Criar link\" faz o mesmo sem colar nada.",
+                    ),
+                )
+            } else {
+                field("Link de afiliado", &self.pasted).child(
+                    div().text_xs().text_color(t.text2).child(format!(
+                        "O link que a {} dá na sua área de afiliado. O app só acrescenta a \
+                         marcação do canal; o resto fica como está.",
+                        program.platform.name()
+                    )),
+                )
+            })
             .when(amazon, |form| {
                 form.child(field("Tracking id do canal", &self.tracking_id).child(
                     div().text_xs().text_color(t.text2).child(
@@ -570,6 +655,46 @@ impl AffiliateLinksSection {
     }
 }
 
+impl AffiliateLinksSection {
+    /// A Platform with a single Program that no Conversion brought yet, as
+    /// Shopee before the first sale: "Criar link" creates the Program.
+    fn render_awaited(
+        &self,
+        index: usize,
+        tagger: Arc<dyn LinkTagger>,
+        program: &ReportedProgram,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        table_row(&t)
+            .flex_wrap()
+            .child(kit::tag(tagger.platform().name(), t.text2, cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(220.))
+                    .child(div().font_medium().truncate().child(program.name.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(t.text2)
+                            .child("nenhum link ainda"),
+                    ),
+            )
+            .child(
+                Button::new(("open-awaited-link", index))
+                    .label("Criar link")
+                    .outline()
+                    .small()
+                    .disabled(self.busy)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_platform(tagger.clone(), window, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for AffiliateLinksSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
@@ -578,11 +703,30 @@ impl Render for AffiliateLinksSection {
             .clone()
             .into_iter()
             .partition(|program| tagger(program.platform, cx).is_some());
-        let rows: Vec<AnyElement> = taggable
+        let mut rows: Vec<AnyElement> = taggable
             .iter()
             .enumerate()
             .map(|(index, program)| self.render_program(index, program, cx))
             .collect();
+        let awaited: Vec<(Arc<dyn LinkTagger>, ReportedProgram)> = cx
+            .try_global::<LinkTaggers>()
+            .map(|taggers| {
+                taggers
+                    .0
+                    .iter()
+                    .filter(|tagger| {
+                        !self
+                            .programs
+                            .iter()
+                            .any(|program| program.platform == tagger.platform())
+                    })
+                    .filter_map(|tagger| Some((tagger.clone(), tagger.program()?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (index, (tagger, program)) in awaited.into_iter().enumerate() {
+            rows.push(self.render_awaited(index, tagger, &program, cx));
+        }
         let mut untagged: Vec<&str> = untagged
             .iter()
             .map(|program| program.platform.name())
@@ -593,7 +737,8 @@ impl Render for AffiliateLinksSection {
             .child(kit::section_heading("Links de afiliado"))
             .child(div().text_sm().text_color(t.text2).child(
                 "Cole o link de afiliado de um produto e escolha o canal: o app acrescenta a \
-                 marcação do canal, que volta em cada venda e liga a comissão a ele.",
+                 marcação do canal, que volta em cada venda e liga a comissão a ele. Na Shopee, \
+                 a própria Shopee devolve o link curto já marcado.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
             .when(rows.is_empty(), |section| {

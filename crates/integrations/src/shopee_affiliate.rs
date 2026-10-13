@@ -1,10 +1,13 @@
 //! The Shopee Affiliate Open API's adapter: searches Shopee's catalog for
-//! items and shops as a source of Supplier Offers (#12, ADR 0027), and reads
-//! the owner's Conversions and validated Payouts (#80, ADR 0030). Every
-//! request is a GraphQL query signed with the Connection's AppID and
-//! Secret; the API only reads, so nothing ever goes to Shopee but queries.
+//! items and shops as a source of Supplier Offers (#12, ADR 0027), reads
+//! the owner's Conversions and validated Payouts (#80, ADR 0030) and makes
+//! the owner's short links tagged by Promotion Channel (#100, ADR 0031).
+//! Every request is a GraphQL query signed with the Connection's AppID and
+//! Secret; the one mutation, `generateShortLink`, changes nothing on the
+//! owner's account but adds a link.
 
 mod conversions;
+mod short_links;
 
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -86,7 +89,7 @@ impl ShopeeAffiliates {
         self
     }
 
-    /// What `operation` answers to the GraphQL `query`. A rate limit or a
+    /// What `operation` answers to the GraphQL `query` (or mutation). A rate limit or a
     /// failure on Shopee's side is tried again after a pause.
     fn query<T: DeserializeOwned>(&self, operation: &str, query: &str) -> Result<T, PlatformError> {
         self.query_after(operation, query, || {})

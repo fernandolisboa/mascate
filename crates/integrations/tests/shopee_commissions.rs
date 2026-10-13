@@ -164,8 +164,9 @@ fn each_item_sold_is_one_conversion_with_its_commission_marking_and_dates() {
     assert_eq!(fone.sold_at, at(1788350400));
     assert_eq!(fone.status_changed_at, Some(at(1789905600)));
     assert_eq!(fone.platform_status, "COMPLETED/VERIFIED");
-    // The subIds without the dashes left by the unused ones.
-    assert_eq!(fone.tracking.as_deref(), Some("instagram-story"));
+    // The first subId, the Promotion Channel's marking: `utmContent` joins
+    // the five with dashes.
+    assert_eq!(fone.tracking.as_deref(), Some("instagram"));
     let raw: serde_json::Value = serde_json::from_str(&fone.raw).unwrap();
     assert_eq!(raw["conversion"]["conversionId"], 81726354001u64);
     assert!(raw["conversion"].get("orders").is_none());
@@ -173,6 +174,10 @@ fn each_item_sold_is_one_conversion_with_its_commission_marking_and_dates() {
     assert!(raw["order"].get("items").is_none());
     assert_eq!(raw["item"]["itemId"], 22334455667u64);
 
+    assert_eq!(
+        find(&conversions, RELOGIO).tracking.as_deref(),
+        Some("whatsapp")
+    );
     let carregador = find(&conversions, CARREGADOR);
     assert_eq!(carregador.tracking, None);
     assert_eq!(carregador.status_changed_at, None);

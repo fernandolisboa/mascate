@@ -853,7 +853,7 @@ impl Affiliate {
 
     /// The Program `reported` names, created the first time it shows up.
     /// Its name stays the one it was born with: the owner renames it.
-    async fn program_for(
+    pub(crate) async fn program_for(
         &self,
         on: &Connection,
         platform: AffiliatePlatform,

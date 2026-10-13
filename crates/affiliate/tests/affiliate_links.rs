@@ -14,7 +14,7 @@ use mascate_affiliate::{
     SHOPEE_PAID_SEARCH, Standing, TagRefusal,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, RecordId, Timestamp};
+use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp};
 use mascate_platform::{Database, Flag, Flags, Registry, migrate};
 use rust_decimal::Decimal;
 
@@ -480,5 +480,139 @@ fn a_link_needs_a_product_a_marking_a_program_and_its_platforms_tagger() {
             .create_link(&link(hotmart, channel(1), &longest), &tagger)
             .await
             .unwrap();
+    });
+}
+
+#[test]
+fn a_marking_another_channel_holds_is_refused_before_the_adapter_is_asked() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shopee = f.program(AffiliatePlatform::Shopee).await;
+        let tagger = FakeTagger::of(AffiliatePlatform::Shopee);
+        f.affiliate
+            .create_link(&link(shopee, channel(1), "telegram"), &tagger)
+            .await
+            .unwrap();
+
+        let taken = f
+            .affiliate
+            .create_link(&link(shopee, channel(2), "telegram"), &tagger)
+            .await;
+
+        assert!(matches!(taken, Err(AffiliateError::TagTaken(_))));
+        // On Shopee each tagging is a call to its API.
+        assert_eq!(tagger.calls.load(Ordering::SeqCst), 1);
+    });
+}
+
+/// Tags through a Platform's API that answers `error`.
+struct UnansweredTagger(PlatformError);
+
+impl LinkTagger for UnansweredTagger {
+    fn platform(&self) -> AffiliatePlatform {
+        AffiliatePlatform::Shopee
+    }
+
+    fn tag(&self, _: &str, _: &str) -> Result<String, TagRefusal> {
+        Err(self.0.clone().into())
+    }
+}
+
+#[test]
+fn a_platform_api_that_does_not_tag_fails_as_the_platform_and_keeps_nothing() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shopee = f.program(AffiliatePlatform::Shopee).await;
+
+        for error in [PlatformError::NotConnected, PlatformError::RateLimited] {
+            let failed = f
+                .affiliate
+                .create_link(
+                    &link(shopee, channel(1), "telegram"),
+                    &UnansweredTagger(error.clone()),
+                )
+                .await;
+
+            assert!(matches!(failed, Err(AffiliateError::Platform(e)) if e == error));
+        }
+        assert!(f.affiliate.links().await.unwrap().is_empty());
+    });
+}
+
+/// A Platform with a single Program, as Shopee Afiliados.
+struct SingleProgramTagger;
+
+impl LinkTagger for SingleProgramTagger {
+    fn platform(&self) -> AffiliatePlatform {
+        AffiliatePlatform::Magalu
+    }
+
+    fn program(&self) -> Option<ReportedProgram> {
+        Some(ReportedProgram {
+            id: "magalu-parceiro".into(),
+            name: "Parceiro Magalu".into(),
+        })
+    }
+
+    fn tag(&self, link: &str, tag: &str) -> Result<String, TagRefusal> {
+        Ok(format!("{link}?t={tag}"))
+    }
+}
+
+#[test]
+fn a_platform_with_one_program_has_it_before_its_first_conversion() {
+    block_on(async {
+        let f = Fixture::new().await;
+
+        let program = f
+            .affiliate
+            .program_of(&SingleProgramTagger)
+            .await
+            .unwrap()
+            .unwrap();
+        let again = f
+            .affiliate
+            .program_of(&SingleProgramTagger)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(again, program);
+        assert_eq!(program.platform, AffiliatePlatform::Magalu);
+        assert_eq!(program.name, "Parceiro Magalu");
+        // A link can be made for it right away.
+        f.affiliate
+            .create_link(
+                &link(program.id, channel(1), "telegram"),
+                &SingleProgramTagger,
+            )
+            .await
+            .unwrap();
+        // The first Conversion lands on the same Program.
+        let first_sale = ReportedConversion {
+            program: SingleProgramTagger.program().unwrap(),
+            ..sale(AffiliatePlatform::Magalu)
+        };
+        f.affiliate
+            .import(AffiliatePlatform::Magalu, &[first_sale])
+            .await
+            .unwrap();
+        let magalu: Vec<_> = f
+            .affiliate
+            .programs()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|p| p.platform == AffiliatePlatform::Magalu)
+            .collect();
+        assert_eq!(magalu, vec![program]);
+        // Links that come per Program have none of their own.
+        assert_eq!(
+            f.affiliate
+                .program_of(&FakeTagger::of(AffiliatePlatform::Hotmart))
+                .await
+                .unwrap(),
+            None
+        );
     });
 }

@@ -10,8 +10,9 @@ use mascate_platform::{Migration, StoredRow, stored};
 
 use crate::commissions::{Affiliate, AffiliateError, platform_at};
 use crate::report::ProgramRef;
-use crate::rules::{Promotion, RuleWarning};
-use crate::tagging::LinkTagger;
+use crate::rules::{Program, Promotion, RuleWarning};
+use crate::source::AffiliatePlatform;
+use crate::tagging::{LinkTagger, TagRefusal};
 
 pub(crate) const CREATE_AFFILIATE_LINKS: Migration = Migration {
     version: 5,
@@ -144,26 +145,30 @@ impl Affiliate {
                 existed: true,
             });
         }
-        let tagged = tagger.tag(new.pasted.trim(), tag)?;
+        // Checked before tagging too, since a Platform may tag through a
+        // call to its API.
+        if tag_taken(
+            self.database.connection(),
+            program.platform,
+            tag,
+            new.channel,
+        )
+        .await?
+        {
+            return Err(AffiliateError::TagTaken(tag.to_owned()));
+        }
+        let tagged = tagger
+            .tag(new.pasted.trim(), tag)
+            .map_err(|refusal| match refusal {
+                TagRefusal::Platform(error) => AffiliateError::Platform(error),
+                refusal => AffiliateError::Tag(refusal),
+            })?;
 
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        // Deleted links count too: Conversions from their clicks keep
-        // arriving until the Platform settles them.
-        let taken = transaction
-            .query(
-                "SELECT 1 FROM affiliate_links l
-                 JOIN affiliate_programs p ON p.id = l.program_id
-                 WHERE p.platform = ?1 AND l.tag = ?2 AND l.channel_id <> ?3",
-                params![program.platform.code(), tag, new.channel.to_string()],
-            )
-            .await?
-            .next()
-            .await?
-            .is_some();
-        if taken {
+        if tag_taken(&transaction, program.platform, tag, new.channel).await? {
             return Err(AffiliateError::TagTaken(tag.to_owned()));
         }
         let id = self.ids.next_id();
@@ -221,6 +226,27 @@ impl Affiliate {
         })
     }
 
+    /// The Program every link of `tagger`'s Platform belongs to, created the
+    /// way a Sync would when no Conversion brought it yet; `None` when the
+    /// Platform's links come per Program.
+    pub async fn program_of(
+        &self,
+        tagger: &dyn LinkTagger,
+    ) -> Result<Option<Program>, AffiliateError> {
+        let Some(reported) = tagger.program() else {
+            return Ok(None);
+        };
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let id = self
+            .program_for(&transaction, tagger.platform(), &reported, self.clock.now())
+            .await?;
+        transaction.commit().await?;
+        self.program(id).await.map(Some)
+    }
+
     /// Takes a link off the list; its marking stays with its channel.
     pub async fn delete_link(&self, link: RecordId) -> Result<(), AffiliateError> {
         let changed = self
@@ -256,6 +282,28 @@ impl Affiliate {
             .await?;
         rows.next().await?.map(|row| link_from(&row)).transpose()
     }
+}
+
+/// Whether another channel used `tag` on `platform`. Deleted links count
+/// too: Conversions from their clicks keep arriving until the Platform
+/// settles them.
+async fn tag_taken(
+    on: &libsql::Connection,
+    platform: AffiliatePlatform,
+    tag: &str,
+    channel: RecordId,
+) -> Result<bool, AffiliateError> {
+    Ok(on
+        .query(
+            "SELECT 1 FROM affiliate_links l
+             JOIN affiliate_programs p ON p.id = l.program_id
+             WHERE p.platform = ?1 AND l.tag = ?2 AND l.channel_id <> ?3",
+            params![platform.code(), tag, channel.to_string()],
+        )
+        .await?
+        .next()
+        .await?
+        .is_some())
 }
 
 /// A marking every Platform carries in a link as it is: lowercase letters,

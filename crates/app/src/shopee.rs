@@ -1,5 +1,5 @@
-//! Shopee Afiliados as the Ofertas screen uses it (#12): the adapter, where
-//! it points, and how its failures read in Portuguese.
+//! Shopee Afiliados as the screens use it (#12, #80, #100): the adapter,
+//! where it points, and how its failures read in Portuguese.
 
 use std::sync::Arc;
 
@@ -106,6 +106,29 @@ pub fn validated_failure(error: &PlatformError) -> String {
              número no faturamento."
                 .into()
         }
+        PlatformError::Expired | PlatformError::Failed(_) => failure(error),
+    }
+}
+
+/// Why Shopee gave no short link, as the owner reads it; no link was kept.
+pub fn link_failure(error: &PlatformError) -> String {
+    match error {
+        PlatformError::NotConnected => {
+            "O link da Shopee é o link curto que a Open API de afiliados devolve, e ela liga \
+             quando a Shopee aprovar o seu acesso e você colar o AppID e o Secret em \
+             Configurações › Conexões. Nenhum link foi criado."
+                .into()
+        }
+        PlatformError::RateLimited => {
+            "A Shopee pediu para esperar e continuou pedindo depois de três tentativas. Crie o \
+             link de novo daqui a alguns minutos."
+                .into()
+        }
+        PlatformError::Refused(why) => format!(
+            "A Shopee recusou o link: {why}. Confira se é o link de um produto ou de uma loja \
+             da Shopee."
+        ),
+        PlatformError::NotFound => "A Shopee não encontrou esse produto ou loja.".into(),
         PlatformError::Expired | PlatformError::Failed(_) => failure(error),
     }
 }

@@ -5,7 +5,8 @@ Shopee ainda aguarda aprovação. A documentação oficial só abre dentro do pa
 os campos seguem a lista de `productOfferV2`, `shopOfferV2`, `conversionReport`, `validatedReport`
 e dos códigos de erro publicada a partir dela no repositório público `bcat95/shopee-aff` e o exemplo
 de assinatura do mesmo repositório, consultados em 05/10/2026 e 13/10/2026, a página pública
-affiliateshopee.com.br/documentacao (exemplos de `conversionReport` e `validatedReport` com
+affiliateshopee.com.br/documentacao (também para `generateShortLink`), a ajuda da Shopee sobre
+Sub IDs (até 5 por link; o gerador do painel aceita só letras e números) (exemplos de `conversionReport` e `validatedReport` com
 `pageInfo { limit hasNextPage scrollId }`), além de `docs/platform-integrations.md`. Os regression
 passes da fase 1 (#37, busca) e da fase 2 (#76, conversões e repasses) os regravam quando a Shopee
 aprovar o acesso.
@@ -23,6 +24,9 @@ aprovar o acesso.
 | `error-11001-scroll.json` | `scrollId` vencido ou já usado | Lista de códigos de erro |
 | `validated-report.json` | `validatedReport` de um `validationId`: a conversão concluída acima, com `netCommission` menor que `totalCommission` (taxa de MCN), e uma conversão de antes da janela do app | Get Validated Report |
 | `validated-report-empty.json` | `validatedReport` sem conversões (validationId que a Shopee não conhece) | Get Validated Report |
+| `short-link.json` | `generateShortLink` com o `shortLink` | Get Short Link |
+| `short-link-off-shopee.json` | `generateShortLink` com um `shortLink` fora da Shopee (o app recusa) | Get Short Link |
+| `error-11001-url.json` | `generateShortLink` com um `originUrl` que a Shopee não aceita | Lista de códigos de erro |
 
 Como o app chama a API:
 
@@ -57,7 +61,23 @@ Conversões e repasses (#80):
   de `netCommission` (ou `totalCommission`) de cada conversão e cobre cada item pela mesma chave. A
   data do repasse é a que o owner digita: o relatório não traz.
 
+Links curtos (#100):
+
+- `mutation{generateShortLink(input: {originUrl: "...", subIds: ["marcação"]}){shortLink}}`, com a
+  mesma assinatura e as mesmas novas tentativas das consultas. A marcação do Promotion Channel vai
+  no primeiro subId; a Conversion lê como marcação só o primeiro subId do `utmContent`, que junta os
+  cinco com traços. Por isso a marcação para a Shopee tem só letras e números (até 20), e o app
+  recusa outra antes de chamar a API.
+- O `originUrl` é o link do produto ou da loja na Shopee (`https://` em `shopee.com.br` ou num
+  subdomínio), enviado como foi colado: os termos (2.2) proíbem alterar o link de afiliado. O
+  `shortLink` só é aceito em `https://` de `shope.ee`, `shp.ee` ou `shopee.com.br`.
+
 Inventados ou completados (conferir no regression pass):
+
+- Se a mutação recebe `input: {...}` (como na cópia vietnamita da documentação) ou os argumentos
+  soltos (como na página brasileira), o domínio do `shortLink` no Brasil, o código e o texto do erro
+  de um `originUrl` inválido, se o subId aceita `_` e `-` e o tamanho máximo dele, e se o
+  `utmContent` de um link com só o primeiro subId vem como `marcação----`.
 
 - O texto de `message` dos erros, que a documentação só dá em `extensions.message`.
 - O link da loja num item (`https://shopee.com.br/shop/{shopId}`): `productOfferV2` não traz o link
