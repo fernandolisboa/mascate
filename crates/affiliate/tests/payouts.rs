@@ -2,8 +2,9 @@
 //! temporary database, an injected clock and ids, and an in-memory source:
 //! the proposal for a Payout the owner records, nothing paid before the
 //! owner confirms, one Payout per Commission, deleting a Payout, the
-//! difference with its sign, and the Payouts a Platform reports kept by
-//! their natural key.
+//! difference with its sign, the Payouts a Platform reports kept by their
+//! natural key, and the Commissions the owner confirms for one a Platform
+//! reports without naming them.
 
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -804,6 +805,187 @@ fn a_commission_the_owner_paid_stays_paid_when_the_platform_calls_it_approved_ag
         let commission = fixture.affiliate.commission(sold.id).await.unwrap();
         assert_eq!(commission.status, CommissionStatus::Paid);
         assert_eq!(commission.platform_status, "paid_out");
+    });
+}
+
+#[test]
+fn a_platform_payout_without_its_commissions_gets_the_same_proposal_and_pays_what_the_owner_confirms()
+ {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        // Eduzz reports the withdrawal but not the sales it pays.
+        fixture.eduzz.reports(
+            vec![
+                ReportedConversion {
+                    sold_at: noon() - TimeDelta::days(30),
+                    ..sale("S1", brl("40.00"))
+                },
+                sale("S2", brl("25.00")),
+                ReportedConversion {
+                    sold_at: noon() - TimeDelta::days(10),
+                    ..sale("S3", brl("30.00"))
+                },
+            ],
+            vec![transfer("T1", brl("64.00"), &[])],
+        );
+        fixture.sync().await;
+        let reported = fixture
+            .affiliate
+            .payouts(Timestamp::MIN_UTC..Timestamp::MAX_UTC)
+            .await
+            .unwrap()
+            .remove(0);
+        assert!(reported.covers.is_empty());
+        let commissions = fixture
+            .affiliate
+            .commissions(&CommissionFilter::default())
+            .await
+            .unwrap();
+        let of = |amount: &str| {
+            commissions
+                .iter()
+                .find(|commission| commission.amount == brl(amount))
+                .unwrap()
+                .clone()
+        };
+        let (s1, s2, s3) = (of("40.00"), of("25.00"), of("30.00"));
+
+        let proposal = fixture.affiliate.propose_cover(reported.id).await.unwrap();
+
+        assert_eq!(proposal.of, Some(reported.id));
+        assert_eq!(
+            proposal.payout,
+            ManualPayout {
+                platform: AffiliatePlatform::Eduzz,
+                paid_at: noon() - TimeDelta::days(2),
+                amount: brl("64.00"),
+            }
+        );
+        assert_eq!(
+            ids(&proposal.candidates.iter().collect::<Vec<_>>()),
+            ids(&[&s1, &s2, &s3])
+        );
+        // 40 + 25 passes 64: the proposal stops at the oldest one.
+        assert_eq!(proposal.proposed, vec![s1.id]);
+        assert_eq!(fixture.status(s1.id).await, CommissionStatus::Approved);
+
+        fixture.clock.advance(TimeDelta::hours(1));
+        let covered = fixture
+            .affiliate
+            .cover_payout(reported.id, &[s1.id, s2.id, s1.id])
+            .await
+            .unwrap();
+
+        assert_eq!(covered.id, reported.id);
+        assert_eq!(
+            ids(&covered.covers.iter().collect::<Vec<_>>()),
+            vec![s1.id, s2.id]
+        );
+        assert_eq!(covered.difference(), brl("-1.00"));
+        assert_eq!(fixture.status(s1.id).await, CommissionStatus::Paid);
+        assert_eq!(fixture.status(s3.id).await, CommissionStatus::Approved);
+        let history = fixture.affiliate.status_history(s2.id).await.unwrap();
+        assert_eq!(history.last().unwrap().status, CommissionStatus::Paid);
+        assert_eq!(
+            history.last().unwrap().platform_at,
+            Some(noon() - TimeDelta::days(2))
+        );
+
+        // Confirmed once: the Payout no longer takes the owner's picks, and
+        // reading it again keeps what the owner confirmed.
+        assert!(matches!(
+            fixture.affiliate.propose_cover(reported.id).await,
+            Err(AffiliateError::NotCoverable)
+        ));
+        assert!(matches!(
+            fixture.affiliate.cover_payout(reported.id, &[s3.id]).await,
+            Err(AffiliateError::NotCoverable)
+        ));
+        let (_, payouts) = fixture.sync().await;
+        assert_eq!(payouts.unchanged, 1);
+        assert_eq!(
+            fixture
+                .affiliate
+                .payout(reported.id)
+                .await
+                .unwrap()
+                .covers
+                .len(),
+            2
+        );
+    });
+}
+
+#[test]
+fn only_a_platform_payout_that_covers_nothing_takes_the_owners_picks_and_only_payable_ones() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        fixture.eduzz.reports(
+            vec![sale("S1", brl("40.00")), sale("S2", brl("25.00"))],
+            vec![
+                transfer("NAMED", brl("40.00"), &["S1"]),
+                transfer("BARE", brl("25.00"), &[]),
+            ],
+        );
+        fixture.sync().await;
+        let payouts = fixture
+            .affiliate
+            .payouts(Timestamp::MIN_UTC..Timestamp::MAX_UTC)
+            .await
+            .unwrap();
+        let named = payouts.iter().find(|p| !p.covers.is_empty()).unwrap();
+        let bare = payouts.iter().find(|p| p.covers.is_empty()).unwrap();
+        let paid_by_named = named.covers[0].id;
+        let manual = fixture
+            .record(commission("A", 5, brl("10.00"), CommissionStatus::Approved))
+            .await;
+        let recorded = fixture
+            .affiliate
+            .record_payout(payout(brl("10.00")), &[manual.id])
+            .await
+            .unwrap();
+
+        for payout in [named.id, recorded.id] {
+            assert!(matches!(
+                fixture.affiliate.propose_cover(payout).await,
+                Err(AffiliateError::NotCoverable)
+            ));
+            assert!(matches!(
+                fixture.affiliate.cover_payout(payout, &[]).await,
+                Err(AffiliateError::NotCoverable)
+            ));
+        }
+        // Already paid by another Payout, or of another Platform.
+        for taken in [paid_by_named, manual.id] {
+            assert!(matches!(
+                fixture.affiliate.cover_payout(bare.id, &[taken]).await,
+                Err(AffiliateError::NotPayable)
+            ));
+        }
+        assert!(matches!(
+            fixture
+                .affiliate
+                .propose_cover(RecordId::from_u128(999))
+                .await,
+            Err(AffiliateError::NoSuchPayout)
+        ));
+        assert!(matches!(
+            fixture
+                .affiliate
+                .cover_payout(RecordId::from_u128(999), &[])
+                .await,
+            Err(AffiliateError::NoSuchPayout)
+        ));
+        // Nothing changed on the way.
+        assert!(
+            fixture
+                .affiliate
+                .payout(bare.id)
+                .await
+                .unwrap()
+                .covers
+                .is_empty()
+        );
     });
 }
 

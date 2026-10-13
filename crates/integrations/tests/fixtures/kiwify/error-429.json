@@ -1,0 +1,4 @@
+{
+  "error": "too_many_requests",
+  "message": "Rate limit exceeded"
+}

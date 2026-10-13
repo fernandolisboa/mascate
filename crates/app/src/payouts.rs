@@ -3,7 +3,9 @@
 //! report none. The app proposes the approved Commissions the Payout
 //! covers, oldest first; the owner adjusts and confirms, and only then are
 //! they paid. A Shopee Payout is read by the `validationId` the owner pastes
-//! from Shopee's billing page (#80). The rules live in Affiliate (ADR 0030).
+//! from Shopee's billing page (#80). A Kiwify withdrawal arrives with the
+//! Sync but without its sales (#84): the owner confirms its Commissions from
+//! the same proposal. The rules live in Affiliate (ADR 0030).
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -43,8 +45,11 @@ pub struct PayoutsSection {
     paid_on: Entity<InputState>,
     amount: Entity<InputState>,
     currency: Currency,
-    /// What the owner is confirming, as they adjust it.
+    /// What the owner is confirming, as they adjust it: a Payout typed in
+    /// the form, or the Commissions of one a Platform reported.
     proposal: Option<PayoutProposal>,
+    /// What confirming a reported Payout's Commissions did.
+    covering: Option<Outcome>,
     /// The Payout asking to confirm its deletion.
     deleting: Option<RecordId>,
     busy: bool,
@@ -75,6 +80,7 @@ impl PayoutsSection {
             amount: input("120,00", window, cx),
             currency: Currency::Brl,
             proposal: None,
+            covering: None,
             deleting: None,
             busy: false,
             reads: 0,
@@ -191,6 +197,29 @@ impl PayoutsSection {
         );
     }
 
+    /// Proposes the Commissions of `payout`, which the Platform reported
+    /// without naming them.
+    fn propose_cover(&mut self, payout: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        self.proposal = None;
+        self.covering = None;
+        self.run(
+            window,
+            cx,
+            move |affiliate| async move {
+                Ok(Some(
+                    affiliate
+                        .propose_cover(payout)
+                        .await
+                        .map_err(|error| failure(&error)),
+                ))
+            },
+            |this, proposed: Result<PayoutProposal, String>, _, _| match proposed {
+                Ok(proposal) => this.proposal = Some(proposal),
+                Err(why) => this.covering = Some(Outcome::Failed(why.into())),
+            },
+        );
+    }
+
     /// Reads the Payout of the `validationId` the owner pasted and keeps it
     /// by that id: pasting it again changes nothing.
     fn read_validated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -263,6 +292,31 @@ impl PayoutsSection {
         let covers = proposal.proposed.clone();
         self.form = None;
         self.outcome = None;
+        self.covering = None;
+        if let Some(reported) = proposal.of {
+            self.run(
+                window,
+                cx,
+                move |affiliate| async move {
+                    Ok(Some(
+                        affiliate
+                            .cover_payout(reported, &covers)
+                            .await
+                            .map_err(|error| failure(&error)),
+                    ))
+                },
+                |this, covered: Result<Payout, String>, _, cx| match covered {
+                    Ok(covered) => {
+                        this.proposal = None;
+                        this.covering =
+                            Some(Outcome::Done(covered_outcome(covered.covers.len()).into()));
+                        cx.emit(PayoutsChanged);
+                    }
+                    Err(why) => this.covering = Some(Outcome::Failed(why.into())),
+                },
+            );
+            return;
+        }
         self.run(
             window,
             cx,
@@ -296,14 +350,24 @@ impl PayoutsSection {
     fn render_payout(&self, payout: &Payout, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let id = payout.id;
+        let button = |name: &'static str, label: &'static str| {
+            Button::new(SharedString::from(format!("{name}-{id}")))
+                .label(label)
+                .ghost()
+                .small()
+                .disabled(self.busy)
+        };
+        let confirming = self
+            .proposal
+            .as_ref()
+            .filter(|proposal| proposal.of == Some(id));
+        let unconfirmed = !payout.manual && payout.covers.is_empty() && confirming.is_none();
+        let check = unconfirmed.then(|| {
+            button("cover-payout", "Conferir comissões").on_click(
+                cx.listener(move |this, _, window, cx| this.propose_cover(id, window, cx)),
+            )
+        });
         let actions = payout.manual.then(|| {
-            let button = |name: &'static str, label: &'static str| {
-                Button::new(SharedString::from(format!("{name}-{id}")))
-                    .label(label)
-                    .ghost()
-                    .small()
-                    .disabled(self.busy)
-            };
             if self.deleting == Some(id) {
                 h_flex()
                     .gap_2()
@@ -390,6 +454,7 @@ impl PayoutsSection {
                                 signed(payout.difference())
                             ))),
                     )
+                    .children(check)
                     .children(actions)
                     .child(
                         div()
@@ -399,19 +464,30 @@ impl PayoutsSection {
                     ),
             )
             .children(covers)
+            .children(confirming.map(|proposal| self.render_proposal(proposal, cx)))
             .into_any_element()
     }
 
     fn render_proposal(&self, proposal: &PayoutProposal, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         if proposal.candidates.is_empty() {
-            return v_flex()
-                .gap_2()
-                .child(div().text_sm().text_color(t.text2).child(
+            let (why, confirm) = match proposal.of {
+                Some(_) => (
+                    "Nenhuma comissão aprovada dessa plataforma e moeda está sem repasse. \
+                     Confira de novo depois do próximo Sync.",
+                    None,
+                ),
+                None => (
                     "Nenhuma comissão aprovada dessa plataforma e moeda está sem repasse. O \
                      repasse pode ser registrado assim mesmo, sem cobrir comissões.",
-                ))
-                .child(self.render_confirm(proposal, cx))
+                    Some(self.render_confirm(proposal, cx)),
+                ),
+            };
+            return v_flex()
+                .gap_2()
+                .child(div().text_sm().text_color(t.text2).child(why))
+                .children(confirm)
+                .children(proposal.of.is_some().then(|| discard_button(cx)))
                 .into_any_element();
         }
         let entity = cx.entity().downgrade();
@@ -467,32 +543,34 @@ impl PayoutsSection {
     }
 
     fn render_confirm(&self, proposal: &PayoutProposal, cx: &mut Context<Self>) -> AnyElement {
+        let label = match proposal.of {
+            Some(_) => "Confirmar as comissões deste repasse".to_owned(),
+            None => format!(
+                "Confirmar repasse de {} em {}",
+                proposal.payout.amount.to_pt_br(),
+                day(proposal.payout.paid_at)
+            ),
+        };
         h_flex()
             .gap_2()
             .child(
                 Button::new("confirm-payout")
-                    .label(format!(
-                        "Confirmar repasse de {} em {}",
-                        proposal.payout.amount.to_pt_br(),
-                        day(proposal.payout.paid_at)
-                    ))
+                    .label(label)
                     .primary()
                     .small()
                     .loading(self.busy)
                     .disabled(self.busy)
                     .on_click(cx.listener(|this, _, window, cx| this.confirm(window, cx))),
             )
-            .child(
-                Button::new("discard-payout")
-                    .label("Descartar")
-                    .ghost()
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.proposal = None;
-                        cx.notify();
-                    })),
-            )
+            .child(discard_button(cx))
             .into_any_element()
+    }
+
+    /// The proposal for a Payout typed in the form, if that is the one open.
+    fn typed_proposal(&self) -> Option<&PayoutProposal> {
+        self.proposal
+            .as_ref()
+            .filter(|proposal| proposal.of.is_none())
     }
 
     fn render_validated(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -582,7 +660,7 @@ impl PayoutsSection {
             .p_4()
             .rounded(t.radius_lg)
             .border(t.border_width)
-            .border_color(if self.proposal.is_some() {
+            .border_color(if self.typed_proposal().is_some() {
                 t.accent_edge
             } else {
                 t.frame
@@ -629,8 +707,7 @@ impl PayoutsSection {
                     ),
             )
             .children(
-                self.proposal
-                    .as_ref()
+                self.typed_proposal()
                     .map(|proposal| self.render_proposal(proposal, cx)),
             )
             .children(self.form.as_ref().map(|outcome| notice(outcome, cx)))
@@ -645,6 +722,17 @@ fn commission_line(commission: &Commission) -> String {
         commission.product,
         day(commission.sold_at)
     )
+}
+
+fn discard_button(cx: &mut Context<PayoutsSection>) -> Button {
+    Button::new("discard-payout")
+        .label("Descartar")
+        .ghost()
+        .small()
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.proposal = None;
+            cx.notify();
+        }))
 }
 
 /// "+R$ 2,00", "-R$ 2,50", "R$ 0,00".
@@ -688,6 +776,15 @@ fn recorded_text(count: usize) -> &'static str {
     }
 }
 
+/// What confirming `count` Commissions of a reported Payout did.
+fn covered_outcome(count: usize) -> &'static str {
+    match count {
+        0 => "Nenhuma comissão marcada; o repasse continua sem cobrir comissões.",
+        1 => "A comissão ficou paga por este repasse.",
+        _ => "As comissões ficaram pagas por este repasse.",
+    }
+}
+
 fn today() -> String {
     Local::now().format("%d/%m/%Y").to_string()
 }
@@ -708,9 +805,12 @@ impl Render for PayoutsSection {
             )))
             .child(div().text_sm().text_color(t.text2).child(
                 "O que cada plataforma repassou e as comissões que cada repasse cobre. A \
-                 diferença mostra o que a plataforma reteve (negativa) ou pagou a mais.",
+                 diferença mostra o que a plataforma reteve (negativa) ou pagou a mais. Os \
+                 saques da Kiwify chegam pelo Sync sem dizer quais vendas pagam: confira as \
+                 comissões de cada um.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(self.covering.as_ref().map(|outcome| notice(outcome, cx)))
             .when(payouts.is_empty(), |list| {
                 list.child(
                     div()

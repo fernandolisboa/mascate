@@ -31,6 +31,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Anthropic => "Anthropic",
         Connection::Hotmart => "Hotmart",
         Connection::Monetizze => "Monetizze",
+        Connection::Kiwify => "Kiwify",
     }
 }
 
@@ -44,6 +45,10 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
         Connection::Anthropic => "Títulos e descrições de anúncio gerados como rascunho.",
         Connection::Hotmart | Connection::Monetizze => {
             "Comissões de afiliado: vendas, status, estornos e cancelamentos, lidos a cada hora."
+        }
+        Connection::Kiwify => {
+            "Comissões de afiliado e saques: vendas, status, estornos e cancelamentos, lidos a \
+             cada hora."
         }
     }
 }
@@ -60,6 +65,9 @@ fn credential_label(credential: Credential) -> &'static str {
         "HOTMART_BASIC" => "Basic",
         "MONETIZZE_CONSUMER_KEY" => "Chave da API",
         "MONETIZZE_EMAIL" => "E-mail da conta",
+        "KIWIFY_CLIENT_ID" => "Client ID",
+        "KIWIFY_CLIENT_SECRET" => "Client Secret",
+        "KIWIFY_ACCOUNT_ID" => "Account ID",
         other => other,
     }
 }
@@ -68,7 +76,12 @@ fn credential_label(credential: Credential) -> &'static str {
 fn is_identifier(credential: Credential) -> bool {
     matches!(
         credential.name,
-        "ML_CLIENT_ID" | "SHOPEE_AFFILIATE_APP_ID" | "HOTMART_CLIENT_ID" | "MONETIZZE_EMAIL"
+        "ML_CLIENT_ID"
+            | "SHOPEE_AFFILIATE_APP_ID"
+            | "HOTMART_CLIENT_ID"
+            | "MONETIZZE_EMAIL"
+            | "KIWIFY_CLIENT_ID"
+            | "KIWIFY_ACCOUNT_ID"
     )
 }
 

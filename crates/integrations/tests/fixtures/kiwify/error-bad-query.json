@@ -1,0 +1,4 @@
+{
+  "error": "validation_error",
+  "message": "O período máximo entre o start_date e o end_date é de 90 dias"
+}

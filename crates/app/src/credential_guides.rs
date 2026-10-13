@@ -178,6 +178,27 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Kiwify => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "Entre na Kiwify com a sua conta e abra Apps, API no menu do painel.",
+                        "Abrir o painel da Kiwify",
+                        "https://dashboard.kiwify.com.br/",
+                    ),
+                    step(
+                        "Clique em Criar API Key e dê um nome como Mascate. Se a Kiwify pedir \
+                     os escopos, marque vendas e financeiro: o app só lê as vendas e os saques.",
+                    ),
+                    step(
+                        "Copie o Client ID, o Client Secret e o Account ID que a Kiwify mostra \
+                     na mesma tela. Se perder o Client Secret, apague a chave e crie outra.",
+                    ),
+                ],
+                then: None,
+            };
+            GUIDE
+        }
     }
 }
 
@@ -204,6 +225,7 @@ mod tests {
             Connection::Anthropic => "platform.claude.com",
             Connection::Hotmart => "app-vlc.hotmart.com",
             Connection::Monetizze => "app.monetizze.com.br",
+            Connection::Kiwify => "dashboard.kiwify.com.br",
         }
     }
 
@@ -212,7 +234,7 @@ mod tests {
     fn phase(connection: Connection) -> u8 {
         match connection {
             Connection::MercadoLivre | Connection::ShopeeAffiliates | Connection::Anthropic => 1,
-            Connection::Hotmart | Connection::Monetizze => 2,
+            Connection::Hotmart | Connection::Monetizze | Connection::Kiwify => 2,
         }
     }
 
