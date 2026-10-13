@@ -14,6 +14,7 @@ mod drafts;
 mod finance;
 mod forms;
 mod home;
+mod hotmart;
 mod kit;
 mod layout;
 mod listing_copy;
@@ -55,7 +56,10 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui_kit::*;
-use mascate_integrations::{Anthropic, Connections, MercadoLivre, ShopeeAffiliates};
+use mascate_affiliate::CommissionSource;
+use mascate_integrations::{
+    Anthropic, Connection, Connections, Hotmart, MercadoLivre, ShopeeAffiliates,
+};
 use mascate_kernel::SystemClock;
 use mascate_platform::{
     Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
@@ -63,7 +67,7 @@ use mascate_platform::{
 };
 
 use crate::ads::AppProductAds;
-use crate::affiliate::AppAffiliate;
+use crate::affiliate::{AppAffiliate, CommissionSources};
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -114,6 +118,14 @@ fn main() {
     let user_agent = format!("Mascate/{}", env!("CARGO_PKG_VERSION"));
     let shopee = Arc::new(ShopeeAffiliates::new(
         &shopee::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
+    let (hotmart_api, hotmart_auth) = hotmart::urls(Build::CURRENT, &process_environment());
+    let hotmart = Arc::new(Hotmart::new(
+        &hotmart_api,
+        &hotmart_auth,
         &user_agent,
         secrets.clone(),
         Arc::new(SystemClock),
@@ -171,6 +183,10 @@ fn main() {
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
                 cx.set_global(AppAffiliate(started.affiliate.clone()));
+                cx.set_global(CommissionSources(vec![(
+                    Connection::Hotmart,
+                    hotmart.clone() as Arc<dyn CommissionSource>,
+                )]));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));
@@ -200,6 +216,7 @@ fn main() {
                 });
                 backups::start_daily(cx);
                 orders::start_polling(cx);
+                affiliate::start_syncing(cx);
             } else if let Some(path) = problem
                 .as_ref()
                 .and_then(|problem| problem.database_path.clone())

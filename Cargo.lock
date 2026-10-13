@@ -4316,6 +4316,7 @@ version = "0.2.0"
 dependencies = [
  "chrono",
  "futures",
+ "mascate-affiliate",
  "mascate-catalog",
  "mascate-commerce",
  "mascate-kernel",

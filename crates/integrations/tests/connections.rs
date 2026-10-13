@@ -25,6 +25,41 @@ fn nothing_is_configured_on_a_new_install_and_shopee_awaits_approval() {
         connections.state(Connection::Anthropic),
         ConnectionState::NotConfigured
     );
+    assert_eq!(
+        connections.state(Connection::Hotmart),
+        ConnectionState::NotConfigured
+    );
+}
+
+#[test]
+fn hotmart_connects_with_its_client_id_secret_and_basic_token() {
+    let (connections, store) = connections();
+
+    connections
+        .save(
+            Connection::Hotmart,
+            &[
+                ("HOTMART_CLIENT_ID", "client-id"),
+                ("HOTMART_CLIENT_SECRET", "client-secret"),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Hotmart),
+        ConnectionState::NotConfigured
+    );
+    connections
+        .save(Connection::Hotmart, &[("HOTMART_BASIC", "Basic abc=")])
+        .unwrap();
+
+    assert_eq!(
+        connections.state(Connection::Hotmart),
+        ConnectionState::Connected
+    );
+    assert_eq!(
+        store.read("HOTMART_BASIC").unwrap(),
+        Some(Secret::new("Basic abc="))
+    );
 }
 
 #[test]

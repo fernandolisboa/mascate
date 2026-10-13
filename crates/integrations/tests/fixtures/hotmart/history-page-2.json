@@ -1,0 +1,85 @@
+{
+  "items": [
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 23",
+        "ucode": "00000000-0000-0000-0000-000000000023",
+        "email": "comprador23@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690037003",
+        "order_date": 1788609600000,
+        "status": "WAITING_PAYMENT",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "BILLET",
+          "installments_number": 1,
+          "type": "BILLET"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "tracking": {
+          "source": "youtube"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso em Euros",
+        "id": 5520031
+      },
+      "buyer": {
+        "name": "Comprador 24",
+        "ucode": "00000000-0000-0000-0000-000000000024",
+        "email": "comprador24@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690037004",
+        "order_date": 1788696000000,
+        "status": "APPROVED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 39.0,
+          "currency_code": "EUR"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1788696600000,
+        "warranty_expire_date": 1789992000000
+      }
+    }
+  ],
+  "page_info": {
+    "total_results": 4,
+    "results_per_page": 2
+  }
+}

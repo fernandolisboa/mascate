@@ -13,6 +13,8 @@ pub enum Connection {
     ShopeeAffiliates,
     /// Listing Copy drafts through the Claude API.
     Anthropic,
+    /// The owner's affiliate Commissions on Hotmart.
+    Hotmart,
 }
 
 /// How a credential reaches the store.
@@ -40,10 +42,11 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 3] = [
+    pub const ALL: [Connection; 4] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
+        Connection::Hotmart,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -63,10 +66,16 @@ impl Connection {
             pasted("SHOPEE_AFFILIATE_SECRET"),
         ];
         const ANTHROPIC: &[Credential] = &[pasted("ANTHROPIC_API_KEY")];
+        const HOTMART: &[Credential] = &[
+            pasted("HOTMART_CLIENT_ID"),
+            pasted("HOTMART_CLIENT_SECRET"),
+            pasted("HOTMART_BASIC"),
+        ];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
             Connection::Anthropic => ANTHROPIC,
+            Connection::Hotmart => HOTMART,
         }
     }
 
