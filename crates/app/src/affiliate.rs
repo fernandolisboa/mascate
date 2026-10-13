@@ -645,7 +645,10 @@ impl AffiliateScreen {
         if let Some(tracking) = &commission.tracking {
             facts.push(format!("marcação {tracking}"));
         }
-        let program = if commission.program_name == commission.platform.name() {
+        // Infoproduct Programs are the product itself: naming both repeats it.
+        let program = if commission.program_name == commission.platform.name()
+            || commission.program_name == commission.product
+        {
             String::new()
         } else {
             format!("{} · ", commission.program_name)
