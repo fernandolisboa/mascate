@@ -17,11 +17,13 @@ const MARK: Brand = Brand {
     bytes: include_bytes!("../assets/brand/mark.svg"),
     aspect: 57. / 41.,
 };
-/// The name outlined from Fraunces (OFL): the letters ship as paths, not as a font.
+/// The name outlined from Fraunces (OFL): the letters ship as paths, not as
+/// a font. Its box is centered on the letters' x-height, not the baseline,
+/// so the tag centered beside it lines up with the middle of the word.
 const WORDMARK: Brand = Brand {
     path: "brand/wordmark.svg",
     bytes: include_bytes!("../assets/brand/wordmark.svg"),
-    aspect: 159.57 / 35.41,
+    aspect: 159.57 / 47.81,
 };
 /// The tag on the app's dark ground: tray, window and installers.
 const APP_ICON: Brand = Brand {

@@ -35,7 +35,9 @@ pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
         .when(cfg!(target_os = "macos"), |brand| brand.pl(px(80.)))
         .items_center()
         .child(brand::mark(px(13.)).text_color(t.accent))
-        .child(brand::wordmark(px(13.)).text_color(t.text));
+        // Taller than the tag only by the room its box leaves under the
+        // baseline: the letters stay the size they were.
+        .child(brand::wordmark(px(17.5)).text_color(t.text));
     let drag = h_flex()
         .id("title-bar-drag")
         .flex_1()
