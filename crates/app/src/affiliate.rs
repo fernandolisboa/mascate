@@ -2,11 +2,15 @@
 //! sale date, amount and status, filtered by status and period, the totals
 //! per currency, reversals highlighted and cancelled sales listed apart,
 //! and the form to record a Commission by hand for Platforms without an API
-//! or a file. The rules live in Affiliate (ADR 0030).
+//! or a file. The Commissions Sync (#78) reads each connected Platform at
+//! start, every hour and on "Sincronizar agora". The rules live in
+//! Affiliate (ADR 0030).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Local;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
@@ -15,15 +19,20 @@ use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, StyledExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
-use mascate_affiliate::{
-    Affiliate, AffiliateError, AffiliatePlatform, Commission, CommissionFilter, CommissionStatus,
-    CurrencyTotals, ManualCommission, totals_by_currency,
+use gpui_kit::{
+    AnyElement, App, Entity, Global, Hsla, SharedString, Subscription, Task, Window, div, px,
 };
-use mascate_kernel::{Currency, Money, RecordId, parse_amount};
+use mascate_affiliate::{
+    Affiliate, AffiliateError, AffiliatePlatform, AffiliateSync, Commission, CommissionFilter,
+    CommissionSource, CommissionStatus, CurrencyTotals, LastSync, ManualCommission, Recorded,
+    totals_by_currency,
+};
+use mascate_integrations::{Connection, ConnectionState};
+use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 
 use crate::appearance::{Tokens, look};
-use crate::catalog::{NO_DATABASE, day};
+use crate::catalog::{NO_DATABASE, day, day_and_time};
+use crate::connections::AppConnections;
 use crate::forms::{Outcome, amount_text, day_text, input, notice, parse_day};
 use crate::kit;
 use crate::layout;
@@ -45,6 +54,162 @@ pub(crate) fn affiliate(cx: &App) -> Option<Arc<Affiliate>> {
 pub struct CommissionChanges(pub u64);
 
 impl Global for CommissionChanges {}
+
+/// The Platforms the Commissions Sync reads, each behind its Connection.
+/// Each Platform's slice adds its adapter here.
+pub struct CommissionSources(pub Vec<(Connection, Arc<dyn CommissionSource>)>);
+
+impl Global for CommissionSources {}
+
+fn sources(cx: &App) -> Vec<(Connection, Arc<dyn CommissionSource>)> {
+    cx.try_global::<CommissionSources>()
+        .map(|sources| sources.0.clone())
+        .unwrap_or_default()
+}
+
+/// The Commissions Syncs since the app opened; the screen reads the
+/// Commissions again after each.
+#[derive(Default)]
+pub struct CommissionSyncs {
+    pub finished: u64,
+    pub running: bool,
+    /// Why the last Sync could not read a Platform, one line each.
+    pub failures: Vec<String>,
+}
+
+impl Global for CommissionSyncs {}
+
+/// How often the Commissions Sync runs with the app open or in the tray:
+/// Commissions change slowly and Platforms limit requests (ADR 0030).
+const SYNC_EVERY: Duration = Duration::from_secs(60 * 60);
+
+/// What one Platform's part of a Sync did.
+pub struct SyncOutcome {
+    platform: AffiliatePlatform,
+    result: Result<AffiliateSync, String>,
+}
+
+/// Syncs the Commissions now and then every hour, for as long as the app
+/// runs.
+pub fn start_syncing(cx: &mut App) {
+    let executor = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        loop {
+            if let Some(round) = cx.update(sync_now) {
+                let outcomes = round.await;
+                cx.update(|cx| finished(outcomes, cx));
+            }
+            executor.timer(SYNC_EVERY).await;
+        }
+    })
+    .detach();
+}
+
+/// Runs a Sync of every connected Platform off the UI thread; `None` while
+/// one is already running or without the database. A Platform without its
+/// Connection is skipped, not failed.
+pub fn sync_now(cx: &mut App) -> Option<Task<Vec<SyncOutcome>>> {
+    let affiliate = affiliate(cx)?;
+    if cx.default_global::<CommissionSyncs>().running {
+        return None;
+    }
+    let sources = sources(cx);
+    let connections = cx.global::<AppConnections>().0.clone();
+    cx.default_global::<CommissionSyncs>().running = true;
+    Some(cx.background_executor().spawn(async move {
+        let mut outcomes = Vec::new();
+        for (connection, source) in sources {
+            if connections.state(connection) != ConnectionState::Connected {
+                continue;
+            }
+            let platform = source.platform();
+            let result = match affiliate.sync(source.as_ref()).await {
+                Err(AffiliateError::Platform(PlatformError::NotConnected)) => continue,
+                synced => synced.map_err(|error| sync_failure(platform, &error)),
+            };
+            outcomes.push(SyncOutcome { platform, result });
+        }
+        outcomes
+    }))
+}
+
+/// Tells the screen and the income Reminder that a Sync ran.
+pub fn finished(outcomes: Vec<SyncOutcome>, cx: &mut App) {
+    let changed = outcomes.iter().any(|outcome| {
+        outcome
+            .result
+            .as_ref()
+            .is_ok_and(|sync| sync.recorded.added + sync.recorded.changed > 0)
+    });
+    let syncs = cx.default_global::<CommissionSyncs>();
+    syncs.running = false;
+    syncs.finished += 1;
+    syncs.failures = outcomes
+        .into_iter()
+        .filter_map(|outcome| outcome.result.err())
+        .collect();
+    if changed {
+        cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+    }
+}
+
+/// Why a Platform's part of the Sync failed, as the owner reads it.
+fn sync_failure(platform: AffiliatePlatform, error: &AffiliateError) -> String {
+    let name = platform.name();
+    match error {
+        AffiliateError::Platform(PlatformError::Expired) => {
+            format!("A {name} não aceitou as chaves: confira cada uma em Configurações › Conexões.")
+        }
+        AffiliateError::Platform(PlatformError::RateLimited) => format!(
+            "A {name} pediu para esperar e continuou pedindo; o próximo Sync tenta de novo."
+        ),
+        AffiliateError::Platform(PlatformError::Refused(why)) => {
+            format!("A {name} recusou a consulta: {why}")
+        }
+        AffiliateError::Platform(PlatformError::NotFound) => {
+            format!("A {name} não encontrou as vendas pedidas.")
+        }
+        AffiliateError::Platform(PlatformError::Failed(why)) => {
+            format!("Não consegui falar com a {name}: {why}")
+        }
+        error => failure(error),
+    }
+}
+
+/// "Hotmart: 2 novas e 1 mudou de status".
+fn synced_text(outcomes: &[SyncOutcome]) -> String {
+    outcomes
+        .iter()
+        .filter_map(|outcome| {
+            let sync = outcome.result.as_ref().ok()?;
+            Some(format!(
+                "{}: {}",
+                outcome.platform.name(),
+                recorded_text(&sync.recorded)
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// "nada novo", "2 novas e 1 mudou de status".
+fn recorded_text(recorded: &Recorded) -> String {
+    let added = match recorded.added {
+        0 => None,
+        1 => Some("1 nova".to_owned()),
+        count => Some(format!("{count} novas")),
+    };
+    let changed = match recorded.changed {
+        0 => None,
+        1 => Some("1 mudou de status".to_owned()),
+        count => Some(format!("{count} mudaram de status")),
+    };
+    match (added, changed) {
+        (None, None) => "nada novo".into(),
+        (Some(text), None) | (None, Some(text)) => text,
+        (Some(added), Some(changed)) => format!("{added} e {changed}"),
+    }
+}
 
 /// The Reminders Affiliate raises now. A failure raises nothing.
 pub(crate) async fn raised_reminders(affiliate: Option<Arc<Affiliate>>) -> Vec<&'static str> {
@@ -105,6 +270,7 @@ const FORM_PLATFORMS: [AffiliatePlatform; 9] = [
 struct Snapshot {
     listed: Vec<Commission>,
     cancelled: Vec<Commission>,
+    synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
 }
 
 pub struct AffiliateScreen {
@@ -113,6 +279,10 @@ pub struct AffiliateScreen {
     status: Option<CommissionStatus>,
     listed: Vec<Commission>,
     cancelled: Vec<Commission>,
+    /// Each Platform the Sync reads, with its last Sync that went through.
+    synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
+    /// What the last Sync this screen started brought.
+    sync_outcome: Option<Outcome>,
     platform: PlatformSelect,
     program: Entity<InputState>,
     product: Entity<InputState>,
@@ -129,6 +299,7 @@ pub struct AffiliateScreen {
     reads: u64,
     form: Option<Outcome>,
     outcome: Option<Outcome>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AffiliateScreen {
@@ -144,11 +315,15 @@ impl AffiliateScreen {
         let platform = cx.new(|cx| SelectState::new(choices, Some(IndexPath::new(0)), window, cx));
         let sold_on = input("dd/mm/aaaa", window, cx);
         sold_on.update(cx, |field, cx| field.set_value(today(), window, cx));
+        // A Sync in the background brings Commissions this screen has not read.
+        let subscriptions = vec![cx.observe_global_in::<CommissionSyncs>(window, Self::refresh)];
         let mut screen = Self {
             period: Period::ThisMonth,
             status: None,
             listed: Vec::new(),
             cancelled: Vec::new(),
+            synced: Vec::new(),
+            sync_outcome: None,
             platform,
             program: input("Igual à plataforma", window, cx),
             product: input("Fone Bluetooth", window, cx),
@@ -162,6 +337,7 @@ impl AffiliateScreen {
             reads: 0,
             form: None,
             outcome: None,
+            _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
         screen
@@ -192,6 +368,10 @@ impl AffiliateScreen {
         let statuses = self
             .status
             .map_or_else(|| LISTED.to_vec(), |status| vec![status]);
+        let platforms: Vec<AffiliatePlatform> = sources(cx)
+            .iter()
+            .map(|(_, source)| source.platform())
+            .collect();
         self.reads += 1;
         let read = self.reads;
         self.busy = true;
@@ -210,7 +390,15 @@ impl AffiliateScreen {
                         sold,
                     })
                     .await?;
-                Ok::<_, AffiliateError>(Snapshot { listed, cancelled })
+                let mut synced = Vec::new();
+                for platform in platforms {
+                    synced.push((platform, affiliate.last_sync(platform).await?));
+                }
+                Ok::<_, AffiliateError>(Snapshot {
+                    listed,
+                    cancelled,
+                    synced,
+                })
             }
             .await;
             (changed, snapshot)
@@ -224,6 +412,7 @@ impl AffiliateScreen {
                         Ok(snapshot) => {
                             this.listed = snapshot.listed;
                             this.cancelled = snapshot.cancelled;
+                            this.synced = snapshot.synced;
                         }
                         Err(error) => this.outcome = Some(Outcome::Failed(failure(&error).into())),
                     }
@@ -243,6 +432,84 @@ impl AffiliateScreen {
         })
         .detach();
         cx.notify();
+    }
+
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        let Some(round) = sync_now(cx) else {
+            return;
+        };
+        self.sync_outcome = None;
+        cx.spawn(async move |this, cx| {
+            let outcomes = round.await;
+            let _ = this.update(cx, |this, cx| {
+                // Failures show apart, from the last Sync.
+                this.sync_outcome = if outcomes.is_empty() {
+                    Some(Outcome::Failed(
+                        "Nenhuma plataforma de afiliado está conectada; conecte em \
+                         Configurações › Conexões."
+                            .into(),
+                    ))
+                } else if outcomes.iter().all(|outcome| outcome.result.is_ok()) {
+                    Some(Outcome::Done(synced_text(&outcomes).into()))
+                } else {
+                    None
+                };
+                // Reads the Commissions again, through the screen's observer.
+                finished(outcomes, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn render_sync(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let running = cx
+            .try_global::<CommissionSyncs>()
+            .is_some_and(|syncs| syncs.running);
+        let when = self
+            .synced
+            .iter()
+            .map(|(platform, last)| match last {
+                Some(last) => format!("{}: {}", platform.name(), day_and_time(last.finished_at)),
+                None => format!("{}: nunca", platform.name()),
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(t.text2)
+                    .child(format!("Último Sync: {when} · a cada hora")),
+            )
+            .child(
+                Button::new("sync-commissions")
+                    .label("Sincronizar agora")
+                    .icon(IconName::RefreshCw)
+                    .primary()
+                    .small()
+                    .loading(running)
+                    .disabled(running)
+                    .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
+            )
+            .into_any_element()
+    }
+
+    /// Why a Platform was not read in the last Sync, one notice each.
+    fn sync_failures(&self, cx: &App) -> Vec<AnyElement> {
+        cx.try_global::<CommissionSyncs>()
+            .map(|syncs| {
+                syncs
+                    .failures
+                    .iter()
+                    .map(|why| kit::error_notice(why.clone(), cx).into_any_element())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn pick_period(&mut self, period: Period, window: &mut Window, cx: &mut Context<Self>) {
@@ -810,7 +1077,16 @@ impl Render for AffiliateScreen {
                 .push(kit::error_notice(NO_DATABASE, cx).into_any_element());
             return layout::screen(parts, cx);
         }
+        if !self.synced.is_empty() {
+            parts.actions.push(self.render_sync(cx));
+        }
         parts.actions.push(self.render_filters(cx));
+        parts.notices.extend(self.sync_failures(cx));
+        parts.notices.extend(
+            self.sync_outcome
+                .as_ref()
+                .map(|outcome| notice(outcome, cx)),
+        );
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
@@ -826,8 +1102,9 @@ impl Render for AffiliateScreen {
                 .child(kit::section_heading(commissions_text(self.listed.len())))
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma comissão neste período. Lance abaixo as de plataformas sem \
-                         API; as das outras chegam pela conexão de cada uma.",
+                        "Nenhuma comissão neste período. As da Hotmart chegam sozinhas com a \
+                         conexão em Configurações › Conexões; lance abaixo as de plataformas sem \
+                         API.",
                     ))
                 })
                 .children(listed)

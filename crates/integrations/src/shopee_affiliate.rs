@@ -13,11 +13,11 @@ use mascate_catalog::{
 use mascate_kernel::{Clock, Currency, Money, Percentage, PlatformError};
 use mascate_platform::{Secret, SecretStore, http_agent};
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 
-use crate::answers::read_json;
+use crate::answers::{numeric_id, read_json};
 use crate::retry::{Attempt, Backoff, Pause, ThreadPause, retrying};
 
 /// Shopee Brasil's endpoint, unless a test points elsewhere.
@@ -320,7 +320,7 @@ struct PageInfo {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProductNode {
-    #[serde(deserialize_with = "id")]
+    #[serde(deserialize_with = "numeric_id")]
     item_id: String,
     product_name: String,
     product_link: String,
@@ -330,7 +330,7 @@ struct ProductNode {
     sales: u32,
     commission_rate: Option<String>,
     rating_star: Option<String>,
-    #[serde(deserialize_with = "id")]
+    #[serde(deserialize_with = "numeric_id")]
     shop_id: String,
     shop_name: String,
 }
@@ -378,7 +378,7 @@ impl ProductNode {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ShopNode {
-    #[serde(deserialize_with = "id")]
+    #[serde(deserialize_with = "numeric_id")]
     shop_id: String,
     shop_name: String,
     original_link: Option<String>,
@@ -421,20 +421,6 @@ fn shopee_page(link: &str) -> Option<String> {
 /// The page of the shop `id`; `productOfferV2` brings no link to it.
 fn shop_page(id: &str) -> String {
     format!("https://shopee.com.br/shop/{id}")
-}
-
-/// Shopee's Int64 ids, which a client may also see as strings.
-fn id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Id {
-        Number(u64),
-        Text(String),
-    }
-    Ok(match Id::deserialize(deserializer)? {
-        Id::Number(number) => number.to_string(),
-        Id::Text(text) => text,
-    })
 }
 
 /// Prices come as decimal text in reais, such as `"29.90"`.

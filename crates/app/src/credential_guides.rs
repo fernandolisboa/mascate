@@ -1,6 +1,6 @@
 //! How to get the keys of each Connection (#65): numbered steps on the
 //! Platform, each with the exact page to open. One source of truth (ADR
-//! 0029): the guide screen in Conexões shows them, and the phase 1 section
+//! 0029): the guide screen in Conexões shows them, and each phase's section
 //! of `docs/credentials.html` is generated from them.
 
 use mascate_integrations::Connection;
@@ -131,6 +131,28 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Hotmart => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "Entre na Hotmart com a sua conta e abra Ferramentas, Credenciais \
+                     Developers.",
+                        "Abrir Credenciais Developers",
+                        "https://app-vlc.hotmart.com/tools/credentials",
+                    ),
+                    step(
+                        "Clique em Criar credencial e dê um nome como Mascate. Deixe o tipo \
+                     sandbox desmarcado: a credencial de sandbox só enxerga vendas de teste.",
+                    ),
+                    step(
+                        "Confirme. A Hotmart mostra o Client ID, o Client Secret e o Basic; copie \
+                     os três antes de fechar. Se perder algum, apague a credencial e crie outra.",
+                    ),
+                ],
+                then: None,
+            };
+            GUIDE
+        }
     }
 }
 
@@ -142,8 +164,8 @@ mod tests {
     use super::*;
     use crate::connections::{connection_name, connection_purpose};
 
-    const START: &str = "<!-- phase-1-guides:start";
-    const END: &str = "<!-- phase-1-guides:end -->";
+    /// The phases with generated cards on the page.
+    const PHASES: [u8; 2] = [1, 2];
 
     fn credentials_page() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/credentials.html")
@@ -155,6 +177,16 @@ mod tests {
             Connection::MercadoLivre => "developers.mercadolivre.com.br",
             Connection::ShopeeAffiliates => "affiliate.shopee.com.br",
             Connection::Anthropic => "platform.claude.com",
+            Connection::Hotmart => "app-vlc.hotmart.com",
+        }
+    }
+
+    /// The phase of the plan a Connection arrived with; its card goes in
+    /// that phase's section of the page.
+    fn phase(connection: Connection) -> u8 {
+        match connection {
+            Connection::MercadoLivre | Connection::ShopeeAffiliates | Connection::Anthropic => 1,
+            Connection::Hotmart => 2,
         }
     }
 
@@ -165,10 +197,13 @@ mod tests {
             .replace('"', "&quot;")
     }
 
-    /// The phase 1 cards of `docs/credentials.html`, between the markers.
-    fn phase_one_cards() -> String {
+    /// The cards of `phase` in `docs/credentials.html`, between its markers.
+    fn cards(phase: u8) -> String {
         let mut html = String::new();
-        for connection in Connection::ALL {
+        for connection in Connection::ALL
+            .into_iter()
+            .filter(|&connection| self::phase(connection) == phase)
+        {
             let guide = guide(connection);
             let (pill, class) = if connection.awaits_approval_without_credentials() {
                 ("pedir acesso", "pill wait")
@@ -228,15 +263,26 @@ mod tests {
         html
     }
 
-    /// The page with its phase 1 cards replaced by `cards`. Line endings are
-    /// normalized: Windows checks the page out with CRLF.
-    fn with_cards(page: &str, cards: &str) -> String {
+    /// The page with the cards of `phase` replaced by `cards`. Line endings
+    /// are normalized: Windows checks the page out with CRLF.
+    fn with_cards(page: &str, phase: u8, cards: &str) -> String {
         let page = page.replace("\r\n", "\n");
-        let start = page.find(START).expect("the page has the start marker");
+        let start_marker = format!("<!-- phase-{phase}-guides:start");
+        let end_marker = format!("<!-- phase-{phase}-guides:end -->");
+        let start = page
+            .find(&start_marker)
+            .expect("the page has the start marker");
         let body = start + page[start..].find('\n').expect("the marker ends its line") + 1;
-        let end = page.find(END).expect("the page has the end marker");
+        let end = page.find(&end_marker).expect("the page has the end marker");
         let indent = page[..end].rfind('\n').map_or(end, |line| line + 1);
         format!("{}{cards}{}", &page[..body], &page[indent..])
+    }
+
+    /// The page with every phase's cards generated again.
+    fn with_every_phase(page: &str) -> String {
+        PHASES.into_iter().fold(page.to_owned(), |page, phase| {
+            with_cards(&page, phase, &cards(phase))
+        })
     }
 
     #[test]
@@ -262,7 +308,7 @@ mod tests {
     #[test]
     fn the_credentials_page_shows_the_same_steps_as_the_app() {
         let page = std::fs::read_to_string(credentials_page()).unwrap();
-        let expected = with_cards(&page, &phase_one_cards());
+        let expected = with_every_phase(&page);
         assert!(
             page.replace("\r\n", "\n") == expected,
             "docs/credentials.html is out of date: run `cargo test -p mascate -- --ignored \
@@ -272,7 +318,7 @@ mod tests {
 
     #[test]
     fn the_page_lists_every_pasted_credential_once() {
-        let cards = phase_one_cards();
+        let cards: String = PHASES.into_iter().map(cards).collect();
         for credential in Connection::ALL
             .into_iter()
             .flat_map(Connection::pasted_credentials)
@@ -288,6 +334,6 @@ mod tests {
     #[ignore = "rewrites docs/credentials.html"]
     fn write_credentials_page() {
         let page = std::fs::read_to_string(credentials_page()).unwrap();
-        std::fs::write(credentials_page(), with_cards(&page, &phase_one_cards())).unwrap();
+        std::fs::write(credentials_page(), with_every_phase(&page)).unwrap();
     }
 }

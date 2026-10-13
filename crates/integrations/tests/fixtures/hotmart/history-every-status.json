@@ -1,0 +1,686 @@
+{
+  "items": [
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 01",
+        "ucode": "00000000-0000-0000-0000-000000000001",
+        "email": "comprador01@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036001",
+        "order_date": 1788350400000,
+        "status": "WAITING_PAYMENT",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 02",
+        "ucode": "00000000-0000-0000-0000-000000000002",
+        "email": "comprador02@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036002",
+        "order_date": 1788436800000,
+        "status": "PRINTED_BILLET",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 03",
+        "ucode": "00000000-0000-0000-0000-000000000003",
+        "email": "comprador03@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036003",
+        "order_date": 1788523200000,
+        "status": "STARTED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 04",
+        "ucode": "00000000-0000-0000-0000-000000000004",
+        "email": "comprador04@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036004",
+        "order_date": 1788609600000,
+        "status": "PROCESSING_TRANSACTION",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 05",
+        "ucode": "00000000-0000-0000-0000-000000000005",
+        "email": "comprador05@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036005",
+        "order_date": 1788696000000,
+        "status": "UNDER_ANALISYS",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 06",
+        "ucode": "00000000-0000-0000-0000-000000000006",
+        "email": "comprador06@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036006",
+        "order_date": 1788782400000,
+        "status": "PRE_ORDER",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 07",
+        "ucode": "00000000-0000-0000-0000-000000000007",
+        "email": "comprador07@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036007",
+        "order_date": 1788868800000,
+        "status": "OVERDUE",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 08",
+        "ucode": "00000000-0000-0000-0000-000000000008",
+        "email": "comprador08@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036008",
+        "order_date": 1788955200000,
+        "status": "BLOCKED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 09",
+        "ucode": "00000000-0000-0000-0000-000000000009",
+        "email": "comprador09@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036009",
+        "order_date": 1789041600000,
+        "status": "APPROVED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789045200000,
+        "warranty_expire_date": 1791633600000,
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 10",
+        "ucode": "00000000-0000-0000-0000-000000000010",
+        "email": "comprador10@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036010",
+        "order_date": 1789128000000,
+        "status": "COMPLETE",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789131600000,
+        "warranty_expire_date": 1791720000000
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 11",
+        "ucode": "00000000-0000-0000-0000-000000000011",
+        "email": "comprador11@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036011",
+        "order_date": 1789214400000,
+        "status": "REFUNDED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789218000000,
+        "warranty_expire_date": 1791806400000
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 12",
+        "ucode": "00000000-0000-0000-0000-000000000012",
+        "email": "comprador12@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036012",
+        "order_date": 1789300800000,
+        "status": "PARTIALLY_REFUNDED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789304400000,
+        "warranty_expire_date": 1791892800000,
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 13",
+        "ucode": "00000000-0000-0000-0000-000000000013",
+        "email": "comprador13@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036013",
+        "order_date": 1789387200000,
+        "status": "CHARGEBACK",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789390800000,
+        "warranty_expire_date": 1791979200000
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 14",
+        "ucode": "00000000-0000-0000-0000-000000000014",
+        "email": "comprador14@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036014",
+        "order_date": 1789473600000,
+        "status": "PROTESTED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1789477200000,
+        "warranty_expire_date": 1792065600000
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 15",
+        "ucode": "00000000-0000-0000-0000-000000000015",
+        "email": "comprador15@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036015",
+        "order_date": 1789560000000,
+        "status": "CANCELLED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 16",
+        "ucode": "00000000-0000-0000-0000-000000000016",
+        "email": "comprador16@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036016",
+        "order_date": 1789646400000,
+        "status": "EXPIRED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "buyer": {
+        "name": "Comprador 17",
+        "ucode": "00000000-0000-0000-0000-000000000017",
+        "email": "comprador17@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036017",
+        "order_date": 1789732800000,
+        "status": "NO_FUNDS",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 18",
+        "ucode": "00000000-0000-0000-0000-000000000018",
+        "email": "comprador18@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690036018",
+        "order_date": 1789819200000,
+        "status": "AWAITING_SOMETHING_NEW",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "tracking": {
+          "source_sck": "fb_reels"
+        }
+      }
+    }
+  ],
+  "page_info": {
+    "total_results": 18,
+    "results_per_page": 18
+  }
+}

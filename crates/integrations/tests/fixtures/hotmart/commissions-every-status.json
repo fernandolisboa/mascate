@@ -1,0 +1,584 @@
+{
+  "items": [
+    {
+      "transaction": "HP17715690036001",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 16.65
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 11.1
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036002",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 18.3
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 12.2
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036003",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 19.95
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 13.3
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036004",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 21.6
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 14.4
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036005",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 23.25
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 15.5
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036006",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 24.9
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 16.6
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036007",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 26.55
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 17.7
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036008",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 28.2
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 18.8
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036009",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 29.85
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 19.9
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036010",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 31.5
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 21.0
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036011",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 33.15
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 22.1
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036012",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 34.8
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 23.2
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036013",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 36.45
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 24.3
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036014",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 38.1
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 25.4
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036015",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 39.75
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 26.5
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036016",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 41.4
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 27.6
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036017",
+      "product": {
+        "name": "Planilha de Finanças Pessoais",
+        "id": 3301457
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 43.05
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 28.7
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    },
+    {
+      "transaction": "HP17715690036018",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 44.7
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 29.8
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    }
+  ],
+  "page_info": {
+    "total_results": 18,
+    "results_per_page": 18
+  }
+}

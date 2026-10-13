@@ -29,6 +29,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::MercadoLivre => "Mercado Livre",
         Connection::ShopeeAffiliates => "Shopee Afiliados",
         Connection::Anthropic => "Anthropic",
+        Connection::Hotmart => "Hotmart",
     }
 }
 
@@ -40,6 +41,9 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
              aprovação e a descoberta usa o cadastro manual de ofertas."
         }
         Connection::Anthropic => "Títulos e descrições de anúncio gerados como rascunho.",
+        Connection::Hotmart => {
+            "Comissões de afiliado: vendas, status, estornos e cancelamentos, lidos a cada hora."
+        }
     }
 }
 
@@ -50,13 +54,19 @@ fn credential_label(credential: Credential) -> &'static str {
         "SHOPEE_AFFILIATE_APP_ID" => "AppID",
         "SHOPEE_AFFILIATE_SECRET" => "Secret",
         "ANTHROPIC_API_KEY" => "Chave da API",
+        "HOTMART_CLIENT_ID" => "Client ID",
+        "HOTMART_CLIENT_SECRET" => "Client Secret",
+        "HOTMART_BASIC" => "Basic",
         other => other,
     }
 }
 
 /// Identifiers are not secret; everything else is masked while typed.
 fn is_identifier(credential: Credential) -> bool {
-    matches!(credential.name, "ML_CLIENT_ID" | "SHOPEE_AFFILIATE_APP_ID")
+    matches!(
+        credential.name,
+        "ML_CLIENT_ID" | "SHOPEE_AFFILIATE_APP_ID" | "HOTMART_CLIENT_ID"
+    )
 }
 
 /// What the screen knows about one Connection, read off the UI thread

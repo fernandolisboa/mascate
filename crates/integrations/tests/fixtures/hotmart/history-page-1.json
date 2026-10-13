@@ -1,0 +1,89 @@
+{
+  "items": [
+    {
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "buyer": {
+        "name": "Comprador 21",
+        "ucode": "00000000-0000-0000-0000-000000000021",
+        "email": "comprador21@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690037001",
+        "order_date": 1788436800000,
+        "status": "APPROVED",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 197.0,
+          "currency_code": "BRL"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1788437400000,
+        "warranty_expire_date": 1791028800000,
+        "tracking": {
+          "source_sck": "instagram_bio",
+          "source": "campanha_setembro"
+        }
+      }
+    },
+    {
+      "product": {
+        "name": "Masterclass de Edição de Vídeo",
+        "id": 4410998
+      },
+      "buyer": {
+        "name": "Comprador 22",
+        "ucode": "00000000-0000-0000-0000-000000000022",
+        "email": "comprador22@example.com"
+      },
+      "producer": {
+        "name": "Produtora Exemplo",
+        "ucode": "252A74C5-4A97-143A-9349-E45D871C6018"
+      },
+      "purchase": {
+        "transaction": "HP17715690037002",
+        "order_date": 1788523200000,
+        "status": "COMPLETE",
+        "recurrency_number": 1,
+        "is_subscription": false,
+        "commission_as": "AFFILIATE",
+        "price": {
+          "value": 49.0,
+          "currency_code": "USD"
+        },
+        "payment": {
+          "method": "CREDIT_CARD",
+          "installments_number": 1,
+          "type": "CREDIT_CARD"
+        },
+        "offer": {
+          "payment_mode": "UNIQUE_PAYMENT",
+          "code": "k2pasun0"
+        },
+        "approved_date": 1788523800000,
+        "warranty_expire_date": 1789128000000
+      }
+    }
+  ],
+  "page_info": {
+    "total_results": 4,
+    "results_per_page": 2,
+    "next_page_token": "eyJyb3dzIjoyLCJwYWdlIjoyfQ"
+  }
+}

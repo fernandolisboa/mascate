@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "transaction": "HP17715690037001",
+      "product": {
+        "name": "Curso de Fotografia com Celular",
+        "id": 2125812
+      },
+      "exchange_rate_currency_payout": 1,
+      "commissions": [
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 88.65
+          },
+          "user": {
+            "ucode": "252A74C5-4A97-143A-9349-E45D871C6018",
+            "name": "Produtora Exemplo"
+          },
+          "source": "PRODUCER"
+        },
+        {
+          "commission": {
+            "currency_value": "BRL",
+            "value": 59.1
+          },
+          "user": {
+            "ucode": "9F1C2B3A-0000-4000-8000-00000000AF01",
+            "name": "Fernando Afiliado"
+          },
+          "source": "AFFILIATE"
+        }
+      ]
+    }
+  ],
+  "page_info": {
+    "total_results": 1,
+    "results_per_page": 1
+  }
+}

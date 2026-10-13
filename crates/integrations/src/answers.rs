@@ -2,6 +2,7 @@
 
 use mascate_kernel::PlatformError;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 
 /// Answers are small JSON documents; anything bigger is not one.
 const MAX_ANSWER_BYTES: u64 = 2 * 1024 * 1024;
@@ -19,5 +20,20 @@ pub(crate) fn read_json<T: DeserializeOwned>(
         .map_err(|error| PlatformError::Failed(error.to_string()))?;
     serde_json::from_slice(&bytes).map_err(|error| {
         PlatformError::Failed(format!("{platform} answered something unexpected: {error}"))
+    })
+}
+
+/// A Platform's numeric id, which a client may also see as a string, as
+/// text.
+pub(crate) fn numeric_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Id {
+        Number(u64),
+        Text(String),
+    }
+    Ok(match Id::deserialize(deserializer)? {
+        Id::Number(number) => number.to_string(),
+        Id::Text(text) => text,
     })
 }
