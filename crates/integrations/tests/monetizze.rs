@@ -2,18 +2,22 @@
 //! the API 2.1 documentation (see the fixtures' README), and the Affiliate
 //! module's Sync over it with a real temporary database.
 
+mod common;
+
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone, Utc};
+use common::query_value;
 use futures::executor::block_on;
+use mascate_affiliate::LinkTagger;
 use mascate_affiliate::{
     Affiliate, AffiliatePlatform, CommissionFilter, CommissionSource, CommissionStatus, MIGRATIONS,
     Recorded, ReportedConversion,
 };
-use mascate_integrations::{Monetizze, Pause};
+use mascate_integrations::{MONETIZZE_LINKS, Monetizze, Pause};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
@@ -629,5 +633,32 @@ fn a_returned_sale_reverses_the_same_commission() {
     assert_eq!(
         statuses,
         [CommissionStatus::Approved, CommissionStatus::Reversed]
+    );
+}
+
+/// What the app's link carries in `src` comes back as the sale's marking.
+#[test]
+fn a_tagged_monetizze_link_comes_back_as_the_sales_marking() {
+    let tagged = MONETIZZE_LINKS
+        .tag("https://app.monetizze.com.br/r/ABC12345", "telegram")
+        .unwrap();
+    assert_eq!(
+        tagged,
+        "https://app.monetizze.com.br/r/ABC12345?src=telegram"
+    );
+    let src = query_value(&tagged, "src").unwrap();
+    let s = setup();
+    s.serve_nothing(&window());
+    s.server.serve(
+        &path(2, &window(), 1),
+        200,
+        fixture("shares.json").replace(" instagram_bio ", &src),
+    );
+
+    let conversions = s.monetizze.conversions(window()).unwrap();
+
+    assert_eq!(
+        by_key(&conversions, "7101").tracking.as_deref(),
+        Some("telegram")
     );
 }

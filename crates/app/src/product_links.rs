@@ -28,6 +28,12 @@ const SHOWN: usize = 20;
 /// A product was linked or unlinked: the comparisons changed.
 pub struct ProductLinksChanged;
 
+/// The owner asked for an affiliate link of a promoted product.
+pub struct CreateLinkFor {
+    pub program: RecordId,
+    pub product: String,
+}
+
 /// A promoted product by its Program and name.
 type Promoted = (RecordId, String);
 
@@ -46,6 +52,8 @@ pub struct ProductLinksSection {
 }
 
 impl EventEmitter<ProductLinksChanged> for ProductLinksSection {}
+
+impl EventEmitter<CreateLinkFor> for ProductLinksSection {}
 
 impl ProductLinksSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -260,6 +268,19 @@ impl ProductLinksSection {
                         this.pick(pick_key.clone(), window, cx)
                     })),
             );
+        let (program, product) = key.clone();
+        row = row.child(
+            Button::new(("create-link-for", index))
+                .label("Criar link")
+                .ghost()
+                .small()
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.emit(CreateLinkFor {
+                        program,
+                        product: product.clone(),
+                    })
+                })),
+        );
         if linked.is_some() {
             let unlink_key = key.clone();
             row = row.child(

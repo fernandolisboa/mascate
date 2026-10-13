@@ -26,10 +26,20 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use crate::answers::{decimal, read_json};
+use crate::link_tags::UrlTagger;
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// The public API, unless a test points elsewhere.
 pub const API_URL: &str = "https://public-api.kiwify.com";
+
+/// A Kiwify link carries the marking in `sck`, read back as
+/// `tracking.sck`.
+pub const LINKS: UrlTagger = UrlTagger {
+    platform: AffiliatePlatform::Kiwify,
+    parameter: "sck",
+    domains: &["kiwify.com.br", "kiwify.app"],
+    tag_ends_with: None,
+};
 
 const CLIENT_ID: &str = "KIWIFY_CLIENT_ID";
 const CLIENT_SECRET: &str = "KIWIFY_CLIENT_SECRET";

@@ -22,10 +22,21 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::answers::brasilia;
+use crate::link_tags::UrlTagger;
 use crate::spreadsheet::{Cell, TableError, TableRow, excel_serial, read_table};
 
 /// The Platform the report's Conversions belong to.
 pub const PLATFORM: AffiliatePlatform = AffiliatePlatform::Amazon;
+
+/// An Amazon link carries the tracking id the owner created in the
+/// Associates panel in `tag`, which the report shows per sale. Brazilian
+/// tracking ids end in `-20`.
+pub const LINKS: UrlTagger = UrlTagger {
+    platform: PLATFORM,
+    parameter: "tag",
+    domains: &["amazon.com.br"],
+    tag_ends_with: Some("-20"),
+};
 
 /// Amazon has one Program for every product.
 const PROGRAM_ID: &str = "amazon-associates";

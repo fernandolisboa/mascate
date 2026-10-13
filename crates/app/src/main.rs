@@ -3,6 +3,7 @@
 
 mod ads;
 mod affiliate;
+mod affiliate_links;
 mod amazon_import;
 mod appearance;
 mod backups;
@@ -38,6 +39,7 @@ mod preferences;
 mod pricing;
 mod product_links;
 mod products;
+mod promotion_channels;
 mod promotion_rules;
 mod promotions;
 mod purchases;
@@ -66,10 +68,10 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui_kit::*;
-use mascate_affiliate::CommissionSource;
+use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
-    Anthropic, Connection, Connections, Eduzz, Hotmart, Kiwify, MercadoLivre, Monetizze,
-    ShopeeAffiliates,
+    AMAZON_LINKS, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS, Hotmart,
+    KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -79,6 +81,7 @@ use mascate_platform::{
 
 use crate::ads::AppProductAds;
 use crate::affiliate::{AppAffiliate, CommissionSources};
+use crate::affiliate_links::LinkTaggers;
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -89,6 +92,7 @@ use crate::mercado_livre::AppMercadoLivre;
 use crate::orders::AppOrders;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
+use crate::promotion_channels::AppPromotionChannels;
 use crate::promotions::AppPromotions;
 use crate::purchases::AppPurchaseOrders;
 use crate::quality::AppQuality;
@@ -233,6 +237,19 @@ fn main() {
                         eduzz.clone() as Arc<dyn CommissionSource>,
                     ),
                 ]));
+                cx.set_global(LinkTaggers(
+                    [
+                        HOTMART_LINKS,
+                        KIWIFY_LINKS,
+                        MONETIZZE_LINKS,
+                        EDUZZ_LINKS,
+                        AMAZON_LINKS,
+                    ]
+                    .into_iter()
+                    .map(|tagger| Arc::new(tagger) as Arc<dyn LinkTagger>)
+                    .collect(),
+                ));
+                cx.set_global(AppPromotionChannels(started.promotion_channels.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));

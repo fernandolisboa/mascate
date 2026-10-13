@@ -4,8 +4,10 @@
 //! and the form to record a Commission by hand for Platforms without an API
 //! or a file. The Commissions Sync (#78) reads each connected Platform at
 //! start, every hour and on "Sincronizar agora"; the Amazon earnings report
-//! comes in by file (#83). Below them, the Payouts (#79). The rules live in
-//! Affiliate (ADR 0030).
+//! comes in by file (#83). Below them, the products promoted (#86), their
+//! Affiliate Links per Promotion Channel (#99), the Programs' promotion
+//! rules (#98) and the Payouts (#79). The rules live in Affiliate (ADR
+//! 0030).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,11 +27,12 @@ use gpui_kit::{
 };
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliatePlatform, AffiliateSync, Commission, CommissionFilter,
-    CommissionSource, CommissionStatus, LastSync, ManualCommission, Recorded,
+    CommissionSource, CommissionStatus, LastSync, ManualCommission, Recorded, TagRefusal,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 
+use crate::affiliate_links::AffiliateLinksSection;
 use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{NO_DATABASE, day, day_and_time};
@@ -40,7 +43,7 @@ use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
-use crate::product_links::{ProductLinksChanged, ProductLinksSection};
+use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSection};
 use crate::promotion_rules::PromotionRulesSection;
 use crate::sales::day_start;
 use crate::span::{SpanChanged, SpanPicker};
@@ -329,6 +332,7 @@ pub struct AffiliateScreen {
     import: Entity<AmazonImportSection>,
     payouts: Entity<PayoutsSection>,
     links: Entity<ProductLinksSection>,
+    affiliate_links: Entity<AffiliateLinksSection>,
     rules: Entity<PromotionRulesSection>,
     _subscriptions: Vec<Subscription>,
 }
@@ -342,6 +346,7 @@ impl AffiliateScreen {
         let span = cx.new(|cx| SpanPicker::new(window, cx));
         let import = cx.new(|_| AmazonImportSection::default());
         let links = cx.new(|cx| ProductLinksSection::new(window, cx));
+        let affiliate_links = cx.new(|cx| AffiliateLinksSection::new(window, cx));
         let rules = cx.new(|cx| PromotionRulesSection::new(window, cx));
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
@@ -372,6 +377,16 @@ impl AffiliateScreen {
             cx.subscribe(&links, |_, _, _: &ProductLinksChanged, cx| {
                 cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
             }),
+            cx.subscribe_in(
+                &links,
+                window,
+                |this, _, wanted: &CreateLinkFor, window, cx| {
+                    let product = Some(wanted.product.clone());
+                    this.affiliate_links.update(cx, |links, cx| {
+                        links.open(wanted.program, product, window, cx)
+                    });
+                },
+            ),
         ];
         let mut screen = Self {
             span,
@@ -396,6 +411,7 @@ impl AffiliateScreen {
             import,
             payouts,
             links,
+            affiliate_links,
             rules,
             _subscriptions: subscriptions,
         };
@@ -411,6 +427,8 @@ impl AffiliateScreen {
         self.payouts
             .update(cx, |payouts, cx| payouts.refresh(paid, window, cx));
         self.links.update(cx, |links, cx| links.refresh(window, cx));
+        self.affiliate_links
+            .update(cx, |links, cx| links.refresh(window, cx));
         self.rules.update(cx, |rules, cx| rules.refresh(window, cx));
     }
 
@@ -1060,6 +1078,27 @@ fn commissions_text(count: usize) -> String {
 }
 
 /// Why an action on the Commissions failed, as the owner reads it.
+fn tag_refusal(refusal: &TagRefusal) -> String {
+    match refusal {
+        TagRefusal::NotALink => {
+            "Cole o link inteiro, começando com https://, como a plataforma mostra.".into()
+        }
+        TagRefusal::ForeignDomain(platform) => format!(
+            "Esse link não é da {}: cole o link de afiliado que ela dá na sua área de \
+             afiliado. O app só marca links da própria plataforma.",
+            platform.name()
+        ),
+        TagRefusal::BadTag(AffiliatePlatform::Amazon) => {
+            "O tracking id da Amazon termina em -20, como aparece no painel do Associados \
+             (por exemplo, mascate-tg-20)."
+                .into()
+        }
+        TagRefusal::BadTag(platform) => {
+            format!("A {} não aceita essa marcação.", platform.name())
+        }
+    }
+}
+
 pub(crate) fn failure(error: &AffiliateError) -> String {
     match error {
         AffiliateError::NotFound => "Essa comissão mudou; a lista foi atualizada.".into(),
@@ -1087,6 +1126,16 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
         }
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
         AffiliateError::NoSuchProgram => "Esse programa mudou; a lista foi atualizada.".into(),
+        AffiliateError::NoSuchLink => "Esse link mudou; a lista foi atualizada.".into(),
+        AffiliateError::BadTag => "A marcação tem letras minúsculas, números, _ e -, até 40 \
+                                   caracteres."
+            .into(),
+        AffiliateError::TagTaken(tag) => format!(
+            "Outro canal já usa a marcação {tag} nesta plataforma, e as vendas dela iriam \
+             para ele. Use outra marcação neste canal."
+        ),
+        AffiliateError::WrongTagger => "O app ainda não sabe marcar links desta plataforma.".into(),
+        AffiliateError::Tag(refusal) => tag_refusal(refusal),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
         AffiliateError::Restricted(flag) => format!(
             "{} Para usar mesmo assim, ligue \"{}\" em Configurações › Funcionalidades \
@@ -1170,6 +1219,9 @@ impl Render for AffiliateScreen {
             cx,
         ));
         parts.content.push(self.links.clone().into_any_element());
+        parts
+            .content
+            .push(self.affiliate_links.clone().into_any_element());
         parts.content.push(self.rules.clone().into_any_element());
         parts.content.push(self.import.clone().into_any_element());
         parts.content.push(self.render_form(cx));

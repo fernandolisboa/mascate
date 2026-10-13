@@ -2,18 +2,22 @@
 //! the public API documentation (see the fixtures' README), and the
 //! Affiliate module's Sync over it with a real temporary database.
 
+mod common;
+
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone, Utc};
+use common::query_value;
 use futures::executor::block_on;
+use mascate_affiliate::LinkTagger;
 use mascate_affiliate::{
     Affiliate, AffiliatePlatform, CommissionFilter, CommissionSource, CommissionStatus, MIGRATIONS,
     Recorded, ReportedConversion,
 };
-use mascate_integrations::{Kiwify, Pause};
+use mascate_integrations::{KIWIFY_LINKS, Kiwify, Pause};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore, Request};
@@ -817,4 +821,36 @@ fn the_owner_confirms_which_commissions_a_withdrawal_pays() {
                 .all(|commission| commission.status == CommissionStatus::Paid)
         );
     });
+}
+
+/// What the app's link carries in `sck` comes back as the sale's marking,
+/// ahead of the other tracking fields.
+#[test]
+fn a_tagged_kiwify_link_comes_back_as_the_sales_marking() {
+    let tagged = KIWIFY_LINKS
+        .tag(
+            "https://pay.kiwify.com.br/AbC123?afid=XyZ9#oferta",
+            "telegram",
+        )
+        .unwrap();
+    assert_eq!(
+        tagged,
+        "https://pay.kiwify.com.br/AbC123?afid=XyZ9&sck=telegram#oferta"
+    );
+    let sck = query_value(&tagged, "sck").unwrap();
+    let s = setup();
+    s.serve_nothing(&window());
+    let newest = sales_paths(&window()).pop().unwrap();
+    s.server.serve(
+        &newest,
+        200,
+        fixture("sales-shares.json").replace("  instagram-bio ", &sck),
+    );
+
+    let conversions = s.kiwify.conversions(window()).unwrap();
+
+    assert_eq!(
+        by_key(&conversions, &sale(101)).tracking.as_deref(),
+        Some("telegram")
+    );
 }

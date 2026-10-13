@@ -2,18 +2,23 @@
 //! documentation (see the fixtures' README), and its import into the
 //! Affiliate module with a real temporary database.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, TimeZone, Utc};
+use common::query_value;
 use futures::executor::block_on;
+use mascate_affiliate::LinkTagger;
 use mascate_affiliate::{
     Affiliate, AffiliatePlatform, Commission, CommissionFilter, CommissionStatus, MIGRATIONS,
     Recorded, ReportedConversion,
 };
 use mascate_integrations::{
-    AMAZON_PLATFORM, EarningsImport, EarningsReport, ReportError, SkippedRow, read_earnings_report,
+    AMAZON_LINKS, AMAZON_PLATFORM, EarningsImport, EarningsReport, ReportError, SkippedRow,
+    read_earnings_report,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, Timestamp};
@@ -474,4 +479,34 @@ proptest! {
         };
         prop_assert_eq!(summary(&reordered), summary(&original));
     }
+}
+
+/// The tracking id the app's link carries in `tag` is the one the report
+/// shows for the sale.
+#[test]
+fn a_tagged_amazon_link_comes_back_as_the_sales_marking() {
+    let tagged = AMAZON_LINKS
+        .tag(
+            "https://www.amazon.com.br/dp/B0C1234567?tag=antigo-20&th=1",
+            "mascate-tg-20",
+        )
+        .unwrap();
+    assert_eq!(
+        tagged,
+        "https://www.amazon.com.br/dp/B0C1234567?tag=mascate-tg-20&th=1"
+    );
+    let tracking_id = query_value(&tagged, "tag").unwrap();
+    let written = String::from_utf8(fixture("earnings-2026-09.csv"))
+        .unwrap()
+        .replacen(",mascate-20,", &format!(",{tracking_id},"), 1);
+
+    let import = read_earnings_report(written.as_bytes())
+        .unwrap()
+        .conversions(&[]);
+
+    let headphones = by_product(
+        &import.conversions,
+        "Fone de Ouvido Bluetooth JBL Tune 520BT",
+    );
+    assert_eq!(headphones[0].tracking.as_deref(), Some("mascate-tg-20"));
 }

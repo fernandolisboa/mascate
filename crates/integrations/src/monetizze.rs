@@ -24,10 +24,20 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use crate::answers::{brasilia, decimal, numeric_id, read_json};
+use crate::link_tags::UrlTagger;
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// API 2.1, unless a test points elsewhere.
 pub const API_URL: &str = "https://api.monetizze.com.br/2.1";
+
+/// A Monetizze link carries the marking in `src`, read back as
+/// `venda.src`.
+pub const LINKS: UrlTagger = UrlTagger {
+    platform: AffiliatePlatform::Monetizze,
+    parameter: "src",
+    domains: &["monetizze.com.br"],
+    tag_ends_with: None,
+};
 
 const CONSUMER_KEY: &str = "MONETIZZE_CONSUMER_KEY";
 const EMAIL: &str = "MONETIZZE_EMAIL";

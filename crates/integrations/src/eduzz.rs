@@ -30,10 +30,21 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::answers::{brasilia, decimal, numeric_id, read_json};
+use crate::link_tags::UrlTagger;
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// The Developer Hub API, unless a test points elsewhere.
 pub const API_URL: &str = "https://api.eduzz.com";
+
+/// Eduzz documents no link parameter for its trackers (checked on
+/// 13/10/2026), so the marking goes in `utm_content`, which the checkout
+/// keeps and the sale reports as `utm.content`.
+pub const LINKS: UrlTagger = UrlTagger {
+    platform: AffiliatePlatform::Eduzz,
+    parameter: "utm_content",
+    domains: &["eduzz.com"],
+    tag_ends_with: None,
+};
 
 const PERSONAL_TOKEN: &str = "EDUZZ_PERSONAL_TOKEN";
 
@@ -554,11 +565,18 @@ impl Sale {
             refunded_at: when(read.refund.and_then(|refund| refund.refunded_at)),
             affiliated: read.affiliate.is_some(),
             product: read.product,
-            tracking: [read.tracker, read.tracker2, read.tracker3]
-                .into_iter()
-                .flatten()
-                .map(|tracker| tracker.trim().to_owned())
-                .find(|tracker| !tracker.is_empty()),
+            // The app's links carry the marking in utm_content (see LINKS);
+            // the trackers come after it.
+            tracking: [
+                read.utm.and_then(|utm| utm.content),
+                read.tracker,
+                read.tracker2,
+                read.tracker3,
+            ]
+            .into_iter()
+            .flatten()
+            .map(|tracker| tracker.trim().to_owned())
+            .find(|tracker| !tracker.is_empty()),
             raw,
         })
     }
@@ -618,6 +636,12 @@ struct SaleItem {
     tracker: Option<String>,
     tracker2: Option<String>,
     tracker3: Option<String>,
+    utm: Option<Utm>,
+}
+
+#[derive(Deserialize)]
+struct Utm {
+    content: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -9,7 +9,8 @@ use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_marketing::{
-    ListingCopy, ListingQuality, ProductAds, Questions, ReplyTemplates, Reputation,
+    ListingCopy, ListingQuality, ProductAds, PromotionChannels, Questions, ReplyTemplates,
+    Reputation,
 };
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
@@ -65,6 +66,7 @@ pub struct Started {
     pub reputation: Arc<Reputation>,
     pub product_ads: Arc<ProductAds>,
     pub reply_templates: Arc<ReplyTemplates>,
+    pub promotion_channels: Arc<PromotionChannels>,
     pub taxes: Arc<Taxes>,
     pub sales_volume: Arc<SalesVolume>,
     pub affiliate: Arc<Affiliate>,
@@ -283,6 +285,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let promotion_channels = PromotionChannels::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -320,6 +327,7 @@ pub fn prepare() -> Outcome {
                 reputation: Arc::new(reputation),
                 product_ads: Arc::new(product_ads),
                 reply_templates: Arc::new(reply_templates),
+                promotion_channels: Arc::new(promotion_channels),
                 taxes: Arc::new(taxes),
                 sales_volume: Arc::new(sales_volume),
                 affiliate: Arc::new(affiliate),
@@ -390,8 +398,8 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, ManualCommission, ManualPayout,
-        Practice, PromotionRules, Standing,
+        AffiliatePlatform, CommissionFilter, CommissionStatus, LinkTagger, ManualCommission,
+        ManualPayout, NewAffiliateLink, Practice, Promotion, PromotionRules, Standing, TagRefusal,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -402,10 +410,11 @@ mod tests {
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
     use mascate_marketing::{
-        AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelQuality,
-        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
-        ListedItem, ListingReviews, MetricReading, NewReplyTemplate, QualityLevel, QualitySource,
-        QuestionStatus, Rating, ReputationColor, ReputationSource,
+        AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
+        ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
+        CopySettings, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
+        NewReplyTemplate, QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor,
+        ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
@@ -659,6 +668,40 @@ mod tests {
         rules
     }
 
+    fn sample_channel() -> NewPromotionChannel {
+        NewPromotionChannel {
+            name: "Canal de exemplo".into(),
+            kind: ChannelKind::TelegramChannel,
+            default_tag: "exemplo".into(),
+            keywords: Vec::new(),
+            telegram_chat: Some("@canaldeexemplo".into()),
+        }
+    }
+
+    fn sample_link(program: RecordId, channel: RecordId) -> NewAffiliateLink {
+        NewAffiliateLink {
+            program,
+            product: "Produto de exemplo".into(),
+            pasted: "https://example.com/afiliado/123".into(),
+            channel,
+            tag: sample_channel().default_tag,
+            promotion: Promotion::default(),
+        }
+    }
+
+    /// Tags the sample Program's links the way the URL taggers do.
+    struct SampleTagger;
+
+    impl LinkTagger for SampleTagger {
+        fn platform(&self) -> AffiliatePlatform {
+            AffiliatePlatform::MercadoLivre
+        }
+
+        fn tag(&self, link: &str, tag: &str) -> Result<String, TagRefusal> {
+            Ok(format!("{link}?tag={tag}"))
+        }
+    }
+
     fn sample_payout() -> ManualPayout {
         ManualPayout {
             platform: AffiliatePlatform::MercadoLivre,
@@ -847,6 +890,14 @@ mod tests {
                 .unwrap();
             affiliate
                 .set_promotion_rules(commission.program, &sample_rules())
+                .await
+                .unwrap();
+            let channel = PromotionChannels::new(database.clone(), clock.clone(), ids.clone())
+                .create(&sample_channel())
+                .await
+                .unwrap();
+            affiliate
+                .create_link(&sample_link(commission.program, channel.id), &SampleTagger)
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -1255,6 +1306,28 @@ mod tests {
                     sample_rules(),
                     "{name}"
                 );
+                // Promotion Channels and Affiliate Links arrived after
+                // 0.2.0 too.
+                let channels = PromotionChannels::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                if channels.channels().await.unwrap().is_empty() {
+                    channels.create(&sample_channel()).await.unwrap();
+                }
+                let kept = channels.channels().await.unwrap();
+                assert_eq!(kept.len(), 1, "{name}");
+                assert_eq!(kept[0].default_tag, "exemplo", "{name}");
+                let created = affiliate
+                    .create_link(&sample_link(program.id, kept[0].id), &SampleTagger)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    created.link.tagged, "https://example.com/afiliado/123?tag=exemplo",
+                    "{name}"
+                );
+                assert_eq!(affiliate.links().await.unwrap().len(), 1, "{name}");
             });
         }
     }

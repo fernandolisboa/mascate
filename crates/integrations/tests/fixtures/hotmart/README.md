@@ -35,8 +35,8 @@ Como o app chama a API:
 - Histórico e comissões se juntam pela `transaction`, que é a chave natural. A comissão é a entrada
   de `commissions[]` com `source` AFFILIATE (`commission.value` na moeda `commission.currency_value`).
   A data da venda é `order_date`; a mudança de status é `approved_date` para APPROVED e
-  `warranty_expire_date` para COMPLETE. A marcação é `tracking.source_sck` ou, sem ela,
-  `tracking.source` (o `src`). O comprador é tirado do JSON bruto guardado.
+  `warranty_expire_date` para COMPLETE. A marcação é `tracking.source` (o `src`, marcação do
+  afiliado, que os links do app levam) ou, sem ela, `tracking.source_sck` (o `sck`, do produtor). O comprador é tirado do JSON bruto guardado.
 - Status: WAITING_PAYMENT, PRINTED_BILLET, STARTED, PROCESSING_TRANSACTION, UNDER_ANALISYS,
   PRE_ORDER, OVERDUE e BLOCKED ficam pendentes; APPROVED e COMPLETE, aprovadas; REFUNDED,
   PARTIALLY_REFUNDED, CHARGEBACK e PROTESTED, estornadas; CANCELLED, EXPIRED e NO_FUNDS, canceladas.

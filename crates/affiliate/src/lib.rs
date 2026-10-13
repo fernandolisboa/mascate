@@ -1,13 +1,16 @@
 //! Affiliate: Programs, Affiliate Links, Conversions, Commissions and Payouts.
 
+mod affiliate_links;
 mod commissions;
 mod links;
 mod payouts;
 mod report;
 mod rules;
 mod source;
+mod tagging;
 mod totals;
 
+pub use affiliate_links::{AffiliateLink, CreatedLink, NewAffiliateLink, TAG_MAX_CHARS};
 pub use commissions::{
     Affiliate, AffiliateError, AffiliateSync, Commission, CommissionFilter, INCOME_WINDOW_DAYS,
     LastSync, ManualCommission, Reading, Recorded, StatusChange,
@@ -23,6 +26,7 @@ pub use source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedPayout,
     ReportedProgram,
 };
+pub use tagging::{LinkTagger, TagRefusal};
 pub use totals::{CurrencyTotals, totals_by_currency};
 
 use mascate_platform::{Flag, ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
@@ -35,6 +39,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         payouts::CREATE_PAYOUTS,
         links::CREATE_PRODUCT_LINKS,
         rules::ADD_PROMOTION_RULES,
+        affiliate_links::CREATE_AFFILIATE_LINKS,
     ],
 };
 

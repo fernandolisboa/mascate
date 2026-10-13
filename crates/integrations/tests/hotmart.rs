@@ -2,18 +2,22 @@
 //! Hotmart's documentation (see the fixtures' README), and the Affiliate
 //! module's Sync over it with a real temporary database.
 
+mod common;
+
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone, Utc};
+use common::query_value;
 use futures::executor::block_on;
+use mascate_affiliate::LinkTagger;
 use mascate_affiliate::{
     Affiliate, AffiliatePlatform, CommissionFilter, CommissionSource, CommissionStatus, MIGRATIONS,
     Recorded, ReportedConversion,
 };
-use mascate_integrations::{Hotmart, Pause};
+use mascate_integrations::{HOTMART_LINKS, Hotmart, Pause};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
@@ -307,8 +311,9 @@ fn reads_the_affiliate_share_product_dates_and_marking_of_each_sale() {
     assert_eq!(approved.commission, money("59.1", Currency::Brl));
     assert_eq!(approved.status, CommissionStatus::Approved);
     assert_eq!(approved.status_changed_at, Some(at(9, 3, 12, 10)));
-    // The sck wins over the src when the link carried both.
-    assert_eq!(approved.tracking.as_deref(), Some("instagram_bio"));
+    // The src is the affiliate's marking: it wins over the producer's sck
+    // when the link carried both.
+    assert_eq!(approved.tracking.as_deref(), Some("campanha_setembro"));
     let raw: serde_json::Value = serde_json::from_str(&approved.raw).unwrap();
     assert_eq!(raw["sale"]["purchase"]["status"], "APPROVED");
     assert_eq!(raw["commission"]["transaction"], "HP17715690037001");
@@ -604,4 +609,33 @@ fn a_refund_on_hotmart_reverses_the_same_commission() {
         statuses,
         [CommissionStatus::Approved, CommissionStatus::Reversed]
     );
+}
+
+/// What the app's link carries in `src` comes back as the sale's marking,
+/// even when the producer's checkout added an `sck`.
+#[test]
+fn a_tagged_hotlink_comes_back_as_the_sales_marking() {
+    let tagged = HOTMART_LINKS
+        .tag(
+            "https://go.hotmart.com/X12345678Y?src=antigo&ap=1a2b",
+            "telegram",
+        )
+        .unwrap();
+    assert_eq!(
+        tagged,
+        "https://go.hotmart.com/X12345678Y?src=telegram&ap=1a2b"
+    );
+    let src = query_value(&tagged, "src").unwrap();
+    let s = setup();
+    s.serve_pages(&window());
+    s.server.serve(
+        &path(HISTORY, "APPROVED", &window(), None),
+        200,
+        fixture("history-page-1.json").replace("campanha_setembro", &src),
+    );
+
+    let conversions = s.hotmart.conversions(window()).unwrap();
+
+    let approved = by_key(&conversions, "HP17715690037001");
+    assert_eq!(approved.tracking.as_deref(), Some("telegram"));
 }

@@ -38,8 +38,10 @@ Como o app chama a API:
 - As vendas vêm de `GET /myeduzz/v1/sales` com `referenceDate=updatedAt`, desde 90 dias antes da
   janela (o tempo em que a comissão ainda pode ser creditada depois da última mudança da venda).
   Quando a lista mostra a venda, ela dá o Program e o produto (`product.id` e `product.name`), a
-  data da venda (`createdAt`), o status e a marcação (o primeiro não vazio entre `tracker`,
-  `tracker2` e `tracker3`).
+  data da venda (`createdAt`), o status e a marcação (o primeiro não vazio entre `utm.content`,
+  onde os links do app levam a marcação, `tracker`, `tracker2` e `tracker3`). A documentação não
+  diz qual parâmetro de link preenche os `tracker*` (conferido em 13/10/2026); o regression pass
+  (#76) confere se o `utm_content` do link volta em `utm.content`.
 - Uma venda com afiliado que mudou na janela, ou um estorno na janela, sem a comissão no extrato
   da janela, é procurada no extrato pelo `saleId`, nos cinco anos que o app lê. Sem
   `affiliante_sale` em lugar nenhum, a venda fica de fora: ainda não há comissão creditada (ou a
