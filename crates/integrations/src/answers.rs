@@ -1,6 +1,9 @@
 //! What every adapter does with a Platform's answer.
 
+use std::str::FromStr;
+
 use mascate_kernel::PlatformError;
+use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 
@@ -36,4 +39,13 @@ pub(crate) fn numeric_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<S
         Id::Number(number) => number.to_string(),
         Id::Text(text) => text,
     })
+}
+
+/// An amount a Platform sends as a JSON number: its text, not a float,
+/// becomes the decimal.
+pub(crate) fn decimal(number: &serde_json::Number) -> Option<Decimal> {
+    let text = number.to_string();
+    Decimal::from_str(&text)
+        .or_else(|_| Decimal::from_scientific(&text))
+        .ok()
 }

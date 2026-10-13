@@ -154,6 +154,30 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Monetizze => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "Entre na Monetizze com a sua conta de afiliado e abra Ferramentas, API \
+                     no menu.",
+                        "Abrir a Monetizze",
+                        "https://app.monetizze.com.br/",
+                    ),
+                    step(
+                        "Crie uma chave de acesso e dê um nome como Mascate. Se a Monetizze \
+                     pedir as permissões, marque a consulta de transações: o app só lê as \
+                     vendas.",
+                    ),
+                    step(
+                        "Copie a chave. Tenha à mão também o e-mail com que você entra na \
+                     Monetizze: quando uma venda tem mais de um afiliado, é por ele que o app \
+                     acha a sua comissão.",
+                    ),
+                ],
+                then: None,
+            };
+            GUIDE
+        }
     }
 }
 
@@ -179,6 +203,7 @@ mod tests {
             Connection::ShopeeAffiliates => "affiliate.shopee.com.br",
             Connection::Anthropic => "platform.claude.com",
             Connection::Hotmart => "app-vlc.hotmart.com",
+            Connection::Monetizze => "app.monetizze.com.br",
         }
     }
 
@@ -187,7 +212,7 @@ mod tests {
     fn phase(connection: Connection) -> u8 {
         match connection {
             Connection::MercadoLivre | Connection::ShopeeAffiliates | Connection::Anthropic => 1,
-            Connection::Hotmart => 2,
+            Connection::Hotmart | Connection::Monetizze => 2,
         }
     }
 

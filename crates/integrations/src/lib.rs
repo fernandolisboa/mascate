@@ -5,6 +5,7 @@ mod anthropic;
 mod connections;
 mod hotmart;
 mod mercado_livre;
+mod monetizze;
 mod retry;
 mod shopee_affiliate;
 
@@ -16,5 +17,6 @@ pub use hotmart::{API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotm
 pub use mercado_livre::{
     API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
 };
+pub use monetizze::{API_URL as MONETIZZE_API_URL, Monetizze};
 pub use retry::{Pause, ThreadPause};
 pub use shopee_affiliate::{API_URL as SHOPEE_AFFILIATE_API_URL, ShopeeAffiliates};

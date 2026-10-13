@@ -29,6 +29,10 @@ fn nothing_is_configured_on_a_new_install_and_shopee_awaits_approval() {
         connections.state(Connection::Hotmart),
         ConnectionState::NotConfigured
     );
+    assert_eq!(
+        connections.state(Connection::Monetizze),
+        ConnectionState::NotConfigured
+    );
 }
 
 #[test]
@@ -59,6 +63,37 @@ fn hotmart_connects_with_its_client_id_secret_and_basic_token() {
     assert_eq!(
         store.read("HOTMART_BASIC").unwrap(),
         Some(Secret::new("Basic abc="))
+    );
+}
+
+#[test]
+fn monetizze_connects_with_its_consumer_key_and_the_accounts_email() {
+    let (connections, store) = connections();
+
+    connections
+        .save(
+            Connection::Monetizze,
+            &[("MONETIZZE_CONSUMER_KEY", "consumer-key")],
+        )
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Monetizze),
+        ConnectionState::NotConfigured
+    );
+    connections
+        .save(
+            Connection::Monetizze,
+            &[("MONETIZZE_EMAIL", " afiliado@exemplo.com.br ")],
+        )
+        .unwrap();
+
+    assert_eq!(
+        connections.state(Connection::Monetizze),
+        ConnectionState::Connected
+    );
+    assert_eq!(
+        store.read("MONETIZZE_EMAIL").unwrap(),
+        Some(Secret::new("afiliado@exemplo.com.br"))
     );
 }
 

@@ -1,0 +1,84 @@
+[
+  {
+    "status": 200,
+    "dados": [
+      {
+        "chave_unica": "98e71cd6871f130b90509d22ad2daba0",
+        "venda": {
+          "codigo": "5005",
+          "dataInicio": "2026-09-05 09:15:00",
+          "dataFinalizada": null,
+          "meioPagamento": "Cartão de Crédito",
+          "formaPagamento": "Cartão de crédito",
+          "garantiaRestante": 7,
+          "status": "Bloqueada",
+          "valor": "197.00",
+          "quantidade": "1",
+          "valorRecebido": "197.00",
+          "tipo_frete": "0",
+          "frete": "0.00",
+          "cupom": null,
+          "idioma": "pt-BR",
+          "src": "",
+          "utm_source": "",
+          "utm_medium": "",
+          "utm_content": "",
+          "utm_campaign": "",
+          "linkBoleto": "",
+          "linha_digitavel": "",
+          "moeda": "BRL",
+          "produto": {
+            "codigo": "12832",
+            "chave": "d166bc9efec4b99953fa17aa5966d648",
+            "nome": "Curso de Fotografia com Celular"
+          },
+          "comprador": {
+            "nome": "Cliente Demonstração",
+            "email": "cliente@sandbox.monetizze.com.br",
+            "data_nascimento": "1978-12-31",
+            "cnpj_cpf": "012.345.678.90",
+            "telefone": "(31)3166-0838",
+            "cep": "31000-000",
+            "endereco": "Rua Demonstração",
+            "numero": "110",
+            "complemento": "1",
+            "bairro": "Santa Monica",
+            "cidade": "Belo Horizonte",
+            "estado": "MG",
+            "pais": "Br"
+          },
+          "produtor": {
+            "cnpj_cpf": "01.234.567/0001-89",
+            "nome": "Produtor Demonstração"
+          },
+          "comissoes": [
+            {
+              "refAfiliado": "",
+              "nome": "Renato Souza",
+              "email": "produtor@exemplo.com.br",
+              "tipo_comissao": "Produtor",
+              "valor": "118.20",
+              "porcentagem": "60.00000"
+            },
+            {
+              "refAfiliado": "AF9817",
+              "nome": "Afiliado Mascate",
+              "email": "afiliado.mascate@exemplo.com.br",
+              "tipo_comissao": "Afiliado",
+              "valor": "78.80",
+              "porcentagem": "40.00000"
+            }
+          ],
+          "tipoPostback": {
+            "codigo": 4,
+            "descricao": "Afiliado"
+          },
+          "downloads": []
+        }
+      }
+    ],
+    "recordCount": "1",
+    "pages": 1,
+    "error": ""
+  }
+]

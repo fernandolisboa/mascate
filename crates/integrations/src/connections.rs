@@ -15,6 +15,8 @@ pub enum Connection {
     Anthropic,
     /// The owner's affiliate Commissions on Hotmart.
     Hotmart,
+    /// The owner's affiliate Commissions on Monetizze.
+    Monetizze,
 }
 
 /// How a credential reaches the store.
@@ -42,11 +44,12 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 4] = [
+    pub const ALL: [Connection; 5] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
         Connection::Hotmart,
+        Connection::Monetizze,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -71,11 +74,16 @@ impl Connection {
             pasted("HOTMART_CLIENT_SECRET"),
             pasted("HOTMART_BASIC"),
         ];
+        // The e-mail is not secret: it picks the owner's share among the
+        // affiliates a Monetizze sale lists.
+        const MONETIZZE: &[Credential] =
+            &[pasted("MONETIZZE_CONSUMER_KEY"), pasted("MONETIZZE_EMAIL")];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
             Connection::Anthropic => ANTHROPIC,
             Connection::Hotmart => HOTMART,
+            Connection::Monetizze => MONETIZZE,
         }
     }
 

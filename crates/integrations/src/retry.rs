@@ -27,6 +27,13 @@ pub(crate) struct Backoff {
     pub retries: u32,
 }
 
+/// Waits 5, 10, 20 and then 40 seconds, past a whole minute, before giving
+/// up: for Platforms that limit calls per minute or publish no limit.
+pub(crate) const PAST_A_MINUTE: Backoff = Backoff {
+    first: Duration::from_secs(5),
+    retries: 4,
+};
+
 /// The outcome of one attempt.
 pub(crate) enum Attempt<T> {
     /// Final, whether it worked or not.

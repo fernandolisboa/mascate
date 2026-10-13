@@ -22,6 +22,7 @@ mod listing_copy;
 mod listings;
 mod low_stock;
 mod mercado_livre;
+mod monetizze;
 mod offers;
 mod opportunities;
 mod order_alerts;
@@ -61,7 +62,7 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_affiliate::CommissionSource;
 use mascate_integrations::{
-    Anthropic, Connection, Connections, Hotmart, MercadoLivre, ShopeeAffiliates,
+    Anthropic, Connection, Connections, Hotmart, MercadoLivre, Monetizze, ShopeeAffiliates,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -133,6 +134,12 @@ fn main() {
         secrets.clone(),
         Arc::new(SystemClock),
     ));
+    let monetizze = Arc::new(Monetizze::new(
+        &monetizze::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -194,6 +201,10 @@ fn main() {
                     (
                         Connection::ShopeeAffiliates,
                         shopee.clone() as Arc<dyn CommissionSource>,
+                    ),
+                    (
+                        Connection::Monetizze,
+                        monetizze.clone() as Arc<dyn CommissionSource>,
                     ),
                 ]));
                 cx.set_global(AppCatalog(started.catalog.clone()));
