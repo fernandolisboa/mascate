@@ -51,7 +51,7 @@ pub(crate) fn affiliate(cx: &App) -> Option<Arc<Affiliate>> {
 }
 
 /// Counts the changes to the Commissions, so what depends on them (the
-/// income Reminder) reads them again.
+/// income Reminder, the Painel) reads them again.
 #[derive(Default)]
 pub struct CommissionChanges(pub u64);
 
