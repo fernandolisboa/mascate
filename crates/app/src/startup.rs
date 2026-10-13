@@ -390,7 +390,7 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, ManualCommission,
+        AffiliatePlatform, CommissionFilter, CommissionStatus, ManualCommission, ManualPayout,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -650,6 +650,16 @@ mod tests {
         }
     }
 
+    fn sample_payout() -> ManualPayout {
+        ManualPayout {
+            platform: AffiliatePlatform::MercadoLivre,
+            paid_at: chrono::DateTime::parse_from_rfc3339("2026-10-10T00:00:00-03:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            amount: Money::new(rust_decimal::Decimal::new(1200, 2), Currency::Brl),
+        }
+    }
+
     fn sample_template() -> NewReplyTemplate {
         NewReplyTemplate {
             name: "Prazo de envio".into(),
@@ -820,8 +830,10 @@ mod tests {
                 .sync(&SampleAds)
                 .await
                 .unwrap();
-            Affiliate::new(database.clone(), clock.clone(), ids.clone())
-                .record_manual(sample_commission())
+            let affiliate = Affiliate::new(database.clone(), clock.clone(), ids.clone());
+            let commission = affiliate.record_manual(sample_commission()).await.unwrap();
+            affiliate
+                .record_payout(sample_payout(), &[commission.id])
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -1199,6 +1211,23 @@ mod tests {
                 assert_eq!(commissions.len(), 1, "{name}");
                 assert_eq!(commissions[0].amount, sample_commission().amount, "{name}");
                 assert!(commissions[0].manual, "{name}");
+                // Payouts arrived after 0.2.0 too.
+                let ever = chrono::DateTime::<chrono::Utc>::MIN_UTC
+                    ..chrono::DateTime::<chrono::Utc>::MAX_UTC;
+                if affiliate.payouts(ever.clone()).await.unwrap().is_empty() {
+                    affiliate
+                        .record_payout(sample_payout(), &[commissions[0].id])
+                        .await
+                        .unwrap();
+                }
+                let payouts = affiliate.payouts(ever).await.unwrap();
+                assert_eq!(payouts.len(), 1, "{name}");
+                assert_eq!(payouts[0].covers.len(), 1, "{name}");
+                assert_eq!(
+                    payouts[0].difference(),
+                    Money::new(rust_decimal::Decimal::new(-40, 2), Currency::Brl),
+                    "{name}"
+                );
             });
         }
     }

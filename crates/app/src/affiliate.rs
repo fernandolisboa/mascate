@@ -3,8 +3,8 @@
 //! per currency, reversals highlighted and cancelled sales listed apart,
 //! and the form to record a Commission by hand for Platforms without an API
 //! or a file. The Commissions Sync (#78) reads each connected Platform at
-//! start, every hour and on "Sincronizar agora". The rules live in
-//! Affiliate (ADR 0030).
+//! start, every hour and on "Sincronizar agora". Below them, the Payouts
+//! (#79). The rules live in Affiliate (ADR 0030).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +37,7 @@ use crate::forms::{Outcome, amount_text, day_text, input, notice, parse_day};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
+use crate::payouts::{PayoutsChanged, PayoutsSection};
 use crate::sales::{Period, day_start};
 
 /// The app's Commissions; absent when the database did not open.
@@ -139,7 +140,7 @@ pub fn finished(outcomes: Vec<SyncOutcome>, cx: &mut App) {
         outcome
             .result
             .as_ref()
-            .is_ok_and(|sync| sync.recorded.added + sync.recorded.changed > 0)
+            .is_ok_and(AffiliateSync::changed_anything)
     });
     let syncs = cx.default_global::<CommissionSyncs>();
     syncs.running = false;
@@ -176,14 +177,19 @@ fn sync_failure(platform: AffiliatePlatform, error: &AffiliateError) -> String {
     }
 }
 
-/// "Hotmart: 2 novas e 1 mudou de status".
+/// "Hotmart: 2 novas e 1 mudou de status", "Eduzz: nada novo, 1 repasse novo".
 fn synced_text(outcomes: &[SyncOutcome]) -> String {
     outcomes
         .iter()
         .filter_map(|outcome| {
             let sync = outcome.result.as_ref().ok()?;
+            let payouts = match sync.payouts.added + sync.payouts.changed {
+                0 => String::new(),
+                1 => ", 1 repasse novo ou mudado".into(),
+                count => format!(", {count} repasses novos ou mudados"),
+            };
             Some(format!(
-                "{}: {}",
+                "{}: {}{payouts}",
                 outcome.platform.name(),
                 recorded_text(&sync.recorded)
             ))
@@ -231,9 +237,9 @@ const LISTED: [CommissionStatus; 4] = [
     CommissionStatus::Reversed,
 ];
 
-/// One Platform in the form's picker.
+/// One Platform in a form's picker.
 #[derive(Clone)]
-struct PlatformChoice {
+pub(crate) struct PlatformChoice {
     value: AffiliatePlatform,
     title: SharedString,
 }
@@ -250,10 +256,10 @@ impl SearchableListItem for PlatformChoice {
     }
 }
 
-type PlatformSelect = Entity<SelectState<SearchableVec<PlatformChoice>>>;
+pub(crate) type PlatformSelect = Entity<SelectState<SearchableVec<PlatformChoice>>>;
 
-/// Platforms without an API or a file come first: they are why the form
-/// exists.
+/// Platforms without an API or a file come first: they are why the forms
+/// exist.
 const FORM_PLATFORMS: [AffiliatePlatform; 9] = [
     AffiliatePlatform::MercadoLivre,
     AffiliatePlatform::Magalu,
@@ -265,6 +271,22 @@ const FORM_PLATFORMS: [AffiliatePlatform; 9] = [
     AffiliatePlatform::Eduzz,
     AffiliatePlatform::Other,
 ];
+
+/// A picker of the Platforms, the first one picked.
+pub(crate) fn platform_select<V: 'static>(
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> PlatformSelect {
+    let choices = SearchableVec::new(
+        FORM_PLATFORMS
+            .map(|value| PlatformChoice {
+                value,
+                title: value.name().into(),
+            })
+            .to_vec(),
+    );
+    cx.new(|cx| SelectState::new(choices, Some(IndexPath::new(0)), window, cx))
+}
 
 /// What one read of the screen brings.
 struct Snapshot {
@@ -299,24 +321,26 @@ pub struct AffiliateScreen {
     reads: u64,
     form: Option<Outcome>,
     outcome: Option<Outcome>,
+    payouts: Entity<PayoutsSection>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl AffiliateScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let choices = SearchableVec::new(
-            FORM_PLATFORMS
-                .map(|value| PlatformChoice {
-                    value,
-                    title: value.name().into(),
-                })
-                .to_vec(),
-        );
-        let platform = cx.new(|cx| SelectState::new(choices, Some(IndexPath::new(0)), window, cx));
+        let platform = platform_select(window, cx);
         let sold_on = input("dd/mm/aaaa", window, cx);
         sold_on.update(cx, |field, cx| field.set_value(today(), window, cx));
-        // A Sync in the background brings Commissions this screen has not read.
-        let subscriptions = vec![cx.observe_global_in::<CommissionSyncs>(window, Self::refresh)];
+        let payouts = cx.new(|cx| PayoutsSection::new(window, cx));
+        let subscriptions = vec![
+            // A Sync in the background brings Commissions this screen has not read.
+            cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
+            // A Payout recorded or deleted changes what is paid.
+            cx.subscribe_in(
+                &payouts,
+                window,
+                |this, _, _: &PayoutsChanged, window, cx| this.read_commissions(window, cx),
+            ),
+        ];
         let mut screen = Self {
             period: Period::ThisMonth,
             status: None,
@@ -337,14 +361,23 @@ impl AffiliateScreen {
             reads: 0,
             form: None,
             outcome: None,
+            payouts,
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
         screen
     }
 
-    /// Reads the Commissions again, as when the screen comes into view.
+    /// Reads the Commissions and the Payouts again, as when the screen
+    /// comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.read_commissions(window, cx);
+        let paid = self.period.range(Local::now().date_naive());
+        self.payouts
+            .update(cx, |payouts, cx| payouts.refresh(paid, window, cx));
+    }
+
+    fn read_commissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(None) }, |_, _: (), _, _| {});
     }
 
@@ -916,6 +949,9 @@ impl AffiliateScreen {
         if let Some(tracking) = &commission.tracking {
             facts.push(format!("marcação {tracking}"));
         }
+        if commission.payout.is_some() {
+            facts.push("coberta por um repasse".into());
+        }
         // Infoproduct Programs are the product itself: naming both repeats it.
         let program = if commission.program_name == commission.platform.name()
             || commission.program_name == commission.product
@@ -924,7 +960,8 @@ impl AffiliateScreen {
         } else {
             format!("{} · ", commission.program_name)
         };
-        let actions = commission.manual.then(|| {
+        // One a Payout covers changes only after that Payout is deleted.
+        let actions = (commission.manual && commission.payout.is_none()).then(|| {
             let button = |name: &'static str, label: &'static str| {
                 Button::new(SharedString::from(format!("{name}-{id}")))
                     .label(label)
@@ -1062,6 +1099,20 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
              plataforma."
                 .into()
         }
+        AffiliateError::Covered => {
+            "Esta comissão está num repasse: exclua o repasse antes de mudá-la.".into()
+        }
+        AffiliateError::NoSuchPayout => "Esse repasse mudou; a lista foi atualizada.".into(),
+        AffiliateError::NotManualPayout => {
+            "Só repasses registrados à mão podem ser excluídos; os outros seguem a plataforma."
+                .into()
+        }
+        AffiliateError::NoPayoutAmount => "Digite o valor do repasse, maior que zero.".into(),
+        AffiliateError::NotPayable => {
+            "Uma das comissões escolhidas já não está aprovada ou entrou em outro repasse; \
+             proponha de novo."
+                .into()
+        }
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
         AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
@@ -1136,6 +1187,7 @@ impl Render for AffiliateScreen {
             );
         }
         parts.content.push(self.render_form(cx));
+        parts.content.push(self.payouts.clone().into_any_element());
         layout::screen(parts, cx)
     }
 }

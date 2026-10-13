@@ -164,7 +164,7 @@ pub struct ReportedConversion {
 }
 
 /// A transfer of money from a Platform to the owner, as the Platform
-/// reports it. Recorded by the Payouts slice (#79).
+/// reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportedPayout {
     /// What makes it unique on the Platform.

@@ -28,6 +28,7 @@ mod ordered_saves;
 mod orders;
 mod palette;
 mod parts;
+mod payouts;
 mod preferences;
 mod pricing;
 mod products;

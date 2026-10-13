@@ -2,7 +2,8 @@
 //! report in each Sync, or by the owner by hand, through one path with one
 //! rule, the Platform's natural key (ADR 0030). Each status change is kept
 //! with the time it was seen; nothing is deleted because a Platform stopped
-//! reporting it.
+//! reporting it. A Commission a Payout covers stays paid while the
+//! Platform still calls it approved (#79).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -129,8 +130,11 @@ pub struct Commission {
     /// else when the app saw it.
     pub status_since: Timestamp,
     pub tracking: Option<String>,
-    /// Recorded by the owner, who may edit or delete it.
+    /// Recorded by the owner, who may edit or delete it while no Payout
+    /// covers it.
     pub manual: bool,
+    /// The Payout that covers it, if one does.
+    pub payout: Option<RecordId>,
 }
 
 /// One status a Commission took.
@@ -176,6 +180,15 @@ pub struct AffiliateSync {
     /// The time asked of the Platform.
     pub window: Range<Timestamp>,
     pub recorded: Recorded,
+    /// The Payouts the Platform reported, on Platforms that report them.
+    pub payouts: Recorded,
+}
+
+impl AffiliateSync {
+    /// Something new or changed came in.
+    pub fn changed_anything(&self) -> bool {
+        self.recorded.added + self.recorded.changed + self.payouts.added + self.payouts.changed > 0
+    }
 }
 
 /// The last Sync of a Platform that went through.
@@ -193,6 +206,16 @@ pub enum AffiliateError {
     NotFound,
     #[error("only a Commission recorded by hand can be changed")]
     NotManual,
+    #[error("a Commission a Payout covers changes only after that Payout is deleted")]
+    Covered,
+    #[error("no such Payout")]
+    NoSuchPayout,
+    #[error("only a Payout recorded by hand can be deleted")]
+    NotManualPayout,
+    #[error("a Payout is more than zero")]
+    NoPayoutAmount,
+    #[error("a Payout covers approved Commissions of its Platform and currency, once")]
+    NotPayable,
     #[error("the product is missing")]
     NoProduct,
     #[error("a Commission is never negative")]
@@ -213,26 +236,28 @@ impl From<StoredValueError> for AffiliateError {
 }
 
 /// A Conversion as kept, to compare a new reading against.
-struct Kept {
+pub(crate) struct Kept {
     conversion: RecordId,
-    commission: RecordId,
+    pub(crate) commission: RecordId,
     manual: bool,
-    platform: String,
+    pub(crate) platform: String,
     program: RecordId,
     product: String,
     sold_at: String,
     tracking: Option<String>,
     raw: Option<String>,
-    amount: Money,
-    status: CommissionStatus,
+    pub(crate) amount: Money,
+    pub(crate) status: CommissionStatus,
     platform_status: String,
+    /// A Payout covers it.
+    pub(crate) covered: bool,
 }
 
 /// The owner's affiliate Programs, Conversions and Commissions.
 pub struct Affiliate {
-    database: Arc<Database>,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
+    pub(crate) database: Arc<Database>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) ids: Arc<dyn IdGenerator>,
 }
 
 impl Affiliate {
@@ -248,8 +273,9 @@ impl Affiliate {
     /// time a status still changes there, until now; the first time, as far
     /// back as it lets. Each Conversion is recorded by its natural key:
     /// read again, it changes nothing; changed, the same row is updated and
-    /// a new status goes to the history. Nothing is kept unless everything
-    /// was read.
+    /// a new status goes to the history. The Payouts the Platform reports
+    /// are kept the same way, by their own key. Nothing is kept unless
+    /// everything was read.
     pub async fn sync(
         &self,
         source: &dyn CommissionSource,
@@ -263,6 +289,7 @@ impl Affiliate {
         };
         let window = from..started;
         let reported = source.conversions(window.clone())?;
+        let reported_payouts = source.payouts(window.clone())?;
 
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection
@@ -270,6 +297,9 @@ impl Affiliate {
             .await?;
         let recorded = self
             .record_on(&transaction, platform, &reported, false)
+            .await?;
+        let payouts = self
+            .record_reported_payouts(&transaction, platform, &reported_payouts)
             .await?;
         transaction
             .execute(
@@ -292,6 +322,7 @@ impl Affiliate {
             platform,
             window,
             recorded,
+            payouts,
         })
     }
 
@@ -337,7 +368,8 @@ impl Affiliate {
     }
 
     /// Changes a Commission the owner recorded by hand; one read from a
-    /// Platform is the Platform's to change.
+    /// Platform is the Platform's to change, and one a Payout covers waits
+    /// for that Payout to be deleted.
     pub async fn edit_manual(
         &self,
         commission: RecordId,
@@ -353,6 +385,9 @@ impl Affiliate {
         if !kept.manual {
             return Err(AffiliateError::NotManual);
         }
+        if kept.covered {
+            return Err(AffiliateError::Covered);
+        }
         let reported = manual_reading(&manual, String::new())?;
         self.write(&transaction, manual.platform, &reported, true, Some(kept))
             .await?;
@@ -360,7 +395,7 @@ impl Affiliate {
         self.commission(commission).await
     }
 
-    /// Deletes a Commission the owner recorded by hand.
+    /// Deletes a Commission the owner recorded by hand and no Payout covers.
     pub async fn delete_manual(&self, commission: RecordId) -> Result<(), AffiliateError> {
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection
@@ -371,6 +406,9 @@ impl Affiliate {
             .ok_or(AffiliateError::NotFound)?;
         if !kept.manual {
             return Err(AffiliateError::NotManual);
+        }
+        if kept.covered {
+            return Err(AffiliateError::Covered);
         }
         let now = stored(self.clock.now());
         transaction
@@ -614,12 +652,21 @@ impl Affiliate {
                 ],
             )
             .await?;
-            self.add_change(on, commission, reported, now).await?;
+            self.add_change(on, commission, reported.status, reported, now)
+                .await?;
             return Ok(Write::Added);
         };
 
+        // A Payout is proof the money came: the Platform calling it approved
+        // again does not undo that, a reversal does.
+        let status = match reported.status {
+            CommissionStatus::Pending | CommissionStatus::Approved if kept.covered => {
+                CommissionStatus::Paid
+            }
+            status => status,
+        };
         let status_changed =
-            kept.status != reported.status || kept.platform_status != reported.platform_status;
+            kept.status != status || kept.platform_status != reported.platform_status;
         let same = kept.platform == platform.code()
             && kept.program == program
             && kept.product == reported.product
@@ -656,7 +703,7 @@ impl Affiliate {
             params![
                 reported.commission.amount().to_string(),
                 reported.commission.currency().code(),
-                reported.status.code(),
+                status.code(),
                 reported.platform_status.clone(),
                 i64::from(status_changed),
                 stored(reported.status_changed_at.unwrap_or(now)),
@@ -666,7 +713,8 @@ impl Affiliate {
         )
         .await?;
         if status_changed {
-            self.add_change(on, kept.commission, reported, now).await?;
+            self.add_change(on, kept.commission, status, reported, now)
+                .await?;
         }
         Ok(Write::Changed)
     }
@@ -675,6 +723,7 @@ impl Affiliate {
         &self,
         on: &Connection,
         commission: RecordId,
+        status: CommissionStatus,
         reported: &ReportedConversion,
         now: Timestamp,
     ) -> Result<(), AffiliateError> {
@@ -686,7 +735,7 @@ impl Affiliate {
             params![
                 self.ids.next_id().to_string(),
                 commission.to_string(),
-                reported.status.code(),
+                status.code(),
                 reported.platform_status.clone(),
                 stored(now),
                 reported.status_changed_at.map(stored)
@@ -737,14 +786,17 @@ enum Write {
     Unchanged,
 }
 
-const COMMISSION_QUERY: &str = "SELECT c.id, v.platform, p.id, p.name, v.product, v.sold_at,
-         c.amount, c.currency, c.status, c.platform_status, c.status_since, v.tracking, v.manual
+pub(crate) const COMMISSION_QUERY: &str =
+    "SELECT c.id, v.platform, p.id, p.name, v.product, v.sold_at,
+         c.amount, c.currency, c.status, c.platform_status, c.status_since, v.tracking, v.manual,
+         (SELECT l.payout_id FROM affiliate_payout_commissions l
+          WHERE l.commission_id = c.id AND l.deleted_at IS NULL)
      FROM affiliate_commissions c
      JOIN affiliate_conversions v ON v.id = c.conversion_id
      JOIN affiliate_programs p ON p.id = v.program_id
      WHERE c.deleted_at IS NULL AND v.deleted_at IS NULL";
 
-fn commission_from(row: &libsql::Row) -> Result<Commission, AffiliateError> {
+pub(crate) fn commission_from(row: &libsql::Row) -> Result<Commission, AffiliateError> {
     Ok(Commission {
         id: row.id_at(0)?,
         platform: platform_at(row, 1)?,
@@ -758,10 +810,11 @@ fn commission_from(row: &libsql::Row) -> Result<Commission, AffiliateError> {
         status_since: row.time_at(10)?,
         tracking: row.get(11)?,
         manual: row.get::<i64>(12)? == 1,
+        payout: row.optional_id_at(13)?,
     })
 }
 
-async fn read_stored(
+pub(crate) async fn read_stored(
     on: &Connection,
     condition: &str,
     params: impl libsql::params::IntoParams,
@@ -770,7 +823,9 @@ async fn read_stored(
         .query(
             &format!(
                 "SELECT v.id, c.id, v.manual, v.platform, v.program_id, v.product, v.sold_at,
-                     v.tracking, v.raw, c.amount, c.currency, c.status, c.platform_status
+                     v.tracking, v.raw, c.amount, c.currency, c.status, c.platform_status,
+                     EXISTS (SELECT 1 FROM affiliate_payout_commissions l
+                             WHERE l.commission_id = c.id AND l.deleted_at IS NULL)
                  FROM affiliate_commissions c
                  JOIN affiliate_conversions v ON v.id = c.conversion_id
                  WHERE c.deleted_at IS NULL AND v.deleted_at IS NULL AND {condition}"
@@ -794,6 +849,7 @@ async fn read_stored(
         amount: Money::new(row.decimal_at(9)?, row.currency_at(10)?),
         status: status_at(&row, 11)?,
         platform_status: row.get(12)?,
+        covered: row.get::<i64>(13)? == 1,
     }))
 }
 
@@ -833,7 +889,7 @@ fn manual_reading(
     })
 }
 
-fn platform_at(row: &libsql::Row, at: i32) -> Result<AffiliatePlatform, AffiliateError> {
+pub(crate) fn platform_at(row: &libsql::Row, at: i32) -> Result<AffiliatePlatform, AffiliateError> {
     let code = row.get::<String>(at)?;
     AffiliatePlatform::from_code(&code).ok_or(AffiliateError::Unreadable(code))
 }
