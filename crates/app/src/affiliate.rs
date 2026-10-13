@@ -150,7 +150,7 @@ impl AffiliateScreen {
             listed: Vec::new(),
             cancelled: Vec::new(),
             platform,
-            program: input("Igual à Platform", window, cx),
+            program: input("Igual à plataforma", window, cx),
             product: input("Fone Bluetooth", window, cx),
             sold_on,
             amount: input("12,40", window, cx),
@@ -266,7 +266,7 @@ impl AffiliateScreen {
             .platform
             .read(cx)
             .selected_value()
-            .ok_or("Escolha a Platform.")?;
+            .ok_or("Escolha a plataforma.")?;
         let product = self.product.read(cx).value().trim().to_owned();
         if product.is_empty() {
             return Err("Digite o produto da venda.");
@@ -543,7 +543,7 @@ impl AffiliateScreen {
                 "Lançar comissão"
             }))
             .child(div().text_sm().text_color(t.text2).child(
-                "Para Platforms sem API nem arquivo, como Mercado Livre e Magalu. Só as \
+                "Para plataformas sem API nem arquivo, como Mercado Livre e Magalu. Só as \
                  comissões lançadas à mão podem ser editadas.",
             ))
             .child(
@@ -552,7 +552,7 @@ impl AffiliateScreen {
                     .gap_3()
                     .items_end()
                     .child(div().w(px(180.)).child(field(
-                        "Platform",
+                        "Plataforma",
                         Select::new(&self.platform).small().into_any_element(),
                     )))
                     .child(div().w(px(200.)).child(field(
@@ -640,7 +640,7 @@ impl AffiliateScreen {
             ),
         ];
         if !commission.platform_status.is_empty() {
-            facts.push(format!("na Platform: {}", commission.platform_status));
+            facts.push(format!("na plataforma: {}", commission.platform_status));
         }
         if let Some(tracking) = &commission.tracking {
             facts.push(format!("marcação {tracking}"));
@@ -785,12 +785,12 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
         AffiliateError::NotFound => "Essa comissão mudou; a lista foi atualizada.".into(),
         AffiliateError::NotManual => {
             "Só comissões lançadas à mão podem ser editadas ou excluídas; as outras seguem a \
-             Platform."
+             plataforma."
                 .into()
         }
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
-        AffiliateError::Platform(error) => format!("A Platform não respondeu: {error}"),
+        AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
         AffiliateError::Unreadable(_) | AffiliateError::Sql(_) => {
             format!("Não consegui ler ou gravar as comissões no banco: {error}")
         }
@@ -823,8 +823,8 @@ impl Render for AffiliateScreen {
                 .child(kit::section_heading(commissions_text(self.listed.len())))
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma comissão neste período. Lance abaixo as de Platforms sem \
-                         API; as das outras chegam com a Connection de cada uma.",
+                        "Nenhuma comissão neste período. Lance abaixo as de plataformas sem \
+                         API; as das outras chegam pela conexão de cada uma.",
                     ))
                 })
                 .children(listed)
