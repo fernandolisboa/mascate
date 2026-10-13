@@ -2,6 +2,7 @@
 
 mod commissions;
 mod payouts;
+mod report;
 mod source;
 mod totals;
 
@@ -10,6 +11,7 @@ pub use commissions::{
     LastSync, ManualCommission, Recorded, StatusChange,
 };
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
+pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedPayout,
     ReportedProgram,
