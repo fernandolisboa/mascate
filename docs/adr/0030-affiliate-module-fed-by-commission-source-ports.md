@@ -20,7 +20,7 @@ A fase 2 começa pelo épico #29: as Commissions de Hotmart, Shopee Afiliados, K
 
 9. **O Promotion Channel chega pela marcação do link.** A Conversion guarda a marcação que a Platform devolve (os `subIds` da Shopee, o `sck`/`src` da Hotmart, o tracking id da Amazon). O Promotion Channel é do Marketing (PRD) e as Affiliate Links, que ligam uma marcação a um Promotion Channel, são do épico #30; até lá o painel agrupa pela própria marcação, com "sem marcação" quando não há. Nenhuma dependência do Affiliate ao Marketing: quem monta o painel por Promotion Channel recebe a correspondência do app.
 
-10. **Uma Connection por conta de Platform, com o guia dela.** Hotmart, Kiwify, Monetizze e Eduzz viram novas `Connection`, cada uma com o guia de chaves no mesmo `match` do ADR 0029, os segredos no cofre (ADR 0008) e as variáveis de desenvolvimento de `docs/credentials.html`. A Shopee Afiliados usa a Connection que já existe: as mesmas chaves servem à busca de ofertas e às conversões. Amazon, Mercado Livre e Magalu não têm Connection na fase 2. Os testes não usam chave nem chamada paga: o Affiliate testa com uma porta falsa em memória e banco temporário real; cada adapter, contra o `FakeHttpServer` com fixtures escritas a partir da documentação, com o README da pasta dizendo isso. O que só uma conta real confirma vai para o regression pass da fase 2.
+10. **Uma Connection por conta de Platform, com o guia dela.** Hotmart, Kiwify, Monetizze e Eduzz viram novas `Connection`, cada uma com o guia de chaves no mesmo `match` do ADR 0029, os segredos no cofre (ADR 0008) e as variáveis de desenvolvimento de `docs/credentials.html`. A Shopee Afiliados usa a Connection que já existe: as mesmas chaves servem à busca de ofertas e às conversões. Amazon, Mercado Livre e Magalu não têm Connection na fase 2. Os testes não usam chave nem chamada paga: o Affiliate testa com uma porta falsa em memória e banco temporário real; cada adapter, contra o `FakeHttpServer` com fixtures escritas a partir da documentação, com o README da pasta dizendo isso. O que só uma conta real confirma vai para o regression pass da fase 2 (#76).
 
 ## Considered Options
 
@@ -36,8 +36,8 @@ A fase 2 começa pelo épico #29: as Commissions de Hotmart, Shopee Afiliados, K
 
 ## Consequences
 
-- O épico #29 vira fatias verticais (sub-issues): o núcleo do Affiliate com lançamento à mão e a tela Afiliação, depois uma fatia por Platform, Payouts, o painel de comissões e a comparação entre revender e divulgar.
+- O épico #29 vira fatias verticais, nesta ordem: o núcleo do Affiliate com lançamento à mão e a tela Afiliação (#77), Hotmart (#78), Payouts (#79), Shopee Afiliados (#80), o painel de comissões (#81), Monetizze (#82), o relatório da Amazon (#83), Kiwify (#84), Eduzz (#85) e a comparação entre revender e divulgar (#86).
 - O Affiliate ganha migrações próprias, `FLAGS` e `REMINDERS`: as comissões de afiliado são renda tributável, e um Reminder fiscal aparece enquanto houver Commission aprovada nos últimos 12 meses, sem bloquear nada (ADR 0009).
 - O app ganha a tela Afiliação e, em Configurações › Conexões, uma Connection por Platform nova; a seção da fase 2 de `docs/credentials.html` passa a ser gerada à medida que cada Connection entra.
 - O Painel do negócio (ADR 0026) recebe do app o total de Commissions do período, sem aresta nova.
-- Os itens marcados [I] e [T] de cada Platform deixam de travar o adapter: ele é construído pela documentação atual e a conferência com conta real vai para o regression pass da fase 2.
+- Os itens marcados [I] e [T] de cada Platform deixam de travar o adapter: ele é construído pela documentação atual e a conferência com conta real vai para o regression pass da fase 2 (#76).
