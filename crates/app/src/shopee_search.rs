@@ -441,14 +441,16 @@ impl ShopeeSearch {
                         )
                 }))
                 .child(
-                    Button::new("close-shopee-link")
-                        .label("Fechar")
-                        .ghost()
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.link = None;
-                            cx.notify();
-                        })),
+                    h_flex().child(
+                        Button::new("close-shopee-link")
+                            .label("Fechar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.link = None;
+                                cx.notify();
+                            })),
+                    ),
                 )
                 .into_any_element(),
         )
