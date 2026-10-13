@@ -124,6 +124,7 @@ Critério: só entra o que o dono, sem saber marketing, usa toda semana e que me
 | Encurtador/redirect próprio em links Shopee | Proibido alterar o link de afiliado (2.2) [C]; se redirect simples conta como alteração [I] | 3 | **Desativado** até confirmar |
 | Marcação "tráfego de busca pago" em programa Shopee | 4.3(i) [C] | 2 | **Desativado**; o app avisa ao registrar campanha |
 | Palavra-chave com marca (amazon, Shopee, Hotmart) em campanha registrada | Amazon, Shopee, Hotmart proíbem [C] | 2 | **Bloqueio por flag** com aviso |
+| Preço digitado à mão em Offer Post da Amazon | A política do Associados BR (14/04/2026) só deixa exibir preço vindo de link fornecido pela Amazon ou da API de produtos [C] | 2 | **Desativado**; o post da Amazon sai sem preço (ADR 0031) |
 | Resposta automática de perguntas no ML sem confirmação | Não proibido; risco de resposta errada (flag de produto) | 1 | Desativado |
 | Autocompra pelo próprio link | Fraude, não funcionalidade | — | Não construído |
 
