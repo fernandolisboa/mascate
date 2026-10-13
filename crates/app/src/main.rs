@@ -4,6 +4,7 @@
 mod ads;
 mod appearance;
 mod backups;
+mod brand;
 mod catalog;
 mod connections;
 mod credential_guides;
@@ -146,9 +147,9 @@ fn main() {
         .as_ref()
         .map(|problem| SharedString::from(problem.message.clone()));
 
-    // gpui-kit's default icon set; without it icons draw nothing.
+    // gpui-kit's default icon set and the logo; without them icons draw nothing.
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(brand::Assets)
         .run(move |cx| {
             // Windows shows system notifications only for an app with an
             // identity; the installer's identifier is that identity.

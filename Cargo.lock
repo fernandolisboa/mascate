@@ -4223,8 +4223,10 @@ name = "mascate"
 version = "0.2.0"
 dependencies = [
  "chrono",
+ "embed-resource",
  "futures",
  "gpui-kit",
+ "image",
  "mascate-catalog",
  "mascate-commerce",
  "mascate-finance",
