@@ -27,6 +27,7 @@ fn commission(amount: Money, status: CommissionStatus) -> Commission {
         manual: false,
         payout: None,
         linked_product: None,
+        channel: None,
     }
 }
 

@@ -369,9 +369,10 @@ fn any_commission() -> impl Strategy<Value = Commission> {
         0u128..4,
         prop::sample::select(vec!["Curso", "Fone", "Air fryer"]),
         prop::option::of(prop::sample::select(vec!["instagram", "telegram", "", " "])),
+        prop::option::of(0u128..3),
     )
         .prop_map(
-            |(currency, status, units, scale, platform, program, product, tracking)| {
+            |(currency, status, units, scale, platform, program, product, tracking, channel)| {
                 let at = noon();
                 Commission {
                     id: RecordId::from_u128(1),
@@ -388,6 +389,7 @@ fn any_commission() -> impl Strategy<Value = Commission> {
                     manual: false,
                     payout: None,
                     linked_product: None,
+                    channel: channel.map(RecordId::from_u128),
                 }
             },
         )
@@ -447,6 +449,25 @@ proptest! {
             prop_assert_eq!(added_up(&report.by_program, report.currency), expected);
             prop_assert_eq!(added_up(&report.by_product, report.currency), expected);
             prop_assert_eq!(added_up(&report.by_tracking, report.currency), expected);
+            prop_assert_eq!(added_up(&report.by_channel, report.currency), expected);
+        }
+    }
+
+    #[test]
+    fn naming_the_channels_keeps_the_sum_and_the_sales_without_a_channel_last(
+        commissions in prop::collection::vec(any_commission(), 0..40),
+        order in any_order(),
+        names in prop::collection::vec("[a-c]{0,2}", 3),
+    ) {
+        for mut report in CommissionReport::of(&commissions, order) {
+            let expected = (report.totals, report.commissions);
+            let none_last = |report: &CommissionReport| {
+                report.by_channel.iter().skip_while(|g| g.of.is_some()).all(|g| g.of.is_none())
+            };
+            prop_assert!(none_last(&report));
+            report.arrange_channels(order, |id| names[id.as_u128() as usize].clone());
+            prop_assert!(none_last(&report));
+            prop_assert_eq!(added_up(&report.by_channel, report.currency), expected);
         }
     }
 

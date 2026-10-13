@@ -140,6 +140,10 @@ pub struct Commission {
     pub payout: Option<RecordId>,
     /// The Catalog's Product the owner linked its product to (#86).
     pub linked_product: Option<RecordId>,
+    /// The Promotion Channel of the Affiliate Link whose Platform and
+    /// marking match the tracking (#101). Read on each query, so a sale
+    /// recorded before its link was created joins the channel once it is.
+    pub channel: Option<RecordId>,
 }
 
 /// A Conversion as a Platform last reported it.
@@ -897,7 +901,12 @@ pub(crate) const COMMISSION_QUERY: &str =
          c.amount, c.currency, c.status, c.platform_status, c.status_since, v.tracking, v.manual,
          (SELECT l.payout_id FROM affiliate_payout_commissions l
           WHERE l.commission_id = c.id AND l.deleted_at IS NULL),
-         k.catalog_product_id
+         k.catalog_product_id,
+         -- Deleted links too: their marking stays with their channel (#99).
+         (SELECT l.channel_id FROM affiliate_links l
+          JOIN affiliate_programs q ON q.id = l.program_id
+          WHERE q.platform = v.platform AND l.tag = lower(trim(v.tracking))
+          LIMIT 1)
      FROM affiliate_commissions c
      JOIN affiliate_conversions v ON v.id = c.conversion_id
      JOIN affiliate_programs p ON p.id = v.program_id
@@ -921,6 +930,7 @@ pub(crate) fn commission_from(row: &libsql::Row) -> Result<Commission, Affiliate
         manual: row.get::<i64>(12)? == 1,
         payout: row.optional_id_at(13)?,
         linked_product: row.optional_id_at(14)?,
+        channel: row.optional_id_at(15)?,
     })
 }
 

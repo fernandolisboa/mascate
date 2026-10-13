@@ -12,7 +12,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, ClipboardItem, Entity, Global, Subscription, Window, div, px};
+use gpui_kit::{
+    AnyElement, App, ClipboardItem, Entity, EventEmitter, Global, Subscription, Window, div, px,
+};
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform, CreatedLink, LinkTagger,
     NewAffiliateLink, Program, PromotedProduct, Promotion, Reach, ReportedProgram, RuleWarning,
@@ -151,6 +153,9 @@ async fn read(affiliate: &Affiliate) -> Result<Snapshot, AffiliateError> {
     })
 }
 
+/// A link was created: the sales carrying its marking join its channel.
+pub struct AffiliateLinkCreated;
+
 pub struct AffiliateLinksSection {
     links: Vec<AffiliateLink>,
     programs: Vec<Program>,
@@ -172,6 +177,8 @@ pub struct AffiliateLinksSection {
     outcome: Option<Outcome>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<AffiliateLinkCreated> for AffiliateLinksSection {}
 
 impl AffiliateLinksSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -384,6 +391,9 @@ impl AffiliateLinksSection {
                 }
                 this.pasted
                     .update(cx, |field, cx| field.set_value("", window, cx));
+                if !created.existed {
+                    cx.emit(AffiliateLinkCreated);
+                }
             },
         );
     }
