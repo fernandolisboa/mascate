@@ -11,8 +11,8 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliatePlatform, COMMISSION_INCOME, CommissionFilter,
-    CommissionSource, CommissionStatus, INCOME_WINDOW_DAYS, MIGRATIONS, ManualCommission, Recorded,
-    ReportedConversion, ReportedProgram,
+    CommissionSource, CommissionStatus, INCOME_WINDOW_DAYS, MIGRATIONS, ManualCommission, Reading,
+    Recorded, ReportedConversion, ReportedProgram,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, PlatformError, Timestamp};
@@ -578,6 +578,149 @@ fn a_platform_reading_never_touches_a_commission_recorded_by_hand() {
 
         assert_eq!(fixture.sync().await.unchanged, 1);
         assert_eq!(fixture.all().await, [recorded]);
+    });
+}
+
+#[test]
+fn a_file_imports_through_the_same_natural_key_rule_as_a_sync() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let file = vec![
+            sale("A-1", CommissionStatus::Approved, "Enviado"),
+            sale("A-2", CommissionStatus::Approved, "Enviado"),
+        ];
+
+        let added = fixture
+            .affiliate
+            .import(AffiliatePlatform::Amazon, &file)
+            .await
+            .unwrap();
+        let again = fixture
+            .affiliate
+            .import(AffiliatePlatform::Amazon, &file)
+            .await
+            .unwrap();
+        let returned = fixture
+            .affiliate
+            .import(
+                AffiliatePlatform::Amazon,
+                &[sale("A-1", CommissionStatus::Reversed, "Devolvido")],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            added,
+            Recorded {
+                added: 2,
+                changed: 0,
+                unchanged: 0
+            }
+        );
+        assert_eq!(
+            again,
+            Recorded {
+                added: 0,
+                changed: 0,
+                unchanged: 2
+            }
+        );
+        assert_eq!(
+            returned,
+            Recorded {
+                added: 0,
+                changed: 1,
+                unchanged: 0
+            }
+        );
+        let statuses: Vec<CommissionStatus> =
+            fixture.all().await.iter().map(|c| c.status).collect();
+        assert_eq!(statuses.len(), 2);
+        assert!(statuses.contains(&CommissionStatus::Reversed));
+        // Nothing marks it a Sync: Amazon was never synced.
+        assert_eq!(
+            fixture
+                .affiliate
+                .last_sync(AffiliatePlatform::Amazon)
+                .await
+                .unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn a_preview_counts_what_an_import_would_do_and_keeps_nothing() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let file = vec![sale("A-1", CommissionStatus::Approved, "Enviado")];
+        fixture
+            .affiliate
+            .import(AffiliatePlatform::Amazon, &file)
+            .await
+            .unwrap();
+        let before = fixture.all().await;
+
+        let preview = fixture
+            .affiliate
+            .preview_import(
+                AffiliatePlatform::Amazon,
+                &[
+                    sale("A-1", CommissionStatus::Reversed, "Devolvido"),
+                    sale("A-2", CommissionStatus::Approved, "Enviado"),
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            preview,
+            Recorded {
+                added: 1,
+                changed: 1,
+                unchanged: 0
+            }
+        );
+        assert_eq!(fixture.all().await, before);
+    });
+}
+
+#[test]
+fn the_readings_of_a_platform_are_what_it_reported_never_the_owners_hand() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        fixture
+            .affiliate
+            .import(
+                AffiliatePlatform::Amazon,
+                &[sale("A-1", CommissionStatus::Approved, "Enviado")],
+            )
+            .await
+            .unwrap();
+        fixture
+            .affiliate
+            .record_manual(ManualCommission {
+                platform: AffiliatePlatform::Amazon,
+                ..manual("Fone", CommissionStatus::Approved, brl("5"))
+            })
+            .await
+            .unwrap();
+        fixture
+            .hotmart
+            .reports(vec![sale("H-1", CommissionStatus::Approved, "APPROVED")]);
+        fixture.sync().await;
+
+        assert_eq!(
+            fixture
+                .affiliate
+                .readings(AffiliatePlatform::Amazon)
+                .await
+                .unwrap(),
+            [Reading {
+                key: "A-1".into(),
+                raw: r#"{"transaction":"A-1","status":"Enviado"}"#.into(),
+            }]
+        );
     });
 }
 

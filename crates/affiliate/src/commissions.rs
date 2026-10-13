@@ -137,6 +137,15 @@ pub struct Commission {
     pub payout: Option<RecordId>,
 }
 
+/// A Conversion as a Platform last reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reading {
+    /// Its natural key on the Platform.
+    pub key: String,
+    /// The Platform's answer for it, as the adapter kept it.
+    pub raw: String,
+}
+
 /// One status a Commission took.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusChange {
@@ -324,6 +333,69 @@ impl Affiliate {
             recorded,
             payouts,
         })
+    }
+
+    /// Records the Conversions read from a file the owner exported from
+    /// `platform`, in one transaction and by the same natural-key rule as a
+    /// Sync: importing the same file again changes nothing.
+    pub async fn import(
+        &self,
+        platform: AffiliatePlatform,
+        reported: &[ReportedConversion],
+    ) -> Result<Recorded, AffiliateError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let recorded = self
+            .record_on(&transaction, platform, reported, false)
+            .await?;
+        transaction.commit().await?;
+        Ok(recorded)
+    }
+
+    /// What [`Affiliate::import`] would do with `reported`, keeping nothing.
+    pub async fn preview_import(
+        &self,
+        platform: AffiliatePlatform,
+        reported: &[ReportedConversion],
+    ) -> Result<Recorded, AffiliateError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .await?;
+        let recorded = self
+            .record_on(&transaction, platform, reported, false)
+            .await?;
+        transaction.rollback().await?;
+        Ok(recorded)
+    }
+
+    /// Every Conversion read from `platform`, by its key, with the
+    /// Platform's answer as last read: what a file reader needs to know of
+    /// the files imported before.
+    pub async fn readings(
+        &self,
+        platform: AffiliatePlatform,
+    ) -> Result<Vec<Reading>, AffiliateError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT natural_key, raw FROM affiliate_conversions
+                 WHERE platform = ?1 AND manual = 0 AND deleted_at IS NULL
+                 ORDER BY sold_at, natural_key",
+                params![platform.code()],
+            )
+            .await?;
+        let mut readings = Vec::new();
+        while let Some(row) = rows.next().await? {
+            readings.push(Reading {
+                key: row.get(0)?,
+                raw: row.get::<Option<String>>(1)?.unwrap_or_default(),
+            });
+        }
+        Ok(readings)
     }
 
     /// The last Sync of `platform` that went through; `None` before the
