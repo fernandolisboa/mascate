@@ -448,6 +448,71 @@ fn the_suggestion_follows_the_fee_into_the_band_its_price_falls_in() {
 }
 
 #[test]
+fn a_price_caught_between_two_fee_bands_settles_where_the_higher_band_starts() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        // Below R$ 79 the channel adds R$ 6,25 to each sale; from R$ 79 the
+        // seller pays R$ 5 of shipping instead, less than that fixed fee.
+        *fx.channel.fee_bands.lock().unwrap() = vec![(brl("0"), fee("14", "6.25"))];
+        fx.channel.charges_from("79", fee("14", "0"));
+        let cheap_shipping = PriceAssumptions {
+            estimated_shipping: brl("5"),
+            ..assumptions()
+        };
+        let listed = fx.listed(vec![(priced("MLB1", "89.90"), Some(1))]).await;
+        fx.stock(1, 1, "42").await;
+
+        let suggestion = fx
+            .pricing
+            .suggest(listed[0].id, &fx.channel, cheap_shipping)
+            .await
+            .unwrap();
+
+        // Below R$ 79 it takes (R$ 42 + R$ 6,25) / 0,6 = R$ 80,42, a price
+        // past R$ 79; from R$ 79 it takes (R$ 42 + R$ 5) / 0,6 = R$ 78,34,
+        // a price under it. R$ 79 is the first that reaches the target.
+        assert_eq!(suggestion.price, brl("79"));
+        assert_eq!(suggestion.suggested.sale_fee, fee("14", "0"));
+        assert_eq!(suggestion.suggested.shipping, brl("5"));
+        assert!(suggestion.suggested.reaches(percent("20")).unwrap());
+        let cent_less = PriceScenario {
+            price: brl("78.99"),
+            sale_fee: fee("14", "6.25"),
+            shipping: brl("0"),
+            ..suggestion.suggested
+        };
+        assert!(!cent_less.reaches(percent("20")).unwrap());
+    });
+}
+
+#[test]
+fn a_draft_caught_between_two_fee_bands_is_priced_where_the_higher_band_starts() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        *fx.channel.fee_bands.lock().unwrap() = vec![(brl("0"), fee("14", "6.25"))];
+        fx.channel.charges_from("79", fee("14", "0"));
+        let draft = fx.draft(1, &Publisher::default()).await;
+
+        let priced = fx
+            .pricing
+            .draft_price(
+                draft.id,
+                &fx.channel,
+                PriceAssumptions {
+                    estimated_shipping: brl("5"),
+                    ..assumptions()
+                },
+                Some(brl("42")),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(priced.suggested.price, brl("79"));
+        assert_eq!(priced.suggested.shipping, brl("5"));
+    });
+}
+
+#[test]
 fn variations_share_the_price_that_gives_each_its_target() {
     block_on(async {
         let fx = Fixture::new().await;
@@ -699,21 +764,34 @@ fn approving_the_suggestion_sends_its_price_to_the_channel() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(64))]
 
-    /// Whatever the cost, target and starting price, the suggestion reaches
-    /// the target with the fee and shipping that apply at it, and one cent
-    /// less does not.
+    /// Whatever the cost, target, starting price, shipping and fixed fee
+    /// below R$ 79, the suggestion reaches the target with the fee and
+    /// shipping that apply at it, and one cent less, with the fee and
+    /// shipping that apply there, does not.
     #[test]
     fn a_suggestion_gives_exactly_the_target_margin(
-        cost in 1i64..50_000,
+        // Half the costs land the price near the free shipping edge.
+        cost in prop_oneof![1i64..50_000, 3_000i64..6_500],
         target in 0i64..50,
         today in 100i64..100_000,
+        shipping in 0i64..3_000,
+        fixed in 0i64..1_000,
     ) {
         block_on(async {
             let fx = Fixture::new().await;
-            *fx.channel.fee_bands.lock().unwrap() = vec![(brl("0"), fee("12", "6.25"))];
-            fx.channel.charges_from("79", fee("14", "0"));
+            let below = SaleFee {
+                rate: percent("14"),
+                fixed: cents(Decimal::new(fixed, 2)),
+            };
+            let from_79 = fee("14", "0");
+            *fx.channel.fee_bands.lock().unwrap() = vec![(brl("0"), below)];
+            fx.channel.charges_from("79", from_79);
+            let assumptions = PriceAssumptions {
+                estimated_shipping: cents(Decimal::new(shipping, 2)),
+                ..assumptions()
+            };
             let target = Percentage::new(Decimal::from(target)).unwrap();
             fx.pricing.save_default_target_margin(target).await.unwrap();
             let listed = fx
@@ -727,21 +805,34 @@ proptest! {
                 .await;
             fx.stock(1, 1, &Decimal::new(cost, 2).to_string()).await;
 
-            let suggestion = fx.suggest(&listed[0]).await.unwrap();
+            let suggestion = fx
+                .pricing
+                .suggest(listed[0].id, &fx.channel, assumptions)
+                .await
+                .unwrap();
 
+            let terms_at = |price: Money| {
+                if price.amount() >= Decimal::from(79) {
+                    (from_79, assumptions.estimated_shipping)
+                } else {
+                    (below, brl("0"))
+                }
+            };
             let at = suggestion.suggested;
             assert_eq!(at.price, suggestion.price);
+            assert_eq!((at.sale_fee, at.shipping), terms_at(at.price));
             assert!(at.reaches(target).unwrap());
-            let cent_less = suggestion.price.amount() - Decimal::new(1, 2);
-            if cent_less > Decimal::ZERO {
-                assert!(!at.at(cents(cent_less)).reaches(target).unwrap());
+            let cent_less = cents(suggestion.price.amount() - Decimal::new(1, 2));
+            if cent_less.amount() > Decimal::ZERO {
+                let (sale_fee, shipping) = terms_at(cent_less);
+                let short = PriceScenario {
+                    price: cent_less,
+                    sale_fee,
+                    shipping,
+                    ..at
+                };
+                assert!(!short.reaches(target).unwrap());
             }
-            let fee_there = if suggestion.price.amount() >= Decimal::from(79) {
-                fee("14", "0")
-            } else {
-                fee("12", "6.25")
-            };
-            assert_eq!(at.sale_fee, fee_there);
         });
     }
 }
