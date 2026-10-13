@@ -1,6 +1,7 @@
 //! Produtos (#9): every Product by SKU, and each one's sheet with its SKU,
 //! its folder of files (drop files on the sheet to copy them there), its
-//! target margin (#19) and the price history of its Supplier Offers.
+//! target margin (#19), the price history of its Supplier Offers, and
+//! reselling it against promoting it (#86).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,6 +28,7 @@ use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::pricing;
+use crate::resell_or_promote::ResellOrPromoteCard;
 
 /// A Product's sheet as last read.
 struct Sheet {
@@ -45,6 +47,7 @@ pub struct ProductsScreen {
     sheet: Option<Sheet>,
     sku: Entity<InputState>,
     target: Entity<InputState>,
+    resell_or_promote: Entity<ResellOrPromoteCard>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -72,6 +75,7 @@ impl ProductsScreen {
             sheet: None,
             sku,
             target,
+            resell_or_promote: cx.new(|cx| ResellOrPromoteCard::new(window, cx)),
             busy: false,
             reads: 0,
             outcome: None,
@@ -88,6 +92,8 @@ impl ProductsScreen {
             self.outcome = None;
         }
         self.open = Some(product);
+        self.resell_or_promote
+            .update(cx, |card, cx| card.show(Some(product), cx));
         self.refresh(window, cx);
     }
 
@@ -95,6 +101,8 @@ impl ProductsScreen {
         self.open = None;
         self.sheet = None;
         self.outcome = None;
+        self.resell_or_promote
+            .update(cx, |card, cx| card.show(None, cx));
         self.refresh(window, cx);
     }
 
@@ -522,6 +530,7 @@ impl ProductsScreen {
         vec![
             identity.into_any_element(),
             target.into_any_element(),
+            self.resell_or_promote.clone().into_any_element(),
             files.into_any_element(),
             offers.into_any_element(),
         ]

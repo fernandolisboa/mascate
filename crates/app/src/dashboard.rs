@@ -5,7 +5,8 @@
 //! with each sale's lines, the Listings' Products and categories, and each
 //! Order's Money Releases (ADR 0026); the capital in stock is Inventory's,
 //! at the Average Cost. Next to the margin, the period's approved and paid
-//! affiliate Commissions, read from Affiliate and summed by Finance (#81).
+//! affiliate Commissions, read from Affiliate and summed by Finance (#81),
+//! and each linked Product's sale margin against its Commissions (#86).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -15,9 +16,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Entity, SharedString, Subscription, Window, div, px};
-use mascate_affiliate::{Affiliate, CommissionFilter, CommissionStatus};
+use mascate_affiliate::{Affiliate, CommissionStatus};
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, Orders, Sale, SalesSummary};
+use mascate_commerce::{Listings, Orders, Sale, SalesPeriod, SalesSummary};
 use mascate_finance::{
     CommissionIncome, EarnedCommission, MarginOrder, MarginReport, MarginRow, MoneyRelease,
     ReleaseSummary, SoldLine, SoldProduct, Taxes, VolumeCheck,
@@ -38,6 +39,7 @@ use crate::listings::{self, listings};
 use crate::orders::{self, OrderSyncs};
 use crate::parts::ScreenParts;
 use crate::pricing;
+use crate::resell_or_promote::{self, Compared};
 use crate::sales::{amount_text, margin_cell, money_cell, orders_text, table_row};
 use crate::span::{SpanChanged, SpanPicker};
 use crate::stock;
@@ -51,16 +53,68 @@ struct Snapshot {
     releases: ReleaseSummary,
     volume: VolumeCheck,
     commissions: Vec<CommissionIncome>,
+    /// The linked Products, reselling against promoting (#86).
+    compared: Compared,
 }
 
-/// What the dashboard reads from the rest of the app.
-struct Sources {
+/// What reading a period's sales line by line needs (#28, #86).
+pub(crate) struct SaleSources {
     orders: Arc<Orders>,
     taxes: Arc<Taxes>,
     listings: Arc<Listings>,
     catalog: Arc<Catalog>,
-    inventory: Arc<Inventory>,
     product_ads: Option<Arc<ProductAds>>,
+}
+
+/// A period's sales, each line as Finance sums it up, with the Products'
+/// names.
+pub(crate) struct SoldPeriod {
+    pub period: SalesPeriod,
+    pub lines: Vec<SoldLine>,
+    pub names: BTreeMap<RecordId, String>,
+}
+
+impl SaleSources {
+    pub(crate) fn of(cx: &App) -> Option<Self> {
+        Some(Self {
+            orders: orders::orders(cx)?,
+            taxes: pricing::taxes(cx)?,
+            listings: listings(cx)?,
+            catalog: catalog::catalog(cx)?,
+            product_ads: ads::product_ads(cx),
+        })
+    }
+
+    pub(crate) async fn read(&self, during: Range<Timestamp>) -> Result<SoldPeriod, String> {
+        let tax = self
+            .taxes
+            .rate()
+            .await
+            .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
+        let ad_costs = ads::costs(self.product_ads.as_deref()).await?;
+        let period = self
+            .orders
+            .sales(tax, during, &ad_costs)
+            .await
+            .map_err(|e| orders::failure(&e))?;
+        let sold_as = SoldAs::read(&self.listings, &self.catalog).await?;
+        let lines = period
+            .sales
+            .iter()
+            .flat_map(|sale| sold_lines(sale, &sold_as))
+            .collect();
+        Ok(SoldPeriod {
+            period,
+            lines,
+            names: sold_as.products,
+        })
+    }
+}
+
+/// What the dashboard reads from the rest of the app.
+struct Sources {
+    sales: SaleSources,
+    inventory: Arc<Inventory>,
     volume: VolumeSources,
     affiliate: Arc<Affiliate>,
 }
@@ -68,12 +122,8 @@ struct Sources {
 impl Sources {
     fn of(cx: &App) -> Option<Self> {
         Some(Self {
-            orders: orders::orders(cx)?,
-            taxes: pricing::taxes(cx)?,
-            listings: listings(cx)?,
-            catalog: catalog::catalog(cx)?,
+            sales: SaleSources::of(cx)?,
             inventory: stock::inventory(cx)?,
-            product_ads: ads::product_ads(cx),
             volume: VolumeSources::of(cx)?,
             affiliate: affiliate::affiliate(cx)?,
         })
@@ -81,25 +131,9 @@ impl Sources {
 }
 
 async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, String> {
-    let tax = sources
-        .taxes
-        .rate()
-        .await
-        .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
-    let ad_costs = ads::costs(sources.product_ads.as_deref()).await?;
-    let period = sources
-        .orders
-        .sales(tax, during.clone(), &ad_costs)
-        .await
-        .map_err(|e| orders::failure(&e))?;
-    let summary = SalesSummary::of(&period, Currency::Brl)
+    let sold = sources.sales.read(during.clone()).await?;
+    let summary = SalesSummary::of(&sold.period, Currency::Brl)
         .map_err(|e| format!("Vendas em moedas diferentes: {e}"))?;
-    let sold_as = SoldAs::read(&sources.listings, &sources.catalog).await?;
-    let lines = period
-        .sales
-        .iter()
-        .flat_map(|sale| sold_lines(sale, &sold_as))
-        .collect();
     let stock = sources
         .inventory
         .stock()
@@ -111,6 +145,7 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         .find(|value| value.currency() == Currency::Brl)
         .unwrap_or(Money::zero(Currency::Brl));
     let releases: Vec<MoneyRelease> = sources
+        .sales
         .orders
         .money_releases()
         .await
@@ -124,28 +159,25 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         .collect();
     let releases = ReleaseSummary::of(&releases, during.clone(), Currency::Brl)
         .map_err(|e| format!("Valores do Mercado Pago em moedas diferentes: {e}"))?;
-    let earned: Vec<EarnedCommission> = sources
-        .affiliate
-        .commissions(&CommissionFilter {
-            statuses: vec![CommissionStatus::Approved, CommissionStatus::Paid],
-            sold: during,
-        })
-        .await
-        .map_err(|e| affiliate::failure(&e))?
-        .into_iter()
+    let commissions = resell_or_promote::earned(&sources.affiliate, during).await?;
+    let earned: Vec<EarnedCommission> = commissions
+        .iter()
         .map(|commission| EarnedCommission {
             amount: commission.amount,
             paid: commission.status == CommissionStatus::Paid,
         })
         .collect();
+    let compared =
+        resell_or_promote::compare_linked(&sources.affiliate, &sold, &commissions).await?;
     Ok(Snapshot {
         summary,
-        lines,
+        lines: sold.lines,
         capital,
         units: stock.units(),
         releases,
         volume: finance::volume(&sources.volume).await?,
         commissions: CommissionIncome::of(&earned),
+        compared,
     })
 }
 
@@ -644,6 +676,9 @@ impl Render for DashboardScreen {
         parts.content.push(self.render_figures(&snapshot, cx));
         parts.content.push(self.render_volume(&snapshot.volume, cx));
         parts.content.push(self.render_margins(cx));
+        parts
+            .content
+            .extend(resell_or_promote::painel_section(&snapshot.compared, cx));
         parts.content.push(self.render_releases(&snapshot, cx));
         self.snapshot = Some(snapshot);
         layout::screen(parts, cx)

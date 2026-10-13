@@ -116,7 +116,7 @@ fn rows<K: Ord + Clone>(
         .collect()
 }
 
-fn row<K>(
+pub(crate) fn row<K>(
     of: K,
     lines: &[&SoldLine],
     currency: Currency,

@@ -40,6 +40,7 @@ use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
+use crate::product_links::{ProductLinksChanged, ProductLinksSection};
 use crate::sales::day_start;
 use crate::span::{SpanChanged, SpanPicker};
 
@@ -326,6 +327,7 @@ pub struct AffiliateScreen {
     outcome: Option<Outcome>,
     import: Entity<AmazonImportSection>,
     payouts: Entity<PayoutsSection>,
+    links: Entity<ProductLinksSection>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -337,6 +339,7 @@ impl AffiliateScreen {
         let payouts = cx.new(|cx| PayoutsSection::new(window, cx));
         let span = cx.new(|cx| SpanPicker::new(window, cx));
         let import = cx.new(|_| AmazonImportSection::default());
+        let links = cx.new(|cx| ProductLinksSection::new(window, cx));
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
@@ -361,6 +364,11 @@ impl AffiliateScreen {
                     this.read_commissions(window, cx)
                 },
             ),
+            // A link moves Commissions between Products on the sheet and the
+            // Painel.
+            cx.subscribe(&links, |_, _, _: &ProductLinksChanged, cx| {
+                cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+            }),
         ];
         let mut screen = Self {
             span,
@@ -384,6 +392,7 @@ impl AffiliateScreen {
             outcome: None,
             import,
             payouts,
+            links,
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
@@ -397,6 +406,7 @@ impl AffiliateScreen {
         let paid = self.span.read(cx).during();
         self.payouts
             .update(cx, |payouts, cx| payouts.refresh(paid, window, cx));
+        self.links.update(cx, |links, cx| links.refresh(window, cx));
     }
 
     fn read_commissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1071,6 +1081,7 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
             "As comissões deste repasse já foram conferidas; a lista foi atualizada.".into()
         }
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
+        AffiliateError::NoSuchProgram => "Esse programa mudou; a lista foi atualizada.".into(),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
         AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
         AffiliateError::Unreadable(_) | AffiliateError::Sql(_) => {
@@ -1145,6 +1156,7 @@ impl Render for AffiliateScreen {
              então não contam como estorno nem entram nos totais.",
             cx,
         ));
+        parts.content.push(self.links.clone().into_any_element());
         parts.content.push(self.import.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());

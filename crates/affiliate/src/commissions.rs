@@ -135,6 +135,8 @@ pub struct Commission {
     pub manual: bool,
     /// The Payout that covers it, if one does.
     pub payout: Option<RecordId>,
+    /// The Catalog's Product the owner linked its product to (#86).
+    pub linked_product: Option<RecordId>,
 }
 
 /// A Conversion as a Platform last reported it.
@@ -232,6 +234,8 @@ pub enum AffiliateError {
     NotCoverable,
     #[error("the product is missing")]
     NoProduct,
+    #[error("no such Program")]
+    NoSuchProgram,
     #[error("a Commission is never negative")]
     Negative,
     #[error("the Commissions hold a value this app cannot read: {0}")]
@@ -867,10 +871,13 @@ pub(crate) const COMMISSION_QUERY: &str =
     "SELECT c.id, v.platform, p.id, p.name, v.product, v.sold_at,
          c.amount, c.currency, c.status, c.platform_status, c.status_since, v.tracking, v.manual,
          (SELECT l.payout_id FROM affiliate_payout_commissions l
-          WHERE l.commission_id = c.id AND l.deleted_at IS NULL)
+          WHERE l.commission_id = c.id AND l.deleted_at IS NULL),
+         k.catalog_product_id
      FROM affiliate_commissions c
      JOIN affiliate_conversions v ON v.id = c.conversion_id
      JOIN affiliate_programs p ON p.id = v.program_id
+     LEFT JOIN affiliate_product_links k
+         ON k.program_id = p.id AND k.product = trim(v.product) AND k.deleted_at IS NULL
      WHERE c.deleted_at IS NULL AND v.deleted_at IS NULL";
 
 pub(crate) fn commission_from(row: &libsql::Row) -> Result<Commission, AffiliateError> {
@@ -888,6 +895,7 @@ pub(crate) fn commission_from(row: &libsql::Row) -> Result<Commission, Affiliate
         tracking: row.get(11)?,
         manual: row.get::<i64>(12)? == 1,
         payout: row.optional_id_at(13)?,
+        linked_product: row.optional_id_at(14)?,
     })
 }
 

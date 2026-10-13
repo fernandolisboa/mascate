@@ -1,12 +1,14 @@
 //! Finance & Reporting: revenue, Fees, margins and the dashboard.
 
 mod commissions;
+mod comparison;
 mod margins;
 mod releases;
 mod tax;
 mod volume;
 
 pub use commissions::{CommissionIncome, EarnedCommission};
+pub use comparison::{Ahead, LinkedCommission, Promoting, ResellOrPromote, Reselling};
 pub use margins::{MarginOrder, MarginReport, MarginRow, SoldLine, SoldProduct};
 pub use releases::{MoneyRelease, ReleaseSummary};
 pub use tax::{TaxError, Taxes};
