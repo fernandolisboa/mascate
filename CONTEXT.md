@@ -145,11 +145,11 @@ _Avoid_: estoque mínimo, ponto de pedido
 ## Afiliação
 
 **Program**:
-Programa de afiliado de uma Platform (ou de um produto específico, como na Hotmart), com suas regras de divulgação.
+Programa de afiliado de uma Platform (ou de um produto específico, como na Hotmart), com suas regras de divulgação: cada uma permitida, proibida ou não verificada (que avisa como proibida).
 _Avoid_: parceria, afiliação (sozinho)
 
 **Affiliate Link**:
-Link de afiliado de um Program para um produto, com marcação do Promotion Channel onde foi divulgado.
+Link de afiliado de um Program para um produto, com marcação do Promotion Channel onde foi divulgado. A marcação é única por Platform e volta na Conversion, o que liga cada Commission ao seu canal.
 _Avoid_: link rastreado, URL, tracking link
 
 **Conversion**:
@@ -171,7 +171,7 @@ Lugar onde o Fernando divulga produtos ou links (grupo de WhatsApp, canal do Tel
 _Avoid_: canal (sozinho), rede
 
 **Offer Post**:
-Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel.
+Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel, com identificação de publicidade. Só é publicado (no Telegram) quando o Fernando confirma, na hora ou agendado, e sai no máximo uma vez.
 _Avoid_: post, copy (sozinho), anúncio
 
 **Listing Copy**:
