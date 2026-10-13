@@ -667,7 +667,10 @@ struct Settled {
 /// The lowest price at which each of `costs` (a Product, its unit cost and
 /// target margin) reaches its target, starting from the channel's fee at
 /// `start`. The channel is asked for its fee at each new price, until the
-/// fee and shipping solved with are the ones that apply there.
+/// fee and shipping solved with are the ones that apply there. A price can
+/// keep crossing the edge of a fee band (or of free shipping): solved below
+/// the edge it lands past it, solved past it it lands below. The answer is
+/// then the first cent past the edge, found between the two.
 fn settle(
     channel: &dyn SalesChannel,
     (category, listing_type): (&str, ListingType),
@@ -676,17 +679,18 @@ fn settle(
     assumptions: PriceAssumptions,
 ) -> Result<Settled, PricingError> {
     let (mut probe, mut fee) = start;
+    let mut solved: Vec<(Money, SaleFee)> = Vec::new();
     for _ in 0..MAX_FEE_LOOKUPS {
-        let mut highest: Option<(Money, usize)> = None;
-        for (index, (_, cost, target)) in costs.iter().enumerate() {
-            let price = sale(probe, fee, *cost, assumptions)
-                .lowest_price_for(target.margin)?
-                .ok_or(PricingError::Unreachable)?;
-            if highest.is_none_or(|(most, _)| price.amount() > most.amount()) {
-                highest = Some((price, index));
-            }
+        let (price, index) = highest_price(probe, fee, costs, assumptions)?;
+        if solved.iter().any(|(seen, _)| *seen == price) {
+            return band_edge(
+                channel,
+                (category, listing_type),
+                &solved,
+                costs,
+                assumptions,
+            );
         }
-        let (price, index) = highest.ok_or(PricingError::Unreachable)?;
         let cost = costs[index].1;
         let fee_there = channel.sale_fee(category, price, listing_type)?;
         if fee_there == fee
@@ -699,9 +703,96 @@ fn settle(
                 fee,
             });
         }
+        solved.push((price, fee_there));
         (probe, fee) = (price, fee_there);
     }
     Err(PricingError::Unsettled)
+}
+
+/// The highest of the lowest prices at which each of `costs` reaches its
+/// target with `fee` and the shipping due at `probe`, and which cost needs it.
+fn highest_price(
+    probe: Money,
+    fee: SaleFee,
+    costs: &[(RecordId, Money, TargetMargin)],
+    assumptions: PriceAssumptions,
+) -> Result<(Money, usize), PricingError> {
+    let mut highest: Option<(Money, usize)> = None;
+    for (index, (_, cost, target)) in costs.iter().enumerate() {
+        let price = sale(probe, fee, *cost, assumptions)
+            .lowest_price_for(target.margin)?
+            .ok_or(PricingError::Unreachable)?;
+        if highest.is_none_or(|(most, _)| price.amount() > most.amount()) {
+            highest = Some((price, index));
+        }
+    }
+    highest.ok_or(PricingError::Unreachable)
+}
+
+/// Whether every one of `costs` reaches its target sold at `price` with the
+/// channel's `fee` there.
+fn all_reach(
+    price: Money,
+    fee: SaleFee,
+    costs: &[(RecordId, Money, TargetMargin)],
+    assumptions: PriceAssumptions,
+) -> Result<bool, PricingError> {
+    for (_, cost, target) in costs {
+        if !sale(price, fee, *cost, assumptions).reaches(target.margin)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The first cent that reaches every target with the fee and shipping that
+/// apply at it, between the highest `solved` price that falls short and the
+/// lowest above it that reaches, halving the gap with one fee lookup a step.
+fn band_edge(
+    channel: &dyn SalesChannel,
+    (category, listing_type): (&str, ListingType),
+    solved: &[(Money, SaleFee)],
+    costs: &[(RecordId, Money, TargetMargin)],
+    assumptions: PriceAssumptions,
+) -> Result<Settled, PricingError> {
+    let mut reaching: Option<(Money, SaleFee)> = None;
+    for &(price, fee) in solved {
+        if all_reach(price, fee, costs, assumptions)?
+            && reaching.is_none_or(|(lowest, _)| price.amount() < lowest.amount())
+        {
+            reaching = Some((price, fee));
+        }
+    }
+    let (mut high, mut high_fee) = reaching.ok_or(PricingError::Unsettled)?;
+    let currency = high.currency();
+    let mut low = Decimal::ZERO;
+    for &(price, fee) in solved {
+        if price.amount() < high.amount()
+            && price.amount() > low
+            && !all_reach(price, fee, costs, assumptions)?
+        {
+            low = price.amount();
+        }
+    }
+    while high.amount() - low > CENT {
+        let middle = Money::new(
+            ((low + high.amount()) / Decimal::TWO)
+                .round_dp_with_strategy(2, RoundingStrategy::ToNegativeInfinity),
+            currency,
+        );
+        let fee = channel.sale_fee(category, middle, listing_type)?;
+        if all_reach(middle, fee, costs, assumptions)? {
+            (high, high_fee) = (middle, fee);
+        } else {
+            low = middle.amount();
+        }
+    }
+    let (_, highest) = highest_price(high, high_fee, costs, assumptions)?;
+    Ok(Settled {
+        price: high,
+        highest,
+        fee: high_fee,
+    })
 }
 
 /// One unit sold at `price` with no discount and no Ads: shipping once free
