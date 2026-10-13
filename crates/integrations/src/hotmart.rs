@@ -9,7 +9,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -19,11 +18,10 @@ use mascate_affiliate::{
 };
 use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
 use mascate_platform::{Secret, SecretStore, http_agent};
-use rust_decimal::Decimal;
 use serde::Deserialize;
 
-use crate::answers::{numeric_id, read_json};
-use crate::retry::{Attempt, Backoff, Pause, ThreadPause, retrying};
+use crate::answers::{decimal, numeric_id, read_json};
+use crate::retry::{Attempt, Backoff, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// The sales API, unless a test points elsewhere.
 pub const API_URL: &str = "https://developers.hotmart.com";
@@ -46,12 +44,8 @@ const PAGE_SIZE: u32 = 100;
 /// leaves with a token about to lapse.
 const RENEW_BEFORE: TimeDelta = TimeDelta::minutes(5);
 
-/// The limit is 500 calls a minute, so a refused request waits 5, 10, 20
-/// and then 40 seconds, past the minute, before giving up.
-const BACKOFF: Backoff = Backoff {
-    first: Duration::from_secs(5),
-    retries: 4,
-};
+/// The limit is 500 calls a minute.
+const BACKOFF: Backoff = PAST_A_MINUTE;
 
 /// Every status a Hotmart sale takes, from its documentation.
 const STATUSES: [&str; 17] = [
@@ -419,15 +413,6 @@ fn text_at(value: &serde_json::Value, pointer: &str) -> Option<String> {
 /// Hotmart's dates, in milliseconds since 1970 UTC.
 fn millis(millis: i64) -> Option<Timestamp> {
     DateTime::from_timestamp_millis(millis)
-}
-
-/// Amounts come as JSON numbers; their text, not a float, becomes the
-/// decimal.
-fn decimal(number: &serde_json::Number) -> Option<Decimal> {
-    let text = number.to_string();
-    Decimal::from_str(&text)
-        .or_else(|_| Decimal::from_scientific(&text))
-        .ok()
 }
 
 /// What Hotmart says when it refuses a request, when it says.

@@ -30,6 +30,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::ShopeeAffiliates => "Shopee Afiliados",
         Connection::Anthropic => "Anthropic",
         Connection::Hotmart => "Hotmart",
+        Connection::Monetizze => "Monetizze",
     }
 }
 
@@ -41,7 +42,7 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
              aprovação e a descoberta usa o cadastro manual de ofertas."
         }
         Connection::Anthropic => "Títulos e descrições de anúncio gerados como rascunho.",
-        Connection::Hotmart => {
+        Connection::Hotmart | Connection::Monetizze => {
             "Comissões de afiliado: vendas, status, estornos e cancelamentos, lidos a cada hora."
         }
     }
@@ -57,6 +58,8 @@ fn credential_label(credential: Credential) -> &'static str {
         "HOTMART_CLIENT_ID" => "Client ID",
         "HOTMART_CLIENT_SECRET" => "Client Secret",
         "HOTMART_BASIC" => "Basic",
+        "MONETIZZE_CONSUMER_KEY" => "Chave da API",
+        "MONETIZZE_EMAIL" => "E-mail da conta",
         other => other,
     }
 }
@@ -65,7 +68,7 @@ fn credential_label(credential: Credential) -> &'static str {
 fn is_identifier(credential: Credential) -> bool {
     matches!(
         credential.name,
-        "ML_CLIENT_ID" | "SHOPEE_AFFILIATE_APP_ID" | "HOTMART_CLIENT_ID"
+        "ML_CLIENT_ID" | "SHOPEE_AFFILIATE_APP_ID" | "HOTMART_CLIENT_ID" | "MONETIZZE_EMAIL"
     )
 }
 
