@@ -3,6 +3,7 @@
 
 mod ads;
 mod affiliate;
+mod amazon_import;
 mod appearance;
 mod backups;
 mod brand;

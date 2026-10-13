@@ -3,8 +3,9 @@
 //! status, filtered by status, reversals and cancelled sales listed apart,
 //! and the form to record a Commission by hand for Platforms without an API
 //! or a file. The Commissions Sync (#78) reads each connected Platform at
-//! start, every hour and on "Sincronizar agora". Below them, the Payouts
-//! (#79). The rules live in Affiliate (ADR 0030).
+//! start, every hour and on "Sincronizar agora"; the Amazon earnings report
+//! comes in by file (#83). Below them, the Payouts (#79). The rules live in
+//! Affiliate (ADR 0030).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +30,7 @@ use mascate_affiliate::{
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 
+use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{NO_DATABASE, day, day_and_time};
 use crate::commission_dashboard::CommissionDashboard;
@@ -322,6 +324,7 @@ pub struct AffiliateScreen {
     reads: u64,
     form: Option<Outcome>,
     outcome: Option<Outcome>,
+    import: Entity<AmazonImportSection>,
     payouts: Entity<PayoutsSection>,
     _subscriptions: Vec<Subscription>,
 }
@@ -333,6 +336,7 @@ impl AffiliateScreen {
         sold_on.update(cx, |field, cx| field.set_value(today(), window, cx));
         let payouts = cx.new(|cx| PayoutsSection::new(window, cx));
         let span = cx.new(|cx| SpanPicker::new(window, cx));
+        let import = cx.new(|_| AmazonImportSection::default());
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
@@ -349,6 +353,14 @@ impl AffiliateScreen {
             cx.subscribe_in(&span, window, |this, _, _: &SpanChanged, window, cx| {
                 this.refresh(window, cx)
             }),
+            cx.subscribe_in(
+                &import,
+                window,
+                |this, _, _: &CommissionsImported, window, cx| {
+                    cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+                    this.read_commissions(window, cx)
+                },
+            ),
         ];
         let mut screen = Self {
             span,
@@ -370,6 +382,7 @@ impl AffiliateScreen {
             reads: 0,
             form: None,
             outcome: None,
+            import,
             payouts,
             _subscriptions: subscriptions,
         };
@@ -1109,8 +1122,9 @@ impl Render for AffiliateScreen {
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
                         "Nenhuma comissão neste período. As da Hotmart, da Monetizze e da \
-                         Shopee chegam sozinhas com a conexão em Configurações › Conexões; lance abaixo as de \
-                         plataformas sem API.",
+                         Shopee chegam sozinhas com a conexão em Configurações › Conexões; as da \
+                         Amazon, pelo relatório importado abaixo; lance à mão as de plataformas \
+                         sem API nem arquivo.",
                     ))
                 })
                 .children(listed)
@@ -1128,6 +1142,7 @@ impl Render for AffiliateScreen {
              então não contam como estorno nem entram nos totais.",
             cx,
         ));
+        parts.content.push(self.import.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());
         layout::screen(parts, cx)

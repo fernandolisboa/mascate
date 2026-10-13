@@ -20,7 +20,11 @@ mascate-kernel = { path = "crates/kernel" }
 mascate-marketing = { path = "crates/marketing" }
 mascate-platform = { path = "crates/platform" }
 
+# Reads XLSX exports (ADR 0030): reading only, no optional features.
+calamine = { version = "0.36", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Reads CSV exports (ADR 0030).
+csv = "1"
 directories = "6"
 embed-resource = "3"
 futures = "0.3"

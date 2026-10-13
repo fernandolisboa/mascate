@@ -8,7 +8,7 @@ mod totals;
 
 pub use commissions::{
     Affiliate, AffiliateError, AffiliateSync, Commission, CommissionFilter, INCOME_WINDOW_DAYS,
-    LastSync, ManualCommission, Recorded, StatusChange,
+    LastSync, ManualCommission, Reading, Recorded, StatusChange,
 };
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};

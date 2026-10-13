@@ -1,5 +1,6 @@
 //! Integrations: one adapter per Platform, publishing normalized data to the other modules.
 
+mod amazon_earnings;
 mod answers;
 mod anthropic;
 mod connections;
@@ -8,7 +9,12 @@ mod mercado_livre;
 mod monetizze;
 mod retry;
 mod shopee_affiliate;
+mod spreadsheet;
 
+pub use amazon_earnings::{
+    EarningsImport, EarningsReport, PLATFORM as AMAZON_PLATFORM, ReportError, SkippedRow,
+    read_earnings_report,
+};
 pub use anthropic::{API_URL as ANTHROPIC_API_URL, Anthropic};
 pub use connections::{
     Connection, ConnectionError, ConnectionState, Connections, Credential, CredentialEntry,
