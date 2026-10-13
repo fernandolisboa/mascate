@@ -178,6 +178,8 @@ fn each_item_sold_is_one_conversion_with_its_commission_marking_and_dates() {
     assert_eq!(carregador.status_changed_at, None);
     // Ids sent as text make the same key as numbers would.
     assert_eq!(find(&conversions, MOUSE).commission, brl("3.00"));
+    // Shopee dates the completion, not a later fraud verdict.
+    assert_eq!(find(&conversions, MOUSE).status_changed_at, None);
 }
 
 #[test]

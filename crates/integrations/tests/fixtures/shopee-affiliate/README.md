@@ -50,7 +50,7 @@ Conversões e repasses (#80):
   10030 e no recomeço depois de um `scrollId` vencido.
 - Uma Conversion por item: chave `conversionId:orderId:itemId:modelId` (`modelId` ausente vale 0),
   comissão `itemTotalCommission`, marcação `utmContent` sem os traços finais, venda em
-  `purchaseTime`, mudança de status em `completeTime` quando o pedido está concluído. Status:
+  `purchaseTime`, aprovação em `completeTime` (um estorno fica com a hora em que o app o viu). Status:
   UNPAID e PENDING pendente, COMPLETED aprovada, CANCELLED cancelada; `fraudStatus` FRAUD, ou
   `refundAmount` num pedido concluído, estornada. O status bruto guardado é `orderStatus/fraudStatus`.
 - `validatedReport(validationId, limit: 500)` pede só os ids e as comissões; o repasse vale a soma

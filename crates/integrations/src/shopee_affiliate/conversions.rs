@@ -315,7 +315,9 @@ fn conversions(conversion: Value) -> Vec<ReportedConversion> {
                 } else {
                     format!("{order_status}/{fraud_status}")
                 },
-                status_changed_at: (order_status == "COMPLETED")
+                // Completion is when it was approved; Shopee dates no
+                // reversal.
+                status_changed_at: (status == CommissionStatus::Approved)
                     .then(|| time(item.get("completeTime")))
                     .flatten(),
                 tracking: tracking.clone(),
