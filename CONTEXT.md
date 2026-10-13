@@ -157,8 +157,8 @@ Venda atribuída a um Affiliate Link, informada pela Platform.
 _Avoid_: venda (sozinho), pedido
 
 **Commission**:
-Valor que o Fernando recebe por uma Conversion, com status derivado: pendente, aprovada, paga ou estornada.
-_Avoid_: ganho, receita
+Valor que o Fernando recebe por uma Conversion, com status derivado do status da venda na Platform: pendente, aprovada, paga, estornada (o dinheiro voltou ao comprador) ou cancelada (a venda não se concretizou e nunca houve comissão, como um boleto vencido).
+_Avoid_: ganho, receita, estorno (quando a venda só não se concretizou)
 
 **Payout**:
 Repasse de dinheiro de um Program para o Fernando, cobrindo uma ou mais Commissions.
