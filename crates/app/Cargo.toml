@@ -22,7 +22,11 @@ mascate-platform.workspace = true
 rust_decimal.workspace = true
 tray-icon.workspace = true
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [dev-dependencies]
+image.workspace = true
 tempfile.workspace = true
 
 [lints]
@@ -35,7 +39,7 @@ identifier = "app.mascate.desktop"
 category = "Business"
 description = "Garimpo, venda com estoque próprio e afiliação, num app local."
 before-packaging-command = "cargo build --release -p mascate"
-icons = ["assets/icon.png"]
+icons = ["assets/icon.png", "assets/mascate.ico"]
 formats = ["nsis", "appimage", "pacman"]
 
 [package.metadata.packager.nsis]

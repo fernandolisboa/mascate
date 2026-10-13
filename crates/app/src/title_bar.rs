@@ -1,5 +1,5 @@
 //! The window's title bar (#67), drawn by Mascate in the interface theme
-//! in place of the native caption, after Bardo's: the app mark and name, a
+//! in place of the native caption, after Bardo's: the logo (#69), a
 //! drag area, and the minimize / maximize / close buttons.
 //!
 //! On Windows every part declares what it is ([`WindowControlArea`]) and
@@ -18,6 +18,7 @@ use gpui_kit::{
 };
 
 use crate::appearance::{Tokens, look};
+use crate::brand;
 
 /// Height of the bar.
 const HEIGHT: Pixels = px(32.);
@@ -33,18 +34,8 @@ pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
         // Room for the traffic lights, which macOS keeps drawing.
         .when(cfg!(target_os = "macos"), |brand| brand.pl(px(80.)))
         .items_center()
-        .child(
-            div()
-                .size(px(12.))
-                .rounded(if t.radius == px(0.) { px(0.) } else { px(3.) })
-                .bg(t.accent),
-        )
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                .child("Mascate"),
-        );
+        .child(brand::mark(px(13.)).text_color(t.accent))
+        .child(brand::wordmark(px(13.)).text_color(t.text));
     let drag = h_flex()
         .id("title-bar-drag")
         .flex_1()
