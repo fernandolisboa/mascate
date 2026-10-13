@@ -1,7 +1,8 @@
 //! The Reminders on the home screen (#7): fiscal and legal notes in a
 //! quiet corner, each dismissable until its interval runs out. Some show
-//! only while raised, like the sales volume one (#28); each Order Sync
-//! checks again.
+//! only while raised, like the sales volume one (#28), checked again on
+//! each Order Sync, and the income one of affiliate Commissions (#77),
+//! checked again whenever they change.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Global, SharedString, Subscription, Window, div};
 use mascate_platform::{Reminder, ReminderError, ReminderTopic, Reminders};
 
+use crate::affiliate::{self, CommissionChanges};
 use crate::appearance::look;
 use crate::finance::{self, VolumeSources};
 use crate::kit;
@@ -38,7 +40,10 @@ pub struct RemindersArea {
 
 impl RemindersArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
+        let subscriptions = vec![
+            cx.observe_global::<OrderSyncs>(Self::refresh),
+            cx.observe_global::<CommissionChanges>(Self::refresh),
+        ];
         let mut area = Self {
             showing: Vec::new(),
             reads: 0,
@@ -73,11 +78,13 @@ impl RemindersArea {
         };
         let reminders = app.0.clone();
         let sources = VolumeSources::of(cx);
+        let commissions = affiliate::affiliate(cx);
         self.reads += 1;
         let read = self.reads;
         let working = cx.background_executor().spawn(async move {
             let outcome = change(reminders.clone()).await;
-            let raised = finance::raised_reminders(sources).await;
+            let mut raised = finance::raised_reminders(sources).await;
+            raised.extend(affiliate::raised_reminders(commissions).await);
             (outcome, reminders.showing(&raised).await)
         });
         cx.spawn(async move |this, cx| {

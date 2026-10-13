@@ -3,6 +3,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Entity, SharedString, Subscription, Window, div};
 use mascate_kernel::RecordId;
 
+use crate::affiliate::AffiliateScreen;
 use crate::appearance;
 use crate::dashboard::DashboardScreen;
 use crate::drafts::StartDraft;
@@ -48,6 +49,7 @@ pub struct Shell {
     dashboard: Entity<DashboardScreen>,
     purchases: Entity<PurchasesScreen>,
     stock: Entity<StockScreen>,
+    affiliate: Entity<AffiliateScreen>,
     settings: Entity<SettingsScreen>,
     _subscriptions: Vec<Subscription>,
 }
@@ -73,6 +75,7 @@ impl Shell {
         let dashboard = cx.new(|cx| DashboardScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
         let stock = cx.new(|cx| StockScreen::new(window, cx));
+        let affiliate = cx.new(|cx| AffiliateScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
         // The startup theme guessed the system's appearance before any window
         // existed; this window knows it.
@@ -176,6 +179,7 @@ impl Shell {
             dashboard,
             purchases,
             stock,
+            affiliate,
             settings,
             _subscriptions: subscriptions,
         }
@@ -226,6 +230,9 @@ impl Shell {
                         Place::Stock => shell
                             .stock
                             .update(cx, |stock, cx| stock.refresh(window, cx)),
+                        Place::Affiliate => shell
+                            .affiliate
+                            .update(cx, |affiliate, cx| affiliate.refresh(window, cx)),
                         Place::Today => shell.home.update(cx, Home::refresh),
                         Place::Settings => {}
                     }
@@ -254,6 +261,7 @@ impl Render for Shell {
             Place::Dashboard => self.dashboard.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),
             Place::Stock => self.stock.clone().into_any_element(),
+            Place::Affiliate => self.affiliate.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),
         };
         v_flex()

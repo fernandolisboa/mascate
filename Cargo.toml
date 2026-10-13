@@ -10,6 +10,7 @@ license = "UNLICENSED"
 publish = false
 
 [workspace.dependencies]
+mascate-affiliate = { path = "crates/affiliate" }
 mascate-catalog = { path = "crates/catalog" }
 mascate-commerce = { path = "crates/commerce" }
 mascate-finance = { path = "crates/finance" }

@@ -46,16 +46,16 @@ pub(crate) fn day_start(day: NaiveDate) -> Timestamp {
 
 /// The sales listed: one calendar month or all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Period {
+pub(crate) enum Period {
     ThisMonth,
     LastMonth,
     All,
 }
 
 impl Period {
-    const ALL: [Period; 3] = [Period::ThisMonth, Period::LastMonth, Period::All];
+    pub(crate) const ALL: [Period; 3] = [Period::ThisMonth, Period::LastMonth, Period::All];
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Period::ThisMonth => "Este mês",
             Period::LastMonth => "Mês passado",
@@ -64,7 +64,7 @@ impl Period {
     }
 
     /// The period's time, by the computer's calendar.
-    fn range(self, today: NaiveDate) -> Range<Timestamp> {
+    pub(crate) fn range(self, today: NaiveDate) -> Range<Timestamp> {
         let this_month = today.with_day(1).unwrap_or(today);
         let month_after = |day: NaiveDate| day.checked_add_months(Months::new(1)).unwrap_or(day);
         let month_before = |day: NaiveDate| day.checked_sub_months(Months::new(1)).unwrap_or(day);

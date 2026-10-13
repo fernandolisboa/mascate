@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures::executor::block_on;
+use mascate_affiliate::Affiliate;
 use mascate_catalog::Catalog;
 use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror};
 use mascate_finance::{SalesVolume, Taxes};
@@ -26,13 +27,18 @@ pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
     mascate_commerce::MIGRATIONS,
     mascate_marketing::MIGRATIONS,
     mascate_finance::MIGRATIONS,
+    mascate_affiliate::MIGRATIONS,
 ];
 
 /// Every module's flags, in the order the settings screen lists them.
 const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS];
 
 /// Every module's Reminders, in the order the home screen shows them.
-const MODULE_REMINDERS: &[&[Reminder]] = &[mascate_finance::REMINDERS, mascate_commerce::REMINDERS];
+const MODULE_REMINDERS: &[&[Reminder]] = &[
+    mascate_finance::REMINDERS,
+    mascate_commerce::REMINDERS,
+    mascate_affiliate::REMINDERS,
+];
 
 /// The ready database and what is read from it before the first window, or
 /// why the database is not ready.
@@ -61,6 +67,7 @@ pub struct Started {
     pub reply_templates: Arc<ReplyTemplates>,
     pub taxes: Arc<Taxes>,
     pub sales_volume: Arc<SalesVolume>,
+    pub affiliate: Arc<Affiliate>,
     pub backup_settings: BackupSettings,
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
@@ -286,6 +293,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let affiliate = Affiliate::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
             Ok::<_, Box<dyn std::error::Error>>(Started {
@@ -310,6 +322,7 @@ pub fn prepare() -> Outcome {
                 reply_templates: Arc::new(reply_templates),
                 taxes: Arc::new(taxes),
                 sales_volume: Arc::new(sales_volume),
+                affiliate: Arc::new(affiliate),
                 backup_settings,
                 update_settings,
                 restore,
@@ -376,6 +389,9 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 
 #[cfg(test)]
 mod tests {
+    use mascate_affiliate::{
+        AffiliatePlatform, CommissionFilter, CommissionStatus, ManualCommission,
+    };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
@@ -621,6 +637,19 @@ mod tests {
         }
     }
 
+    fn sample_commission() -> ManualCommission {
+        ManualCommission {
+            platform: AffiliatePlatform::MercadoLivre,
+            program: String::new(),
+            product: "Produto de exemplo".into(),
+            sold_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T10:00:00-03:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            amount: Money::new(rust_decimal::Decimal::new(1240, 2), Currency::Brl),
+            status: CommissionStatus::Approved,
+        }
+    }
+
     fn sample_template() -> NewReplyTemplate {
         NewReplyTemplate {
             name: "Prazo de envio".into(),
@@ -789,6 +818,10 @@ mod tests {
             .unwrap();
             ProductAds::new(database.clone(), clock.clone(), ids.clone())
                 .sync(&SampleAds)
+                .await
+                .unwrap();
+            Affiliate::new(database.clone(), clock.clone(), ids.clone())
+                .record_manual(sample_commission())
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -1151,6 +1184,21 @@ mod tests {
                     "claude-opus-5-5",
                     "{name}"
                 );
+                // Commissions arrived after 0.2.0: a sample written after
+                // it already has the manual one.
+                let affiliate = Affiliate::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                let everything = CommissionFilter::default();
+                if affiliate.commissions(&everything).await.unwrap().is_empty() {
+                    affiliate.record_manual(sample_commission()).await.unwrap();
+                }
+                let commissions = affiliate.commissions(&everything).await.unwrap();
+                assert_eq!(commissions.len(), 1, "{name}");
+                assert_eq!(commissions[0].amount, sample_commission().amount, "{name}");
+                assert!(commissions[0].manual, "{name}");
             });
         }
     }
