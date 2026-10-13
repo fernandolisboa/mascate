@@ -472,8 +472,12 @@ impl AffiliateScreen {
             .synced
             .iter()
             .map(|(platform, last)| match last {
-                Some(last) => format!("{}: {}", platform.name(), day_and_time(last.finished_at)),
-                None => format!("{}: nunca", platform.name()),
+                Some(last) => format!(
+                    "{} sincronizada em {}",
+                    platform.name(),
+                    day_and_time(last.finished_at)
+                ),
+                None => format!("{} ainda não sincronizada", platform.name()),
             })
             .collect::<Vec<_>>()
             .join(" · ");
@@ -484,7 +488,7 @@ impl AffiliateScreen {
                 div()
                     .text_xs()
                     .text_color(t.text2)
-                    .child(format!("Último Sync: {when} · a cada hora")),
+                    .child(format!("{when} · de novo a cada hora")),
             )
             .child(
                 Button::new("sync-commissions")
