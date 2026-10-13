@@ -1124,8 +1124,8 @@ impl Render for AffiliateScreen {
                 )
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma comissão neste período. As da Hotmart, da Kiwify, da Monetizze \
-                         e da Shopee chegam sozinhas com a conexão em Configurações › Conexões; as da \
+                        "Nenhuma comissão neste período. As da Hotmart, da Kiwify, da Eduzz, \
+                         da Monetizze e da Shopee chegam sozinhas com a conexão em Configurações › Conexões; as da \
                          Amazon, pelo relatório importado abaixo; lance à mão as de plataformas \
                          sem API nem arquivo.",
                     ))

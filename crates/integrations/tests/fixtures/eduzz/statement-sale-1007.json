@@ -1,0 +1,19 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 1,
+  "items": [
+    {
+      "id": "660107",
+      "creditDate": "2026-09-20T12:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1007",
+      "saleId": "1007",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 23.6
+      }
+    }
+  ]
+}

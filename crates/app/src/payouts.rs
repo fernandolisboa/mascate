@@ -3,9 +3,9 @@
 //! report none. The app proposes the approved Commissions the Payout
 //! covers, oldest first; the owner adjusts and confirms, and only then are
 //! they paid. A Shopee Payout is read by the `validationId` the owner pastes
-//! from Shopee's billing page (#80). A Kiwify withdrawal arrives with the
-//! Sync but without its sales (#84): the owner confirms its Commissions from
-//! the same proposal. The rules live in Affiliate (ADR 0030).
+//! from Shopee's billing page (#80). A Kiwify withdrawal (#84) or an Eduzz
+//! transfer (#85) arrives with the Sync but without its sales: the owner
+//! confirms its Commissions from the same proposal. The rules live in Affiliate (ADR 0030).
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -806,8 +806,8 @@ impl Render for PayoutsSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "O que cada plataforma repassou e as comissões que cada repasse cobre. A \
                  diferença mostra o que a plataforma reteve (negativa) ou pagou a mais. Os \
-                 saques da Kiwify chegam pelo Sync sem dizer quais vendas pagam: confira as \
-                 comissões de cada um.",
+                 saques da Kiwify e as transferências da Eduzz chegam pelo Sync sem dizer quais \
+                 vendas pagam: confira as comissões de cada um.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
             .children(self.covering.as_ref().map(|outcome| notice(outcome, cx)))

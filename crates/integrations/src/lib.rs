@@ -4,6 +4,7 @@ mod amazon_earnings;
 mod answers;
 mod anthropic;
 mod connections;
+mod eduzz;
 mod hotmart;
 mod kiwify;
 mod mercado_livre;
@@ -20,6 +21,7 @@ pub use anthropic::{API_URL as ANTHROPIC_API_URL, Anthropic};
 pub use connections::{
     Connection, ConnectionError, ConnectionState, Connections, Credential, CredentialEntry,
 };
+pub use eduzz::{API_URL as EDUZZ_API_URL, Eduzz};
 pub use hotmart::{API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart};
 pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify};
 pub use mercado_livre::{

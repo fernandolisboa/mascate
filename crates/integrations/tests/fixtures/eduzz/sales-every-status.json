@@ -1,0 +1,1390 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 12,
+  "items": [
+    {
+      "id": "2001",
+      "contractId": null,
+      "status": "open",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2001/2001?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2001",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2002",
+      "contractId": null,
+      "status": "processing",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2002/2002?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2002",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2003",
+      "contractId": null,
+      "status": "paid",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": "2026-10-12T11:35:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2003/2003?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2003",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2004",
+      "contractId": null,
+      "status": "canceled",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2004/2004?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2004",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2005",
+      "contractId": null,
+      "status": "waitingRefund",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": "2026-10-12T11:35:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2005/2005?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2005",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2006",
+      "contractId": null,
+      "status": "refunded",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": "2026-10-12T11:35:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2006/2006?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": {
+        "type": "common",
+        "value": {
+          "currency": "BRL",
+          "value": 197.0
+        },
+        "partialValue": {
+          "currency": "BRL",
+          "value": 0
+        },
+        "refundedAt": "2026-10-13T09:00:00.000Z",
+        "requestedAt": "2026-10-13T08:00:00.000Z",
+        "motive": "Não fiz essa compra.",
+        "requesterName": "Comprador Exemplo"
+      },
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2006",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2007",
+      "contractId": null,
+      "status": "duplicated",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2007/2007?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2007",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2008",
+      "contractId": null,
+      "status": "expired",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2008/2008?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2008",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2009",
+      "contractId": null,
+      "status": "recovering",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": "2026-10-12T11:35:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2009/2009?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2009",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2010",
+      "contractId": null,
+      "status": "waitingPayment",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2010/2010?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2010",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2011",
+      "contractId": null,
+      "status": "scheduled",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": null,
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2011/2011?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2011",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "2012",
+      "contractId": null,
+      "status": "negotiated",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T11:30:00.000Z",
+      "paidAt": "2026-10-12T11:35:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T11:30:00.000Z",
+      "updatedAt": "2026-10-13T09:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/2012/2012?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b2012",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "pages": 2,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 9,
+  "items": [
+    {
+      "id": "700001",
+      "creditDate": "2026-10-12T15:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1001",
+      "saleId": "1001",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 48.5
+      }
+    },
+    {
+      "id": "700002",
+      "creditDate": "2026-10-12T16:00:00.000Z",
+      "description": "Venda de produto 1 referente ao pedido 1002",
+      "saleId": "1002",
+      "type": "sale",
+      "value": {
+        "currency": "BRL",
+        "value": 141.84
+      }
+    },
+    {
+      "id": "700003",
+      "creditDate": "2026-10-12T16:10:00.000Z",
+      "description": "Tarifa de saque",
+      "saleId": null,
+      "type": "fee",
+      "value": {
+        "currency": "BRL",
+        "value": -3.49
+      }
+    },
+    {
+      "id": "700004",
+      "creditDate": "2026-10-12T18:30:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1003",
+      "saleId": "1003",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 37.9
+      }
+    },
+    {
+      "id": "700005",
+      "creditDate": "2026-10-12T20:00:00.000Z",
+      "description": "Reembolso da venda 1004",
+      "saleId": "1004",
+      "type": "refund",
+      "value": {
+        "currency": "BRL",
+        "value": -29.7
+      }
+    }
+  ]
+}

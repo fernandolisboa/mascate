@@ -1,0 +1,565 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 5,
+  "items": [
+    {
+      "id": "1003",
+      "contractId": null,
+      "status": "paid",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T14:00:00.000Z",
+      "paidAt": "2026-10-12T14:05:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": "  ",
+      "tracker2": "insta-bio",
+      "tracker3": null,
+      "createdAt": "2026-10-12T14:00:00.000Z",
+      "updatedAt": "2026-10-12T14:05:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/1003/1003?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b1003",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "1007",
+      "contractId": null,
+      "status": "waitingRefund",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-09-19T21:00:00.000Z",
+      "paidAt": "2026-09-19T21:02:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": "yt-video-3",
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-09-19T21:00:00.000Z",
+      "updatedAt": "2026-10-13T08:00:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/1007/1007?t=x"
+      },
+      "product": {
+        "id": "2002",
+        "name": "Planilhas para Pequenos Negócios",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b1007",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "1008",
+      "contractId": null,
+      "status": "paid",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-12T19:00:00.000Z",
+      "paidAt": "2026-10-12T19:01:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-10-12T19:00:00.000Z",
+      "updatedAt": "2026-10-12T19:01:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/1008/1008?t=x"
+      },
+      "product": {
+        "id": "3001",
+        "name": "Meu Próprio Ebook",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": null,
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b1008",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "1009",
+      "contractId": null,
+      "status": "paid",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 141.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 59.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 13.77
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 197.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-10-13T10:00:00.000Z",
+      "paidAt": "2026-10-13T10:01:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": null,
+      "tracker2": null,
+      "tracker3": "email-out",
+      "createdAt": "2026-10-13T10:00:00.000Z",
+      "updatedAt": "2026-10-13T10:01:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/1009/1009?t=x"
+      },
+      "product": {
+        "id": "2001",
+        "name": "Curso de Excel do Zero",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b1009",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 59.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    },
+    {
+      "id": "1010",
+      "contractId": null,
+      "status": "paid",
+      "grossGain": {
+        "currency": "BRL",
+        "value": 497.0
+      },
+      "netGain": {
+        "currency": "BRL",
+        "value": 357.84
+      },
+      "partnersGain": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "affiliatesGain": {
+        "currency": "BRL",
+        "value": 149.1
+      },
+      "fee": {
+        "currency": "BRL",
+        "value": 34.74
+      },
+      "total": {
+        "currency": "BRL",
+        "value": 497.0
+      },
+      "totalInterest": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "installments": 1,
+      "alumyFee": null,
+      "installmentSettlementFee": null,
+      "others": {
+        "currency": "BRL",
+        "value": 0
+      },
+      "currency": "BRL",
+      "locale": "pt-BR",
+      "dueDate": "2026-08-20T17:00:00.000Z",
+      "paidAt": "2026-08-20T17:03:00.000Z",
+      "creditDate": null,
+      "isInfiniteFunnel": false,
+      "recoveringStatus": "inactive",
+      "tracker": "wpp-grupo",
+      "tracker2": null,
+      "tracker3": null,
+      "createdAt": "2026-08-20T17:00:00.000Z",
+      "updatedAt": "2026-08-20T17:03:00.000Z",
+      "payment": {
+        "method": "pix",
+        "detail": "pix",
+        "link": "https://edz.la/1010/1010?t=x"
+      },
+      "product": {
+        "id": "2003",
+        "name": "Mentoria em Vendas",
+        "type": "digital",
+        "billingType": "single",
+        "sku": null
+      },
+      "refund": null,
+      "affiliate": {
+        "id": "88231",
+        "name": "Fernando Lisboa"
+      },
+      "recipient": {
+        "id": "456",
+        "name": "Produtora Exemplo",
+        "email": "produtora@example.com",
+        "document": "12345678000190",
+        "phone": "11999999999"
+      },
+      "buyer": {
+        "id": "b1010",
+        "name": "Comprador Exemplo",
+        "email": "comprador@example.com",
+        "document": "12345678900",
+        "phone": "11988887777"
+      },
+      "producer": {
+        "id": "5",
+        "name": "Produtora Exemplo"
+      },
+      "affiliates": [
+        {
+          "id": "88231",
+          "name": "Fernando Lisboa",
+          "email": "fernando@example.com",
+          "netGain": {
+            "currency": "BRL",
+            "value": 149.1
+          }
+        }
+      ],
+      "partners": [],
+      "offer": {
+        "name": "Oferta Base"
+      },
+      "utm": {
+        "source": "instagram",
+        "campaign": null,
+        "medium": null,
+        "content": null,
+        "term": null
+      },
+      "orderBump": {
+        "has": false,
+        "isMainSale": true,
+        "mainSaleId": null
+      }
+    }
+  ]
+}

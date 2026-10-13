@@ -1,0 +1,30 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 2,
+  "items": [
+    {
+      "id": "640105",
+      "creditDate": "2026-08-02T10:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1005",
+      "saleId": "1005",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 59.1
+      }
+    },
+    {
+      "id": "700006",
+      "creditDate": "2026-10-13T01:15:00.000Z",
+      "description": "Chargeback da venda 1005",
+      "saleId": "1005",
+      "type": "chargerback_success",
+      "value": {
+        "currency": "BRL",
+        "value": -59.1
+      }
+    }
+  ]
+}

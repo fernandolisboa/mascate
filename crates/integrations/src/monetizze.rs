@@ -13,7 +13,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use chrono::{FixedOffset, NaiveDateTime, TimeDelta};
+use chrono::{NaiveDateTime, TimeDelta};
 use mascate_affiliate::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram,
 };
@@ -23,7 +23,7 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::answers::{decimal, numeric_id, read_json};
+use crate::answers::{brasilia, decimal, numeric_id, read_json};
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// API 2.1, unless a test points elsewhere.
@@ -62,12 +62,6 @@ const SETTLE_DAYS: i64 = 35;
 
 /// Monetizze documents no limit on how far back the sales go.
 const HISTORY_DAYS: i64 = 5 * 365;
-
-/// Monetizze takes and gives dates as Brasília's wall clock, which has had
-/// no daylight saving since 2019.
-fn brasilia() -> FixedOffset {
-    FixedOffset::west_opt(3 * 3600).expect("a valid offset")
-}
 
 const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 

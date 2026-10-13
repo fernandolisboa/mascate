@@ -1,0 +1,52 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 4,
+  "items": [
+    {
+      "id": "720001",
+      "creditDate": "2026-10-12T12:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 3001",
+      "saleId": 3001,
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": "19.90"
+      }
+    },
+    {
+      "id": "720002",
+      "creditDate": "2026-10-12T13:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 3002",
+      "saleId": "3002",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 25
+      }
+    },
+    {
+      "id": "720003",
+      "creditDate": "2026-10-13T13:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 3002",
+      "saleId": "3002",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 25.01
+      }
+    },
+    {
+      "id": "720004",
+      "creditDate": "2026-10-12T14:00:00.000Z",
+      "description": "   ",
+      "saleId": "3003",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "USD",
+        "value": 7.5
+      }
+    }
+  ]
+}

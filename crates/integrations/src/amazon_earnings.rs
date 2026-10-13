@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::RangeInclusive;
 
-use chrono::{FixedOffset, NaiveDate, NaiveDateTime, TimeZone as _};
+use chrono::{NaiveDate, NaiveDateTime, TimeZone as _};
 use mascate_affiliate::{
     AffiliatePlatform, CommissionStatus, Reading, ReportedConversion, ReportedProgram,
 };
@@ -21,6 +21,7 @@ use mascate_kernel::{Currency, Money, Timestamp, fold, parse_amount};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::answers::brasilia;
 use crate::spreadsheet::{Cell, TableError, TableRow, excel_serial, read_table};
 
 /// The Platform the report's Conversions belong to.
@@ -413,8 +414,7 @@ impl Row {
     /// Amazon's dates are Brasília time (UTC-3, no daylight saving since
     /// 2019).
     fn when(&self) -> Timestamp {
-        let brasilia = FixedOffset::west_opt(3 * 3600).expect("a valid offset");
-        brasilia
+        brasilia()
             .from_local_datetime(&self.date_shipped)
             .single()
             .expect("a fixed offset has one local time")

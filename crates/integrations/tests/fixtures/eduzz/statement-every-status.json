@@ -1,0 +1,140 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 12,
+  "items": [
+    {
+      "id": "710001",
+      "creditDate": "2026-10-12T13:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2001",
+      "saleId": "2001",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.01
+      }
+    },
+    {
+      "id": "710002",
+      "creditDate": "2026-10-12T14:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2002",
+      "saleId": "2002",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.02
+      }
+    },
+    {
+      "id": "710003",
+      "creditDate": "2026-10-12T15:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2003",
+      "saleId": "2003",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.03
+      }
+    },
+    {
+      "id": "710004",
+      "creditDate": "2026-10-12T16:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2004",
+      "saleId": "2004",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.04
+      }
+    },
+    {
+      "id": "710005",
+      "creditDate": "2026-10-12T17:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2005",
+      "saleId": "2005",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.05
+      }
+    },
+    {
+      "id": "710006",
+      "creditDate": "2026-10-12T18:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2006",
+      "saleId": "2006",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.06
+      }
+    },
+    {
+      "id": "710007",
+      "creditDate": "2026-10-12T19:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2007",
+      "saleId": "2007",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.07
+      }
+    },
+    {
+      "id": "710008",
+      "creditDate": "2026-10-12T20:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2008",
+      "saleId": "2008",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.08
+      }
+    },
+    {
+      "id": "710009",
+      "creditDate": "2026-10-12T21:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2009",
+      "saleId": "2009",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.09
+      }
+    },
+    {
+      "id": "710010",
+      "creditDate": "2026-10-12T12:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2010",
+      "saleId": "2010",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.1
+      }
+    },
+    {
+      "id": "710011",
+      "creditDate": "2026-10-12T13:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2011",
+      "saleId": "2011",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.11
+      }
+    },
+    {
+      "id": "710012",
+      "creditDate": "2026-10-12T14:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 2012",
+      "saleId": "2012",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 10.12
+      }
+    }
+  ]
+}
