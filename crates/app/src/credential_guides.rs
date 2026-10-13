@@ -199,6 +199,31 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Eduzz => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "Entre no console de desenvolvedor da Eduzz com a sua conta e abra Meus \
+                     Aplicativos.",
+                        "Abrir o console da Eduzz",
+                        "https://console.eduzz.com/application/apps",
+                    ),
+                    step(
+                        "Clique em Novo Aplicativo, dê um nome como Mascate e marque os escopos \
+                     myeduzz_financial_read e myeduzz_sales_read: o app só lê o extrato, as \
+                     vendas e as transferências. Clique em Criar Aplicativo; o Client ID e o \
+                     Client Secret que aparecem não são usados.",
+                    ),
+                    step(
+                        "Na lista de aplicativos, na linha do Mascate, use Copiar access token. \
+                     É o seu token pessoal e não expira; se gerar outro ou mudar os escopos, \
+                     cole o novo aqui.",
+                    ),
+                ],
+                then: None,
+            };
+            GUIDE
+        }
     }
 }
 
@@ -226,6 +251,7 @@ mod tests {
             Connection::Hotmart => "app-vlc.hotmart.com",
             Connection::Monetizze => "app.monetizze.com.br",
             Connection::Kiwify => "dashboard.kiwify.com.br",
+            Connection::Eduzz => "console.eduzz.com",
         }
     }
 
@@ -234,7 +260,10 @@ mod tests {
     fn phase(connection: Connection) -> u8 {
         match connection {
             Connection::MercadoLivre | Connection::ShopeeAffiliates | Connection::Anthropic => 1,
-            Connection::Hotmart | Connection::Monetizze | Connection::Kiwify => 2,
+            Connection::Hotmart
+            | Connection::Monetizze
+            | Connection::Kiwify
+            | Connection::Eduzz => 2,
         }
     }
 

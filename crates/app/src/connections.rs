@@ -32,6 +32,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Hotmart => "Hotmart",
         Connection::Monetizze => "Monetizze",
         Connection::Kiwify => "Kiwify",
+        Connection::Eduzz => "Eduzz",
     }
 }
 
@@ -49,6 +50,10 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
         Connection::Kiwify => {
             "Comissões de afiliado e saques: vendas, status, estornos e cancelamentos, lidos a \
              cada hora."
+        }
+        Connection::Eduzz => {
+            "Comissões de afiliado e transferências: extrato, vendas, estornos e chargebacks, \
+             lidos a cada hora."
         }
     }
 }
@@ -68,6 +73,7 @@ fn credential_label(credential: Credential) -> &'static str {
         "KIWIFY_CLIENT_ID" => "Client ID",
         "KIWIFY_CLIENT_SECRET" => "Client Secret",
         "KIWIFY_ACCOUNT_ID" => "Account ID",
+        "EDUZZ_PERSONAL_TOKEN" => "Token pessoal",
         other => other,
     }
 }

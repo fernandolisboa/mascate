@@ -1,0 +1,52 @@
+{
+  "pages": 2,
+  "page": 2,
+  "itemsPerPage": 100,
+  "totalItems": 9,
+  "items": [
+    {
+      "id": "700006",
+      "creditDate": "2026-10-13T01:15:00.000Z",
+      "description": "Chargeback da venda 1005",
+      "saleId": "1005",
+      "type": "chargerback_success",
+      "value": {
+        "currency": "BRL",
+        "value": -59.1
+      }
+    },
+    {
+      "id": "700007",
+      "creditDate": "2026-10-13T02:00:00.000Z",
+      "description": "Bônus de campanha",
+      "saleId": null,
+      "type": "bonus",
+      "value": {
+        "currency": "BRL",
+        "value": 10
+      }
+    },
+    {
+      "id": "700008",
+      "creditDate": "2026-10-13T03:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1006",
+      "saleId": "1006",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "EUR",
+        "value": 12.0
+      }
+    },
+    {
+      "id": "700009",
+      "creditDate": "2026-10-13T09:45:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1010",
+      "saleId": "1010",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 89.4
+      }
+    }
+  ]
+}

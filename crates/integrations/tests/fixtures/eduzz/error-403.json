@@ -1,0 +1,6 @@
+{
+  "message": "O aplicativo não tem o escopo myeduzz_financial_read",
+  "code": "FORBIDDEN",
+  "link": "https://documentacao-api.eduzz.com/suporte?error=FORBIDDEN",
+  "debug": {}
+}

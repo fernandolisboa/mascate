@@ -1,0 +1,30 @@
+{
+  "pages": 1,
+  "page": 1,
+  "itemsPerPage": 100,
+  "totalItems": 2,
+  "items": [
+    {
+      "id": "690104",
+      "creditDate": "2026-09-28T13:00:00.000Z",
+      "description": "Comissão de afiliado referente à venda 1004",
+      "saleId": "1004",
+      "type": "affiliante_sale",
+      "value": {
+        "currency": "BRL",
+        "value": 29.7
+      }
+    },
+    {
+      "id": "700005",
+      "creditDate": "2026-10-12T20:00:00.000Z",
+      "description": "Reembolso da venda 1004",
+      "saleId": "1004",
+      "type": "refund",
+      "value": {
+        "currency": "BRL",
+        "value": -29.7
+      }
+    }
+  ]
+}

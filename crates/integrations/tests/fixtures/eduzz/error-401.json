@@ -1,0 +1,6 @@
+{
+  "message": "Token inválido ou expirado",
+  "code": "UNAUTHORIZED",
+  "link": "https://documentacao-api.eduzz.com/suporte?error=UNAUTHORIZED",
+  "debug": {}
+}

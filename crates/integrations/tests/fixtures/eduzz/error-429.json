@@ -1,0 +1,6 @@
+{
+  "message": "Too many requests",
+  "code": "TOO_MANY_REQUESTS",
+  "link": "https://documentacao-api.eduzz.com/suporte?error=TOO_MANY_REQUESTS",
+  "debug": {}
+}

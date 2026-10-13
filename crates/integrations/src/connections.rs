@@ -19,6 +19,8 @@ pub enum Connection {
     Monetizze,
     /// The owner's affiliate Commissions and withdrawals on Kiwify.
     Kiwify,
+    /// The owner's affiliate Commissions and transfers on Eduzz.
+    Eduzz,
 }
 
 /// How a credential reaches the store.
@@ -46,13 +48,14 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 6] = [
+    pub const ALL: [Connection; 7] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
         Connection::Hotmart,
         Connection::Monetizze,
         Connection::Kiwify,
+        Connection::Eduzz,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -86,6 +89,7 @@ impl Connection {
             pasted("KIWIFY_CLIENT_SECRET"),
             pasted("KIWIFY_ACCOUNT_ID"),
         ];
+        const EDUZZ: &[Credential] = &[pasted("EDUZZ_PERSONAL_TOKEN")];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -93,6 +97,7 @@ impl Connection {
             Connection::Hotmart => HOTMART,
             Connection::Monetizze => MONETIZZE,
             Connection::Kiwify => KIWIFY,
+            Connection::Eduzz => EDUZZ,
         }
     }
 
