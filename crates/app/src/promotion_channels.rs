@@ -423,7 +423,7 @@ impl PromotionScreen {
             .child(div().text_xs().text_color(t.text2).child(kind_note(self.kind)))
             .child(
                 field("Marcação", &self.tag).child(div().text_xs().text_color(t.text2).child(
-                    "Letras minúsculas, números e _, até 20. Vai em cada link de afiliado                      deste canal e volta nas vendas, ligando cada comissão ao canal.",
+                    "Letras minúsculas, números e _, até 20. Vai em cada link de afiliado deste canal e volta nas vendas, ligando cada comissão ao canal.",
                 )),
             )
             .when(self.kind == ChannelKind::PaidSearch, |form| {
@@ -437,7 +437,7 @@ impl PromotionScreen {
             .when(self.kind == ChannelKind::TelegramChannel, |form| {
                 form.child(field("Chat do Telegram", &self.chat).child(
                     div().text_xs().text_color(t.text2).child(
-                        "O @nome público do canal ou, num canal privado, o id que começa                          com -100.",
+                        "O @nome público do canal ou, num canal privado, o id que começa com -100.",
                     ),
                 ))
             })
@@ -499,7 +499,7 @@ impl Render for PromotionScreen {
                 .gap_3()
                 .child(kit::section_heading("Canais de divulgação"))
                 .child(div().text_sm().text_color(t.text2).child(
-                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram,                      TikTok, busca paga. Cada canal tem uma marcação, que vai nos links de                      afiliado criados em Afiliação.",
+                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram, TikTok, busca paga. Cada canal tem uma marcação, que vai nos links de afiliado criados em Afiliação.",
                 ))
                 .when(rows.is_empty(), |list| {
                     list.child(

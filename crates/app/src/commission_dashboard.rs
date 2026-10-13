@@ -188,9 +188,10 @@ impl CommissionDashboard {
                     .children(rows)
             }))
             .child(div().text_xs().text_color(t.text2).child(
-                "Marcação é o que vai no link de afiliado: os subIds da Shopee, o sck ou src da \
-                 Hotmart, o src da Monetizze, o sck ou src da Kiwify, o tracker da Eduzz, o \
-                 tracking id da Amazon. Por enquanto ela faz as vezes do canal de divulgação.",
+                "Marcação é o que vai no link de afiliado: os subIds da Shopee, o src ou sck da \
+                 Hotmart, o src da Monetizze, o sck ou src da Kiwify, o utm_content ou tracker da \
+                 Eduzz, o tracking id da Amazon. Os links criados aqui levam a marcação do canal \
+                 de divulgação.",
             ))
             .into_any_element()
     }
