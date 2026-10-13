@@ -25,6 +25,7 @@ fn commission(amount: Money, status: CommissionStatus) -> Commission {
         status_since: at,
         tracking: None,
         manual: false,
+        payout: None,
     }
 }
 
