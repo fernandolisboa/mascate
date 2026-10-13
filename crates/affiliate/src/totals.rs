@@ -20,7 +20,7 @@ pub struct CurrencyTotals {
 }
 
 impl CurrencyTotals {
-    fn new(currency: Currency) -> Self {
+    pub(crate) fn new(currency: Currency) -> Self {
         Self {
             currency,
             pending: Money::zero(currency),
@@ -48,7 +48,7 @@ impl CurrencyTotals {
         }
     }
 
-    fn add(&mut self, commission: &Commission) {
+    pub(crate) fn add(&mut self, commission: &Commission) {
         let amount = commission.amount.amount();
         let into = match commission.status {
             CommissionStatus::Pending => &mut self.pending,

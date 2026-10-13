@@ -4,71 +4,43 @@
 //! and the sales volume against its limit are summed up by Finance, fed
 //! with each sale's lines, the Listings' Products and categories, and each
 //! Order's Money Releases (ADR 0026); the capital in stock is Inventory's,
-//! at the Average Cost.
+//! at the Average Cost. Next to the margin, the period's approved and paid
+//! affiliate Commissions, read from Affiliate and summed by Finance (#81).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use chrono::{Local, NaiveDate, TimeDelta};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Entity, SharedString, Subscription, Window, div, px};
+use mascate_affiliate::{Affiliate, CommissionFilter, CommissionStatus};
 use mascate_catalog::Catalog;
 use mascate_commerce::{Listings, Orders, Sale, SalesSummary};
 use mascate_finance::{
-    MarginOrder, MarginReport, MarginRow, MoneyRelease, ReleaseSummary, SoldLine, SoldProduct,
-    Taxes, VolumeCheck,
+    CommissionIncome, EarnedCommission, MarginOrder, MarginReport, MarginRow, MoneyRelease,
+    ReleaseSummary, SoldLine, SoldProduct, Taxes, VolumeCheck,
 };
 use mascate_inventory::Inventory;
 use mascate_kernel::{Currency, Money, RecordId, Timestamp};
 use mascate_marketing::ProductAds;
 
 use crate::ads::{self, AdsSyncs};
+use crate::affiliate::{self, CommissionChanges};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
 use crate::finance::{self, VolumeSources};
-use crate::forms::{Outcome, day_text, input, notice, parse_day};
+use crate::forms::{Outcome, day_text, notice};
 use crate::kit;
 use crate::layout;
 use crate::listings::{self, listings};
 use crate::orders::{self, OrderSyncs};
 use crate::parts::ScreenParts;
 use crate::pricing;
-use crate::sales::{amount_text, day_start, margin_cell, money_cell, orders_text, table_row};
+use crate::sales::{amount_text, margin_cell, money_cell, orders_text, table_row};
+use crate::span::{SpanChanged, SpanPicker};
 use crate::stock;
-
-/// The days the dashboard sums up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Span {
-    /// The last few days, today included.
-    Days(u16),
-    /// The days the owner typed, both included.
-    Custom,
-}
-
-impl Span {
-    const ALL: [Span; 4] = [Span::Days(7), Span::Days(30), Span::Days(90), Span::Custom];
-
-    fn name(self) -> SharedString {
-        match self {
-            Span::Days(days) => format!("{days} dias").into(),
-            Span::Custom => "Personalizado".into(),
-        }
-    }
-}
-
-/// From the start of `from` to the end of `to`, by the computer's calendar.
-fn days(from: NaiveDate, to: NaiveDate) -> Range<Timestamp> {
-    day_start(from)..day_start(to + TimeDelta::days(1))
-}
-
-/// The last `count` days, `today` included.
-fn last_days(count: u16, today: NaiveDate) -> Range<Timestamp> {
-    days(today - TimeDelta::days(i64::from(count) - 1), today)
-}
 
 /// What a read of the dashboard brings.
 struct Snapshot {
@@ -78,6 +50,7 @@ struct Snapshot {
     units: i64,
     releases: ReleaseSummary,
     volume: VolumeCheck,
+    commissions: Vec<CommissionIncome>,
 }
 
 /// What the dashboard reads from the rest of the app.
@@ -89,6 +62,7 @@ struct Sources {
     inventory: Arc<Inventory>,
     product_ads: Option<Arc<ProductAds>>,
     volume: VolumeSources,
+    affiliate: Arc<Affiliate>,
 }
 
 impl Sources {
@@ -101,6 +75,7 @@ impl Sources {
             inventory: stock::inventory(cx)?,
             product_ads: ads::product_ads(cx),
             volume: VolumeSources::of(cx)?,
+            affiliate: affiliate::affiliate(cx)?,
         })
     }
 }
@@ -147,8 +122,22 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
             on: payment.release_at,
         })
         .collect();
-    let releases = ReleaseSummary::of(&releases, during, Currency::Brl)
+    let releases = ReleaseSummary::of(&releases, during.clone(), Currency::Brl)
         .map_err(|e| format!("Valores do Mercado Pago em moedas diferentes: {e}"))?;
+    let earned: Vec<EarnedCommission> = sources
+        .affiliate
+        .commissions(&CommissionFilter {
+            statuses: vec![CommissionStatus::Approved, CommissionStatus::Paid],
+            sold: during,
+        })
+        .await
+        .map_err(|e| affiliate::failure(&e))?
+        .into_iter()
+        .map(|commission| EarnedCommission {
+            amount: commission.amount,
+            paid: commission.status == CommissionStatus::Paid,
+        })
+        .collect();
     Ok(Snapshot {
         summary,
         lines,
@@ -156,6 +145,7 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         units: stock.units(),
         releases,
         volume: finance::volume(&sources.volume).await?,
+        commissions: CommissionIncome::of(&earned),
     })
 }
 
@@ -233,11 +223,7 @@ fn sold_lines(sale: &Sale, sold_as: &SoldAs) -> Vec<SoldLine> {
 }
 
 pub struct DashboardScreen {
-    span: Span,
-    from: Entity<InputState>,
-    to: Entity<InputState>,
-    /// The custom days last applied.
-    custom: Option<(NaiveDate, NaiveDate)>,
+    span: Entity<SpanPicker>,
     order: MarginOrder,
     snapshot: Option<Snapshot>,
     report: Option<MarginReport>,
@@ -249,23 +235,18 @@ pub struct DashboardScreen {
 
 impl DashboardScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let span = cx.new(|cx| SpanPicker::new(window, cx));
         // Each Order Sync brings Orders, their Fees and their Money
-        // Releases; each Sync of Product Ads, what the ads cost.
+        // Releases; each Sync of Product Ads, what the ads cost; each change
+        // to the Commissions, what affiliation earned.
         let subscriptions = vec![
             cx.observe_global::<OrderSyncs>(Self::refresh),
             cx.observe_global::<AdsSyncs>(Self::refresh),
+            cx.observe_global::<CommissionChanges>(Self::refresh),
+            cx.subscribe(&span, |this, _, _: &SpanChanged, cx| this.refresh(cx)),
         ];
-        let today = Local::now().date_naive();
-        let from = input("dd/mm/aaaa", window, cx);
-        let to = input("dd/mm/aaaa", window, cx);
-        let month_ago = day_text(today - TimeDelta::days(29));
-        from.update(cx, |input, cx| input.set_value(month_ago, window, cx));
-        to.update(cx, |input, cx| input.set_value(day_text(today), window, cx));
         let mut screen = Self {
-            span: Span::Days(30),
-            from,
-            to,
-            custom: None,
+            span,
             order: MarginOrder::default(),
             snapshot: None,
             report: None,
@@ -277,19 +258,12 @@ impl DashboardScreen {
         screen
     }
 
-    fn during(&self) -> Option<Range<Timestamp>> {
-        let today = Local::now().date_naive();
-        match self.span {
-            Span::Days(count) => Some(last_days(count, today)),
-            Span::Custom => self.custom.map(|(from, to)| days(from, to)),
-        }
-    }
-
     /// Reads the period again, as when the screen comes into view.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let (Some(sources), Some(during)) = (Sources::of(cx), self.during()) else {
+        let Some(sources) = Sources::of(cx) else {
             return;
         };
+        let during = self.span.read(cx).during();
         self.reads += 1;
         let read_number = self.reads;
         let reading = cx
@@ -331,76 +305,6 @@ impl DashboardScreen {
         }
     }
 
-    fn pick(&mut self, span: Span, cx: &mut Context<Self>) {
-        self.span = span;
-        if span == Span::Custom && self.custom.is_none() {
-            self.apply_custom(cx);
-        } else {
-            self.refresh(cx);
-        }
-        cx.notify();
-    }
-
-    fn apply_custom(&mut self, cx: &mut Context<Self>) {
-        let from = parse_day(&self.from.read(cx).value());
-        let to = parse_day(&self.to.read(cx).value());
-        match (from, to) {
-            (Some(from), Some(to)) if from <= to => {
-                self.custom = Some((from, to));
-                self.refresh(cx);
-            }
-            _ => {
-                self.outcome = Some(Outcome::Failed(
-                    "Digite o primeiro e o último dia do período (ex.: 01/10/2026 e \
-                     31/10/2026), o primeiro antes do último."
-                        .into(),
-                ));
-            }
-        }
-        cx.notify();
-    }
-
-    fn render_spans(&self, cx: &mut Context<Self>) -> AnyElement {
-        h_flex()
-            .gap_2()
-            .children(Span::ALL.into_iter().enumerate().map(|(at, span)| {
-                let button = Button::new(("span", at))
-                    .label(span.name())
-                    .small()
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick(span, cx)));
-                if span == self.span {
-                    button.primary()
-                } else {
-                    button.ghost()
-                }
-            }))
-            .into_any_element()
-    }
-
-    fn render_custom(&self, cx: &mut Context<Self>) -> AnyElement {
-        let field = |label: &'static str, state: &Entity<InputState>| {
-            v_flex()
-                .gap_1()
-                .w(px(150.))
-                .child(div().text_sm().font_medium().child(label))
-                .child(Input::new(state).small())
-        };
-        h_flex()
-            .flex_wrap()
-            .gap_3()
-            .items_end()
-            .child(field("De", &self.from))
-            .child(field("Até", &self.to))
-            .child(
-                Button::new("apply-days")
-                    .label("Aplicar")
-                    .outline()
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.apply_custom(cx))),
-            )
-            .into_any_element()
-    }
-
     fn render_figures(&self, snapshot: &Snapshot, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
         let summary = &snapshot.summary;
@@ -438,6 +342,7 @@ impl DashboardScreen {
                             .min_w(px(260.))
                             .text_color(margin_ink),
                     )
+                    .children(commission_figures(&snapshot.commissions, &t))
                     .child(figure("Pedidos", summary.orders.to_string(), &t))
                     .child(
                         figure("Capital em estoque", snapshot.capital.to_pt_br(), &t).child(
@@ -454,8 +359,10 @@ impl DashboardScreen {
                     .map(|text| div().text_sm().text_color(t.text2).child(text)),
             )
             .child(div().text_xs().text_color(t.text2).child(
-                "Capital em estoque: as unidades de hoje pelo custo médio, qualquer que seja o \
-                 período.",
+                "Comissões de afiliado: as aprovadas e pagas das vendas do período, na moeda da \
+                 plataforma e sem conversão; estornos e vendas canceladas ficam fora. O detalhe \
+                 fica em Afiliação. Capital em estoque: as unidades de hoje pelo custo médio, \
+                 qualquer que seja o período.",
             ))
             .into_any_element()
     }
@@ -608,7 +515,7 @@ impl DashboardScreen {
     }
 }
 
-fn figure(label: &'static str, text: String, t: &Tokens) -> Div {
+fn figure(label: impl Into<SharedString>, text: String, t: &Tokens) -> Div {
     v_flex()
         .flex_1()
         .min_w(px(170.))
@@ -618,7 +525,7 @@ fn figure(label: &'static str, text: String, t: &Tokens) -> Div {
         .border(t.border_width)
         .border_color(t.frame)
         .bg(t.surface)
-        .child(div().text_sm().text_color(t.text2).child(label))
+        .child(div().text_sm().text_color(t.text2).child(label.into()))
         .child(
             div()
                 .text_xl()
@@ -626,6 +533,36 @@ fn figure(label: &'static str, text: String, t: &Tokens) -> Div {
                 .whitespace_nowrap()
                 .child(text),
         )
+}
+
+/// The period's earned Commissions, one figure per currency; none earned
+/// shows as zero reais.
+fn commission_figures(income: &[CommissionIncome], t: &Tokens) -> Vec<Div> {
+    let several = income.len() > 1;
+    if income.is_empty() {
+        return vec![figure(
+            "Comissões de afiliado",
+            Money::zero(Currency::Brl).to_pt_br(),
+            t,
+        )];
+    }
+    income
+        .iter()
+        .map(|income| {
+            let label = if several {
+                format!("Comissões de afiliado em {}", income.currency.code())
+            } else {
+                "Comissões de afiliado".to_owned()
+            };
+            figure(label, income.earned().to_pt_br(), t).child(
+                div().text_xs().text_color(t.text2).child(format!(
+                    "aprovadas {} · pagas {}",
+                    income.approved.to_pt_br(),
+                    income.paid.to_pt_br()
+                )),
+            )
+        })
+        .collect()
 }
 
 fn margin_header(first: &'static str, t: &Tokens) -> AnyElement {
@@ -697,12 +634,9 @@ impl Render for DashboardScreen {
                 .push(kit::error_notice(NO_DATABASE, cx).into_any_element());
             return layout::screen(parts, cx);
         }
-        parts.actions.push(self.render_spans(cx));
+        parts.actions.push(self.span.clone().into_any_element());
         if let Some(outcome) = &self.outcome {
             parts.notices.push(notice(outcome, cx));
-        }
-        if self.span == Span::Custom {
-            parts.content.push(self.render_custom(cx));
         }
         let Some(snapshot) = self.snapshot.take() else {
             return layout::screen(parts, cx);
@@ -713,26 +647,5 @@ impl Render for DashboardScreen {
         parts.content.push(self.render_releases(&snapshot, cx));
         self.snapshot = Some(snapshot);
         layout::screen(parts, cx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn the_last_days_end_tomorrow_and_include_today() {
-        let today = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
-        let local = |month, day| {
-            Local
-                .with_ymd_and_hms(2026, month, day, 0, 0, 0)
-                .earliest()
-                .unwrap()
-                .with_timezone(&Utc)
-        };
-
-        assert_eq!(last_days(7, today), local(9, 29)..local(10, 6));
     }
 }

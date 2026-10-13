@@ -1,6 +1,6 @@
-//! Afiliação (#77): every Commission with its Platform, Program, product,
-//! sale date, amount and status, filtered by status and period, the totals
-//! per currency, reversals highlighted and cancelled sales listed apart,
+//! Afiliação (#77): the commissions dashboard of the period (#81), every
+//! Commission with its Platform, Program, product, sale date, amount and
+//! status, filtered by status, reversals and cancelled sales listed apart,
 //! and the form to record a Commission by hand for Platforms without an API
 //! or a file. The Commissions Sync (#78) reads each connected Platform at
 //! start, every hour and on "Sincronizar agora". Below them, the Payouts
@@ -24,21 +24,22 @@ use gpui_kit::{
 };
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliatePlatform, AffiliateSync, Commission, CommissionFilter,
-    CommissionSource, CommissionStatus, CurrencyTotals, LastSync, ManualCommission, Recorded,
-    totals_by_currency,
+    CommissionSource, CommissionStatus, LastSync, ManualCommission, Recorded,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{NO_DATABASE, day, day_and_time};
+use crate::commission_dashboard::CommissionDashboard;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, amount_text, day_text, input, notice, parse_day};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
-use crate::sales::{Period, day_start};
+use crate::sales::day_start;
+use crate::span::{SpanChanged, SpanPicker};
 
 /// The app's Commissions; absent when the database did not open.
 pub struct AppAffiliate(pub Arc<Affiliate>);
@@ -50,7 +51,7 @@ pub(crate) fn affiliate(cx: &App) -> Option<Arc<Affiliate>> {
 }
 
 /// Counts the changes to the Commissions, so what depends on them (the
-/// income Reminder) reads them again.
+/// income Reminder, the Painel) reads them again.
 #[derive(Default)]
 pub struct CommissionChanges(pub u64);
 
@@ -228,13 +229,13 @@ pub(crate) async fn raised_reminders(affiliate: Option<Arc<Affiliate>>) -> Vec<&
     })
 }
 
-/// The statuses the main list shows: every one but cancelled, which is
-/// listed apart because there never was a Commission.
-const LISTED: [CommissionStatus; 4] = [
+/// The statuses the main list shows. Reversals are listed apart, because
+/// the money went back to the buyer, and so are cancelled sales, because
+/// there never was a Commission.
+const LISTED: [CommissionStatus; 3] = [
     CommissionStatus::Pending,
     CommissionStatus::Approved,
     CommissionStatus::Paid,
-    CommissionStatus::Reversed,
 ];
 
 /// One Platform in a form's picker.
@@ -290,17 +291,17 @@ pub(crate) fn platform_select<V: 'static>(
 
 /// What one read of the screen brings.
 struct Snapshot {
-    listed: Vec<Commission>,
-    cancelled: Vec<Commission>,
+    commissions: Vec<Commission>,
     synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
 }
 
 pub struct AffiliateScreen {
-    period: Period,
-    /// `None` lists every status but cancelled.
+    span: Entity<SpanPicker>,
+    /// `None` lists every status of [`LISTED`].
     status: Option<CommissionStatus>,
-    listed: Vec<Commission>,
-    cancelled: Vec<Commission>,
+    /// The period's Commissions, of every status.
+    commissions: Vec<Commission>,
+    dashboard: Entity<CommissionDashboard>,
     /// Each Platform the Sync reads, with its last Sync that went through.
     synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
     /// What the last Sync this screen started brought.
@@ -331,21 +332,29 @@ impl AffiliateScreen {
         let sold_on = input("dd/mm/aaaa", window, cx);
         sold_on.update(cx, |field, cx| field.set_value(today(), window, cx));
         let payouts = cx.new(|cx| PayoutsSection::new(window, cx));
+        let span = cx.new(|cx| SpanPicker::new(window, cx));
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
-            // A Payout recorded or deleted changes what is paid.
+            // A Payout recorded or deleted changes what is paid, here and on
+            // the Painel.
             cx.subscribe_in(
                 &payouts,
                 window,
-                |this, _, _: &PayoutsChanged, window, cx| this.read_commissions(window, cx),
+                |this, _, _: &PayoutsChanged, window, cx| {
+                    cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+                    this.read_commissions(window, cx)
+                },
             ),
+            cx.subscribe_in(&span, window, |this, _, _: &SpanChanged, window, cx| {
+                this.refresh(window, cx)
+            }),
         ];
         let mut screen = Self {
-            period: Period::ThisMonth,
+            span,
             status: None,
-            listed: Vec::new(),
-            cancelled: Vec::new(),
+            commissions: Vec::new(),
+            dashboard: cx.new(|_| CommissionDashboard::default()),
             synced: Vec::new(),
             sync_outcome: None,
             platform,
@@ -372,7 +381,7 @@ impl AffiliateScreen {
     /// comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.read_commissions(window, cx);
-        let paid = self.period.range(Local::now().date_naive());
+        let paid = self.span.read(cx).during();
         self.payouts
             .update(cx, |payouts, cx| payouts.refresh(paid, window, cx));
     }
@@ -397,10 +406,7 @@ impl AffiliateScreen {
         let Some(affiliate) = affiliate(cx) else {
             return;
         };
-        let sold = self.period.range(Local::now().date_naive());
-        let statuses = self
-            .status
-            .map_or_else(|| LISTED.to_vec(), |status| vec![status]);
+        let sold = self.span.read(cx).during();
         let platforms: Vec<AffiliatePlatform> = sources(cx)
             .iter()
             .map(|(_, source)| source.platform())
@@ -411,15 +417,9 @@ impl AffiliateScreen {
         let working = cx.background_executor().spawn(async move {
             let changed = change(affiliate.clone()).await;
             let snapshot = async {
-                let listed = affiliate
+                let commissions = affiliate
                     .commissions(&CommissionFilter {
-                        statuses,
-                        sold: sold.clone(),
-                    })
-                    .await?;
-                let cancelled = affiliate
-                    .commissions(&CommissionFilter {
-                        statuses: vec![CommissionStatus::Cancelled],
+                        statuses: Vec::new(),
                         sold,
                     })
                     .await?;
@@ -428,8 +428,7 @@ impl AffiliateScreen {
                     synced.push((platform, affiliate.last_sync(platform).await?));
                 }
                 Ok::<_, AffiliateError>(Snapshot {
-                    listed,
-                    cancelled,
+                    commissions,
                     synced,
                 })
             }
@@ -443,8 +442,10 @@ impl AffiliateScreen {
                     this.busy = false;
                     match snapshot {
                         Ok(snapshot) => {
-                            this.listed = snapshot.listed;
-                            this.cancelled = snapshot.cancelled;
+                            this.dashboard.update(cx, |dashboard, cx| {
+                                dashboard.show(snapshot.commissions.clone(), cx)
+                            });
+                            this.commissions = snapshot.commissions;
                             this.synced = snapshot.synced;
                         }
                         Err(error) => this.outcome = Some(Outcome::Failed(failure(&error).into())),
@@ -549,19 +550,17 @@ impl AffiliateScreen {
             .unwrap_or_default()
     }
 
-    fn pick_period(&mut self, period: Period, window: &mut Window, cx: &mut Context<Self>) {
-        self.period = period;
-        self.refresh(window, cx);
+    fn pick_status(&mut self, status: Option<CommissionStatus>, cx: &mut Context<Self>) {
+        self.status = status;
+        cx.notify();
     }
 
-    fn pick_status(
-        &mut self,
-        status: Option<CommissionStatus>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.status = status;
-        self.refresh(window, cx);
+    /// The period's Commissions in `statuses`, latest sale first.
+    fn of_status(&self, statuses: &[CommissionStatus]) -> Vec<&Commission> {
+        self.commissions
+            .iter()
+            .filter(|commission| statuses.contains(&commission.status))
+            .collect()
     }
 
     /// The Commission the form describes, or why it cannot be one yet.
@@ -637,9 +636,8 @@ impl AffiliateScreen {
     /// Loads a manual Commission into the form to change it.
     fn edit(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commission) = self
-            .listed
+            .commissions
             .iter()
-            .chain(&self.cancelled)
             .find(|commission| commission.id == id)
             .cloned()
         else {
@@ -704,94 +702,9 @@ impl AffiliateScreen {
                         status_filter_name(status),
                         self.status == status,
                     )
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| {
-                            this.pick_status(status, window, cx)
-                        }),
-                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_status(status, cx)))
                 });
-        let periods = Period::ALL.into_iter().map(|period| {
-            chip(
-                ("period", period as usize),
-                period.name(),
-                self.period == period,
-            )
-            .on_click(cx.listener(move |this, _, window, cx| this.pick_period(period, window, cx)))
-        });
-        h_flex()
-            .flex_wrap()
-            .gap_4()
-            .child(h_flex().gap_1().children(periods))
-            .child(h_flex().gap_1().children(statuses))
-            .into_any_element()
-    }
-
-    fn render_totals(&self, cx: &App) -> AnyElement {
-        let t = look(cx).tokens;
-        let totals = totals_by_currency(&self.listed);
-        if totals.is_empty() {
-            return div().into_any_element();
-        }
-        let figure = |label: String, text: String, ink: Hsla| {
-            v_flex()
-                .flex_1()
-                .min_w(px(150.))
-                .gap_1()
-                .p_4()
-                .rounded(t.radius_lg)
-                .border(t.border_width)
-                .border_color(t.frame)
-                .bg(t.surface)
-                .child(div().text_sm().text_color(t.text2).child(label))
-                .child(
-                    div()
-                        .text_xl()
-                        .font_semibold()
-                        .whitespace_nowrap()
-                        .text_color(ink)
-                        .child(text),
-                )
-        };
-        let several = totals.len() > 1;
-        let label = |name: &str, total: &CurrencyTotals| {
-            if several {
-                format!("{name} em {}", total.currency.code())
-            } else {
-                name.to_owned()
-            }
-        };
-        v_flex()
-            .gap_2()
-            .children(totals.iter().map(|total| {
-                h_flex()
-                    .flex_wrap()
-                    .gap_3()
-                    .child(figure(
-                        label("Ganho", total),
-                        total.earned().to_pt_br(),
-                        t.text,
-                    ))
-                    .child(figure(
-                        label("Pendente", total),
-                        total.pending.to_pt_br(),
-                        t.text,
-                    ))
-                    .child(figure(label("Paga", total), total.paid.to_pt_br(), t.text))
-                    .child(figure(
-                        label("Estornada", total),
-                        total.reversed.to_pt_br(),
-                        if total.reversed.amount().is_zero() {
-                            t.text
-                        } else {
-                            t.danger
-                        },
-                    ))
-            }))
-            .child(div().text_xs().text_color(t.text2).child(
-                "Ganho soma as comissões aprovadas e pagas; estornos ficam fora dele. Cada \
-                 moeda soma à parte, sem conversão.",
-            ))
-            .into_any_element()
+        h_flex().gap_1().children(statuses).into_any_element()
     }
 
     fn render_form(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -929,6 +842,34 @@ impl AffiliateScreen {
             )
             .children(self.form.as_ref().map(|outcome| notice(outcome, cx)))
             .into_any_element()
+    }
+
+    /// The period's Commissions in `status`, listed apart under its own
+    /// heading; nothing without one.
+    fn render_apart(
+        &self,
+        status: CommissionStatus,
+        why: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let apart = self.of_status(&[status]);
+        if apart.is_empty() {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let heading = format!("{} ({})", status_filter_name(Some(status)), apart.len());
+        let rows: Vec<AnyElement> = apart
+            .into_iter()
+            .map(|commission| self.render_commission(commission, cx))
+            .collect();
+        Some(
+            v_flex()
+                .gap_3()
+                .child(kit::section_heading(heading))
+                .child(div().text_sm().text_color(t.text2).child(why))
+                .children(rows)
+                .into_any_element(),
+        )
     }
 
     fn render_commission(&self, commission: &Commission, cx: &mut Context<Self>) -> AnyElement {
@@ -1135,7 +1076,7 @@ impl Render for AffiliateScreen {
         if !self.synced.is_empty() {
             parts.actions.push(self.render_sync(cx));
         }
-        parts.actions.push(self.render_filters(cx));
+        parts.actions.push(self.span.clone().into_any_element());
         parts.notices.extend(self.sync_failures(cx));
         parts.notices.extend(
             self.sync_outcome
@@ -1145,16 +1086,26 @@ impl Render for AffiliateScreen {
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        parts.content.push(self.render_totals(cx));
-        let listed: Vec<AnyElement> = self
-            .listed
-            .iter()
+        parts
+            .content
+            .push(self.dashboard.clone().into_any_element());
+        let listed = self.of_status(&self.status.map_or(LISTED.to_vec(), |status| vec![status]));
+        let count = listed.len();
+        let listed: Vec<AnyElement> = listed
+            .into_iter()
             .map(|commission| self.render_commission(commission, cx))
             .collect();
         parts.content.push(
             v_flex()
                 .gap_3()
-                .child(kit::section_heading(commissions_text(self.listed.len())))
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_4()
+                        .items_center()
+                        .child(kit::section_heading(commissions_text(count)))
+                        .child(self.render_filters(cx)),
+                )
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
                         "Nenhuma comissão neste período. As da Hotmart e da Shopee chegam \
@@ -1165,27 +1116,18 @@ impl Render for AffiliateScreen {
                 .children(listed)
                 .into_any_element(),
         );
-        if !self.cancelled.is_empty() {
-            let cancelled: Vec<AnyElement> = self
-                .cancelled
-                .iter()
-                .map(|commission| self.render_commission(commission, cx))
-                .collect();
-            parts.content.push(
-                v_flex()
-                    .gap_3()
-                    .child(kit::section_heading(format!(
-                        "Canceladas ({})",
-                        self.cancelled.len()
-                    )))
-                    .child(div().text_sm().text_color(t.text2).child(
-                        "Vendas que não se concretizaram, como um boleto vencido: nunca houve \
-                         comissão, então não contam como estorno nem entram nos totais.",
-                    ))
-                    .children(cancelled)
-                    .into_any_element(),
-            );
-        }
+        parts.content.extend(self.render_apart(
+            CommissionStatus::Reversed,
+            "O dinheiro voltou ao comprador (reembolso, chargeback, fraude): ficam fora do \
+             ganho.",
+            cx,
+        ));
+        parts.content.extend(self.render_apart(
+            CommissionStatus::Cancelled,
+            "Vendas que não se concretizaram, como um boleto vencido: nunca houve comissão, \
+             então não contam como estorno nem entram nos totais.",
+            cx,
+        ));
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());
         layout::screen(parts, cx)
