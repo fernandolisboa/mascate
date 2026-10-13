@@ -247,6 +247,7 @@ fn main() {
                     ]
                     .into_iter()
                     .map(|tagger| Arc::new(tagger) as Arc<dyn LinkTagger>)
+                    .chain([shopee.clone() as Arc<dyn LinkTagger>])
                     .collect(),
                 ));
                 cx.set_global(AppPromotionChannels(started.promotion_channels.clone()));

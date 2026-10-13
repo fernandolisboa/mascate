@@ -55,9 +55,13 @@ const CONVERSION_FIELDS: &str = "purchaseTime clickTime conversionId totalCommis
 const VALIDATED_FIELDS: &str =
     "conversionId totalCommission netCommission orders{orderId items{itemId modelId}}";
 
-/// Shopee Afiliados is one Program for every Conversion.
-const PROGRAM_ID: &str = "shopee-affiliates";
-const PROGRAM_NAME: &str = "Shopee Afiliados";
+/// Shopee Afiliados is one Program for every Conversion and link.
+pub(super) fn program() -> ReportedProgram {
+    ReportedProgram {
+        id: "shopee-affiliates".into(),
+        name: "Shopee Afiliados".into(),
+    }
+}
 
 impl CommissionSource for ShopeeAffiliates {
     fn platform(&self) -> AffiliatePlatform {
@@ -263,6 +267,14 @@ fn items(conversion: &Value) -> impl Iterator<Item = Item<'_>> {
     })
 }
 
+/// The marking of the link's Promotion Channel in a report's `utmContent`:
+/// the first subId (ADR 0031, decision 4). Shopee joins the five subIds
+/// with dashes, so a marking for Shopee has none.
+fn channel_tag(utm_content: &str) -> Option<String> {
+    let first = utm_content.trim().split('-').next()?.trim();
+    (!first.is_empty()).then(|| first.to_owned())
+}
+
 /// The Conversions in one node of the report, one per item. An item whose
 /// Commission or purchase time cannot be read is left out.
 fn conversions(conversion: Value) -> Vec<ReportedConversion> {
@@ -272,10 +284,7 @@ fn conversions(conversion: Value) -> Vec<ReportedConversion> {
     let tracking = conversion
         .get("utmContent")
         .and_then(Value::as_str)
-        // Shopee joins the five subIds with dashes, leaving trailing ones
-        // for those not used.
-        .map(|marking| marking.trim().trim_end_matches('-').to_owned())
-        .filter(|marking| !marking.is_empty());
+        .and_then(channel_tag);
     let mut above = conversion.as_object().cloned().unwrap_or_default();
     above.remove("orders");
     items(&conversion)
@@ -302,10 +311,7 @@ fn conversions(conversion: Value) -> Vec<ReportedConversion> {
             order.remove("items");
             Some(ReportedConversion {
                 key,
-                program: ReportedProgram {
-                    id: PROGRAM_ID.into(),
-                    name: PROGRAM_NAME.into(),
-                },
+                program: program(),
                 product,
                 sold_at,
                 commission,

@@ -1093,9 +1093,15 @@ fn tag_refusal(refusal: &TagRefusal) -> String {
              (por exemplo, mascate-tg-20)."
                 .into()
         }
+        TagRefusal::BadTag(AffiliatePlatform::Shopee) => {
+            "Na Shopee, a marcação vai num subId, que aceita só letras e números (até 20), sem _ \
+             nem -. Troque a marcação deste canal em Divulgação, por exemplo canaltelegram."
+                .into()
+        }
         TagRefusal::BadTag(platform) => {
             format!("A {} não aceita essa marcação.", platform.name())
         }
+        TagRefusal::Platform(error) => format!("A plataforma não respondeu: {error}"),
     }
 }
 

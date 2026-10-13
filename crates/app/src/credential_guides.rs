@@ -87,8 +87,9 @@ pub fn guide(connection: Connection) -> Guide {
                     ),
                     step_at(
                         "Abra a área Open API e peça acesso. A Shopee aprova à mão e pode levar \
-                     semanas; até lá, a descoberta usa o cadastro manual de ofertas e as \
-                     comissões da Shopee entram à mão em Afiliação.",
+                     semanas; até lá, a descoberta usa o cadastro manual de ofertas, as \
+                     comissões da Shopee entram à mão em Afiliação e os links curtos da Shopee \
+                     esperam.",
                         "Abrir a Open API",
                         "https://affiliate.shopee.com.br/open_api",
                     ),

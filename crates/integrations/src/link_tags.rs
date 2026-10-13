@@ -31,18 +31,29 @@ impl LinkTagger for UrlTagger {
             return Err(TagRefusal::BadTag(self.platform));
         }
         let link = link.trim();
-        let host = host(link).ok_or(TagRefusal::NotALink)?;
-        let on_platform = self.domains.iter().any(|domain| {
-            host == *domain
-                || host
-                    .strip_suffix(domain)
-                    .is_some_and(|sub| sub.ends_with('.'))
-        });
-        if !on_platform {
-            return Err(TagRefusal::ForeignDomain(self.platform));
-        }
+        on_platform(link, self.platform, self.domains)?;
         Ok(with_parameter(link, self.parameter, tag))
     }
+}
+
+/// Whether `link` is a web link on one of `platform`'s `domains` or their
+/// subdomains.
+pub(crate) fn on_platform(
+    link: &str,
+    platform: AffiliatePlatform,
+    domains: &[&str],
+) -> Result<(), TagRefusal> {
+    let host = host(link).ok_or(TagRefusal::NotALink)?;
+    let on_platform = domains.iter().any(|domain| {
+        host == *domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|sub| sub.ends_with('.'))
+    });
+    if !on_platform {
+        return Err(TagRefusal::ForeignDomain(platform));
+    }
+    Ok(())
 }
 
 /// The host of an `http` or `https` link, lowercase. A link with spaces,
