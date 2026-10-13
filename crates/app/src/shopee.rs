@@ -66,3 +66,46 @@ pub fn failure(error: &PlatformError) -> String {
         PlatformError::Failed(why) => format!("Não consegui falar com a Shopee: {why}"),
     }
 }
+
+/// Why the Payout by `validationId` is off while the Connection is in
+/// `state`; `None` once it is connected.
+pub fn validated_off(state: &ConnectionState) -> Option<&'static str> {
+    match state {
+        ConnectionState::Connected => None,
+        ConnectionState::AwaitingApproval => Some(
+            "Quando a Shopee aprovar o seu acesso à Open API e você colar o AppID e o Secret em \
+             Configurações › Conexões, o repasse da Shopee é lido pelo validationId. Até lá, \
+             registre-o à mão abaixo.",
+        ),
+        ConnectionState::Failed { .. } => Some(
+            "Não consegui ler as chaves da Shopee no cofre do sistema; registre o repasse da \
+             Shopee à mão abaixo.",
+        ),
+        ConnectionState::NotConfigured | ConnectionState::Expired => Some(
+            "Falta o AppID ou o Secret da Shopee em Configurações › Conexões para ler o repasse \
+             pelo validationId; até lá, registre-o à mão abaixo.",
+        ),
+    }
+}
+
+/// Why reading a `validationId` failed, as the owner reads it.
+pub fn validated_failure(error: &PlatformError) -> String {
+    match error {
+        PlatformError::NotConnected => {
+            "Cole o AppID e o Secret da Shopee em Configurações › Conexões para ler o repasse."
+                .into()
+        }
+        PlatformError::RateLimited => {
+            "A Shopee pediu para esperar e continuou pedindo depois de três tentativas. Tente \
+             de novo daqui a alguns minutos."
+                .into()
+        }
+        PlatformError::Refused(why) => format!("A Shopee recusou a consulta: {why}"),
+        PlatformError::NotFound => {
+            "A Shopee não encontrou conversões validadas com esse validationId; confira o \
+             número no faturamento."
+                .into()
+        }
+        PlatformError::Expired | PlatformError::Failed(_) => failure(error),
+    }
+}

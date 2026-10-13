@@ -1,0 +1,122 @@
+{
+  "data": {
+    "conversionReport": {
+      "nodes": [
+        {
+          "purchaseTime": 1788350400,
+          "clickTime": 1788349800,
+          "conversionId": 81726354001,
+          "totalCommission": "5.70",
+          "netCommission": "5.70",
+          "utmContent": "instagram-story---",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260902ABCD1234",
+              "orderStatus": "COMPLETED",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": 22334455667,
+                  "modelId": 180001,
+                  "itemName": "Fone de Ouvido Bluetooth TWS",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 1789905600,
+                  "itemTotalCommission": "4.50",
+                  "refundAmount": "0",
+                  "fraudStatus": "VERIFIED",
+                  "displayItemStatus": "Completed",
+                  "itemNotes": ""
+                },
+                {
+                  "itemId": 22334455668,
+                  "modelId": 0,
+                  "itemName": "Capa para Fone TWS",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 1789905600,
+                  "itemTotalCommission": "1.20",
+                  "refundAmount": "0",
+                  "fraudStatus": "UNVERIFIED",
+                  "displayItemStatus": "Completed",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "purchaseTime": 1790596800,
+          "clickTime": 1790596200,
+          "conversionId": 81726354002,
+          "totalCommission": "2.90",
+          "netCommission": "2.90",
+          "utmContent": "",
+          "device": "APP",
+          "buyerType": "NEW",
+          "orders": [
+            {
+              "orderId": "260928EFGH5678",
+              "orderStatus": "PENDING",
+              "shopType": "C2C_NON_CB",
+              "items": [
+                {
+                  "itemId": 33445566778,
+                  "modelId": 190002,
+                  "itemName": "Carregador Turbo USB-C 20W",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 0,
+                  "itemTotalCommission": "2.10",
+                  "refundAmount": "0",
+                  "fraudStatus": "UNVERIFIED",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            },
+            {
+              "orderId": "260928IJKL9012",
+              "orderStatus": "UNPAID",
+              "shopType": "SHOPEE_MALL_NON_CB",
+              "items": [
+                {
+                  "itemId": 33445566779,
+                  "modelId": null,
+                  "itemName": "Cabo USB-C 1 m",
+                  "shopId": 339216014,
+                  "shopName": "Loja Fones Oficial",
+                  "qty": 1,
+                  "itemPrice": "29.90",
+                  "actualAmount": "27.50",
+                  "completeTime": 0,
+                  "itemTotalCommission": "0.80",
+                  "refundAmount": "0",
+                  "fraudStatus": "UNVERIFIED",
+                  "displayItemStatus": "",
+                  "itemNotes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "pageInfo": {
+        "limit": 500,
+        "hasNextPage": true,
+        "scrollId": "c2Nyb2xsLTE6YWJjZGVm"
+      }
+    }
+  }
+}

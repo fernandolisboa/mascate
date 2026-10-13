@@ -1157,9 +1157,9 @@ impl Render for AffiliateScreen {
                 .child(kit::section_heading(commissions_text(self.listed.len())))
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma comissão neste período. As da Hotmart chegam sozinhas com a \
-                         conexão em Configurações › Conexões; lance abaixo as de plataformas sem \
-                         API.",
+                        "Nenhuma comissão neste período. As da Hotmart e da Shopee chegam \
+                         sozinhas com a conexão em Configurações › Conexões; lance abaixo as de \
+                         plataformas sem API.",
                     ))
                 })
                 .children(listed)

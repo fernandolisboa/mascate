@@ -1,16 +1,19 @@
-//! The Shopee Affiliate Open API's adapter (#12): searches Shopee's catalog
-//! for items and shops as a source of Supplier Offers (ADR 0027). Every
+//! The Shopee Affiliate Open API's adapter: searches Shopee's catalog for
+//! items and shops as a source of Supplier Offers (#12, ADR 0027), and reads
+//! the owner's Conversions and validated Payouts (#80, ADR 0030). Every
 //! request is a GraphQL query signed with the Connection's AppID and
-//! Secret; the API only reads, so nothing ever goes to Shopee but searches.
+//! Secret; the API only reads, so nothing ever goes to Shopee but queries.
+
+mod conversions;
 
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mascate_catalog::{
     Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource, ProductSource,
 };
-use mascate_kernel::{Clock, Currency, Money, Percentage, PlatformError};
+use mascate_kernel::{Clock, Currency, Money, Percentage, PlatformError, Timestamp};
 use mascate_platform::{Secret, SecretStore, http_agent};
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -29,7 +32,7 @@ const SECRET: &str = "SHOPEE_AFFILIATE_SECRET";
 /// Results per page.
 const PAGE_SIZE: u32 = 20;
 
-/// Shopee publishes no rate limit, only the error for passing it, so a
+/// Shopee allows 2,000 calls an hour and answers 10030 past it, so a
 /// refused request waits 2, 4 and then 8 seconds before giving up.
 const BACKOFF: Backoff = Backoff {
     first: Duration::from_secs(2),
@@ -55,6 +58,8 @@ pub struct ShopeeAffiliates {
     store: Arc<dyn SecretStore>,
     clock: Arc<dyn Clock>,
     pause: Arc<dyn Pause>,
+    /// When the last report query without a `scrollId` left.
+    last_first_page: Mutex<Option<Timestamp>>,
 }
 
 impl ShopeeAffiliates {
@@ -71,6 +76,7 @@ impl ShopeeAffiliates {
             store,
             clock,
             pause: Arc::new(ThreadPause),
+            last_first_page: Mutex::new(None),
         }
     }
 
@@ -83,9 +89,20 @@ impl ShopeeAffiliates {
     /// What `operation` answers to the GraphQL `query`. A rate limit or a
     /// failure on Shopee's side is tried again after a pause.
     fn query<T: DeserializeOwned>(&self, operation: &str, query: &str) -> Result<T, PlatformError> {
+        self.query_after(operation, query, || {})
+    }
+
+    /// The same, calling `before` ahead of each attempt.
+    fn query_after<T: DeserializeOwned>(
+        &self,
+        operation: &str,
+        query: &str,
+        before: impl Fn(),
+    ) -> Result<T, PlatformError> {
         let (app_id, secret) = self.credentials()?;
         let body = serde_json::json!({ "query": query }).to_string();
         retrying(self.pause.as_ref(), BACKOFF, || {
+            before();
             self.send(&app_id, &secret, &body, operation)
         })
     }

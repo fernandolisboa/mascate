@@ -176,7 +176,7 @@ fn main() {
             ));
             cx.set_global(AppConnections(connections));
             cx.set_global(AppMercadoLivre(mercado_livre));
-            cx.set_global(AppShopee(shopee));
+            cx.set_global(AppShopee(shopee.clone()));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),
@@ -184,10 +184,16 @@ fn main() {
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
                 cx.set_global(AppAffiliate(started.affiliate.clone()));
-                cx.set_global(CommissionSources(vec![(
-                    Connection::Hotmart,
-                    hotmart.clone() as Arc<dyn CommissionSource>,
-                )]));
+                cx.set_global(CommissionSources(vec![
+                    (
+                        Connection::Hotmart,
+                        hotmart.clone() as Arc<dyn CommissionSource>,
+                    ),
+                    (
+                        Connection::ShopeeAffiliates,
+                        shopee.clone() as Arc<dyn CommissionSource>,
+                    ),
+                ]));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));

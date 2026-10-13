@@ -2,7 +2,8 @@
 //! it covers and the difference, and "Registrar repasse" for Platforms that
 //! report none. The app proposes the approved Commissions the Payout
 //! covers, oldest first; the owner adjusts and confirms, and only then are
-//! they paid. The rules live in Affiliate (ADR 0030).
+//! they paid. A Shopee Payout is read by the `validationId` the owner pastes
+//! from Shopee's billing page (#80). The rules live in Affiliate (ADR 0030).
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -16,16 +17,20 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, EventEmitter, SharedString, Window, div, px};
 use mascate_affiliate::{
-    Affiliate, AffiliateError, Commission, ManualPayout, Payout, PayoutProposal,
+    Affiliate, AffiliateError, AffiliatePlatform, Commission, ManualPayout, Payout, PayoutProposal,
+    Recorded,
 };
+use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
 
 use crate::affiliate::{PlatformSelect, affiliate, failure, platform_select};
 use crate::appearance::look;
 use crate::catalog::day;
+use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice, parse_day};
 use crate::kit;
 use crate::sales::day_start;
+use crate::shopee;
 
 /// A Payout was recorded or deleted: the Commissions it covers changed
 /// status.
@@ -47,6 +52,11 @@ pub struct PayoutsSection {
     reads: u64,
     form: Option<Outcome>,
     outcome: Option<Outcome>,
+    /// The Shopee Connection, once read.
+    shopee: Option<ConnectionState>,
+    validation_id: Entity<InputState>,
+    validated_on: Entity<InputState>,
+    validated: Option<Outcome>,
 }
 
 impl EventEmitter<PayoutsChanged> for PayoutsSection {}
@@ -55,6 +65,8 @@ impl PayoutsSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let paid_on = input("dd/mm/aaaa", window, cx);
         paid_on.update(cx, |field, cx| field.set_value(today(), window, cx));
+        let validated_on = input("dd/mm/aaaa", window, cx);
+        validated_on.update(cx, |field, cx| field.set_value(today(), window, cx));
         Self {
             paid: Timestamp::MIN_UTC..Timestamp::MAX_UTC,
             payouts: Vec::new(),
@@ -68,13 +80,31 @@ impl PayoutsSection {
             reads: 0,
             form: None,
             outcome: None,
+            shopee: None,
+            validation_id: input("1234567890", window, cx),
+            validated_on,
+            validated: None,
         }
     }
 
-    /// Reads the Payouts made during `paid` again.
+    /// Reads the Payouts made during `paid` and the Shopee Connection
+    /// again; the Connection off the UI thread, because the system store may
+    /// ask to be unlocked.
     pub fn refresh(&mut self, paid: Range<Timestamp>, window: &mut Window, cx: &mut Context<Self>) {
         self.paid = paid;
         self.run(window, cx, |_| async { Ok(None) }, |_, _: (), _, _| {});
+        let connections = cx.global::<AppConnections>().0.clone();
+        let reading = cx
+            .background_executor()
+            .spawn(async move { connections.state(Connection::ShopeeAffiliates) });
+        cx.spawn(async move |this, cx| {
+            let state = reading.await;
+            let _ = this.update(cx, |this, cx| {
+                this.shopee = Some(state);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Runs `change` off the UI thread, then reads the Payouts again and
@@ -158,6 +188,58 @@ impl PayoutsSection {
             cx,
             move |affiliate| async move { affiliate.propose_payout(&payout).await.map(Some) },
             |this, proposal: PayoutProposal, _, _| this.proposal = Some(proposal),
+        );
+    }
+
+    /// Reads the Payout of the `validationId` the owner pasted and keeps it
+    /// by that id: pasting it again changes nothing.
+    fn read_validated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = shopee::adapter(cx) else {
+            return;
+        };
+        let validation_id = self.validation_id.read(cx).value().trim().to_owned();
+        let paid_on = parse_day(&self.validated_on.read(cx).value());
+        let paid_at = match (validation_id.is_empty(), paid_on) {
+            (true, _) => Err("Cole o validationId que a Shopee mostra no faturamento."),
+            (false, None) => Err("Digite a data do repasse como 01/10/2026."),
+            (false, Some(paid_on)) => Ok(day_start(paid_on)),
+        };
+        let paid_at = match paid_at {
+            Ok(paid_at) => paid_at,
+            Err(why) => {
+                self.validated = Some(Outcome::Failed(why.into()));
+                cx.notify();
+                return;
+            }
+        };
+        self.validated = None;
+        self.run(
+            window,
+            cx,
+            move |affiliate| async move {
+                let payout = match source.validated_payout(&validation_id, paid_at) {
+                    Ok(payout) => payout,
+                    Err(error) => return Ok(Some(Err(shopee::validated_failure(&error)))),
+                };
+                let amount = payout.amount;
+                let recorded = affiliate
+                    .record_platform_payouts(AffiliatePlatform::Shopee, &[payout])
+                    .await;
+                Ok(Some(
+                    recorded
+                        .map(|recorded| (recorded, amount))
+                        .map_err(|error| failure(&error)),
+                ))
+            },
+            |this, read: Result<(Recorded, Money), String>, window, cx| match read {
+                Ok((recorded, amount)) => {
+                    this.validation_id
+                        .update(cx, |field, cx| field.set_value("", window, cx));
+                    this.validated = Some(Outcome::Done(validated_text(&recorded, amount).into()));
+                    cx.emit(PayoutsChanged);
+                }
+                Err(why) => this.validated = Some(Outcome::Failed(why.into())),
+            },
         );
     }
 
@@ -413,6 +495,66 @@ impl PayoutsSection {
             .into_any_element()
     }
 
+    fn render_validated(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let state = self.shopee.as_ref()?;
+        let t = look(cx).tokens;
+        let card = v_flex()
+            .gap_3()
+            .p_4()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.surface)
+            .child(kit::section_heading("Repasse da Shopee"));
+        if let Some(off) = shopee::validated_off(state) {
+            return Some(
+                card.child(div().text_sm().text_color(t.text2).child(off))
+                    .into_any_element(),
+            );
+        }
+        let field = |label: &'static str, input: AnyElement| {
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().font_medium().child(label))
+                .child(input)
+        };
+        Some(
+            card.child(div().text_sm().text_color(t.text2).child(
+                "Cole o validationId de um pagamento da página de faturamento da Shopee. O app \
+                 lê na Shopee as conversões validadas nele, registra o repasse pelo valor \
+                 líquido e deixa pagas as comissões que ele cobre. A Shopee pede meio minuto \
+                 entre duas consultas, então a leitura pode demorar um pouco.",
+            ))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_3()
+                    .items_end()
+                    .child(div().w(px(200.)).child(field(
+                        "validationId",
+                        Input::new(&self.validation_id).small().into_any_element(),
+                    )))
+                    .child(div().w(px(130.)).child(field(
+                        "Data do repasse",
+                        Input::new(&self.validated_on).small().into_any_element(),
+                    )))
+                    .child(
+                        Button::new("read-validated")
+                            .label("Ler na Shopee")
+                            .outline()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(self.busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.read_validated(window, cx)),
+                            ),
+                    ),
+            )
+            .children(self.validated.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element(),
+        )
+    }
+
     fn render_form(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let field = |label: &'static str, input: AnyElement| {
@@ -523,6 +665,20 @@ fn covered_text(count: usize) -> String {
     }
 }
 
+/// What reading a `validationId` did.
+fn validated_text(recorded: &Recorded, amount: Money) -> String {
+    if recorded.added > 0 {
+        format!(
+            "Repasse da Shopee de {} registrado; as comissões que ele cobre ficaram pagas.",
+            amount.to_pt_br()
+        )
+    } else if recorded.changed > 0 {
+        format!("Repasse da Shopee atualizado: {}.", amount.to_pt_br())
+    } else {
+        "Esse repasse da Shopee já estava registrado; nada mudou.".into()
+    }
+}
+
 /// What recording a Payout that covers `count` Commissions did.
 fn recorded_text(count: usize) -> &'static str {
     match count {
@@ -564,6 +720,7 @@ impl Render for PayoutsSection {
                 )
             })
             .children(payouts)
+            .children(self.render_validated(cx))
             .child(self.render_form(cx))
     }
 }

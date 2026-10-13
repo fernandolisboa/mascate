@@ -1,0 +1,49 @@
+{
+  "data": {
+    "validatedReport": {
+      "nodes": [
+        {
+          "conversionId": 81726354001,
+          "totalCommission": "5.70",
+          "netCommission": "5.40",
+          "orders": [
+            {
+              "orderId": "260902ABCD1234",
+              "items": [
+                {
+                  "itemId": 22334455667,
+                  "modelId": 180001
+                },
+                {
+                  "itemId": 22334455668,
+                  "modelId": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "conversionId": 81726350999,
+          "totalCommission": "2.00",
+          "netCommission": "2.00",
+          "orders": [
+            {
+              "orderId": "260715CDEF9999",
+              "items": [
+                {
+                  "itemId": 11223344556,
+                  "modelId": 0
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "pageInfo": {
+        "limit": 500,
+        "hasNextPage": false,
+        "scrollId": ""
+      }
+    }
+  }
+}

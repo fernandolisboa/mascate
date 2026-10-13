@@ -327,6 +327,25 @@ impl Affiliate {
         Ok(payout)
     }
 
+    /// Keeps Payouts a Platform reported outside a Sync, such as the one a
+    /// Shopee `validationId` stands for, by the same rule as the Sync: the
+    /// same Payout read again is still one.
+    pub async fn record_platform_payouts(
+        &self,
+        platform: AffiliatePlatform,
+        reported: &[ReportedPayout],
+    ) -> Result<Recorded, AffiliateError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let recorded = self
+            .record_reported_payouts(&transaction, platform, reported)
+            .await?;
+        transaction.commit().await?;
+        Ok(recorded)
+    }
+
     /// Keeps the Payouts a source reported by their natural key, each with
     /// the Commissions the Platform says it covers. One the Platform names
     /// that is unknown yet, in another currency or covered by another Payout
