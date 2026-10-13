@@ -18,6 +18,7 @@ mod forms;
 mod home;
 mod hotmart;
 mod kit;
+mod kiwify;
 mod layout;
 mod listing_copy;
 mod listings;
@@ -63,7 +64,7 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_affiliate::CommissionSource;
 use mascate_integrations::{
-    Anthropic, Connection, Connections, Hotmart, MercadoLivre, Monetizze, ShopeeAffiliates,
+    Anthropic, Connection, Connections, Hotmart, Kiwify, MercadoLivre, Monetizze, ShopeeAffiliates,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -141,6 +142,12 @@ fn main() {
         secrets.clone(),
         Arc::new(SystemClock),
     ));
+    let kiwify = Arc::new(Kiwify::new(
+        &kiwify::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -206,6 +213,10 @@ fn main() {
                     (
                         Connection::Monetizze,
                         monetizze.clone() as Arc<dyn CommissionSource>,
+                    ),
+                    (
+                        Connection::Kiwify,
+                        kiwify.clone() as Arc<dyn CommissionSource>,
                     ),
                 ]));
                 cx.set_global(AppCatalog(started.catalog.clone()));

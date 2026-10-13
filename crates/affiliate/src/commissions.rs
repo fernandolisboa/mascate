@@ -225,6 +225,11 @@ pub enum AffiliateError {
     NoPayoutAmount,
     #[error("a Payout covers approved Commissions of its Platform and currency, once")]
     NotPayable,
+    #[error(
+        "only a Payout a Platform reported without naming its Commissions takes the ones the \
+         owner confirms"
+    )]
+    NotCoverable,
     #[error("the product is missing")]
     NoProduct,
     #[error("a Commission is never negative")]

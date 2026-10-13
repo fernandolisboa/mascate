@@ -1067,6 +1067,9 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
              proponha de novo."
                 .into()
         }
+        AffiliateError::NotCoverable => {
+            "As comissões deste repasse já foram conferidas; a lista foi atualizada.".into()
+        }
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
         AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
@@ -1121,8 +1124,8 @@ impl Render for AffiliateScreen {
                 )
                 .when(listed.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma comissão neste período. As da Hotmart, da Monetizze e da \
-                         Shopee chegam sozinhas com a conexão em Configurações › Conexões; as da \
+                        "Nenhuma comissão neste período. As da Hotmart, da Kiwify, da Monetizze \
+                         e da Shopee chegam sozinhas com a conexão em Configurações › Conexões; as da \
                          Amazon, pelo relatório importado abaixo; lance à mão as de plataformas \
                          sem API nem arquivo.",
                     ))

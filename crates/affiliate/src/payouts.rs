@@ -3,7 +3,10 @@
 //! kept by its natural key with the Commissions the Platform names. Where
 //! the Platform reports none, the owner records it, the app proposes the
 //! approved Commissions it covers, oldest first, and nothing is paid until
-//! the owner confirms. A Commission is covered by one Payout at most.
+//! the owner confirms. A Platform that reports its Payouts without naming
+//! the Commissions they cover (Kiwify's withdrawals) gets the same
+//! proposal for each, and the owner confirms it the same way. A Commission
+//! is covered by one Payout at most.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -93,6 +96,9 @@ impl Payout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayoutProposal {
     pub payout: ManualPayout,
+    /// The Platform's Payout whose Commissions the owner is confirming;
+    /// none for one the owner typed.
+    pub of: Option<RecordId>,
     /// The approved Commissions of the Platform and currency no Payout
     /// covers yet, the oldest sale first.
     pub candidates: Vec<Commission>,
@@ -165,9 +171,68 @@ impl Affiliate {
         let proposed = oldest_within(&candidates, payout.amount.amount());
         Ok(PayoutProposal {
             payout: *payout,
+            of: None,
             candidates,
             proposed,
         })
+    }
+
+    /// The Commissions a Payout the Platform reported without naming them
+    /// may cover, proposed as for one the owner types. Nothing changes until
+    /// the owner confirms with [`Self::cover_payout`].
+    pub async fn propose_cover(&self, payout: RecordId) -> Result<PayoutProposal, AffiliateError> {
+        let kept = self.payout(payout).await?;
+        if kept.manual || !kept.covers.is_empty() {
+            return Err(AffiliateError::NotCoverable);
+        }
+        let mut proposal = self
+            .propose_payout(&ManualPayout {
+                platform: kept.platform,
+                paid_at: kept.paid_at,
+                amount: kept.amount,
+            })
+            .await?;
+        proposal.of = Some(payout);
+        Ok(proposal)
+    }
+
+    /// Covers `covers` with a Payout the Platform reported without naming
+    /// them, as the owner confirmed: each turns paid, with the Payout's date
+    /// in its history. The same rules as [`Self::record_payout`] apply.
+    pub async fn cover_payout(
+        &self,
+        payout: RecordId,
+        covers: &[RecordId],
+    ) -> Result<Payout, AffiliateError> {
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let mut rows = transaction
+            .query(
+                "SELECT platform, paid_at, amount, currency, manual,
+                     EXISTS (SELECT 1 FROM affiliate_payout_commissions l
+                             WHERE l.payout_id = p.id AND l.deleted_at IS NULL)
+                 FROM affiliate_payouts p WHERE id = ?1 AND deleted_at IS NULL",
+                params![payout.to_string()],
+            )
+            .await?;
+        let row = rows.next().await?.ok_or(AffiliateError::NoSuchPayout)?;
+        let platform = platform_at(&row, 0)?;
+        let paid_at = row.time_at(1)?;
+        let amount = Money::new(row.decimal_at(2)?, row.currency_at(3)?);
+        if row.get::<i64>(4)? == 1 || row.get::<i64>(5)? == 1 {
+            return Err(AffiliateError::NotCoverable);
+        }
+        drop(rows);
+        let covered = payable(&transaction, platform, amount, covers).await?;
+        let now = self.clock.now();
+        for commission in covered {
+            self.cover(&transaction, payout, commission, paid_at, now)
+                .await?;
+        }
+        transaction.commit().await?;
+        self.payout(payout).await
     }
 
     /// Records a Payout the owner confirmed, covering `covers`: each turns
@@ -185,23 +250,7 @@ impl Affiliate {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        let mut covered = Vec::new();
-        for id in covers {
-            if covered.contains(id) {
-                continue;
-            }
-            let kept = read_stored(&transaction, "c.id = ?1", params![id.to_string()])
-                .await?
-                .ok_or(AffiliateError::NotFound)?;
-            let payable = kept.platform == payout.platform.code()
-                && kept.amount.currency() == payout.amount.currency()
-                && kept.status == CommissionStatus::Approved
-                && !kept.covered;
-            if !payable {
-                return Err(AffiliateError::NotPayable);
-            }
-            covered.push(*id);
-        }
+        let covered = payable(&transaction, payout.platform, payout.amount, covers).await?;
         let id = self.ids.next_id();
         let now = self.clock.now();
         transaction
@@ -565,6 +614,35 @@ impl Affiliate {
         }
         Ok(commissions)
     }
+}
+
+/// `covers` without repeats, once each is known to be an approved
+/// Commission of `platform` in the currency of `amount` that no Payout
+/// covers yet.
+async fn payable(
+    on: &Connection,
+    platform: AffiliatePlatform,
+    amount: Money,
+    covers: &[RecordId],
+) -> Result<Vec<RecordId>, AffiliateError> {
+    let mut covered = Vec::new();
+    for id in covers {
+        if covered.contains(id) {
+            continue;
+        }
+        let kept = read_stored(on, "c.id = ?1", params![id.to_string()])
+            .await?
+            .ok_or(AffiliateError::NotFound)?;
+        let payable = kept.platform == platform.code()
+            && kept.amount.currency() == amount.currency()
+            && kept.status == CommissionStatus::Approved
+            && !kept.covered;
+        if !payable {
+            return Err(AffiliateError::NotPayable);
+        }
+        covered.push(*id);
+    }
+    Ok(covered)
 }
 
 const PAYOUT_QUERY: &str = "SELECT id, platform, paid_at, amount, currency, manual

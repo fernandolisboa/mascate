@@ -5,6 +5,7 @@ mod answers;
 mod anthropic;
 mod connections;
 mod hotmart;
+mod kiwify;
 mod mercado_livre;
 mod monetizze;
 mod retry;
@@ -20,6 +21,7 @@ pub use connections::{
     Connection, ConnectionError, ConnectionState, Connections, Credential, CredentialEntry,
 };
 pub use hotmart::{API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart};
+pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify};
 pub use mercado_livre::{
     API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
 };
