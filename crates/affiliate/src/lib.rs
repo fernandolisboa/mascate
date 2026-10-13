@@ -4,6 +4,7 @@ mod commissions;
 mod links;
 mod payouts;
 mod report;
+mod rules;
 mod source;
 mod totals;
 
@@ -14,13 +15,17 @@ pub use commissions::{
 pub use links::PromotedProduct;
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
+pub use rules::{
+    AMAZON_TYPED_PRICE, BRAND_KEYWORDS, Practice, Program, Promotion, PromotionRules, Reach,
+    RuleWarning, SHOPEE_PAID_SEARCH, ShownPrice, Standing,
+};
 pub use source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedPayout,
     ReportedProgram,
 };
 pub use totals::{CurrencyTotals, totals_by_currency};
 
-use mascate_platform::{ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
+use mascate_platform::{Flag, ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
 
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
@@ -29,8 +34,12 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         commissions::CREATE_COMMISSIONS,
         payouts::CREATE_PAYOUTS,
         links::CREATE_PRODUCT_LINKS,
+        rules::ADD_PROMOTION_RULES,
     ],
 };
+
+/// This module's flags: the phase-2 Restricted Features (ADR 0031).
+pub const FLAGS: &[Flag] = &[SHOPEE_PAID_SEARCH, BRAND_KEYWORDS, AMAZON_TYPED_PRICE];
 
 pub const COMMISSION_INCOME: Reminder = Reminder {
     key: "affiliate.commission_income",

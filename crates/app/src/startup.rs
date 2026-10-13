@@ -31,7 +31,7 @@ pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
 ];
 
 /// Every module's flags, in the order the settings screen lists them.
-const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS];
+const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS, mascate_affiliate::FLAGS];
 
 /// Every module's Reminders, in the order the home screen shows them.
 const MODULE_REMINDERS: &[&[Reminder]] = &[
@@ -391,6 +391,7 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 mod tests {
     use mascate_affiliate::{
         AffiliatePlatform, CommissionFilter, CommissionStatus, ManualCommission, ManualPayout,
+        Practice, PromotionRules, Standing,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -650,6 +651,14 @@ mod tests {
         }
     }
 
+    fn sample_rules() -> PromotionRules {
+        let mut rules = PromotionRules::defaults(AffiliatePlatform::MercadoLivre)
+            .with(Practice::PaidSearch, Standing::Forbidden)
+            .with(Practice::BoostedPosts, Standing::Allowed);
+        rules.brand_keywords = vec!["mercado livre".into()];
+        rules
+    }
+
     fn sample_payout() -> ManualPayout {
         ManualPayout {
             platform: AffiliatePlatform::MercadoLivre,
@@ -834,6 +843,10 @@ mod tests {
             let commission = affiliate.record_manual(sample_commission()).await.unwrap();
             affiliate
                 .record_payout(sample_payout(), &[commission.id])
+                .await
+                .unwrap();
+            affiliate
+                .set_promotion_rules(commission.program, &sample_rules())
                 .await
                 .unwrap();
             let backups = Backups::new(
@@ -1226,6 +1239,20 @@ mod tests {
                 assert_eq!(
                     payouts[0].difference(),
                     Money::new(rust_decimal::Decimal::new(-40, 2), Currency::Brl),
+                    "{name}"
+                );
+                // Promotion rules arrived after 0.2.0: an older sample's
+                // Program reads its Platform's defaults.
+                let program = affiliate.program(commissions[0].program).await.unwrap();
+                if program.rules == PromotionRules::defaults(program.platform) {
+                    affiliate
+                        .set_promotion_rules(program.id, &sample_rules())
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(
+                    affiliate.program(program.id).await.unwrap().rules,
+                    sample_rules(),
                     "{name}"
                 );
             });

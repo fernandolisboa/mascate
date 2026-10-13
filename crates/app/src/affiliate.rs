@@ -41,6 +41,7 @@ use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
 use crate::product_links::{ProductLinksChanged, ProductLinksSection};
+use crate::promotion_rules::PromotionRulesSection;
 use crate::sales::day_start;
 use crate::span::{SpanChanged, SpanPicker};
 
@@ -328,6 +329,7 @@ pub struct AffiliateScreen {
     import: Entity<AmazonImportSection>,
     payouts: Entity<PayoutsSection>,
     links: Entity<ProductLinksSection>,
+    rules: Entity<PromotionRulesSection>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -340,6 +342,7 @@ impl AffiliateScreen {
         let span = cx.new(|cx| SpanPicker::new(window, cx));
         let import = cx.new(|_| AmazonImportSection::default());
         let links = cx.new(|cx| ProductLinksSection::new(window, cx));
+        let rules = cx.new(|cx| PromotionRulesSection::new(window, cx));
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
@@ -393,6 +396,7 @@ impl AffiliateScreen {
             import,
             payouts,
             links,
+            rules,
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
@@ -407,6 +411,7 @@ impl AffiliateScreen {
         self.payouts
             .update(cx, |payouts, cx| payouts.refresh(paid, window, cx));
         self.links.update(cx, |links, cx| links.refresh(window, cx));
+        self.rules.update(cx, |rules, cx| rules.refresh(window, cx));
     }
 
     fn read_commissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1083,6 +1088,14 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
         AffiliateError::NoProduct => "Digite o produto da venda.".into(),
         AffiliateError::NoSuchProgram => "Esse programa mudou; a lista foi atualizada.".into(),
         AffiliateError::Negative => "A comissão não pode ser negativa.".into(),
+        AffiliateError::Restricted(flag) => format!(
+            "{} Para usar mesmo assim, ligue \"{}\" em Configurações › Funcionalidades \
+             restritas.",
+            flag.reason, flag.name
+        ),
+        AffiliateError::Flag(error) => {
+            format!("Não consegui ler as funcionalidades restritas: {error}")
+        }
         AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
         AffiliateError::Unreadable(_) | AffiliateError::Sql(_) => {
             format!("Não consegui ler ou gravar as comissões no banco: {error}")
@@ -1157,6 +1170,7 @@ impl Render for AffiliateScreen {
             cx,
         ));
         parts.content.push(self.links.clone().into_any_element());
+        parts.content.push(self.rules.clone().into_any_element());
         parts.content.push(self.import.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());

@@ -12,12 +12,14 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use libsql::{Connection, TransactionBehavior, params};
 use mascate_kernel::{Clock, IdGenerator, Money, PlatformError, RecordId, Timestamp, fold};
-use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
+use mascate_platform::{
+    Database, Flag, FlagError, Flags, Migration, Registry, StoredRow, StoredValueError, stored,
+};
 
-use crate::COMMISSION_INCOME;
 use crate::source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram,
 };
+use crate::{COMMISSION_INCOME, FLAGS};
 
 pub(crate) const CREATE_COMMISSIONS: Migration = Migration {
     version: 1,
@@ -236,6 +238,11 @@ pub enum AffiliateError {
     NoProduct,
     #[error("no such Program")]
     NoSuchProgram,
+    /// The promotion needs a Restricted Feature that is off.
+    #[error("{}", .0.reason)]
+    Restricted(Flag),
+    #[error(transparent)]
+    Flag(#[from] FlagError),
     #[error("a Commission is never negative")]
     Negative,
     #[error("the Commissions hold a value this app cannot read: {0}")]
@@ -276,11 +283,16 @@ pub struct Affiliate {
     pub(crate) database: Arc<Database>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) ids: Arc<dyn IdGenerator>,
+    /// This module's Restricted Features, as the owner switched them in
+    /// the shared flag history.
+    pub(crate) flags: Flags,
 }
 
 impl Affiliate {
     pub fn new(database: Arc<Database>, clock: Arc<dyn Clock>, ids: Arc<dyn IdGenerator>) -> Self {
+        let registry = Registry::new(&[FLAGS]).expect("the Affiliate's flags have distinct keys");
         Self {
+            flags: Flags::new(database.clone(), registry, clock.clone(), ids.clone()),
             database,
             clock,
             ids,
@@ -691,7 +703,9 @@ impl Affiliate {
         existing: Option<Kept>,
     ) -> Result<Write, AffiliateError> {
         let now = self.clock.now();
-        let program = self.program(on, platform, &reported.program, now).await?;
+        let program = self
+            .program_for(on, platform, &reported.program, now)
+            .await?;
         let raw = (!manual).then(|| reported.raw.clone());
         let sold_at = stored(reported.sold_at);
         let Some(kept) = existing else {
@@ -828,7 +842,7 @@ impl Affiliate {
 
     /// The Program `reported` names, created the first time it shows up.
     /// Its name stays the one it was born with: the owner renames it.
-    async fn program(
+    async fn program_for(
         &self,
         on: &Connection,
         platform: AffiliatePlatform,
