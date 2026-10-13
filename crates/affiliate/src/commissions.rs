@@ -19,6 +19,7 @@ use mascate_platform::{
 use crate::source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram,
 };
+use crate::tagging::TagRefusal;
 use crate::{COMMISSION_INCOME, FLAGS};
 
 pub(crate) const CREATE_COMMISSIONS: Migration = Migration {
@@ -238,6 +239,16 @@ pub enum AffiliateError {
     NoProduct,
     #[error("no such Program")]
     NoSuchProgram,
+    #[error("no such Affiliate Link")]
+    NoSuchLink,
+    #[error("a marking is lowercase letters, digits, _ and -, up to 40 characters")]
+    BadTag,
+    #[error("another Promotion Channel already uses the marking {0} on this Platform")]
+    TagTaken(String),
+    #[error("the link is tagged by the adapter of another Platform")]
+    WrongTagger,
+    #[error(transparent)]
+    Tag(#[from] TagRefusal),
     /// The promotion needs a Restricted Feature that is off.
     #[error("{}", .0.reason)]
     Restricted(Flag),

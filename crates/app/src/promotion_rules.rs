@@ -22,7 +22,7 @@ use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::sales::table_row;
 
-fn practice_name(practice: Practice) -> &'static str {
+pub(crate) fn practice_name(practice: Practice) -> &'static str {
     match practice {
         Practice::PaidSearch => "Busca paga (Google Ads, Bing Ads)",
         Practice::BoostedPosts => "Impulsionar post nas suas redes",
@@ -33,7 +33,7 @@ fn practice_name(practice: Practice) -> &'static str {
     }
 }
 
-fn standing_name(standing: Standing) -> &'static str {
+pub(crate) fn standing_name(standing: Standing) -> &'static str {
     match standing {
         Standing::Allowed => "Permitido",
         Standing::Forbidden => "Proibido",

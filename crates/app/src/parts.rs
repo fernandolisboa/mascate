@@ -12,7 +12,7 @@ use gpui_kit::{AnyElement, App, SharedString, Window};
 pub type OnPick<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
 
 /// A place the navigation opens. Places join as the slices that own their
-/// screens land, grouped by area (Descoberta, Vendas, Estoque, Finanças, Afiliação).
+/// screens land, grouped by area (Descoberta, Vendas, Estoque, Finanças, Afiliação, Divulgação).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     Today,
@@ -30,12 +30,13 @@ pub enum Place {
     Purchases,
     Stock,
     Affiliate,
+    Promotion,
     Settings,
 }
 
 impl Place {
     /// The places listed first, in order.
-    pub const MAIN: [Place; 15] = [
+    pub const MAIN: [Place; 16] = [
         Place::Today,
         Place::Opportunities,
         Place::Offers,
@@ -51,6 +52,7 @@ impl Place {
         Place::Purchases,
         Place::Stock,
         Place::Affiliate,
+        Place::Promotion,
     ];
     /// The places kept apart at the end: the sidebar's foot, the tab bar's
     /// right side.
@@ -73,6 +75,7 @@ impl Place {
             Place::Purchases => "Compras",
             Place::Stock => "Estoque",
             Place::Affiliate => "Afiliação",
+            Place::Promotion => "Divulgação",
             Place::Settings => "Configurações",
         }
     }
@@ -94,6 +97,7 @@ impl Place {
             Place::Purchases => IconName::FileText,
             Place::Stock => IconName::GalleryVerticalEnd,
             Place::Affiliate => IconName::Network,
+            Place::Promotion => IconName::Heart,
             Place::Settings => IconName::Settings,
         }
     }

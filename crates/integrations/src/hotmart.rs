@@ -21,6 +21,7 @@ use mascate_platform::{Secret, SecretStore, http_agent};
 use serde::Deserialize;
 
 use crate::answers::{decimal, numeric_id, read_json};
+use crate::link_tags::UrlTagger;
 use crate::retry::{Attempt, Backoff, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 
 /// The sales API, unless a test points elsewhere.
@@ -28,6 +29,15 @@ pub const API_URL: &str = "https://developers.hotmart.com";
 
 /// Where Hotmart hands out access tokens.
 pub const AUTH_URL: &str = "https://api-sec-vlc.hotmart.com";
+
+/// An affiliate's HotLink carries the marking in `src`, read back as
+/// `tracking.source`; `sck` belongs to the producer's checkout links.
+pub const LINKS: UrlTagger = UrlTagger {
+    platform: AffiliatePlatform::Hotmart,
+    parameter: "src",
+    domains: &["hotmart.com"],
+    tag_ends_with: None,
+};
 
 const CLIENT_ID: &str = "HOTMART_CLIENT_ID";
 const CLIENT_SECRET: &str = "HOTMART_CLIENT_SECRET";
@@ -354,7 +364,7 @@ fn conversion(
         _ => None,
     };
     let tracking = purchase.tracking.and_then(|tracking| {
-        [tracking.source_sck, tracking.source]
+        [tracking.source, tracking.source_sck]
             .into_iter()
             .flatten()
             .map(|marking| marking.trim().to_owned())

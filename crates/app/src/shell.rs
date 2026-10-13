@@ -18,6 +18,7 @@ use crate::orders::OrdersScreen;
 use crate::parts::{AppState, Navigation, Place};
 use crate::preferences;
 use crate::products::ProductsScreen;
+use crate::promotion_channels::PromotionScreen;
 use crate::promotions::PromotionsScreen;
 use crate::purchases::PurchasesScreen;
 use crate::quality::QualityScreen;
@@ -50,6 +51,7 @@ pub struct Shell {
     purchases: Entity<PurchasesScreen>,
     stock: Entity<StockScreen>,
     affiliate: Entity<AffiliateScreen>,
+    promotion: Entity<PromotionScreen>,
     settings: Entity<SettingsScreen>,
     _subscriptions: Vec<Subscription>,
 }
@@ -76,6 +78,7 @@ impl Shell {
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
         let stock = cx.new(|cx| StockScreen::new(window, cx));
         let affiliate = cx.new(|cx| AffiliateScreen::new(window, cx));
+        let promotion = cx.new(|cx| PromotionScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
         // The startup theme guessed the system's appearance before any window
         // existed; this window knows it.
@@ -180,6 +183,7 @@ impl Shell {
             purchases,
             stock,
             affiliate,
+            promotion,
             settings,
             _subscriptions: subscriptions,
         }
@@ -233,6 +237,9 @@ impl Shell {
                         Place::Affiliate => shell
                             .affiliate
                             .update(cx, |affiliate, cx| affiliate.refresh(window, cx)),
+                        Place::Promotion => shell
+                            .promotion
+                            .update(cx, |promotion, cx| promotion.refresh(window, cx)),
                         Place::Today => shell.home.update(cx, Home::refresh),
                         Place::Settings => {}
                     }
@@ -262,6 +269,7 @@ impl Render for Shell {
             Place::Purchases => self.purchases.clone().into_any_element(),
             Place::Stock => self.stock.clone().into_any_element(),
             Place::Affiliate => self.affiliate.clone().into_any_element(),
+            Place::Promotion => self.promotion.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),
         };
         v_flex()

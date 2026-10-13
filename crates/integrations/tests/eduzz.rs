@@ -2,18 +2,22 @@
 //! the Developer Hub documentation (see the fixtures' README), and the
 //! Affiliate module's Sync over it with a real temporary database.
 
+mod common;
+
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone, Utc};
+use common::query_value;
 use futures::executor::block_on;
+use mascate_affiliate::LinkTagger;
 use mascate_affiliate::{
     Affiliate, AffiliatePlatform, CommissionFilter, CommissionSource, CommissionStatus, MIGRATIONS,
     Recorded, ReportedConversion,
 };
-use mascate_integrations::{Eduzz, Pause};
+use mascate_integrations::{EDUZZ_LINKS, Eduzz, Pause};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
@@ -833,4 +837,40 @@ fn the_owner_confirms_which_commissions_a_transfer_pays() {
                 .all(|commission| commission.status == CommissionStatus::Paid)
         );
     });
+}
+
+/// What the app's link carries in `utm_content` comes back in the sale's
+/// `utm.content` and wins over the trackers.
+#[test]
+fn a_tagged_eduzz_link_comes_back_as_the_sales_marking() {
+    let tagged = EDUZZ_LINKS
+        .tag(
+            "https://sun.eduzz.com/2001?a=88231&utm_source=x",
+            "telegram",
+        )
+        .unwrap();
+    assert_eq!(
+        tagged,
+        "https://sun.eduzz.com/2001?a=88231&utm_source=x&utm_content=telegram"
+    );
+    let content = query_value(&tagged, "utm_content").unwrap();
+    let s = setup();
+    s.serve_window(&window());
+    s.server.serve(
+        &sales_path(&window(), 1),
+        200,
+        fixture("sales.json").replacen(
+            r#""content": null"#,
+            &format!(r#""content": "{content}""#),
+            1,
+        ),
+    );
+
+    let conversions = s.eduzz.conversions(window()).unwrap();
+
+    // Its tracker2 is insta-bio.
+    assert_eq!(
+        by_key(&conversions, "1003").tracking.as_deref(),
+        Some("telegram")
+    );
 }
