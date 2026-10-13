@@ -5,9 +5,14 @@ name: Release
 # Release, with its changelog and the update manifest the app reads (#8,
 # ADR 0010). Before tagging, commit that version's sample database:
 # `cargo test -p mascate -- --ignored write_this_versions_sample_database`.
+# A change to this workflow, or a manual run, packages without publishing,
+# so the installers build before a tag that cannot be taken back.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -60,6 +65,7 @@ jobs:
 
   publish:
     needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
