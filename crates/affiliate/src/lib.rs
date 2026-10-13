@@ -1,6 +1,7 @@
 //! Affiliate: Programs, Affiliate Links, Conversions, Commissions and Payouts.
 
 mod commissions;
+mod links;
 mod payouts;
 mod report;
 mod source;
@@ -10,6 +11,7 @@ pub use commissions::{
     Affiliate, AffiliateError, AffiliateSync, Commission, CommissionFilter, INCOME_WINDOW_DAYS,
     LastSync, ManualCommission, Reading, Recorded, StatusChange,
 };
+pub use links::PromotedProduct;
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use source::{
@@ -23,7 +25,11 @@ use mascate_platform::{ModuleMigrations, Reminder, ReminderShows, ReminderTopic}
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "affiliate",
-    migrations: &[commissions::CREATE_COMMISSIONS, payouts::CREATE_PAYOUTS],
+    migrations: &[
+        commissions::CREATE_COMMISSIONS,
+        payouts::CREATE_PAYOUTS,
+        links::CREATE_PRODUCT_LINKS,
+    ],
 };
 
 pub const COMMISSION_INCOME: Reminder = Reminder {

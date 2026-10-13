@@ -387,6 +387,7 @@ fn any_commission() -> impl Strategy<Value = Commission> {
                     tracking: tracking.map(Into::into),
                     manual: false,
                     payout: None,
+                    linked_product: None,
                 }
             },
         )
