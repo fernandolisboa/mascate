@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ads;
+mod affiliate;
 mod appearance;
 mod backups;
 mod brand;
@@ -62,6 +63,7 @@ use mascate_platform::{
 };
 
 use crate::ads::AppProductAds;
+use crate::affiliate::AppAffiliate;
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -168,6 +170,7 @@ fn main() {
                     user: user.clone(),
                 });
                 cx.set_global(AppReminders(started.reminders.clone()));
+                cx.set_global(AppAffiliate(started.affiliate.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));

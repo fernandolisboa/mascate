@@ -4227,6 +4227,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "image",
+ "mascate-affiliate",
  "mascate-catalog",
  "mascate-commerce",
  "mascate-finance",
@@ -4243,6 +4244,17 @@ dependencies = [
 [[package]]
 name = "mascate-affiliate"
 version = "0.2.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "libsql",
+ "mascate-kernel",
+ "mascate-platform",
+ "proptest",
+ "rust_decimal",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "mascate-architecture"
