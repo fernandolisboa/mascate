@@ -121,13 +121,13 @@ fn every_request_is_signed_with_the_appid_timestamp_body_and_secret() {
     // sha256("123456" + "1791115200" + body + "demo-secret").
     assert_eq!(
         request.body,
-        r#"{"query":"{productOfferV2(keyword: \"fone bluetooth\", sortType: 2, page: 1, limit: 20){nodes{itemId productName productLink priceMin priceMax sales commissionRate ratingStar shopId shopName}pageInfo{hasNextPage}}}"}"#
+        r#"{"query":"{productOfferV2(keyword: \"fone bluetooth\", sortType: 2, page: 1, limit: 20){nodes{itemId productName productLink imageUrl priceMin priceMax sales commissionRate ratingStar shopId shopName}pageInfo{hasNextPage}}}"}"#
     );
     assert_eq!(
         request.authorization.as_deref(),
         Some(
             "SHA256 Credential=123456, Timestamp=1791115200, \
-             Signature=33e4a47224748efa57c66f6b06acc467aba0660c65d1989faa3901c9be54037a"
+             Signature=1e9898c3a5cc8e993127ada8f8bf10ba03c7bc013984b6bc9e12de34a5b5249e"
         )
     );
 }
@@ -153,6 +153,10 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
         fone.link,
         "https://shopee.com.br/product/339216014/22334455667"
     );
+    assert_eq!(
+        fone.image.as_deref(),
+        Some("https://down-br.img.susercontent.com/file/br-11134207-7r98o-fone")
+    );
     assert_eq!(fone.price, brl("29.90"));
     assert_eq!(fone.highest_price, brl("29.90"));
     assert_eq!(fone.sales, 12_400);
@@ -162,6 +166,8 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
     assert_eq!(fone.shop.name, "Loja Fones Oficial");
     assert_eq!(fone.shop.link, "https://shopee.com.br/shop/339216014");
     let luminaria = &found.items[1];
+    // A picture over plain HTTP is left out.
+    assert_eq!(luminaria.image, None);
     assert_eq!(luminaria.price, brl("45.50"));
     assert_eq!(luminaria.highest_price, brl("59.90"));
     assert_eq!(luminaria.commission, Some(percent("6")));

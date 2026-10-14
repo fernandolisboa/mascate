@@ -17,13 +17,13 @@ use chrono::{NaiveDateTime, TimeDelta};
 use mascate_affiliate::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram,
 };
-use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp};
+use mascate_kernel::{Clock, Currency, Money, PlatformError, Timestamp, brasilia};
 use mascate_platform::{Secret, SecretStore, http_agent};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::answers::{brasilia, decimal, numeric_id, read_json};
+use crate::answers::{decimal, numeric_id, read_json};
 use crate::link_tags::UrlTagger;
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 

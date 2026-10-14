@@ -15,7 +15,7 @@ pub use ids::{IdGenerator, RecordId, UuidV7Generator};
 pub use margin::{Margin, OutOfRange, Percentage};
 pub use money::{Currency, CurrencyMismatch, Money, parse_amount};
 pub use platform::{
-    ListingType, PlatformError, channel_day, channel_day_start, mercado_livre_link,
+    ListingType, PlatformError, brasilia, channel_day, channel_day_start, mercado_livre_link,
     shipping_paid_by_seller,
 };
 pub use record::Record;

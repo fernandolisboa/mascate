@@ -3,7 +3,7 @@
 //! for shipping, which day it is there and which links open Mercado Livre
 //! itself.
 
-use chrono::{NaiveDate, NaiveTime, TimeDelta};
+use chrono::{FixedOffset, NaiveDate, NaiveTime, TimeDelta};
 use rust_decimal::Decimal;
 
 use crate::{Money, Timestamp};
@@ -93,6 +93,11 @@ pub fn mercado_livre_link(link: &str) -> bool {
 /// there (a Promotion's, a day of Product Ads), and Brazil has had no
 /// daylight saving since 2019.
 const CHANNEL_HOURS_BEHIND_UTC: i64 = 3;
+
+/// Brasília's wall clock, which Brazilian Platforms date things by.
+pub fn brasilia() -> FixedOffset {
+    FixedOffset::west_opt((CHANNEL_HOURS_BEHIND_UTC * 3600) as i32).expect("a valid offset")
+}
 
 /// The day it is on the Sales Channel at `at`.
 pub fn channel_day(at: Timestamp) -> NaiveDate {

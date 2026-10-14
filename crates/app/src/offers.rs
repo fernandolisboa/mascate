@@ -34,7 +34,7 @@ enum Step {
 }
 
 pub struct OffersScreen {
-    shopee: Entity<ShopeeSearch>,
+    pub(crate) shopee: Entity<ShopeeSearch>,
     link: Entity<InputState>,
     title: Entity<InputState>,
     price: Entity<InputState>,

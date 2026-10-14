@@ -17,11 +17,10 @@ use chrono::{NaiveDate, NaiveDateTime, TimeZone as _};
 use mascate_affiliate::{
     AffiliatePlatform, CommissionStatus, Reading, ReportedConversion, ReportedProgram,
 };
-use mascate_kernel::{Currency, Money, Timestamp, fold, parse_amount};
+use mascate_kernel::{Currency, Money, Timestamp, brasilia, fold, parse_amount};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::answers::brasilia;
 use crate::link_tags::UrlTagger;
 use crate::spreadsheet::{Cell, TableError, TableRow, excel_serial, read_table};
 

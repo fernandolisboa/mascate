@@ -1,8 +1,9 @@
 //! The Reminders on the home screen (#7): fiscal and legal notes in a
 //! quiet corner, each dismissable until its interval runs out. Some show
 //! only while raised, like the sales volume one (#28), checked again on
-//! each Order Sync, and the income one of affiliate Commissions (#77),
-//! checked again whenever they change.
+//! each Order Sync, the income one of affiliate Commissions (#77),
+//! checked again whenever they change, and the disclosure one of Offer
+//! Posts (#102), checked again whenever a post is copied.
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use crate::affiliate::{self, CommissionChanges};
 use crate::appearance::look;
 use crate::finance::{self, VolumeSources};
 use crate::kit;
+use crate::offer_posts::{PostChanges, offer_posts};
 use crate::orders::OrderSyncs;
 
 /// The app's Reminders; absent when the database did not open.
@@ -43,6 +45,7 @@ impl RemindersArea {
         let subscriptions = vec![
             cx.observe_global::<OrderSyncs>(Self::refresh),
             cx.observe_global::<CommissionChanges>(Self::refresh),
+            cx.observe_global::<PostChanges>(Self::refresh),
         ];
         let mut area = Self {
             showing: Vec::new(),
@@ -79,12 +82,20 @@ impl RemindersArea {
         let reminders = app.0.clone();
         let sources = VolumeSources::of(cx);
         let commissions = affiliate::affiliate(cx);
+        let posts = offer_posts(cx);
         self.reads += 1;
         let read = self.reads;
         let working = cx.background_executor().spawn(async move {
             let outcome = change(reminders.clone()).await;
             let mut raised = finance::raised_reminders(sources).await;
             raised.extend(affiliate::raised_reminders(commissions).await);
+            if let Some(posts) = posts {
+                // A failure raises nothing.
+                match posts.raised_reminders().await {
+                    Ok(keys) => raised.extend(keys),
+                    Err(error) => eprintln!("could not check the posts for the Reminder: {error}"),
+                }
+            }
             (outcome, reminders.showing(&raised).await)
         });
         cx.spawn(async move |this, cx| {

@@ -26,6 +26,7 @@ use crate::affiliate::{affiliate, failure};
 use crate::appearance::look;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
+use crate::offer_posts::StartPost;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::{practice_name, standing_name};
 use crate::sales::table_row;
@@ -179,6 +180,8 @@ pub struct AffiliateLinksSection {
 }
 
 impl EventEmitter<AffiliateLinkCreated> for AffiliateLinksSection {}
+
+impl EventEmitter<StartPost> for AffiliateLinksSection {}
 
 impl AffiliateLinksSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -469,6 +472,19 @@ impl AffiliateLinksSection {
                     .outline()
                     .small()
                     .on_click(cx.listener(move |this, _, _, cx| this.copy(&copied, cx))),
+            )
+            .child(
+                Button::new(("post-link", index))
+                    .label("Criar post")
+                    .outline()
+                    .small()
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(StartPost {
+                            link: id,
+                            found: None,
+                            image: None,
+                        })
+                    })),
             )
             .child(
                 Button::new(("delete-link", index))
