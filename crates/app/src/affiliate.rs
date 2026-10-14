@@ -4,7 +4,8 @@
 //! and the form to record a Commission by hand for Platforms without an API
 //! or a file. The Commissions Sync (#78) reads each connected Platform at
 //! start, every hour and on "Sincronizar agora"; the Amazon earnings report
-//! comes in by file (#83). Below them, the products promoted (#86), their
+//! comes in by file (#83). The dashboard groups by Promotion Channel too
+//! (#101), named from the Marketing. Below them, the products promoted (#86), their
 //! Affiliate Links per Promotion Channel (#99), the Programs' promotion
 //! rules (#98) and the Payouts (#79). The rules live in Affiliate (ADR
 //! 0030).
@@ -31,8 +32,9 @@ use mascate_affiliate::{
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
+use mascate_marketing::PromotionChannel;
 
-use crate::affiliate_links::AffiliateLinksSection;
+use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection};
 use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{NO_DATABASE, day, day_and_time};
@@ -44,6 +46,7 @@ use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
 use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSection};
+use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::PromotionRulesSection;
 use crate::sales::day_start;
 use crate::span::{SpanChanged, SpanPicker};
@@ -300,6 +303,8 @@ pub(crate) fn platform_select<V: 'static>(
 struct Snapshot {
     commissions: Vec<Commission>,
     synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
+    /// The Promotion Channels' names, from the Marketing.
+    channels: Result<Vec<PromotionChannel>, String>,
 }
 
 pub struct AffiliateScreen {
@@ -351,6 +356,9 @@ impl AffiliateScreen {
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
+            // A channel renamed or deleted in Divulgação names the dashboard's
+            // groups.
+            cx.observe_global_in::<ChannelChanges>(window, Self::read_commissions),
             // A Payout recorded or deleted changes what is paid, here and on
             // the Painel.
             cx.subscribe_in(
@@ -377,6 +385,12 @@ impl AffiliateScreen {
             cx.subscribe(&links, |_, _, _: &ProductLinksChanged, cx| {
                 cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
             }),
+            // The sales carrying the new link's marking join its channel.
+            cx.subscribe_in(
+                &affiliate_links,
+                window,
+                |this, _, _: &AffiliateLinkCreated, window, cx| this.read_commissions(window, cx),
+            ),
             cx.subscribe_in(
                 &links,
                 window,
@@ -452,6 +466,7 @@ impl AffiliateScreen {
         let Some(affiliate) = affiliate(cx) else {
             return;
         };
+        let channels = promotion_channels(cx);
         let sold = self.span.read(cx).during();
         let platforms: Vec<AffiliatePlatform> = sources(cx)
             .iter()
@@ -473,9 +488,14 @@ impl AffiliateScreen {
                 for platform in platforms {
                     synced.push((platform, affiliate.last_sync(platform).await?));
                 }
+                let channels = match channels {
+                    Some(channels) => channels.channels().await.map_err(|error| error.to_string()),
+                    None => Ok(Vec::new()),
+                };
                 Ok::<_, AffiliateError>(Snapshot {
                     commissions,
                     synced,
+                    channels,
                 })
             }
             .await;
@@ -488,8 +508,20 @@ impl AffiliateScreen {
                     this.busy = false;
                     match snapshot {
                         Ok(snapshot) => {
+                            let channels = match snapshot.channels {
+                                Ok(channels) => Some(channels),
+                                Err(error) => {
+                                    this.outcome = Some(Outcome::Failed(
+                                        format!(
+                                            "Não consegui ler os canais de divulgação: {error}"
+                                        )
+                                        .into(),
+                                    ));
+                                    None
+                                }
+                            };
                             this.dashboard.update(cx, |dashboard, cx| {
-                                dashboard.show(snapshot.commissions.clone(), cx)
+                                dashboard.show(snapshot.commissions.clone(), channels, cx)
                             });
                             this.commissions = snapshot.commissions;
                             this.synced = snapshot.synced;

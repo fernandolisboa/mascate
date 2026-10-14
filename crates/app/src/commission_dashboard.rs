@@ -1,10 +1,12 @@
 //! The commissions dashboard on Afiliação (#81): the period's totals per
 //! currency, split by status, and the Commissions grouped by Platform,
-//! Program, product or tracking tag, sortable by amount. Reversals show in
-//! red and stay out of what was earned; cancelled sales never count. The
-//! sums are Affiliate's (`CommissionReport`); the screen hands over the
-//! period's Commissions. The tag stands in for the Promotion Channel until
-//! Affiliate Links (#30).
+//! Program, product, tracking tag or Promotion Channel (#101), sortable by
+//! amount. Reversals show in red and stay out of what was earned; cancelled
+//! sales never count. The sums are Affiliate's (`CommissionReport`); the
+//! screen hands over the period's Commissions and the channels it read from
+//! the Marketing, which name the channel groups.
+
+use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -13,6 +15,8 @@ use gpui_kit::{AnyElement, App, Hsla, Window, div, px};
 use mascate_affiliate::{
     Commission, CommissionGroup, CommissionReport, CurrencyTotals, GroupOrder,
 };
+use mascate_kernel::RecordId;
+use mascate_marketing::PromotionChannel;
 
 use crate::appearance::{Tokens, look};
 use crate::kit;
@@ -26,14 +30,16 @@ enum Grouping {
     Program,
     Product,
     Tracking,
+    Channel,
 }
 
 impl Grouping {
-    const ALL: [Grouping; 4] = [
+    const ALL: [Grouping; 5] = [
         Grouping::Platform,
         Grouping::Program,
         Grouping::Product,
         Grouping::Tracking,
+        Grouping::Channel,
     ];
 
     fn name(self) -> &'static str {
@@ -42,6 +48,7 @@ impl Grouping {
             Grouping::Program => "Programa",
             Grouping::Product => "Produto",
             Grouping::Tracking => "Marcação",
+            Grouping::Channel => "Canal",
         }
     }
 }
@@ -56,22 +63,54 @@ const ORDERS: [(GroupOrder, &str); 4] = [
 #[derive(Default)]
 pub struct CommissionDashboard {
     commissions: Vec<Commission>,
+    /// Each live Promotion Channel's name; `None` until the Marketing
+    /// answered.
+    channels: Option<HashMap<RecordId, String>>,
     grouping: Grouping,
     order: GroupOrder,
     reports: Vec<CommissionReport>,
 }
 
 impl CommissionDashboard {
-    /// Sums up `commissions`, the period's, of every status.
-    pub fn show(&mut self, commissions: Vec<Commission>, cx: &mut Context<Self>) {
+    /// Sums up `commissions`, the period's, of every status, naming their
+    /// channels from `channels` when the Marketing could be read.
+    pub fn show(
+        &mut self,
+        commissions: Vec<Commission>,
+        channels: Option<Vec<PromotionChannel>>,
+        cx: &mut Context<Self>,
+    ) {
         self.commissions = commissions;
+        if let Some(channels) = channels {
+            self.channels = Some(
+                channels
+                    .into_iter()
+                    .map(|channel| (channel.id, channel.name))
+                    .collect(),
+            );
+        }
         self.sort(self.order, cx);
     }
 
     fn sort(&mut self, order: GroupOrder, cx: &mut Context<Self>) {
         self.order = order;
-        self.reports = CommissionReport::of(&self.commissions, order);
+        let mut reports = CommissionReport::of(&self.commissions, order);
+        for report in &mut reports {
+            report.arrange_channels(order, |id| self.channel_name(id));
+        }
+        self.reports = reports;
         cx.notify();
+    }
+
+    /// A channel no longer in the Marketing was deleted there.
+    fn channel_name(&self, id: RecordId) -> String {
+        match &self.channels {
+            Some(names) => names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| "Canal apagado".into()),
+            None => "Canal (nome não lido)".into(),
+        }
     }
 
     fn group(&mut self, grouping: Grouping, cx: &mut Context<Self>) {
@@ -173,6 +212,9 @@ impl CommissionDashboard {
                     Grouping::Tracking => rows(&report.by_tracking, &t, |of| {
                         of.clone().unwrap_or_else(|| "sem marcação".into())
                     }),
+                    Grouping::Channel => rows(&report.by_channel, &t, |of| {
+                        of.map_or_else(|| "sem canal".into(), |id| self.channel_name(id))
+                    }),
                 };
                 v_flex()
                     .gap_2()
@@ -191,7 +233,8 @@ impl CommissionDashboard {
                 "Marcação é o que vai no link de afiliado: os subIds da Shopee, o src ou sck da \
                  Hotmart, o src da Monetizze, o sck ou src da Kiwify, o utm_content ou tracker da \
                  Eduzz, o tracking id da Amazon. Os links criados aqui levam a marcação do canal \
-                 de divulgação.",
+                 de divulgação, e Canal junta as vendas pela marcação do link, mesmo as que \
+                 chegaram antes de o link existir; uma marcação sem link fica em \"sem canal\".",
             ))
             .into_any_element()
     }
