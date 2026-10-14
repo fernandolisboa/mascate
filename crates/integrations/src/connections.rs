@@ -1,6 +1,7 @@
 //! Connections: the owner's credentials for each Platform, kept in the
 //! system secret store, and the state each Connection is in.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use mascate_platform::{Secret, SecretStore, SecretStoreError};
@@ -21,6 +22,8 @@ pub enum Connection {
     Kiwify,
     /// The owner's affiliate Commissions and transfers on Eduzz.
     Eduzz,
+    /// The bot that publishes Offer Posts on the owner's Telegram channels.
+    Telegram,
 }
 
 /// How a credential reaches the store.
@@ -48,7 +51,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 7] = [
+    pub const ALL: [Connection; 8] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -56,6 +59,7 @@ impl Connection {
         Connection::Monetizze,
         Connection::Kiwify,
         Connection::Eduzz,
+        Connection::Telegram,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -90,6 +94,9 @@ impl Connection {
             pasted("KIWIFY_ACCOUNT_ID"),
         ];
         const EDUZZ: &[Credential] = &[pasted("EDUZZ_PERSONAL_TOKEN")];
+        // The channel's chat is not secret: it lives on each Promotion
+        // Channel.
+        const TELEGRAM: &[Credential] = &[pasted("TELEGRAM_BOT_TOKEN")];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -98,6 +105,7 @@ impl Connection {
             Connection::Monetizze => MONETIZZE,
             Connection::Kiwify => KIWIFY,
             Connection::Eduzz => EDUZZ,
+            Connection::Telegram => TELEGRAM,
         }
     }
 
@@ -148,6 +156,9 @@ pub struct Connections {
     /// Saves and removals run one at a time, so a removal never interleaves
     /// with a save and leaves half a Connection behind.
     writing: Mutex<()>,
+    /// The Connections whose Platform refused their stored credentials,
+    /// until new ones are saved.
+    expired: Mutex<HashSet<Connection>>,
 }
 
 impl Connections {
@@ -155,6 +166,7 @@ impl Connections {
         Self {
             store,
             writing: Mutex::new(()),
+            expired: Mutex::new(HashSet::new()),
         }
     }
 
@@ -171,13 +183,30 @@ impl Connections {
                 }
             }
         }
-        if present == connection.credentials().len() {
+        if present == connection.credentials().len() && self.is_expired(connection) {
+            ConnectionState::Expired
+        } else if present == connection.credentials().len() {
             ConnectionState::Connected
         } else if present == 0 && connection.awaits_approval_without_credentials() {
             ConnectionState::AwaitingApproval
         } else {
             ConnectionState::NotConfigured
         }
+    }
+
+    /// Notes that the Platform refused the Connection's stored credentials,
+    /// as its adapter reported: it reads [`ConnectionState::Expired`] until
+    /// the owner saves new ones or removes it.
+    pub fn mark_expired(&self, connection: Connection) {
+        self.expired_set().insert(connection);
+    }
+
+    fn is_expired(&self, connection: Connection) -> bool {
+        self.expired_set().contains(&connection)
+    }
+
+    fn expired_set(&self) -> std::sync::MutexGuard<'_, HashSet<Connection>> {
+        self.expired.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether `name`, one of the Connection's credentials, is stored.
@@ -209,6 +238,7 @@ impl Connections {
             let value = value.trim();
             if !value.is_empty() {
                 self.store.write(name, &Secret::new(value))?;
+                self.expired_set().remove(&connection);
             }
         }
         Ok(())
@@ -220,6 +250,7 @@ impl Connections {
         for credential in connection.credentials() {
             self.store.remove(credential.name)?;
         }
+        self.expired_set().remove(&connection);
         Ok(())
     }
 }

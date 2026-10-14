@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::{Secret, SecretStore, SecretStoreError};
 
@@ -77,7 +78,10 @@ pub struct Request {
     pub authorization: Option<String>,
     /// Every header, names in lower case.
     pub headers: Vec<(String, String)>,
+    /// The body as text, any bytes that are not UTF-8 replaced.
     pub body: String,
+    /// The body as it arrived.
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +89,22 @@ struct Canned {
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    /// How long to wait before answering.
+    delay: Duration,
+    /// Closes the connection after reading the request, answering nothing.
+    hang_up: bool,
+}
+
+impl Canned {
+    fn answer(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            headers,
+            body,
+            delay: Duration::ZERO,
+            hang_up: false,
+        }
+    }
 }
 
 impl FakeHttpServer {
@@ -114,7 +134,27 @@ impl FakeHttpServer {
 
     /// Answers `path` with `status` and `body`, every time.
     pub fn serve(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
-        self.route(path, status, Vec::new(), body.into(), false);
+        self.route(path, Canned::answer(status, Vec::new(), body.into()), false);
+    }
+
+    /// Answers `path` with `status` and `body` only after `delay`, every
+    /// time: a client that stops waiting sooner gives up on it.
+    pub fn serve_late(&self, path: &str, delay: Duration, status: u16, body: impl Into<Vec<u8>>) {
+        let canned = Canned {
+            delay,
+            ..Canned::answer(status, Vec::new(), body.into())
+        };
+        self.route(path, canned, false);
+    }
+
+    /// Reads each request to `path` whole and closes the connection without
+    /// answering, as a network that drops after the request went out.
+    pub fn hang_up(&self, path: &str) {
+        let canned = Canned {
+            hang_up: true,
+            ..Canned::answer(0, Vec::new(), Vec::new())
+        };
+        self.route(path, canned, false);
     }
 
     /// Answers `method` requests to `path` with `status` and `body`, every
@@ -122,9 +162,7 @@ impl FakeHttpServer {
     pub fn serve_method(&self, method: &str, path: &str, status: u16, body: impl Into<Vec<u8>>) {
         self.route(
             &format!("{method} {path}"),
-            status,
-            Vec::new(),
-            body.into(),
+            Canned::answer(status, Vec::new(), body.into()),
             false,
         );
     }
@@ -132,16 +170,14 @@ impl FakeHttpServer {
     /// Answers `path` with `status` and `body` after the answers already
     /// queued for it; the last answer keeps repeating.
     pub fn then_serve(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
-        self.route(path, status, Vec::new(), body.into(), true);
+        self.route(path, Canned::answer(status, Vec::new(), body.into()), true);
     }
 
     /// Answers `path` with a redirect to `to`.
     pub fn redirect(&self, path: &str, to: &str) {
         self.route(
             path,
-            302,
-            vec![("Location".into(), to.into())],
-            Vec::new(),
+            Canned::answer(302, vec![("Location".into(), to.into())], Vec::new()),
             false,
         );
     }
@@ -162,19 +198,7 @@ impl FakeHttpServer {
             .clone()
     }
 
-    fn route(
-        &self,
-        path: &str,
-        status: u16,
-        headers: Vec<(String, String)>,
-        body: Vec<u8>,
-        queued: bool,
-    ) {
-        let canned = Canned {
-            status,
-            headers,
-            body,
-        };
+    fn route(&self, path: &str, canned: Canned, queued: bool) {
         let mut routes = self.routes.lock().expect("routes lock poisoned");
         let answers = routes.entry(path.to_owned()).or_default();
         if !queued {
@@ -228,6 +252,7 @@ fn answer(
             authorization,
             headers,
             body: String::from_utf8_lossy(&body).into_owned(),
+            bytes: body,
         });
     let canned = {
         let mut routes = routes.lock().expect("routes lock poisoned");
@@ -243,11 +268,15 @@ fn answer(
             None => None,
         }
     }
-    .unwrap_or(Canned {
-        status: 404,
-        headers: Vec::new(),
-        body: br#"{"message":"Not Found"}"#.to_vec(),
-    });
+    .unwrap_or(Canned::answer(
+        404,
+        Vec::new(),
+        br#"{"message":"Not Found"}"#.to_vec(),
+    ));
+    if canned.hang_up {
+        return;
+    }
+    std::thread::sleep(canned.delay);
     let mut head = format!(
         "HTTP/1.1 {} Canned\r\nContent-Length: {}\r\nConnection: close\r\n",
         canned.status,

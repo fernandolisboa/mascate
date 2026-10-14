@@ -1,10 +1,11 @@
 //! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy,
-//! Promotion Channels and Offer Posts.
+//! Promotion Channels and Offer Posts, published through a destination's port.
 
 mod ads;
 mod channels;
 mod copy;
 mod offer_posts;
+mod publishing;
 mod quality;
 mod questions;
 mod replies;
@@ -27,9 +28,13 @@ pub use copy::{
 pub use offer_posts::{
     DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice, POST_BEFORE,
     POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES,
-    PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits, PostProblem, PostStatus,
+    PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits, PostProblem, PostStatus, SentPost,
     TELEGRAM_LIMITS, check_post, default_template, discount, has_disclosure, post_limits,
     price_time,
+};
+pub use publishing::{
+    ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PublishFailure,
+    PublishRequest, PublishedPost,
 };
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
@@ -82,6 +87,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         copy::CREATE_COPY_SETTINGS,
         channels::CREATE_PROMOTION_CHANNELS,
         offer_posts::CREATE_OFFER_POSTS,
+        publishing::PUBLISH_OFFER_POSTS,
     ],
 };
 

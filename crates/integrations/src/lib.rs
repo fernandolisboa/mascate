@@ -13,6 +13,7 @@ mod monetizze;
 mod retry;
 mod shopee_affiliate;
 mod spreadsheet;
+mod telegram;
 
 pub use amazon_earnings::{
     EarningsImport, EarningsReport, LINKS as AMAZON_LINKS, PLATFORM as AMAZON_PLATFORM,
@@ -34,3 +35,6 @@ pub use mercado_livre::{
 pub use monetizze::{API_URL as MONETIZZE_API_URL, LINKS as MONETIZZE_LINKS, Monetizze};
 pub use retry::{Pause, ThreadPause};
 pub use shopee_affiliate::{API_URL as SHOPEE_AFFILIATE_API_URL, ShopeeAffiliates};
+pub use telegram::{
+    API_URL as TELEGRAM_API_URL, MAX_PHOTO_BYTES as TELEGRAM_MAX_PHOTO_BYTES, Telegram,
+};

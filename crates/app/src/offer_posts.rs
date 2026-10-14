@@ -5,7 +5,9 @@
 //! its Program's rules from the Affiliate, the Product's name and photos
 //! from the Catalog, the price typed or the one Shopee's search gave. An
 //! Amazon price waits for its Restricted Feature; without it the post goes
-//! without a price.
+//! without a price. A post on a Telegram channel also goes out through the
+//! bot (#103), after the owner reads the final text, picture and channel
+//! and confirms; one that may have gone out waits for the owner to look.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,8 +29,9 @@ use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
 use mascate_kernel::{Currency, Money, RecordId, parse_amount};
 use mascate_marketing::{
-    Contact, OfferFacts, OfferPost, OfferPosts, OfferPrice, PostDraft, PostError, PostImage,
-    PostProblem, PromotionChannel, check_post, post_limits,
+    ChannelKind, Contact, OfferFacts, OfferPost, OfferPosts, OfferPrice, PostDraft, PostError,
+    PostImage, PostProblem, PostStatus, PromotionChannel, PublishFailure, PublishRequest,
+    check_post, post_limits,
 };
 use mascate_platform::Flag;
 
@@ -40,6 +43,7 @@ use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
+use crate::telegram;
 
 /// The app's Offer Posts; absent when the database did not open.
 pub struct AppOfferPosts(pub Arc<OfferPosts>);
@@ -214,6 +218,21 @@ pub(crate) fn post_failure(error: &PostError) -> String {
         }
         PostError::NoSuchChannel => "O canal deste post foi apagado em Divulgação.".into(),
         PostError::NotFound => "Esse post mudou; a lista foi atualizada.".into(),
+        PostError::NoDestination => "Só posts de um canal do Telegram saem pelo app; para os \
+                                     outros canais, copie o texto."
+            .into(),
+        PostError::NoChat => "Informe o chat do canal do Telegram em Canais de divulgação, em \
+                              Editar, para publicar por ele."
+            .into(),
+        PostError::WrongStatus(PostStatus::Sent) => "Esse post já foi publicado.".into(),
+        PostError::WrongStatus(PostStatus::Sending) => "Esse post está saindo agora.".into(),
+        PostError::WrongStatus(PostStatus::Unconfirmed) => "Esse post pode ter saído: confira o \
+                                                            canal e use Marcar como publicado ou \
+                                                            Publicar de novo."
+            .into(),
+        PostError::WrongStatus(PostStatus::Draft | PostStatus::Failed) | PostError::Changed => {
+            "O post mudou depois que você conferiu, e nada saiu. Confira de novo e publique.".into()
+        }
         PostError::Unreadable(_) | PostError::Sql(_) => {
             format!("Não consegui ler ou gravar os posts no banco: {error}")
         }
@@ -340,6 +359,8 @@ pub struct OfferPostsSection {
     editor: Option<Editor>,
     /// The post asking to confirm its deletion.
     deleting: Option<RecordId>,
+    /// The post waiting for the owner to confirm it goes out.
+    confirming: Option<PublishRequest>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -357,6 +378,7 @@ impl OfferPostsSection {
             picking: false,
             editor: None,
             deleting: None,
+            confirming: None,
             busy: false,
             reads: 0,
             outcome: None,
@@ -818,6 +840,192 @@ impl OfferPostsSection {
         cx.notify();
     }
 
+    /// Saves the editor's post, then asks to confirm it goes out.
+    fn publish_editing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(window, cx, |this, post, window, cx| {
+            this.prepare(post.id, window, cx)
+        });
+    }
+
+    /// Checks the post `id` for its channel and shows what will go out,
+    /// waiting for the owner to confirm.
+    fn prepare(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        self.outcome = None;
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.prepare(id).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let prepared = working.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match prepared {
+                    Ok(request) => this.confirming = Some(request),
+                    Err(error) => this.outcome = Some(Outcome::Failed(post_failure(&error).into())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The owner confirmed: the post goes to Telegram, once.
+    fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(posts), Some(telegram)) = (offer_posts(cx), telegram::adapter(cx)) else {
+            return;
+        };
+        let Some(request) = self.confirming.take() else {
+            return;
+        };
+        let channel = request.channel().to_owned();
+        self.outcome = None;
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.publish(telegram.as_ref(), request.confirm()).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let published = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                this.outcome = Some(match published {
+                    Ok(post) => {
+                        if this
+                            .editor
+                            .as_ref()
+                            .is_some_and(|editor| editor.post == Some(post.id))
+                            && !post.status.editable()
+                        {
+                            this.editor = None;
+                        }
+                        match (&post.status, &post.failure) {
+                            (PostStatus::Sent, _) => {
+                                Outcome::Done(format!("Post publicado em {channel}.").into())
+                            }
+                            (_, Some(failure)) => {
+                                if *failure == PublishFailure::Expired {
+                                    telegram::expired(cx);
+                                }
+                                Outcome::Failed(telegram::publish_failure(failure).into())
+                            }
+                            (_, None) => Outcome::Failed("O post não saiu.".into()),
+                        }
+                    }
+                    Err(error) => Outcome::Failed(post_failure(&error).into()),
+                });
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The owner found the unconfirmed post `id` in the channel.
+    fn mark_published(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.mark_published(id).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let marked = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                this.outcome = Some(match marked {
+                    Ok(_) => Outcome::Done("Post marcado como publicado.".into()),
+                    Err(error) => Outcome::Failed(post_failure(&error).into()),
+                });
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// What will go out, for the owner to confirm.
+    fn render_confirmation(&self, request: &PublishRequest, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let off = telegram::state(cx)
+            .as_ref()
+            .and_then(telegram::publishing_off);
+        let picture = match request.image() {
+            Some(PostImage::File(path)) => format!(
+                "Foto: {}",
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
+            Some(PostImage::Url(url)) => format!("Foto da plataforma: {url}"),
+            None => "Sem foto: o Telegram mostra a prévia do link.".to_owned(),
+        };
+        v_flex()
+            .gap_2()
+            .p_4()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.raised)
+            .child(div().font_medium().child(format!(
+                "Publicar agora em {} ({})?",
+                request.channel(),
+                request.chat()
+            )))
+            .child(div().text_xs().text_color(t.text2).child(picture))
+            .child(
+                div()
+                    .p_3()
+                    .rounded(t.radius_lg)
+                    .border(t.border_width)
+                    .border_color(t.border)
+                    .bg(t.surface)
+                    .text_sm()
+                    .child(request.text().to_owned()),
+            )
+            .child(div().text_xs().text_color(t.text2).child(
+                "O post sai do jeito que está acima, uma vez, e fica no canal: o app não apaga \
+                 posts do Telegram.",
+            ))
+            .children(off.map(|why| kit::error_notice(why, cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("confirm-publish")
+                            .label("Confirmar e publicar")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(self.busy || off.is_some())
+                            .on_click(cx.listener(|this, _, window, cx| this.publish(window, cx))),
+                    )
+                    .child(
+                        Button::new("cancel-publish")
+                            .label("Cancelar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirming = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Whether the post `channel` names goes out through the bot.
+    fn on_telegram(&self, channel: RecordId) -> bool {
+        self.channels
+            .iter()
+            .any(|known| known.id == channel && known.kind == ChannelKind::TelegramChannel)
+    }
+
     /// Puts the photo on the clipboard, read off the UI thread.
     fn copy_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(format) = image_format(&path) else {
@@ -884,7 +1092,62 @@ impl OfferPostsSection {
             Some(at) => format!("copiado em {}", day_and_time(at)),
             None => "ainda não copiado".to_owned(),
         };
+        let status = match (post.status, &post.sent) {
+            (PostStatus::Draft, _) => "rascunho".to_owned(),
+            (PostStatus::Sending, _) => "publicando…".to_owned(),
+            (PostStatus::Sent, Some(sent)) => format!("publicado em {}", day_and_time(sent.at)),
+            (PostStatus::Sent, None) => "publicado".to_owned(),
+            (PostStatus::Unconfirmed, _) => "não confirmado".to_owned(),
+            (PostStatus::Failed, _) => "não publicado".to_owned(),
+        };
+        let telegram = self.on_telegram(post.draft.channel);
         let (opened, copying, id) = (post.clone(), post.clone(), post.id);
+        let publish = (telegram && post.status.publishable()).then(|| {
+            Button::new(("publish-post", index))
+                .label(if post.status == PostStatus::Draft {
+                    "Publicar agora"
+                } else {
+                    "Publicar de novo"
+                })
+                .outline()
+                .small()
+                .disabled(self.busy || self.confirming.is_some())
+                .on_click(cx.listener(move |this, _, window, cx| this.prepare(id, window, cx)))
+        });
+        let mark = (post.status == PostStatus::Unconfirmed).then(|| {
+            Button::new(("mark-post-published", index))
+                .label("Marcar como publicado")
+                .outline()
+                .small()
+                .disabled(self.busy)
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.mark_published(id, window, cx)),
+                )
+        });
+        let open_sent = post
+            .sent
+            .as_ref()
+            .and_then(|sent| sent.link.clone())
+            .map(|link| {
+                kit::external_link(
+                    format!("open-sent-post-{index}"),
+                    "Abrir no Telegram",
+                    link,
+                    cx,
+                )
+            });
+        let failure = post
+            .failure
+            .as_ref()
+            .filter(|_| matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed))
+            .map(|failure| {
+                let text = telegram::publish_failure(failure);
+                if failure.may_have_gone_out() {
+                    kit::info_notice(text, cx)
+                } else {
+                    kit::error_notice(text, cx)
+                }
+            });
         let actions = if self.deleting == Some(id) {
             h_flex()
                 .gap_2()
@@ -912,16 +1175,22 @@ impl OfferPostsSection {
         } else {
             h_flex()
                 .gap_2()
-                .child(
-                    Button::new(("open-post", index))
-                        .label("Abrir")
-                        .outline()
-                        .small()
-                        .disabled(self.busy)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open(opened.clone(), window, cx)
-                        })),
-                )
+                .flex_wrap()
+                .children(open_sent)
+                .children(mark)
+                .children(publish)
+                .when(post.status.editable(), |actions| {
+                    actions.child(
+                        Button::new(("open-post", index))
+                            .label("Abrir")
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open(opened.clone(), window, cx)
+                            })),
+                    )
+                })
                 .child(
                     Button::new(("copy-post", index))
                         .label("Copiar texto")
@@ -958,10 +1227,11 @@ impl OfferPostsSection {
                         div()
                             .text_xs()
                             .text_color(t.text2)
-                            .child(format!("rascunho · {copied}")),
+                            .child(format!("{status} · {copied}")),
                     ),
             )
             .child(actions)
+            .children(failure.map(|notice| div().w_full().child(notice)))
             .into_any_element()
     }
 
@@ -1031,6 +1301,10 @@ impl OfferPostsSection {
         let t = look(cx).tokens;
         let (problems, rules) = editor.problems(cx);
         let blocked = problems.iter().any(PostProblem::blocks);
+        let on_telegram = editor
+            .channel
+            .as_ref()
+            .is_some_and(|channel| channel.kind == ChannelKind::TelegramChannel);
         let channel = editor.channel.as_ref().map_or_else(
             || "canal apagado".to_owned(),
             |channel| channel.name.clone(),
@@ -1215,16 +1489,30 @@ impl OfferPostsSection {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .child(
-                        Button::new("copy-post-text")
-                            .label("Copiar texto")
+                    .children(on_telegram.then(|| {
+                        Button::new("publish-post-now")
+                            .label("Publicar agora")
                             .primary()
+                            .small()
+                            .disabled(self.busy || blocked || self.confirming.is_some())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.publish_editing(window, cx)),
+                            )
+                    }))
+                    .child({
+                        let copy = Button::new("copy-post-text")
+                            .label("Copiar texto")
                             .small()
                             .disabled(self.busy || blocked)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.copy_editing(window, cx)),
-                            ),
-                    )
+                            );
+                        if on_telegram {
+                            copy.outline()
+                        } else {
+                            copy.primary()
+                        }
+                    })
                     .children(image_action)
                     .child(
                         Button::new("save-post")
@@ -1302,6 +1590,11 @@ impl Render for OfferPostsSection {
         let editor = self.editor.take();
         let editing = editor.as_ref().map(|editor| self.render_editor(editor, cx));
         self.editor = editor;
+        let confirming = self.confirming.take();
+        let confirmation = confirming
+            .as_ref()
+            .map(|request| self.render_confirmation(request, cx));
+        self.confirming = confirming;
         let rows: Vec<AnyElement> = self
             .posts
             .clone()
@@ -1331,9 +1624,10 @@ impl Render for OfferPostsSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "Um post por link de afiliado, com o modelo do canal: o app preenche produto, \
                  preço, desconto e link, e põe \"#publi · link de afiliado\" no fim. Edite, confira \
-                 os avisos e copie para colar no canal.",
+                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(confirmation)
             .children(self.picking.then(|| self.render_picker(cx)))
             .children(editing)
             .when(rows.is_empty(), |section| {

@@ -61,6 +61,7 @@ mod span;
 mod startup;
 mod stock;
 mod stock_mirror;
+mod telegram;
 mod title_bar;
 mod tray;
 mod updates;
@@ -72,7 +73,7 @@ use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS, Hotmart,
-    KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates,
+    KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -106,6 +107,7 @@ use crate::shell::Shell;
 use crate::shopee::AppShopee;
 use crate::stock::AppInventory;
 use crate::stock_mirror::AppStockMirror;
+use crate::telegram::AppTelegram;
 use crate::tray::TrayCommand;
 
 fn main() {
@@ -164,6 +166,11 @@ fn main() {
         &user_agent,
         secrets.clone(),
     ));
+    let telegram = Arc::new(Telegram::new(
+        &telegram::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -210,6 +217,7 @@ fn main() {
             cx.set_global(AppConnections(connections));
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
+            cx.set_global(AppTelegram(telegram.clone()));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),

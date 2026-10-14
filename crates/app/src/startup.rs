@@ -297,6 +297,7 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            offer_posts.settle_interrupted().await?;
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -421,8 +422,8 @@ mod tests {
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
         ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
         CopySettings, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, OfferFacts, OfferPrice, QualityLevel, QualitySource, QuestionStatus,
-        Rating, ReputationColor, ReputationSource,
+        NewReplyTemplate, OfferFacts, OfferPrice, PostStatus, QualityLevel, QualitySource,
+        QuestionStatus, Rating, ReputationColor, ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
@@ -1395,6 +1396,9 @@ mod tests {
                 }
                 let kept_posts = posts.posts().await.unwrap();
                 assert_eq!(kept_posts.len(), 1, "{name}");
+                // Posts from before #103 were never published.
+                assert_eq!(kept_posts[0].status, PostStatus::Draft, "{name}");
+                assert_eq!(kept_posts[0].sent, None, "{name}");
                 assert_eq!(
                     kept_posts[0].draft.text,
                     "Produto de exemplo por R$ 59,00\n\
