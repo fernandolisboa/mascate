@@ -63,6 +63,8 @@ pub struct FoundOffer {
     pub title: String,
     /// The item's page.
     pub link: String,
+    /// The Platform's picture of the item, over HTTPS.
+    pub image: Option<String>,
     pub shop: FoundShop,
     /// The lowest price of the item, its cheapest variation.
     pub price: Money,

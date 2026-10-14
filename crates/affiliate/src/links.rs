@@ -134,6 +134,30 @@ impl Affiliate {
         Ok(())
     }
 
+    /// The Product `product` of `program` is linked to, if any: an
+    /// Affiliate Link or an Offer Post reads its photos there, with or
+    /// without a Commission.
+    pub async fn linked_product(
+        &self,
+        program: RecordId,
+        product: &str,
+    ) -> Result<Option<RecordId>, AffiliateError> {
+        let product = linkable(product)?;
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT catalog_product_id FROM affiliate_product_links
+                 WHERE program_id = ?1 AND product = ?2 AND deleted_at IS NULL",
+                params![program.to_string(), product],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(Some(row.id_at(0)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Takes `product` of `program` off the Product it was linked to; one
     /// not linked stays as it is.
     pub async fn unlink_product(

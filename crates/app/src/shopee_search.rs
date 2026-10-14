@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use chrono::Utc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -18,7 +19,8 @@ use mascate_catalog::{
     ProductSource, SearchedOffer,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_marketing::PromotionChannel;
+use mascate_kernel::{RecordId, Timestamp};
+use mascate_marketing::{OfferPrice, PromotionChannel};
 use rust_decimal::Decimal;
 
 use crate::affiliate::affiliate;
@@ -30,6 +32,7 @@ use crate::catalog;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
+use crate::offer_posts::StartPost;
 use crate::promotion_channels::promotion_channels;
 use crate::shopee;
 
@@ -57,8 +60,8 @@ struct LinkPanel {
     outcome: Option<Outcome>,
     /// What the link created breaks or may break.
     warnings: Vec<String>,
-    /// The short link created, for "Copiar".
-    tagged: Option<String>,
+    /// The short link created, for "Copiar", and its id, for "Criar post".
+    tagged: Option<(RecordId, String)>,
 }
 
 pub struct ShopeeSearch {
@@ -71,6 +74,8 @@ pub struct ShopeeSearch {
     connection: Option<ConnectionState>,
     items: Vec<SearchedOffer>,
     shops: Vec<FoundShop>,
+    /// When the items' prices were read.
+    searched_at: Timestamp,
     /// The last page read, 0 before a search.
     page: u32,
     more: bool,
@@ -83,6 +88,8 @@ pub struct ShopeeSearch {
 }
 
 impl EventEmitter<OffersKept> for ShopeeSearch {}
+
+impl EventEmitter<StartPost> for ShopeeSearch {}
 
 impl ShopeeSearch {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -107,6 +114,7 @@ impl ShopeeSearch {
             connection: None,
             items: Vec::new(),
             shops: Vec::new(),
+            searched_at: Utc::now(),
             page: 0,
             more: false,
             busy: false,
@@ -205,6 +213,7 @@ impl ShopeeSearch {
                             this.items.clear();
                             this.shops.clear();
                         }
+                        this.searched_at = Utc::now();
                         match results {
                             Results::Items(items) => this.items.extend(items),
                             Results::Shops(shops) => this.shops.extend(shops),
@@ -337,7 +346,7 @@ impl ShopeeSearch {
                     Ok(created) => {
                         panel.outcome = Some(Outcome::Done(created_text(&created, &name).into()));
                         panel.warnings = created.warnings.iter().map(warning_text).collect();
-                        panel.tagged = Some(created.link.tagged);
+                        panel.tagged = Some((created.link.id, created.link.tagged));
                     }
                     Err(error) => {
                         panel.outcome = Some(Outcome::Failed(
@@ -418,7 +427,13 @@ impl ShopeeSearch {
                         .iter()
                         .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
                 )
-                .children(panel.tagged.clone().map(|tagged| {
+                .children(panel.tagged.clone().map(|(link, tagged)| {
+                    let found = OfferPrice {
+                        price: offer.price,
+                        before: None,
+                        seen_at: self.searched_at,
+                    };
+                    let image = offer.image.clone();
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -437,6 +452,19 @@ impl ShopeeSearch {
                                 .small()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.copy_link(tagged.clone(), cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("post-shopee-link")
+                                .label("Criar post")
+                                .outline()
+                                .small()
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(StartPost {
+                                        link,
+                                        found: Some(found),
+                                        image: image.clone(),
+                                    })
                                 })),
                         )
                 }))

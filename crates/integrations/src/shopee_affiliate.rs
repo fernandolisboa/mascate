@@ -206,8 +206,9 @@ impl OfferSource for ShopeeAffiliates {
         let found: Connection<ProductNode> = self.query(
             "productOfferV2",
             &format!(
-                "{{productOfferV2({}){{nodes{{itemId productName productLink priceMin priceMax \
-                 sales commissionRate ratingStar shopId shopName}}pageInfo{{hasNextPage}}}}}}",
+                "{{productOfferV2({}){{nodes{{itemId productName productLink imageUrl priceMin \
+                 priceMax sales commissionRate ratingStar shopId shopName}}pageInfo{{\
+                 hasNextPage}}}}}}",
                 arguments.join(", ")
             ),
         )?;
@@ -344,6 +345,7 @@ struct ProductNode {
     item_id: String,
     product_name: String,
     product_link: String,
+    image_url: Option<String>,
     price_min: Option<String>,
     price_max: Option<String>,
     #[serde(default)]
@@ -386,6 +388,7 @@ impl ProductNode {
             id: self.item_id,
             title: self.product_name,
             link,
+            image: self.image_url.as_deref().and_then(https_link),
             price,
             highest_price,
             sales: self.sales,
@@ -436,6 +439,16 @@ fn shopee_page(link: &str) -> Option<String> {
     let rest = link.trim().strip_prefix("https://")?;
     let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
     (host == "shopee.com.br" || host.ends_with(".shopee.com.br")).then(|| link.trim().to_owned())
+}
+
+/// A picture's address, when it is plain HTTPS: it may be opened or
+/// posted as it is.
+fn https_link(link: &str) -> Option<String> {
+    let link = link.trim();
+    let rest = link.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    (!host.is_empty() && !host.contains('@') && !link.contains(char::is_whitespace))
+        .then(|| link.to_owned())
 }
 
 /// The page of the shop `id`; `productOfferV2` brings no link to it.

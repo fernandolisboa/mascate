@@ -1,9 +1,10 @@
-//! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy and
-//! Promotion Channels.
+//! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy,
+//! Promotion Channels and Offer Posts.
 
 mod ads;
 mod channels;
 mod copy;
+mod offer_posts;
 mod quality;
 mod questions;
 mod replies;
@@ -23,6 +24,13 @@ pub use copy::{
     CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, GeneratedCopy,
     ListingCopy, MODEL_MAX_CHARS, WrittenCopy, check_copy,
 };
+pub use offer_posts::{
+    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice, POST_BEFORE,
+    POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES,
+    PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits, PostProblem, PostStatus,
+    TELEGRAM_LIMITS, check_post, default_template, discount, has_disclosure, post_limits,
+    price_time,
+};
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
     QualityError, QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
@@ -34,7 +42,7 @@ pub use questions::{
 pub use replies::{
     ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,
     PRODUCT_VARIABLE, QuestionSettings, ReplyProblem, ReplyTemplate, ReplyTemplates,
-    TEMPLATE_NAME_MAX_CHARS, check_answer, contact_in,
+    TEMPLATE_NAME_MAX_CHARS, check_answer, contact_in, contacts_in,
 };
 pub use reputation::{
     ArrivedReview, ChannelReputation, ChannelReview, LOW_RATING, ListingReviews, LowReview,
@@ -43,7 +51,9 @@ pub use reputation::{
     ReputationStanding, ReputationSync, ReviewedItem, SellerTool,
 };
 
-use mascate_platform::{Flag, FlagKind, ModuleMigrations, Phase};
+use mascate_platform::{
+    Flag, FlagKind, ModuleMigrations, Phase, Reminder, ReminderShows, ReminderTopic,
+};
 
 /// Answering a buyer's question on Mercado Livre without the owner
 /// confirming the answer first.
@@ -71,5 +81,20 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         ads::CREATE_PRODUCT_ADS,
         copy::CREATE_COPY_SETTINGS,
         channels::CREATE_PROMOTION_CHANNELS,
+        offer_posts::CREATE_OFFER_POSTS,
     ],
 };
+
+pub const AD_DISCLOSURE: Reminder = Reminder {
+    key: "marketing.ad_disclosure",
+    topic: ReminderTopic::Legal,
+    title: "Identifique a publicidade nos posts de afiliado",
+    text: "Um post sem #publi saiu nos últimos 30 dias. Post com link de afiliado é \
+           publicidade, e o CONAR pede que ela seja identificada: deixe \"#publi · link de \
+           afiliado\" no fim, como o app sugere. O app continua funcionando do mesmo jeito.",
+    reappears_after_days: 30,
+    shows: ReminderShows::WhenRaised,
+};
+
+/// This module's Reminders.
+pub const REMINDERS: &[Reminder] = &[AD_DISCLOSURE];

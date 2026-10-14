@@ -2,7 +2,6 @@
 
 use std::str::FromStr;
 
-use chrono::FixedOffset;
 use mascate_kernel::PlatformError;
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
@@ -49,10 +48,4 @@ pub(crate) fn decimal(number: &serde_json::Number) -> Option<Decimal> {
     Decimal::from_str(&text)
         .or_else(|_| Decimal::from_scientific(&text))
         .ok()
-}
-
-/// Brasília's wall clock, which Brazilian Platforms date things by: UTC-3,
-/// with no daylight saving since 2019.
-pub(crate) fn brasilia() -> FixedOffset {
-    FixedOffset::west_opt(3 * 3600).expect("a valid offset")
 }

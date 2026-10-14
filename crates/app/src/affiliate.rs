@@ -337,7 +337,7 @@ pub struct AffiliateScreen {
     import: Entity<AmazonImportSection>,
     payouts: Entity<PayoutsSection>,
     links: Entity<ProductLinksSection>,
-    affiliate_links: Entity<AffiliateLinksSection>,
+    pub(crate) affiliate_links: Entity<AffiliateLinksSection>,
     rules: Entity<PromotionRulesSection>,
     _subscriptions: Vec<Subscription>,
 }

@@ -198,6 +198,24 @@ fn linking_again_moves_the_product_to_the_new_product_never_to_two() {
             [Some(fone()), Some(fone())]
         );
         assert_eq!(fixture.promoted().await.len(), 2);
+        for named in ["Fone Bluetooth TWS", " Fone Bluetooth TWS "] {
+            assert_eq!(
+                fixture
+                    .affiliate
+                    .linked_product(program, named)
+                    .await
+                    .unwrap(),
+                Some(fone())
+            );
+        }
+        assert_eq!(
+            fixture
+                .affiliate
+                .linked_product(program, "Capa de celular")
+                .await
+                .unwrap(),
+            None
+        );
     });
 }
 
@@ -226,6 +244,14 @@ fn unlinking_takes_the_product_off_and_unlinking_again_changes_nothing() {
         assert_eq!(fixture.linked_to("Fone Bluetooth TWS").await, [None, None]);
         assert_eq!(
             fixture.promoted_one("Fone Bluetooth TWS").await.linked_to,
+            None
+        );
+        assert_eq!(
+            fixture
+                .affiliate
+                .linked_product(program, "Fone Bluetooth TWS")
+                .await
+                .unwrap(),
             None
         );
 

@@ -9,8 +9,8 @@ use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_marketing::{
-    ListingCopy, ListingQuality, ProductAds, PromotionChannels, Questions, ReplyTemplates,
-    Reputation,
+    ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
+    ReplyTemplates, Reputation,
 };
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
@@ -39,6 +39,7 @@ const MODULE_REMINDERS: &[&[Reminder]] = &[
     mascate_finance::REMINDERS,
     mascate_commerce::REMINDERS,
     mascate_affiliate::REMINDERS,
+    mascate_marketing::REMINDERS,
 ];
 
 /// The ready database and what is read from it before the first window, or
@@ -67,6 +68,7 @@ pub struct Started {
     pub product_ads: Arc<ProductAds>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub promotion_channels: Arc<PromotionChannels>,
+    pub offer_posts: Arc<OfferPosts>,
     pub taxes: Arc<Taxes>,
     pub sales_volume: Arc<SalesVolume>,
     pub affiliate: Arc<Affiliate>,
@@ -290,6 +292,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let offer_posts = OfferPosts::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -328,6 +335,7 @@ pub fn prepare() -> Outcome {
                 product_ads: Arc::new(product_ads),
                 reply_templates: Arc::new(reply_templates),
                 promotion_channels: Arc::new(promotion_channels),
+                offer_posts: Arc::new(offer_posts),
                 taxes: Arc::new(taxes),
                 sales_volume: Arc::new(sales_volume),
                 affiliate: Arc::new(affiliate),
@@ -413,8 +421,8 @@ mod tests {
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
         ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
         CopySettings, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor,
-        ReputationSource,
+        NewReplyTemplate, OfferFacts, OfferPrice, QualityLevel, QualitySource, QuestionStatus,
+        Rating, ReputationColor, ReputationSource,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
@@ -702,6 +710,27 @@ mod tests {
         }
     }
 
+    const SAMPLE_POST_TEMPLATE: &str = "{produto} por {preco}\n{link}";
+
+    fn sample_facts(link: RecordId, tagged: &str) -> OfferFacts {
+        OfferFacts {
+            link_id: link,
+            link: tagged.into(),
+            product: "Produto de exemplo".into(),
+            platform: "Mercado Livre".into(),
+            price: Some(OfferPrice {
+                price: Money::new(59.into(), Currency::Brl),
+                before: None,
+                seen_at: chrono::DateTime::parse_from_rfc3339("2026-10-13T10:00:00-03:00")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            }),
+            image: None,
+            price_needs_time: false,
+            forbidden_contacts: Vec::new(),
+        }
+    }
+
     fn sample_payout() -> ManualPayout {
         ManualPayout {
             platform: AffiliatePlatform::MercadoLivre,
@@ -896,10 +925,26 @@ mod tests {
                 .create(&sample_channel())
                 .await
                 .unwrap();
-            affiliate
+            let link = affiliate
                 .create_link(&sample_link(commission.program, channel.id), &SampleTagger)
                 .await
+                .unwrap()
+                .link;
+            let posts = OfferPosts::new(database.clone(), clock.clone(), ids.clone());
+            posts
+                .set_template(channel.id, SAMPLE_POST_TEMPLATE)
+                .await
                 .unwrap();
+            let post = posts
+                .create(
+                    &posts
+                        .draft(&sample_facts(link.id, &link.tagged), &channel)
+                        .await
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            posts.copied(post.id).await.unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -1328,6 +1373,39 @@ mod tests {
                     "{name}"
                 );
                 assert_eq!(affiliate.links().await.unwrap().len(), 1, "{name}");
+                // Offer Posts arrived after 0.2.0 too.
+                let posts = OfferPosts::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                if posts.posts().await.unwrap().is_empty() {
+                    posts
+                        .set_template(kept[0].id, SAMPLE_POST_TEMPLATE)
+                        .await
+                        .unwrap();
+                    let draft = posts
+                        .draft(
+                            &sample_facts(created.link.id, &created.link.tagged),
+                            &kept[0],
+                        )
+                        .await
+                        .unwrap();
+                    posts.create(&draft).await.unwrap();
+                }
+                let kept_posts = posts.posts().await.unwrap();
+                assert_eq!(kept_posts.len(), 1, "{name}");
+                assert_eq!(
+                    kept_posts[0].draft.text,
+                    "Produto de exemplo por R$ 59,00\n\
+                     https://example.com/afiliado/123?tag=exemplo\n\n#publi · link de afiliado",
+                    "{name}"
+                );
+                assert_eq!(
+                    posts.template(&kept[0]).await.unwrap(),
+                    SAMPLE_POST_TEMPLATE,
+                    "{name}"
+                );
             });
         }
     }

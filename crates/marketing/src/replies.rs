@@ -45,6 +45,26 @@ pub enum Contact {
 }
 
 impl Contact {
+    const ALL: [Contact; 4] = [
+        Contact::Link,
+        Contact::Email,
+        Contact::Phone,
+        Contact::SocialNetwork,
+    ];
+
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Contact::Link => "link",
+            Contact::Email => "email",
+            Contact::Phone => "phone",
+            Contact::SocialNetwork => "social_network",
+        }
+    }
+
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|contact| contact.code() == code)
+    }
+
     /// As the owner reads it, after "A resposta tem".
     pub fn name(self) -> &'static str {
         match self {
@@ -77,18 +97,28 @@ pub enum ReplyProblem {
 /// Livre over HTTPS are allowed; anything that looks like a link, an
 /// e-mail, a phone number or a messenger is not.
 pub fn contact_in(text: &str) -> Option<Contact> {
+    contacts_in(text).into_iter().next()
+}
+
+/// Every kind of contact detail in `text`, a phone first, then the others
+/// as they appear, each once.
+pub fn contacts_in(text: &str) -> Vec<Contact> {
+    let mut found = Vec::new();
     if phone_in(text) {
-        return Some(Contact::Phone);
+        found.push(Contact::Phone);
     }
-    text.split_whitespace().find_map(|token| {
+    for token in text.split_whitespace() {
         let token = token.trim_matches(|c: char| {
             matches!(
                 c,
                 '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '"' | '\'' | '“' | '”'
             )
         });
-        contact_token(token)
-    })
+        if let Some(contact) = contact_token(token).filter(|contact| !found.contains(contact)) {
+            found.push(contact);
+        }
+    }
+    found
 }
 
 /// Networks and messengers by the words people write them with, folded.
@@ -263,7 +293,7 @@ impl NewReplyTemplate {
             return Err(ReplyProblem::BadName);
         }
         let text = self.text.trim();
-        if let Some(unknown) = unknown_variable(text) {
+        if let Some(unknown) = unknown_variable(text, &VARIABLES) {
             return Err(ReplyProblem::UnknownVariable(unknown));
         }
         let mut bare = text.to_owned();
@@ -283,14 +313,14 @@ impl NewReplyTemplate {
     }
 }
 
-/// The first `{…}` in `text` that is not one of the variables.
-fn unknown_variable(text: &str) -> Option<String> {
+/// The first `{…}` in `text` that is not one of `variables`.
+pub(crate) fn unknown_variable(text: &str, variables: &[&str]) -> Option<String> {
     let mut rest = text;
     while let Some(start) = rest.find('{') {
         let after = &rest[start..];
         let end = after.find('}').map_or(after.len(), |end| end + 1);
         let candidate = &after[..end];
-        if !VARIABLES.contains(&candidate) {
+        if !variables.contains(&candidate) {
             return Some(candidate.to_owned());
         }
         rest = &after[end..];

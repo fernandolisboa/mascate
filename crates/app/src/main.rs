@@ -27,6 +27,7 @@ mod listings;
 mod low_stock;
 mod mercado_livre;
 mod monetizze;
+mod offer_posts;
 mod offers;
 mod opportunities;
 mod order_alerts;
@@ -89,6 +90,7 @@ use crate::finance::AppSalesVolume;
 use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
 use crate::mercado_livre::AppMercadoLivre;
+use crate::offer_posts::AppOfferPosts;
 use crate::orders::AppOrders;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
@@ -251,6 +253,7 @@ fn main() {
                     .collect(),
                 ));
                 cx.set_global(AppPromotionChannels(started.promotion_channels.clone()));
+                cx.set_global(AppOfferPosts(started.offer_posts.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));

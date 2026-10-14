@@ -1,19 +1,20 @@
-//! Divulgação (#99): the owner's Promotion Channels, each with the marking
-//! its affiliate links carry, the keywords of a paid-search channel and
-//! the chat of a Telegram channel. The channels live in the Marketing
+//! Divulgação (#99): the owner's Offer Posts (#102) and Promotion
+//! Channels, each channel with the marking its affiliate links carry, the
+//! keywords of a paid-search channel, the chat of a Telegram channel and
+//! the template its posts start from. The channels live in the Marketing
 //! (ADR 0031, decision 5); Afiliação tags links with them.
 
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_kernel::RecordId;
 use mascate_marketing::{
-    CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, NewPromotionChannel, PromotionChannel,
-    PromotionChannels, suggested_tag,
+    CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, NewPromotionChannel,
+    PromotionChannel, PromotionChannels, suggested_tag,
 };
 
 use crate::appearance::look;
@@ -21,6 +22,7 @@ use crate::catalog::NO_DATABASE;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::layout;
+use crate::offer_posts::{OfferPostsSection, StartPost, offer_posts, post_failure};
 use crate::parts::ScreenParts;
 use crate::sales::table_row;
 
@@ -79,8 +81,17 @@ fn kind_note(kind: ChannelKind) -> &'static str {
     }
 }
 
+/// A channel's post template open for editing.
+struct TemplateEditor {
+    channel: PromotionChannel,
+    text: Entity<TextareaState>,
+    outcome: Option<Outcome>,
+}
+
 pub struct PromotionScreen {
+    posts: Entity<OfferPostsSection>,
     channels: Vec<PromotionChannel>,
+    template: Option<TemplateEditor>,
     name: Entity<InputState>,
     tag: Entity<InputState>,
     /// Separated by commas.
@@ -101,7 +112,9 @@ pub struct PromotionScreen {
 impl PromotionScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut screen = Self {
+            posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
             channels: Vec::new(),
+            template: None,
             name: input("Ofertas do Fernando", window, cx),
             tag: input("Vazia, sai do nome", window, cx),
             keywords: input("fone bluetooth, fone sem fio", window, cx),
@@ -118,9 +131,158 @@ impl PromotionScreen {
         screen
     }
 
-    /// Reads the channels again, as when the screen comes into view.
+    /// Reads the posts and the channels again, as when the screen comes
+    /// into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.posts.update(cx, |posts, cx| posts.refresh(window, cx));
         self.run(window, cx, |_| async { Ok(()) }, |_, _, _, _| {});
+    }
+
+    /// Opens a new post from an Affiliate Link, as Afiliação and Ofertas ask.
+    pub fn start_post(&mut self, start: &StartPost, window: &mut Window, cx: &mut Context<Self>) {
+        self.posts
+            .update(cx, |posts, cx| posts.start(start, window, cx));
+    }
+
+    /// Opens the template of `channel` for editing.
+    fn open_template(
+        &mut self,
+        channel: PromotionChannel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        let text = cx.new(|cx| TextareaState::new(window, cx).auto_grow(6, 14));
+        self.template = Some(TemplateEditor {
+            channel: channel.clone(),
+            text: text.clone(),
+            outcome: None,
+        });
+        let reading = cx
+            .background_executor()
+            .spawn(async move { posts.template(&channel).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let read = reading.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match read {
+                    Ok(template) => {
+                        text.update(cx, |field, cx| field.set_value(template, window, cx))
+                    }
+                    Err(error) => {
+                        if let Some(editor) = this.template.as_mut() {
+                            editor.outcome = Some(Outcome::Failed(post_failure(&error).into()));
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Keeps the template typed, or with `reset` puts the channel back on
+    /// its kind's default.
+    fn save_template(&mut self, reset: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(posts), Some(editor)) = (offer_posts(cx), self.template.as_ref()) else {
+            return;
+        };
+        let (channel, typed) = (
+            editor.channel.clone(),
+            editor.text.read(cx).value().to_string(),
+        );
+        let working = cx.background_executor().spawn(async move {
+            if reset {
+                posts.reset_template(channel.id).await?;
+            } else {
+                posts.set_template(channel.id, &typed).await?;
+            }
+            posts.template(&channel).await
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(editor) = this.template.as_mut() else {
+                    return;
+                };
+                match saved {
+                    Ok(template) => {
+                        editor
+                            .text
+                            .update(cx, |field, cx| field.set_value(template, window, cx));
+                        editor.outcome = Some(Outcome::Done(
+                            if reset {
+                                "Modelo de volta ao padrão. Vale para os próximos posts."
+                            } else {
+                                "Modelo salvo. Vale para os próximos posts deste canal."
+                            }
+                            .into(),
+                        ));
+                    }
+                    Err(error) => {
+                        editor.outcome = Some(Outcome::Failed(post_failure(&error).into()))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_template(&self, editor: &TemplateEditor, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        v_flex()
+            .gap_2()
+            .ml_6()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.border)
+            .bg(t.raised)
+            .child(div().font_medium().child("Modelo do post"))
+            .child(div().text_xs().text_color(t.text2).child(format!(
+                "Use {{produto}}, {{preco}}, {{de}}, {{desconto}}, {{link}} e {{hora_do_preco}}. \
+                 Uma linha com um valor que o post não tem sai inteira, então deixe cada um na sua \
+                 linha. O app põe \"{DISCLOSURE}\" no fim quando o modelo não identifica a \
+                 publicidade."
+            )))
+            .child(Textarea::new(&editor.text).small())
+            .children(editor.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("save-template")
+                            .label("Salvar modelo")
+                            .primary()
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_template(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("reset-template")
+                            .label("Voltar ao padrão")
+                            .outline()
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_template(true, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("close-template")
+                            .label("Fechar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.template = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Runs `change` off the UI thread, then reads the channels again and
@@ -303,6 +465,7 @@ impl PromotionScreen {
             _ => None,
         };
         let edited = channel.clone();
+        let templated = channel.clone();
         let id = channel.id;
         let actions = if self.deleting == Some(id) {
             h_flex()
@@ -332,6 +495,16 @@ impl PromotionScreen {
         } else {
             h_flex()
                 .gap_2()
+                .child(
+                    Button::new(("channel-template", index))
+                        .label("Modelo do post")
+                        .outline()
+                        .small()
+                        .disabled(self.busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_template(templated.clone(), window, cx)
+                        })),
+                )
                 .child(
                     Button::new(("edit-channel", index))
                         .label("Editar")
@@ -487,13 +660,18 @@ impl Render for PromotionScreen {
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        let rows: Vec<AnyElement> = self
-            .channels
-            .clone()
-            .iter()
-            .enumerate()
-            .map(|(index, channel)| self.render_channel(index, channel, cx))
-            .collect();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (index, channel) in self.channels.clone().iter().enumerate() {
+            rows.push(self.render_channel(index, channel, cx));
+            if let Some(editor) = self
+                .template
+                .as_ref()
+                .filter(|editor| editor.channel.id == channel.id)
+            {
+                rows.push(self.render_template(editor, cx));
+            }
+        }
+        parts.content.push(self.posts.clone().into_any_element());
         parts.content.push(
             v_flex()
                 .gap_3()

@@ -82,6 +82,8 @@ Inventados ou completados (conferir no regression pass):
 - O texto de `message` dos erros, que a documentação só dá em `extensions.message`.
 - O link da loja num item (`https://shopee.com.br/shop/{shopId}`): `productOfferV2` não traz o link
   da loja. O link do item é `productLink`; o `offerLink` (link de afiliado) não é usado.
+- O `imageUrl` de cada item (o domínio da imagem, aqui `down-br.img.susercontent.com`) e se ele vem
+  sempre em HTTPS: o app guarda só imagem em HTTPS.
 - Ids, nomes, preços e vendas.
 - Se a API do Brasil está em `https://open-api.affiliate.shopee.com.br/graphql`, se aceita
   `sortType: 3` em `shopOfferV2`, se `pageInfo` traz `hasNextPage` nas duas consultas e se a

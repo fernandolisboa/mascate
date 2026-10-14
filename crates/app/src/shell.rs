@@ -11,6 +11,7 @@ use crate::home::Home;
 use crate::layout;
 use crate::listings::ListingsScreen;
 use crate::low_stock::OpenStock;
+use crate::offer_posts::StartPost;
 use crate::offers::{OffersScreen, OpenProduct};
 use crate::opportunities::OpportunitiesScreen;
 use crate::order_alerts::OpenOrders;
@@ -159,6 +160,16 @@ impl Shell {
                     cx.notify();
                 },
             ),
+            cx.subscribe_in(
+                &affiliate.read(cx).affiliate_links.clone(),
+                window,
+                |shell, _, start: &StartPost, window, cx| shell.start_post(start, window, cx),
+            ),
+            cx.subscribe_in(
+                &offers.read(cx).shopee.clone(),
+                window,
+                |shell, _, start: &StartPost, window, cx| shell.start_post(start, window, cx),
+            ),
             // "Seguir o sistema" switches with the system's light/dark setting.
             cx.observe_window_appearance(window, |_, window, cx| {
                 let preference = preferences::appearance(cx).theme;
@@ -193,6 +204,13 @@ impl Shell {
         self.products
             .update(cx, |products, cx| products.open(product, window, cx));
         self.place = Place::Products;
+        cx.notify();
+    }
+
+    fn start_post(&mut self, start: &StartPost, window: &mut Window, cx: &mut Context<Self>) {
+        self.promotion
+            .update(cx, |promotion, cx| promotion.start_post(start, window, cx));
+        self.place = Place::Promotion;
         cx.notify();
     }
 
