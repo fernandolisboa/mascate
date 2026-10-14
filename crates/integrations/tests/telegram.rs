@@ -242,6 +242,17 @@ fn a_platform_picture_goes_by_its_url_with_the_text_as_caption() {
     });
 }
 
+/// A photo name with a quote, which the multipart header must not carry
+/// as is; Windows refuses quotes in file names, so there it is plain.
+#[cfg(not(windows))]
+const PHOTO_NAME: &str = "fone \"azul\".JPG";
+#[cfg(not(windows))]
+const SENT_NAME: &str = "fone _azul_.JPG";
+#[cfg(windows)]
+const PHOTO_NAME: &str = "fone azul.JPG";
+#[cfg(windows)]
+const SENT_NAME: &str = PHOTO_NAME;
+
 #[test]
 fn a_product_photo_is_uploaded_as_multipart_with_its_bytes_name_and_type() {
     block_on(async {
@@ -249,7 +260,7 @@ fn a_product_photo_is_uploaded_as_multipart_with_its_bytes_name_and_type() {
         f.server
             .serve(&path("sendPhoto"), 200, fixture("send-photo.json"));
         let folder = tempfile::tempdir().unwrap();
-        let photo = folder.path().join("fone \"azul\".JPG");
+        let photo = folder.path().join(PHOTO_NAME);
         // A JPEG's first bytes, which are no UTF-8, and a CRLF inside.
         let bytes: Vec<u8> = [
             0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'\r', b'\n', 0x80, 0xFF, 0xD9,
@@ -286,9 +297,10 @@ fn a_product_photo_is_uploaded_as_multipart_with_its_bytes_name_and_type() {
         assert_eq!(
             parts[2],
             (
-                "Content-Disposition: form-data; name=\"photo\"; filename=\"fone _azul_.JPG\"\r\n\
-                 Content-Type: image/jpeg"
-                    .to_owned(),
+                format!(
+                    "Content-Disposition: form-data; name=\"photo\"; filename=\"{SENT_NAME}\"\r\n\
+                     Content-Type: image/jpeg"
+                ),
                 bytes
             )
         );
