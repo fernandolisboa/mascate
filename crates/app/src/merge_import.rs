@@ -362,9 +362,8 @@ mod tests {
         Clock, Currency, IdGenerator, ListingType, Money, PlatformError, RecordId,
     };
     use mascate_marketing::SalesEvents;
-    use mascate_platform::{
-        Backups, Database, MergeImport, Secret, SecretStore, SecretStoreError, merge_gaps, migrate,
-    };
+    use mascate_platform::testing::MemorySecretStore;
+    use mascate_platform::{Backups, Database, MergeImport, merge_gaps, migrate};
     use rust_decimal::Decimal;
 
     use super::*;
@@ -551,23 +550,6 @@ mod tests {
         }
         dumped.sort();
         dumped
-    }
-
-    /// A credential store with nothing in it: no Connection has its keys.
-    struct NoSecrets;
-
-    impl SecretStore for NoSecrets {
-        fn read(&self, _: &str) -> Result<Option<Secret>, SecretStoreError> {
-            Ok(None)
-        }
-
-        fn write(&self, _: &str, _: &Secret) -> Result<(), SecretStoreError> {
-            Ok(())
-        }
-
-        fn remove(&self, _: &str) -> Result<(), SecretStoreError> {
-            Ok(())
-        }
     }
 
     async fn export(database: &Database, to: &Path) {
@@ -801,7 +783,7 @@ mod tests {
                 clock.clone(),
                 Arc::new(IdsFrom(AtomicU64::new(9_500_000))),
             );
-            let connections = Connections::new(Arc::new(NoSecrets));
+            let connections = Connections::new(Arc::new(MemorySecretStore::default()));
             clock.advance(TimeDelta::minutes(5));
 
             let applied = merge(&file, &merge_import, &backups, &first.catalog, &connections)

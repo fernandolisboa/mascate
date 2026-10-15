@@ -10,3 +10,5 @@ atual, com Backup antes, e confere que o que o dono salvou continua lá.
 - `0.2.0.db`: a primeira release, com a fase 1 inteira.
 - `0.3.0.db`: a fase 2, com comissões, Payouts, regras de divulgação, Affiliate Links,
   Offer Posts na fila do Telegram (pausada) e o calendário de Sales Events.
+- `0.4.0.db`: o Merge Import, com uma mesclagem já vista de uma cópia do outro computador
+  que trouxe um Fornecedor e perdeu o conflito da alíquota de imposto.
