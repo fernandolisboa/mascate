@@ -1160,3 +1160,28 @@ fn the_newest_merge_opens_once_with_the_follow_ups_saved_after_it() {
         assert_eq!(f.merges.merges().await.unwrap()[0].follow_ups, follow_ups);
     });
 }
+
+#[test]
+fn a_file_whose_only_differences_stay_out_or_lose_here_merges_nothing() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(&f.here, "p2", "CAPA", "Capa", 5).await;
+        product(f.there(), "p2", "CAPA", "Capa antiga", 3).await;
+        product(&f.here, "p1", "FONE", "Fone", 0).await;
+        product(f.there(), "p1", "CABO", "Fone", 5).await;
+        product(&f.here, "p7", "CABO", "Cabo", 3).await;
+        let file = f.other_file().await;
+        let before = dump(&f.here).await;
+
+        let report = f.compare(&file).await.unwrap();
+        let merged = f.merge(&file).await.unwrap();
+
+        assert!(
+            !report.is_empty() && !report.brings_changes(),
+            "{report:#?}"
+        );
+        assert_eq!(merged, None);
+        assert_eq!(dump(&f.here).await, before);
+        assert!(f.merges.merges().await.unwrap().is_empty());
+    });
+}

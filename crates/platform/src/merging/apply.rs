@@ -62,7 +62,7 @@ impl MergeImport {
     /// Merges `file` into this database: a Backup with `backups` first, then
     /// the comparison worked out again on the database as it is now and
     /// written in one transaction, with its report. `None` when the file
-    /// brings nothing new or different, and nothing was written. A failure
+    /// brings nothing to write here, and nothing was written. A failure
     /// leaves the database as it was.
     pub async fn merge(
         &self,
@@ -84,7 +84,7 @@ impl MergeImport {
                 .execute("PRAGMA defer_foreign_keys = ON", ())
                 .await?;
             let (report, writes) = examine(&transaction, self.merges).await?;
-            if report.is_empty() {
+            if !report.brings_changes() {
                 transaction.rollback().await?;
                 return Ok(None);
             }

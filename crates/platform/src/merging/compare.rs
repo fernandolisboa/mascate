@@ -32,6 +32,15 @@ impl MergeReport {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+
+    /// Whether merging would write anything: records that come in or
+    /// replace this machine's. Conflicts this machine wins and records
+    /// left out change nothing here.
+    pub fn brings_changes(&self) -> bool {
+        self.records
+            .iter()
+            .any(|records| records.new > 0 || records.changed_here > 0)
+    }
 }
 
 /// One kind of record of one module.

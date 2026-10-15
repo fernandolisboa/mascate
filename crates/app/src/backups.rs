@@ -546,7 +546,9 @@ impl BackupSection {
                             compared.report = MergeReport::default();
                         }
                         this.outcome = Some(Outcome::Done(
-                            "O outro banco já não traz nada novo nem diferente: nada mudou.".into(),
+                            "Com o banco como está agora, o outro banco não traz nada para gravar \
+                             aqui: nada mudou."
+                                .into(),
                         ));
                     }
                     Err(failed) => {
@@ -565,8 +567,15 @@ impl BackupSection {
 
     fn render_comparison(&self, compared: &Compared, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let actions = if compared.report.is_empty() {
-            None
+        let actions = if !compared.report.brings_changes() {
+            (!compared.report.is_empty()).then(|| {
+                kit::info_notice(
+                    "Mesclar não mudaria nada aqui: ficam as versões deste computador, e o que \
+                     fica de fora não entra.",
+                    cx,
+                )
+                .into_any_element()
+            })
         } else if self.confirming_merge {
             Some(self.render_merge_confirmation(&compared.file, cx))
         } else {
