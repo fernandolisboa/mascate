@@ -4,7 +4,7 @@
 //! the template its posts start from. The channels live in the Marketing
 //! (ADR 0031, decision 5); Afiliação tags links with them. A Telegram
 //! channel is checked through the bot (#103): administrator, allowed to
-//! post.
+//! post; and has the posting times its scheduled posts go out at (#104).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,7 +17,8 @@ use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_kernel::RecordId;
 use mascate_marketing::{
     CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, DestinationStanding,
-    NewPromotionChannel, PostDestination as _, PromotionChannel, PromotionChannels, suggested_tag,
+    NewPromotionChannel, PostDestination as _, PromotionChannel, PromotionChannels,
+    default_posting_times, suggested_tag,
 };
 
 use crate::appearance::look;
@@ -27,6 +28,7 @@ use crate::kit;
 use crate::layout;
 use crate::offer_posts::{OfferPostsSection, StartPost, offer_posts, post_failure};
 use crate::parts::ScreenParts;
+use crate::post_queue::{times_text, typed_times};
 use crate::sales::table_row;
 use crate::telegram;
 
@@ -60,6 +62,7 @@ fn failure(error: &ChannelError) -> String {
         ChannelError::BadChat => "O chat do Telegram é o @nome público do canal (como \
                                   @ofertasdofernando) ou o id que começa com -100."
             .into(),
+        ChannelError::NotTelegram => "Só um canal do Telegram tem horários de publicação.".into(),
         ChannelError::NotFound => "Esse canal mudou; a lista foi atualizada.".into(),
         ChannelError::Unreadable(_) | ChannelError::Sql(_) => {
             format!("Não consegui ler ou gravar os canais no banco: {error}")
@@ -72,8 +75,9 @@ fn kind_note(kind: ChannelKind) -> &'static str {
     match kind {
         ChannelKind::TelegramChannel => {
             "Com o chat do canal e o token do bot em Configurações › Conexões › Telegram, os \
-             posts deste canal saem por \"Publicar agora\", sempre depois da sua confirmação. \
-             Use \"Conferir canal\" para ver se o bot pode publicar."
+             posts deste canal saem por \"Publicar agora\" ou \"Agendar\", sempre depois da sua \
+             confirmação. Use \"Conferir canal\" para ver se o bot pode publicar e \
+             \"Horários\" para escolher quando os agendados saem."
         }
         ChannelKind::PaidSearch => {
             "As palavras-chave entram na conferência das regras de cada programa: a Shopee não \
@@ -87,6 +91,13 @@ fn kind_note(kind: ChannelKind) -> &'static str {
     }
 }
 
+/// A Telegram channel's posting times open for editing.
+struct TimesEditor {
+    channel: RecordId,
+    text: Entity<InputState>,
+    outcome: Option<Outcome>,
+}
+
 /// A channel's post template open for editing.
 struct TemplateEditor {
     channel: PromotionChannel,
@@ -98,6 +109,7 @@ pub struct PromotionScreen {
     posts: Entity<OfferPostsSection>,
     channels: Vec<PromotionChannel>,
     template: Option<TemplateEditor>,
+    times: Option<TimesEditor>,
     name: Entity<InputState>,
     tag: Entity<InputState>,
     /// Separated by commas.
@@ -125,6 +137,7 @@ impl PromotionScreen {
             posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
             channels: Vec::new(),
             template: None,
+            times: None,
             name: input("Ofertas do Fernando", window, cx),
             tag: input("Vazia, sai do nome", window, cx),
             keywords: input("fone bluetooth, fone sem fio", window, cx),
@@ -290,6 +303,135 @@ impl PromotionScreen {
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.template = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Opens the posting times of `channel` for editing.
+    fn open_times(
+        &mut self,
+        channel: &PromotionChannel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = input("08:00, 12:00, 19:00, 21:00", window, cx);
+        text.update(cx, |field, cx| {
+            field.set_value(times_text(&channel.posting_times), window, cx)
+        });
+        self.times = Some(TimesEditor {
+            channel: channel.id,
+            text,
+            outcome: None,
+        });
+        cx.notify();
+    }
+
+    /// Keeps the posting times typed, or with `reset` the default ones.
+    fn save_times(&mut self, reset: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.times.as_mut() else {
+            return;
+        };
+        let times = if reset {
+            default_posting_times()
+        } else {
+            match typed_times(&editor.text.read(cx).value()) {
+                Ok(times) => times,
+                Err(wrong) => {
+                    editor.outcome = Some(Outcome::Failed(
+                        format!(
+                            "\"{wrong}\" não é um horário: escreva como 08:00, 12:30 ou 19h, \
+                             separados por vírgula."
+                        )
+                        .into(),
+                    ));
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        let id = editor.channel;
+        self.run(
+            window,
+            cx,
+            move |channels| async move { channels.set_posting_times(id, &times).await },
+            move |this, saved: PromotionChannel, window, cx| {
+                if let Some(editor) = this.times.as_mut() {
+                    editor.text.update(cx, |field, cx| {
+                        field.set_value(times_text(&saved.posting_times), window, cx)
+                    });
+                    editor.outcome = Some(Outcome::Done(
+                        if saved.posting_times.is_empty() {
+                            "Sem horários: os posts deste canal só se agendam com dia e hora \
+                             escolhidos."
+                                .to_owned()
+                        } else {
+                            format!(
+                                "Horários salvos: {}. Os posts já agendados ficam na hora que \
+                                 têm.",
+                                times_text(&saved.posting_times)
+                            )
+                        }
+                        .into(),
+                    ));
+                }
+                Self::changed(cx);
+            },
+        );
+    }
+
+    fn render_times(&self, editor: &TimesEditor, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        v_flex()
+            .gap_2()
+            .ml_6()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.border)
+            .bg(t.raised)
+            .child(div().font_medium().child("Horários de publicação"))
+            .child(div().text_xs().text_color(t.text2).child(
+                "No horário de Brasília, separados por vírgula. \"Agendar\" usa o primeiro \
+                 horário livre deste canal, hoje ou nos próximos dias; vazio, cada post pede dia e \
+                 hora.",
+            ))
+            .child(div().w(px(360.)).child(Input::new(&editor.text).small()))
+            .children(editor.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("save-times")
+                            .label("Salvar horários")
+                            .primary()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_times(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("reset-times")
+                            .label("Voltar ao padrão")
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.save_times(true, window, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        Button::new("close-times")
+                            .label("Fechar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.times = None;
                                 cx.notify();
                             })),
                     ),
@@ -501,9 +643,17 @@ impl PromotionScreen {
     ) -> AnyElement {
         let t = look(cx).tokens;
         let detail = match channel.kind {
-            ChannelKind::TelegramChannel => Some(channel.telegram_chat.clone().map_or_else(
-                || "chat ainda não informado".to_owned(),
-                |chat| format!("chat {chat}"),
+            ChannelKind::TelegramChannel => Some(format!(
+                "{} · {}",
+                channel.telegram_chat.clone().map_or_else(
+                    || "chat ainda não informado".to_owned(),
+                    |chat| format!("chat {chat}"),
+                ),
+                if channel.posting_times.is_empty() {
+                    "sem horários de publicação".to_owned()
+                } else {
+                    format!("horários {}", times_text(&channel.posting_times))
+                }
             )),
             ChannelKind::PaidSearch if channel.keywords.is_empty() => {
                 Some("nenhuma palavra-chave".to_owned())
@@ -516,6 +666,7 @@ impl PromotionScreen {
         let edited = channel.clone();
         let templated = channel.clone();
         let checked = channel.clone();
+        let timed = channel.clone();
         let id = channel.id;
         let check = (channel.kind == ChannelKind::TelegramChannel
             && channel.telegram_chat.is_some())
@@ -527,6 +678,16 @@ impl PromotionScreen {
                 .loading(self.checking == Some(id))
                 .disabled(self.busy || self.checking.is_some())
                 .on_click(cx.listener(move |this, _, window, cx| this.check(&checked, window, cx)))
+        });
+        let times = (channel.kind == ChannelKind::TelegramChannel).then(|| {
+            Button::new(("channel-times", index))
+                .label("Horários")
+                .outline()
+                .small()
+                .disabled(self.busy)
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.open_times(&timed, window, cx)),
+                )
         });
         let actions = if self.deleting == Some(id) {
             h_flex()
@@ -556,7 +717,9 @@ impl PromotionScreen {
         } else {
             h_flex()
                 .gap_2()
+                .flex_wrap()
                 .children(check)
+                .children(times)
                 .child(
                     Button::new(("channel-template", index))
                         .label("Modelo do post")
@@ -736,6 +899,13 @@ impl Render for PromotionScreen {
                 .filter(|editor| editor.channel.id == channel.id)
             {
                 rows.push(self.render_template(editor, cx));
+            }
+            if let Some(editor) = self
+                .times
+                .as_ref()
+                .filter(|editor| editor.channel == channel.id)
+            {
+                rows.push(self.render_times(editor, cx));
             }
         }
         parts.content.push(self.posts.clone().into_any_element());

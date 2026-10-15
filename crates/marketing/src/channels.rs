@@ -1,13 +1,17 @@
 //! Promotion Channels (#99, ADR 0031 decision 5): where the owner promotes
 //! affiliate links and products, each with the marking its links carry.
 //! The Affiliate keeps a channel only by its id; the app translates a
-//! channel into the Affiliate's words when a link is created.
+//! channel into the Affiliate's words when a link is created. A Telegram
+//! channel also has the times its scheduled posts go out at (#104).
 
 use std::sync::Arc;
 
+use chrono::NaiveTime;
 use libsql::params;
 use mascate_kernel::{Clock, IdGenerator, Record, RecordId, folded_words};
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
+
+use crate::queue::{default_posting_times, posting_times_from, posting_times_text, unschedule};
 
 pub(crate) const CREATE_PROMOTION_CHANNELS: Migration = Migration {
     version: 6,
@@ -98,6 +102,9 @@ pub struct PromotionChannel {
     /// The Telegram chat, `@name` or a `-100…` id; only on a Telegram
     /// channel.
     pub telegram_chat: Option<String>,
+    /// When its scheduled posts go out, on Brasília's clock, earliest
+    /// first; only on a Telegram channel.
+    pub posting_times: Vec<NaiveTime>,
 }
 
 /// A channel as the owner writes it.
@@ -211,6 +218,8 @@ pub enum ChannelError {
     TagTaken(String),
     #[error("a Telegram chat is @name or a -100… id")]
     BadChat,
+    #[error("only a Telegram channel has posting times")]
+    NotTelegram,
     #[error("no such Promotion Channel")]
     NotFound,
     #[error("the channels hold a value this app cannot read: {0}")]
@@ -228,7 +237,8 @@ impl From<StoredValueError> for ChannelError {
     }
 }
 
-const CHANNEL_QUERY: &str = "SELECT id, name, kind, default_tag, keywords, telegram_chat
+const CHANNEL_QUERY: &str = "SELECT id, name, kind, default_tag, keywords, telegram_chat,
+         posting_times
      FROM marketing_promotion_channels WHERE deleted_at IS NULL";
 
 /// The owner's Promotion Channels.
@@ -290,9 +300,9 @@ impl PromotionChannels {
             .connection()
             .execute(
                 "INSERT INTO marketing_promotion_channels
-                     (id, name, kind, default_tag, keywords, telegram_chat, created_at,
-                      updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                     (id, name, kind, default_tag, keywords, telegram_chat, posting_times,
+                      created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
                 params![
                     record.id.to_string(),
                     channel.name.clone(),
@@ -300,15 +310,17 @@ impl PromotionChannels {
                     channel.default_tag.clone(),
                     channel.keywords.join("\n"),
                     channel.telegram_chat.clone(),
+                    posting_times_text(&default_posting_times()),
                     stored(record.created_at)
                 ],
             )
             .await?;
-        Ok(kept(record.id, channel))
+        self.channel(record.id).await
     }
 
     /// Changes the channel; the links already made keep the marking they
-    /// were made with.
+    /// were made with. A post scheduled for its old chat leaves the queue,
+    /// since the owner confirmed where it goes.
     pub async fn update(
         &self,
         id: RecordId,
@@ -316,6 +328,7 @@ impl PromotionChannels {
     ) -> Result<PromotionChannel, ChannelError> {
         let channel = channel.checked()?;
         self.ensure_free(&channel.default_tag, Some(id)).await?;
+        let before = self.channel(id).await?;
         let changed = self
             .database
             .connection()
@@ -338,9 +351,39 @@ impl PromotionChannels {
         if changed == 0 {
             return Err(ChannelError::NotFound);
         }
-        Ok(kept(id, channel))
+        if before.telegram_chat != channel.telegram_chat {
+            unschedule(&self.database, id, self.clock.now()).await?;
+        }
+        self.channel(id).await
     }
 
+    /// Keeps the times `channel`'s scheduled posts go out at, to the
+    /// minute, earliest first, each once. The posts already scheduled keep
+    /// their time.
+    pub async fn set_posting_times(
+        &self,
+        id: RecordId,
+        times: &[NaiveTime],
+    ) -> Result<PromotionChannel, ChannelError> {
+        if self.channel(id).await?.kind != ChannelKind::TelegramChannel {
+            return Err(ChannelError::NotTelegram);
+        }
+        self.database
+            .connection()
+            .execute(
+                "UPDATE marketing_promotion_channels SET posting_times = ?1, updated_at = ?2
+                 WHERE id = ?3 AND deleted_at IS NULL",
+                params![
+                    posting_times_text(times),
+                    stored(self.clock.now()),
+                    id.to_string()
+                ],
+            )
+            .await?;
+        self.channel(id).await
+    }
+
+    /// Deletes the channel; its scheduled posts leave the queue.
     pub async fn delete(&self, id: RecordId) -> Result<(), ChannelError> {
         let changed = self
             .database
@@ -354,6 +397,7 @@ impl PromotionChannels {
         if changed == 0 {
             return Err(ChannelError::NotFound);
         }
+        unschedule(&self.database, id, self.clock.now()).await?;
         Ok(())
     }
 
@@ -377,24 +421,20 @@ impl PromotionChannels {
     }
 }
 
-fn kept(id: RecordId, channel: NewPromotionChannel) -> PromotionChannel {
-    PromotionChannel {
-        id,
-        name: channel.name,
-        kind: channel.kind,
-        default_tag: channel.default_tag,
-        keywords: channel.keywords,
-        telegram_chat: channel.telegram_chat,
-    }
-}
-
 fn channel_from(row: &libsql::Row) -> Result<PromotionChannel, ChannelError> {
     let kind: String = row.get(2)?;
+    let kind = ChannelKind::from_code(&kind).ok_or(ChannelError::Unreadable(kind))?;
     let keywords: String = row.get(4)?;
+    let times: String = row.get(6)?;
+    let posting_times = if kind == ChannelKind::TelegramChannel {
+        posting_times_from(&times).ok_or(ChannelError::Unreadable(times))?
+    } else {
+        Vec::new()
+    };
     Ok(PromotionChannel {
         id: row.id_at(0)?,
         name: row.get(1)?,
-        kind: ChannelKind::from_code(&kind).ok_or(ChannelError::Unreadable(kind))?,
+        kind,
         default_tag: row.get(3)?,
         keywords: keywords
             .lines()
@@ -402,5 +442,6 @@ fn channel_from(row: &libsql::Row) -> Result<PromotionChannel, ChannelError> {
             .map(str::to_owned)
             .collect(),
         telegram_chat: row.get(5)?,
+        posting_times,
     })
 }

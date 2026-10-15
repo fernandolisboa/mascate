@@ -8,6 +8,8 @@
 //! without a price. A post on a Telegram channel also goes out through the
 //! bot (#103), after the owner reads the final text, picture and channel
 //! and confirms; one that may have gone out waits for the owner to look.
+//! Confirmed for a time instead, it waits in the Telegram queue (#104),
+//! listed with what is late, unconfirmed, failed or published today.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,11 +29,11 @@ use mascate_affiliate::{
 };
 use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
-use mascate_kernel::{Currency, Money, RecordId, parse_amount};
+use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
-    ChannelKind, Contact, OfferFacts, OfferPost, OfferPosts, OfferPrice, PostDraft, PostError,
-    PostImage, PostProblem, PostStatus, PromotionChannel, PublishFailure, PublishRequest,
-    check_post, post_limits,
+    ChannelKind, Contact, LATE_AFTER_MINUTES, OfferFacts, OfferPost, OfferPosts, OfferPrice,
+    PRICE_KEEPS_HOURS, PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus,
+    PostTime, PromotionChannel, PublishFailure, PublishRequest, check_post, post_limits,
 };
 use mascate_platform::Flag;
 
@@ -41,6 +43,7 @@ use crate::appearance::look;
 use crate::catalog::{self, day_and_time};
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
+use crate::post_queue::{post_time, typed_moment};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
 use crate::telegram;
@@ -54,7 +57,8 @@ pub(crate) fn offer_posts(cx: &App) -> Option<Arc<OfferPosts>> {
     cx.try_global::<AppOfferPosts>().map(|app| app.0.clone())
 }
 
-/// Counts the posts copied, so the disclosure Reminder is read again.
+/// Counts the changes to the posts, copies and the queue's turns
+/// included, so the disclosure Reminder and the lists are read again.
 #[derive(Default)]
 pub struct PostChanges(pub u64);
 
@@ -73,6 +77,21 @@ pub struct StartPost {
 /// macOS; on Linux, X11 and Wayland alike, it offers them only text, so
 /// the photo opens in its folder instead.
 const IMAGE_ON_CLIPBOARD: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+
+/// A post waiting for the owner to confirm it goes out, now or at a time.
+struct Confirming {
+    request: PublishRequest,
+    /// Set when it is to be scheduled.
+    schedule: Option<ScheduleChoice>,
+}
+
+#[derive(Clone, Copy)]
+struct ScheduleChoice {
+    /// The channel's next free posting time; `None` without posting times.
+    next_free: Option<Timestamp>,
+    /// The owner types a day and time instead.
+    picking: bool,
+}
 
 /// What a post knows of its offer before the price: the link, its
 /// Program, and the Product's name and photos when the link's product is
@@ -230,9 +249,24 @@ pub(crate) fn post_failure(error: &PostError) -> String {
                                                             canal e use Marcar como publicado ou \
                                                             Publicar de novo."
             .into(),
-        PostError::WrongStatus(PostStatus::Draft | PostStatus::Failed) | PostError::Changed => {
+        PostError::WrongStatus(PostStatus::PriceExpired) | PostError::OldPrice => format!(
+            "O preço deste post foi visto há mais de {PRICE_KEEPS_HOURS} horas, mais do que o \
+             programa deixa guardar. Abra o post, digite o preço de agora e gere o texto de novo."
+        ),
+        PostError::WrongStatus(
+            PostStatus::Draft | PostStatus::Scheduled | PostStatus::Late | PostStatus::Failed,
+        )
+        | PostError::Changed => {
             "O post mudou depois que você conferiu, e nada saiu. Confira de novo e publique.".into()
         }
+        PostError::PastTime => "Esse horário já passou: escolha um dia e hora à frente.".into(),
+        PostError::TimeTaken => {
+            "Outro post deste canal já está agendado nesse horário: escolha outro.".into()
+        }
+        PostError::NoPostingTimes => "Este canal não tem horários de publicação: escolha dia e \
+                                      hora, ou defina os horários do canal em Canais de \
+                                      divulgação."
+            .into(),
         PostError::Unreadable(_) | PostError::Sql(_) => {
             format!("Não consegui ler ou gravar os posts no banco: {error}")
         }
@@ -352,6 +386,7 @@ impl Editor {
 
 pub struct OfferPostsSection {
     posts: Vec<OfferPost>,
+    queue: PostQueue,
     links: Vec<AffiliateLink>,
     channels: Vec<PromotionChannel>,
     /// "Novo post" lists the links to start from.
@@ -360,7 +395,9 @@ pub struct OfferPostsSection {
     /// The post asking to confirm its deletion.
     deleting: Option<RecordId>,
     /// The post waiting for the owner to confirm it goes out.
-    confirming: Option<PublishRequest>,
+    confirming: Option<Confirming>,
+    /// The day and time typed to schedule a post.
+    when: Entity<InputState>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -370,15 +407,20 @@ pub struct OfferPostsSection {
 
 impl OfferPostsSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_global_in::<ChannelChanges>(window, Self::refresh)];
+        let subscriptions = vec![
+            cx.observe_global_in::<ChannelChanges>(window, Self::refresh),
+            cx.observe_global_in::<PostChanges>(window, Self::refresh),
+        ];
         let mut section = Self {
             posts: Vec::new(),
+            queue: PostQueue::default(),
             links: Vec::new(),
             channels: Vec::new(),
             picking: false,
             editor: None,
             deleting: None,
             confirming: None,
+            when: input("16/10 19:30", window, cx),
             busy: false,
             reads: 0,
             outcome: None,
@@ -398,7 +440,9 @@ impl OfferPostsSection {
         self.reads += 1;
         let read = self.reads;
         let working = cx.background_executor().spawn(async move {
-            let posts = posts.posts().await.map_err(|error| post_failure(&error));
+            let posts = async { Ok((posts.posts().await?, posts.queue().await?)) }
+                .await
+                .map_err(|error: PostError| post_failure(&error));
             let links = affiliate.links().await.map_err(|error| failure(&error));
             let channels = channels
                 .channels()
@@ -414,8 +458,9 @@ impl OfferPostsSection {
                 }
                 let read = (|| Ok::<_, String>((posts?, links?, channels?)))();
                 match read {
-                    Ok((posts, links, channels)) => {
+                    Ok(((posts, queue), links, channels)) => {
                         this.posts = posts;
+                        this.queue = queue;
                         this.links = links;
                         this.channels = channels;
                     }
@@ -840,30 +885,53 @@ impl OfferPostsSection {
         cx.notify();
     }
 
-    /// Saves the editor's post, then asks to confirm it goes out.
-    fn publish_editing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_then(window, cx, |this, post, window, cx| {
-            this.prepare(post.id, window, cx)
+    /// Saves the editor's post, then asks to confirm it goes out now, or
+    /// with `scheduling` at a time.
+    fn confirm_editing(&mut self, scheduling: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(window, cx, move |this, post, window, cx| {
+            this.prepare(post.id, scheduling, window, cx)
         });
     }
 
     /// Checks the post `id` for its channel and shows what will go out,
-    /// waiting for the owner to confirm.
-    fn prepare(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+    /// waiting for the owner to confirm; with `scheduling`, with the
+    /// channel's next free time to confirm it for.
+    fn prepare(
+        &mut self,
+        id: RecordId,
+        scheduling: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(posts) = offer_posts(cx) else {
             return;
         };
         self.outcome = None;
         self.busy = true;
-        let working = cx
-            .background_executor()
-            .spawn(async move { posts.prepare(id).await });
+        let working = cx.background_executor().spawn(async move {
+            let request = posts.prepare(id).await?;
+            let schedule = if scheduling {
+                let channel = posts.post(id).await?.draft.channel;
+                let next_free = posts.next_free(channel, Some(id)).await?;
+                Some(ScheduleChoice {
+                    next_free,
+                    picking: next_free.is_none(),
+                })
+            } else {
+                None
+            };
+            Ok::<_, PostError>(Confirming { request, schedule })
+        });
         cx.spawn_in(window, async move |this, cx| {
             let prepared = working.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match prepared {
-                    Ok(request) => this.confirming = Some(request),
+                    Ok(confirming) => {
+                        this.when
+                            .update(cx, |field, cx| field.set_value("", window, cx));
+                        this.confirming = Some(confirming);
+                    }
                     Err(error) => this.outcome = Some(Outcome::Failed(post_failure(&error).into())),
                 }
                 cx.notify();
@@ -878,7 +946,7 @@ impl OfferPostsSection {
         let (Some(posts), Some(telegram)) = (offer_posts(cx), telegram::adapter(cx)) else {
             return;
         };
-        let Some(request) = self.confirming.take() else {
+        let Some(Confirming { request, .. }) = self.confirming.take() else {
             return;
         };
         let channel = request.channel().to_owned();
@@ -949,9 +1017,149 @@ impl OfferPostsSection {
         cx.notify();
     }
 
-    /// What will go out, for the owner to confirm.
-    fn render_confirmation(&self, request: &PublishRequest, cx: &mut Context<Self>) -> AnyElement {
+    /// The owner confirmed the post for the time picked: it waits in the
+    /// queue. A time the queue refuses keeps the confirmation open to pick
+    /// another.
+    fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        let Some(Confirming {
+            request,
+            schedule: Some(choice),
+        }) = self.confirming.as_ref()
+        else {
+            return;
+        };
+        let when = if choice.picking {
+            match typed_moment(&self.when.read(cx).value(), Utc::now()) {
+                Some(at) => PostTime::At(at),
+                None => {
+                    self.outcome = Some(Outcome::Failed(
+                        "Digite o dia e a hora como 16/10 19:30, no horário de Brasília.".into(),
+                    ));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            PostTime::NextFree
+        };
+        let (confirmed, channel) = (request.clone().confirm(), request.channel().to_owned());
+        self.outcome = None;
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.schedule(confirmed, when).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let scheduled = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match scheduled {
+                    Ok(post) => {
+                        this.confirming = None;
+                        if this
+                            .editor
+                            .as_ref()
+                            .is_some_and(|editor| editor.post == Some(post.id))
+                        {
+                            this.editor = None;
+                        }
+                        let at = post.scheduled_at.map(post_time).unwrap_or_default();
+                        this.outcome = Some(Outcome::Done(
+                            format!(
+                                "Post agendado para {at} em {channel}: sai sozinho na hora, com \
+                                 o app aberto ou na bandeja."
+                            )
+                            .into(),
+                        ));
+                    }
+                    Err(error) => {
+                        let retry = matches!(
+                            error,
+                            PostError::PastTime
+                                | PostError::TimeTaken
+                                | PostError::NoPostingTimes
+                                | PostError::OldPrice
+                        );
+                        if !retry {
+                            this.confirming = None;
+                        }
+                        this.outcome = Some(Outcome::Failed(post_failure(&error).into()));
+                    }
+                }
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Takes the post `id` out of the queue, as a draft.
+    fn unschedule(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.unschedule(id).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let taken = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                this.outcome = Some(match taken {
+                    Ok(_) => Outcome::Done(
+                        "Post tirado da fila: ficou como rascunho e não sai sozinho.".into(),
+                    ),
+                    Err(error) => Outcome::Failed(post_failure(&error).into()),
+                });
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Pauses or resumes the queue.
+    fn set_paused(&mut self, paused: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(posts) = offer_posts(cx) else {
+            return;
+        };
+        self.busy = true;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.set_queue_paused(paused).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let set = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                this.outcome = Some(match (set, paused) {
+                    (Ok(()), true) => Outcome::Done(
+                        "Publicação pausada: nenhum post sai sozinho até você retomar.".into(),
+                    ),
+                    (Ok(()), false) => Outcome::Done(
+                        format!(
+                            "Publicação retomada: os posts agendados saem na hora, e os \
+                             atrasados mais de {LATE_AFTER_MINUTES} minutos esperam você."
+                        )
+                        .into(),
+                    ),
+                    (Err(error), _) => Outcome::Failed(post_failure(&error).into()),
+                });
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// What will go out, and when, for the owner to confirm.
+    fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
+        let request = &confirming.request;
         let off = telegram::state(cx)
             .as_ref()
             .and_then(telegram::publishing_off);
@@ -965,6 +1173,119 @@ impl OfferPostsSection {
             Some(PostImage::Url(url)) => format!("Foto da plataforma: {url}"),
             None => "Sem foto: o Telegram mostra a prévia do link.".to_owned(),
         };
+        let Some(choice) = confirming.schedule else {
+            return self.render_publish_now(request, picture, off, cx);
+        };
+        let pick = |label: String, picking: bool, index: usize| {
+            let chip = Button::new(("schedule-choice", index))
+                .label(label)
+                .small()
+                .disabled(self.busy);
+            if picking == choice.picking {
+                chip.primary()
+            } else {
+                chip.ghost()
+            }
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(Confirming {
+                    schedule: Some(choice),
+                    ..
+                }) = this.confirming.as_mut()
+                {
+                    choice.picking = picking;
+                }
+                cx.notify();
+            }))
+        };
+        let choices = h_flex()
+            .gap_1()
+            .flex_wrap()
+            .children(choice.next_free.map(|at| {
+                pick(
+                    format!("Próximo horário livre: {}", post_time(at)),
+                    false,
+                    0,
+                )
+            }))
+            .child(pick("Escolher dia e hora".into(), true, 1));
+        v_flex()
+            .gap_2()
+            .p_4()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.raised)
+            .child(div().font_medium().child(format!(
+                "Agendar em {} ({})?",
+                request.channel(),
+                request.chat()
+            )))
+            .child(choices)
+            .when(choice.next_free.is_none(), |panel| {
+                panel.child(div().text_xs().text_color(t.text2).child(
+                    "Este canal não tem horários de publicação: escolha dia e hora, ou defina os \
+                     horários do canal em Canais de divulgação.",
+                ))
+            })
+            .when(choice.picking, |panel| {
+                panel.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(div().w(px(180.)).child(Input::new(&self.when).small()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(t.text2)
+                                .child("Dia e hora no horário de Brasília."),
+                        ),
+                )
+            })
+            .child(div().text_xs().text_color(t.text2).child(picture))
+            .child(
+                div()
+                    .p_3()
+                    .rounded(t.radius_lg)
+                    .border(t.border_width)
+                    .border_color(t.border)
+                    .bg(t.surface)
+                    .text_sm()
+                    .child(request.text().to_owned()),
+            )
+            .child(div().text_xs().text_color(t.text2).child(format!(
+                "Na hora marcada o post sai sozinho, uma vez, do jeito que está acima, com o app \
+                 aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos com o app \
+                 fechado, ele espera você. Editar o post tira ele da fila."
+            )))
+            .children(off.map(|why| {
+                kit::info_notice(format!("{why} Enquanto isso, o post agendado não sai."), cx)
+            }))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("confirm-schedule")
+                            .label("Confirmar e agendar")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| this.schedule(window, cx))),
+                    )
+                    .child(cancel_confirmation(cx)),
+            )
+            .into_any_element()
+    }
+
+    /// "Publicar agora", for the owner to confirm.
+    fn render_publish_now(
+        &self,
+        request: &PublishRequest,
+        picture: String,
+        off: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
         v_flex()
             .gap_2()
             .p_4()
@@ -1005,16 +1326,7 @@ impl OfferPostsSection {
                             .disabled(self.busy || off.is_some())
                             .on_click(cx.listener(|this, _, window, cx| this.publish(window, cx))),
                     )
-                    .child(
-                        Button::new("cancel-publish")
-                            .label("Cancelar")
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirming = None;
-                                cx.notify();
-                            })),
-                    ),
+                    .child(cancel_confirmation(cx)),
             )
             .into_any_element()
     }
@@ -1092,8 +1404,12 @@ impl OfferPostsSection {
             Some(at) => format!("copiado em {}", day_and_time(at)),
             None => "ainda não copiado".to_owned(),
         };
+        let when = post.scheduled_at.map(post_time).unwrap_or_default();
         let status = match (post.status, &post.sent) {
             (PostStatus::Draft, _) => "rascunho".to_owned(),
+            (PostStatus::Scheduled, _) => format!("agendado para {when}"),
+            (PostStatus::Late, _) => format!("atrasado: era para {when}"),
+            (PostStatus::PriceExpired, _) => format!("preço vencido: era para {when}"),
             (PostStatus::Sending, _) => "publicando…".to_owned(),
             (PostStatus::Sent, Some(sent)) => format!("publicado em {}", day_and_time(sent.at)),
             (PostStatus::Sent, None) => "publicado".to_owned(),
@@ -1102,18 +1418,58 @@ impl OfferPostsSection {
         };
         let telegram = self.on_telegram(post.draft.channel);
         let (opened, copying, id) = (post.clone(), post.clone(), post.id);
+        let again = matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed);
         let publish = (telegram && post.status.publishable()).then(|| {
             Button::new(("publish-post", index))
-                .label(if post.status == PostStatus::Draft {
-                    "Publicar agora"
-                } else {
+                .label(if again {
                     "Publicar de novo"
+                } else {
+                    "Publicar agora"
                 })
                 .outline()
                 .small()
                 .disabled(self.busy || self.confirming.is_some())
-                .on_click(cx.listener(move |this, _, window, cx| this.prepare(id, window, cx)))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.prepare(id, false, window, cx)),
+                )
         });
+        let schedule = (telegram
+            && post.status.publishable()
+            && post.status != PostStatus::Unconfirmed)
+            .then(|| {
+                Button::new(("schedule-post", index))
+                    .label(if post.status.queued() {
+                        "Reagendar"
+                    } else {
+                        "Agendar"
+                    })
+                    .outline()
+                    .small()
+                    .disabled(self.busy || self.confirming.is_some())
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.prepare(id, true, window, cx)),
+                    )
+            });
+        let unschedule = post.status.queued().then(|| {
+            Button::new(("unschedule-post", index))
+                .label("Tirar da fila")
+                .ghost()
+                .small()
+                .disabled(self.busy)
+                .on_click(cx.listener(move |this, _, window, cx| this.unschedule(id, window, cx)))
+        });
+        let waiting = match post.status {
+            PostStatus::Late => Some(format!(
+                "A hora passou de {LATE_AFTER_MINUTES} minutos com o app fechado, e oferta e \
+                 preço podem ter mudado: publique agora ou reagende."
+            )),
+            PostStatus::PriceExpired => Some(format!(
+                "O preço foi visto há mais de {PRICE_KEEPS_HOURS} horas, mais do que {} deixa \
+                 guardar: abra o post, digite o preço de agora, gere o texto e agende de novo.",
+                facts.platform
+            )),
+            _ => None,
+        };
         let mark = (post.status == PostStatus::Unconfirmed).then(|| {
             Button::new(("mark-post-published", index))
                 .label("Marcar como publicado")
@@ -1179,6 +1535,7 @@ impl OfferPostsSection {
                 .children(open_sent)
                 .children(mark)
                 .children(publish)
+                .children(schedule)
                 .when(post.status.editable(), |actions| {
                     actions.child(
                         Button::new(("open-post", index))
@@ -1200,6 +1557,7 @@ impl OfferPostsSection {
                             this.copy_text(copying.clone(), window, cx)
                         })),
                 )
+                .children(unschedule)
                 .child(
                     Button::new(("delete-post", index))
                         .label("Apagar")
@@ -1232,6 +1590,7 @@ impl OfferPostsSection {
             )
             .child(actions)
             .children(failure.map(|notice| div().w_full().child(notice)))
+            .children(waiting.map(|text| div().w_full().child(kit::info_notice(text, cx))))
             .into_any_element()
     }
 
@@ -1309,6 +1668,17 @@ impl OfferPostsSection {
             || "canal apagado".to_owned(),
             |channel| channel.name.clone(),
         );
+        let queued = self
+            .posts
+            .iter()
+            .find(|post| Some(post.id) == editor.post && post.status.queued())
+            .map(|post| {
+                format!(
+                    "Este post está na fila para {}. Salvar uma mudança tira ele da fila até você \
+                     agendar de novo.",
+                    post.scheduled_at.map(post_time).unwrap_or_default()
+                )
+            });
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
@@ -1484,6 +1854,7 @@ impl OfferPostsSection {
                         ),
                 )
             })
+            .children(queued.map(|text| kit::info_notice(text, cx)))
             .children(editor.form.as_ref().map(|outcome| notice(outcome, cx)))
             .child(
                 h_flex()
@@ -1495,9 +1866,19 @@ impl OfferPostsSection {
                             .primary()
                             .small()
                             .disabled(self.busy || blocked || self.confirming.is_some())
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.publish_editing(window, cx)),
-                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_editing(false, window, cx)
+                            }))
+                    }))
+                    .children(on_telegram.then(|| {
+                        Button::new("schedule-post-editing")
+                            .label("Agendar")
+                            .outline()
+                            .small()
+                            .disabled(self.busy || blocked || self.confirming.is_some())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_editing(true, window, cx)
+                            }))
                     }))
                     .child({
                         let copy = Button::new("copy-post-text")
@@ -1561,6 +1942,18 @@ impl OfferPostsSection {
     }
 }
 
+/// Closes the confirmation; nothing goes out.
+fn cancel_confirmation(cx: &mut Context<OfferPostsSection>) -> Button {
+    Button::new("cancel-publish")
+        .label("Cancelar")
+        .ghost()
+        .small()
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.confirming = None;
+            cx.notify();
+        }))
+}
+
 /// The picture `editor` has picked, as a post keeps it.
 fn picture_of(editor: &Editor, cx: &App) -> Option<PostImage> {
     match &editor.picture {
@@ -1593,17 +1986,99 @@ impl Render for OfferPostsSection {
         let confirming = self.confirming.take();
         let confirmation = confirming
             .as_ref()
-            .map(|request| self.render_confirmation(request, cx));
+            .map(|confirming| self.render_confirmation(confirming, cx));
         self.confirming = confirming;
-        let rows: Vec<AnyElement> = self
+        let queue = self.queue.clone();
+        let mut index = 0;
+        let mut groups: Vec<AnyElement> = Vec::new();
+        for (title, posts) in [
+            ("Esperando você", &queue.waiting),
+            ("Agendados", &queue.scheduled),
+            ("Não confirmados", &queue.unconfirmed),
+            ("Com falha", &queue.failed),
+            ("Publicados hoje", &queue.published_today),
+        ] {
+            if posts.is_empty() {
+                continue;
+            }
+            groups.push(
+                div()
+                    .text_sm()
+                    .font_medium()
+                    .child(format!("{title} ({})", posts.len()))
+                    .into_any_element(),
+            );
+            for post in posts {
+                groups.push(self.render_post(index, post, cx));
+                index += 1;
+            }
+        }
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for post in self
             .posts
             .clone()
             .iter()
-            .enumerate()
-            .map(|(index, post)| self.render_post(index, post, cx))
-            .collect();
+            .filter(|post| !queue.holds(post.id))
+        {
+            rows.push(self.render_post(index, post, cx));
+            index += 1;
+        }
+        // A deleted channel's posts still show where they stand.
+        let on_telegram = !groups.is_empty()
+            || self
+                .channels
+                .iter()
+                .any(|channel| channel.kind == ChannelKind::TelegramChannel);
+        let paused = queue.paused;
+        let queue_block = on_telegram.then(|| {
+            v_flex()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .child(kit::section_heading("Fila do Telegram"))
+                        .child(if paused {
+                            kit::tag("publicação pausada", t.text2, cx)
+                        } else {
+                            kit::tag("publicação ligada", t.accent_text, cx)
+                        })
+                        .child(
+                            Button::new("pause-queue")
+                                .label(if paused {
+                                    "Retomar publicação"
+                                } else {
+                                    "Pausar publicação"
+                                })
+                                .outline()
+                                .small()
+                                .disabled(self.busy)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.set_paused(!paused, window, cx)
+                                })),
+                        ),
+                )
+                .child(div().text_sm().text_color(t.text2).child(format!(
+                    "Um post agendado sai sozinho na hora, com o app aberto ou na bandeja, um por \
+                     vez e com alguns segundos entre dois posts do mesmo canal. Se a hora passar de \
+                     {LATE_AFTER_MINUTES} minutos com o app fechado, ele espera você. Pausada, a fila \
+                     não publica nada."
+                )))
+                .when(groups.is_empty(), |block| {
+                    block.child(
+                        div()
+                            .text_sm()
+                            .text_color(t.text2)
+                            .child("Nada na fila: use Agendar num post de canal do Telegram."),
+                    )
+                })
+                .children(groups)
+        });
         v_flex()
             .gap_3()
+            .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(confirmation)
+            .children(queue_block)
             .child(
                 h_flex()
                     .gap_3()
@@ -1626,8 +2101,6 @@ impl Render for OfferPostsSection {
                  preço, desconto e link, e põe \"#publi · link de afiliado\" no fim. Edite, confira \
                  os avisos e copie para colar no canal, ou publique direto num canal do Telegram.",
             ))
-            .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
-            .children(confirmation)
             .children(self.picking.then(|| self.render_picker(cx)))
             .children(editing)
             .when(rows.is_empty(), |section| {

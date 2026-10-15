@@ -5,6 +5,7 @@ mod clock;
 mod ids;
 mod margin;
 mod money;
+mod pause;
 mod platform;
 mod record;
 mod roas;
@@ -14,6 +15,7 @@ pub use clock::{Clock, SystemClock, Timestamp};
 pub use ids::{IdGenerator, RecordId, UuidV7Generator};
 pub use margin::{Margin, OutOfRange, Percentage};
 pub use money::{Currency, CurrencyMismatch, Money, parse_amount};
+pub use pause::{Pause, ThreadPause};
 pub use platform::{
     ListingType, PlatformError, brasilia, channel_day, channel_day_start, mercado_livre_link,
     shipping_paid_by_seller,
