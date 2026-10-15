@@ -13,11 +13,11 @@ use mascate_marketing::{
     ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
-    Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, MergeImport,
-    ModuleMerge, ModuleMigrations, OpenError, Opened, Registry, ReleaseChannel, Reminder,
-    Reminders, UpdateSettings, Updater, Version, apply_staged_restore, default_backup_folder,
-    default_database_path, default_owner_folder, load_appearance, load_update_settings,
-    open_and_migrate, undo_applied_restore,
+    Appearance, AppliedMerge, BackupSettings, Backups, Database, Flag, Flags, Installation,
+    MergeImport, ModuleMerge, ModuleMigrations, OpenError, Opened, Registry, ReleaseChannel,
+    Reminder, Reminders, UpdateSettings, Updater, Version, apply_staged_restore,
+    default_backup_folder, default_database_path, default_owner_folder, load_appearance,
+    load_update_settings, open_and_migrate, undo_applied_restore,
 };
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
@@ -90,6 +90,8 @@ pub struct Started {
     pub update_settings: UpdateSettings,
     /// What became of a restore staged before the restart, if one was.
     pub restore: Option<Result<(), String>>,
+    /// The Merge Import applied before the restart, which the app opens on.
+    pub merged: Option<AppliedMerge>,
 }
 
 /// Why the database is not ready, for the home screen.
@@ -342,6 +344,11 @@ pub fn prepare() -> Outcome {
             );
             let backup_settings = backups.settings().await?;
             let update_settings = load_update_settings(&database).await?;
+            let merged = merge_import.open_unopened().await.unwrap_or_else(|error| {
+                // A report that cannot be read is no reason to give up the database.
+                eprintln!("could not read the last Merge Import: {error}");
+                None
+            });
             Ok::<_, Box<dyn std::error::Error>>(Started {
                 database: database.clone(),
                 appearance,
@@ -372,6 +379,7 @@ pub fn prepare() -> Outcome {
                 backup_settings,
                 update_settings,
                 restore,
+                merged,
             })
         };
         ready.await.map_err(|error| {

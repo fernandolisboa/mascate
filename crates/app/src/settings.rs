@@ -539,6 +539,21 @@ impl SettingsScreen {
 
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(title) = self.backup.read(cx).report_title() {
+            let mut parts = ScreenParts::new(title);
+            let backup = self.backup.clone();
+            parts.actions.push(
+                Button::new("back-to-backup")
+                    .label("Configurações")
+                    .icon(IconName::ArrowLeft)
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, cx| backup.update(cx, BackupSection::close_report))
+                    .into_any_element(),
+            );
+            parts.content.push(self.backup.clone().into_any_element());
+            return layout::screen(parts, cx);
+        }
         if let Some(connection) = self.connections.read(cx).open_guide() {
             let mut parts = ScreenParts::new(format!(
                 "Como conseguir as chaves: {}",

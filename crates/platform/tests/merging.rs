@@ -1,8 +1,10 @@
-//! "Comparar com outro banco" through the platform's public interface,
-//! with two real temporary databases standing for two machines: records
-//! are recognised by id, by unique key and by the ledger's paired key, the
-//! newer change wins the whole row, what cannot come in stays out with its
-//! reason, files go through the Restore's check, and nothing is written.
+//! "Comparar com outro banco" and "Mesclar" through the platform's public
+//! interface, with two real temporary databases standing for two machines:
+//! records are recognised by id, by unique key and by the ledger's paired
+//! key, the newer change wins the whole row, what cannot come in stays out
+//! with its reason, files go through the Restore's check, comparing writes
+//! nothing, and merging writes it all at once after a Backup, with its
+//! report kept.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,10 +14,10 @@ use futures::executor::block_on;
 use mascate_kernel::Timestamp;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_platform::{
-    Condition, ConflictSide, Database, KeyPart, LeftOut, LeftOutReason, MERGE, MIGRATIONS,
-    MergeConflict, MergeError, MergeGap, MergeImport, MergeReport, Migration, ModuleMerge,
-    ModuleMigrations, RecognisedBy, RecordsReport, Reference, RestoreError, Side, TableMerge,
-    UniqueKey, merge_gaps, migrate, stored,
+    AppliedMerge, Backups, Condition, ConflictSide, Database, FollowUp, KeyPart, LeftOut,
+    LeftOutReason, MERGE, MIGRATIONS, MergeConflict, MergeError, MergeGap, MergeImport,
+    MergeReport, Migration, ModuleMerge, ModuleMigrations, RecognisedBy, RecordsReport, Reference,
+    RestoreError, Side, TableMerge, UniqueKey, merge_gaps, migrate, stored,
 };
 
 const CATALOG_V1: Migration = Migration {
@@ -193,6 +195,7 @@ struct Fixture {
     here: Arc<Database>,
     there: Option<Database>,
     merges: MergeImport,
+    backups: Backups,
 }
 
 impl Fixture {
@@ -221,6 +224,10 @@ impl Fixture {
     async fn compare(&self, file: &Path) -> Result<MergeReport, MergeError> {
         self.merges.compare(file).await
     }
+
+    async fn merge(&self, file: &Path) -> Result<Option<AppliedMerge>, MergeError> {
+        self.merges.merge(file, &self.backups).await
+    }
 }
 
 async fn fixture_with(there_app: &'static [ModuleMigrations]) -> Fixture {
@@ -243,12 +250,20 @@ async fn fixture_with(there_app: &'static [ModuleMigrations]) -> Fixture {
         clock.clone(),
         Arc::new(SequentialIds::default()),
     );
+    let backups = Backups::new(
+        here.clone(),
+        THIS_APP,
+        dir.path().join("backups"),
+        clock.clone(),
+        Arc::new(SequentialIds::default()),
+    );
     Fixture {
         dir,
         clock,
         here,
         there: Some(there),
         merges,
+        backups,
     }
 }
 
@@ -478,8 +493,8 @@ fn crossed_changes_bring_new_records_and_the_newer_side_of_each_conflict() {
         assert_eq!(
             *records(&report, "Produto"),
             RecordsReport {
-                module: "catalog",
-                noun: "Produto",
+                module: "catalog".into(),
+                noun: "Produto".into(),
                 new: 1,
                 changed_here: 2,
                 conflicts: vec![
@@ -503,7 +518,11 @@ fn crossed_changes_bring_new_records_and_the_newer_side_of_each_conflict() {
         );
         assert!(report.records.iter().all(|records| records.noun != "Pasta"));
         assert_eq!(
-            report.records.iter().map(|r| r.module).collect::<Vec<_>>(),
+            report
+                .records
+                .iter()
+                .map(|r| r.module.as_str())
+                .collect::<Vec<_>>(),
             ["catalog", "stock", "sales"]
         );
         // Neither database was written.
@@ -560,8 +579,8 @@ fn the_same_order_synced_on_both_machines_is_one_order_with_one_line_and_one_sal
         assert_eq!(
             *records(&report, "Pedido"),
             RecordsReport {
-                module: "sales",
-                noun: "Pedido",
+                module: "sales".into(),
+                noun: "Pedido".into(),
                 new: 0,
                 changed_here: 1,
                 conflicts: vec![conflict("2000001", (10, false), (20, false), Side::There)],
@@ -643,7 +662,9 @@ fn a_taken_sku_and_a_line_of_a_missing_order_stay_out_with_their_reason() {
             lines.left_out,
             [LeftOut {
                 label: "FONE · Fone".into(),
-                reason: LeftOutReason::MissingRecord { noun: "Pedido" },
+                reason: LeftOutReason::MissingRecord {
+                    noun: "Pedido".into()
+                },
             }]
         );
     });
@@ -871,5 +892,271 @@ fn an_undeclared_table_an_unclassified_id_or_a_key_without_its_index_is_a_gap() 
             merges.compare(&file).await,
             Err(MergeError::Undeclared(_))
         ));
+    });
+}
+
+/// One table's rows as text, by id, without the times they were saved.
+async fn rows(database: &Database, table: &str, columns: &str) -> Vec<String> {
+    let mut rows = database
+        .connection()
+        .query(&format!("SELECT {columns} FROM {table} ORDER BY id"), ())
+        .await
+        .unwrap();
+    let mut read = Vec::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        let cells: Vec<String> = (0..row.column_count())
+            .map(|at| match row.get_value(at).unwrap() {
+                libsql::Value::Null => "-".to_owned(),
+                libsql::Value::Text(text) => text,
+                libsql::Value::Integer(integer) => integer.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        read.push(cells.join(" "));
+    }
+    read
+}
+
+/// Whether each product is deleted, as "id sku name" or "id sku name (deleted)".
+async fn products(database: &Database) -> Vec<String> {
+    rows(
+        database,
+        "catalog_products",
+        "id, sku, name, CASE WHEN deleted_at IS NULL THEN '' ELSE '(deleted)' END",
+    )
+    .await
+    .into_iter()
+    .map(|row| row.trim_end().to_owned())
+    .collect()
+}
+
+#[test]
+fn crossed_changes_merge_into_the_newer_side_of_each_record_and_the_report_is_kept() {
+    block_on(async {
+        let mut f = fixture().await;
+        let (here, there) = (f.here.as_ref(), f.there());
+        product(here, "p1", "FONE", "Fone BT", 2).await;
+        product(there, "p1", "FONE", "Fone Bluetooth", 3).await;
+        product(here, "p2", "CAPA", "Capa preta", 5).await;
+        product(there, "p2", "CAPA", "Capa azul", 4).await;
+        product(here, "p3", "CABO", "Cabo", 0).await;
+        delete_product(here, "p3", 6).await;
+        product(there, "p3", "CABO", "Cabo USB-C", 5).await;
+        product(here, "p4", "PILHA", "Pilha AA", 5).await;
+        product(there, "p4", "PILHA", "Pilha", 0).await;
+        delete_product(there, "p4", 6).await;
+        // The same product made on each machine, the other's first and newer.
+        insert(
+            there,
+            "catalog_products",
+            &["id", "sku", "name", "created_at", "updated_at"],
+            &[
+                "p9-there",
+                "MOUSE",
+                "Mouse sem fio",
+                &stored(at(-30)),
+                &stored(at(9)),
+            ],
+        )
+        .await;
+        product(here, "p9", "MOUSE", "Mouse", 1).await;
+        product(there, "p8", "PELICULA", "Película", 8).await;
+        delete_product(there, "p8", 9).await;
+        row(here, "stock_notes", "n1", "text", "Conferir caixa", 8).await;
+        row(there, "stock_notes", "n2", "text", "Pedir mais capas", 8).await;
+        row(here, "sales_settings", "s1", "rate", "6", 1).await;
+        row(there, "sales_settings", "s2", "rate", "8", 2).await;
+        row(here, "stock_folders", "f1", "folder", "C:\\Mascate", 1).await;
+        row(there, "stock_folders", "f2", "folder", "/home/fernando", 2).await;
+        let file = f.other_file().await;
+        let compared = f.compare(&file).await.unwrap();
+        f.clock.advance(TimeDelta::minutes(60));
+
+        let applied = f
+            .merge(&file)
+            .await
+            .unwrap()
+            .expect("the file brings changes");
+
+        assert_eq!(
+            products(&f.here).await,
+            [
+                "p1 FONE Fone Bluetooth",
+                // This machine's later change and its later deletion stay.
+                "p2 CAPA Capa preta",
+                "p3 CABO Cabo (deleted)",
+                // The other machine's later deletion wins.
+                "p4 PILHA Pilha (deleted)",
+                // A record deleted on the other machine comes in as it is.
+                "p8 PELICULA Película (deleted)",
+                // Recognised by SKU: this machine's id, the other's version.
+                "p9 MOUSE Mouse sem fio",
+            ]
+        );
+        // The older of the two creation times stays.
+        assert_eq!(
+            rows(&f.here, "catalog_products", "created_at").await[5],
+            stored(at(-30))
+        );
+        assert_eq!(
+            rows(&f.here, "stock_notes", "id, text").await,
+            ["n1 Conferir caixa", "n2 Pedir mais capas"]
+        );
+        // One live row of settings, the newer, under this machine's id.
+        assert_eq!(rows(&f.here, "sales_settings", "id, rate").await, ["s1 8"]);
+        assert_eq!(
+            rows(&f.here, "stock_folders", "id, folder").await,
+            ["f1 C:\\Mascate"]
+        );
+        assert_eq!(applied.report, compared);
+        assert_eq!(applied.merged_at, at(60));
+        assert_eq!(applied.file, file);
+        assert!(applied.backup.is_file());
+        assert_eq!(f.merges.merges().await.unwrap(), [applied]);
+    });
+}
+
+#[test]
+fn merging_the_same_file_again_writes_nothing_and_says_nothing_is_new() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(&f.here, "p1", "FONE", "Fone", 0).await;
+        product(f.there(), "p1", "FONE", "Fone Bluetooth", 3).await;
+        product(f.there(), "p8", "PELICULA", "Película", 8).await;
+        let file = f.other_file().await;
+        f.merge(&file).await.unwrap().unwrap();
+        let after_first = dump(&f.here).await;
+
+        let again = f.merge(&file).await.unwrap();
+
+        assert_eq!(again, None);
+        assert!(f.compare(&file).await.unwrap().is_empty());
+        assert_eq!(dump(&f.here).await, after_first);
+        assert_eq!(f.merges.merges().await.unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn the_same_order_synced_on_both_machines_merges_into_one_order_one_line_and_one_sale() {
+    block_on(async {
+        let mut f = fixture().await;
+        let (here, there) = (f.here.as_ref(), f.there());
+        product(here, "p1", "FONE", "Fone", 0).await;
+        product(there, "p1", "FONE", "Fone", 0).await;
+        order(here, "o-here", "2000001", "paid", 10).await;
+        line(here, "l-here", "o-here", "p1", 10).await;
+        movement(here, "m-here", "p1", "sale", "o-here", 10).await;
+        order(there, "o-there", "2000001", "shipped", 20).await;
+        line(there, "l-there", "o-there", "p1", 20).await;
+        movement(there, "m-there", "p1", "sale", "o-there", 20).await;
+        movement(there, "m-count", "p1", "adjustment", "m-count", 21).await;
+        let file = f.other_file().await;
+
+        f.merge(&file).await.unwrap().unwrap();
+
+        assert_eq!(
+            rows(&f.here, "sales_orders", "id, ml_order_id, status").await,
+            ["o-here 2000001 shipped"]
+        );
+        assert_eq!(
+            rows(&f.here, "sales_order_lines", "id, order_id").await,
+            ["l-here o-here"]
+        );
+        assert_eq!(
+            rows(&f.here, "stock_movements", "id, reason, reference_id").await,
+            ["m-count adjustment m-count", "m-here sale o-here"]
+        );
+        assert_eq!(f.merge(&file).await.unwrap(), None);
+    });
+}
+
+#[test]
+fn skus_swapped_on_the_other_machine_merge_without_tripping_the_index() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(&f.here, "p1", "FONE", "Fone", 0).await;
+        product(&f.here, "p2", "CAPA", "Capa", 0).await;
+        product(f.there(), "p1", "CAPA", "Fone", 5).await;
+        product(f.there(), "p2", "FONE", "Capa", 5).await;
+        let file = f.other_file().await;
+
+        f.merge(&file).await.unwrap().unwrap();
+
+        assert_eq!(products(&f.here).await, ["p1 CAPA Fone", "p2 FONE Capa"]);
+    });
+}
+
+#[test]
+fn a_failure_while_writing_leaves_the_database_as_it_was_with_the_backup_taken_first() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(&f.here, "p1", "FONE", "Fone", 0).await;
+        product(f.there(), "p1", "FONE", "Fone Bluetooth", 3).await;
+        product(f.there(), "p8", "PELICULA", "Película", 8).await;
+        row(f.there(), "stock_notes", "n2", "text", "boom", 8).await;
+        // Products are written before notes; the note fails the write.
+        f.here
+            .connection()
+            .execute(
+                "CREATE TRIGGER notes_refuse_boom BEFORE INSERT ON stock_notes
+                 WHEN NEW.text = 'boom' BEGIN SELECT RAISE(ABORT, 'boom'); END",
+                (),
+            )
+            .await
+            .unwrap();
+        let file = f.other_file().await;
+        let before = dump(&f.here).await;
+
+        let merged = f.merge(&file).await;
+
+        assert!(matches!(merged, Err(MergeError::Sql(_))), "{merged:?}");
+        assert_eq!(dump(&f.here).await, before);
+        assert_eq!(f.backups.list().await.unwrap().len(), 1);
+        assert!(
+            file_names(&f.path("data"))
+                .iter()
+                .all(|name| !name.starts_with(".mascate-merge"))
+        );
+        // The database still takes a merge once the cause is gone.
+        f.here
+            .connection()
+            .execute("DROP TRIGGER notes_refuse_boom", ())
+            .await
+            .unwrap();
+        assert!(f.merge(&file).await.unwrap().is_some());
+    });
+}
+
+#[test]
+fn the_newest_merge_opens_once_with_the_follow_ups_saved_after_it() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(f.there(), "p8", "PELICULA", "Película", 8).await;
+        let file = f.other_file().await;
+        let first = f.merge(&file).await.unwrap().unwrap();
+        let follow_ups = [
+            FollowUp::ConnectHere {
+                connection: "Mercado Livre".into(),
+            },
+            FollowUp::CopyFolder {
+                product: "PELICULA · Película".into(),
+            },
+        ];
+
+        f.merges
+            .save_follow_ups(first.id, &follow_ups)
+            .await
+            .unwrap();
+        let opened = f.merges.open_unopened().await.unwrap();
+
+        assert_eq!(
+            opened,
+            Some(AppliedMerge {
+                follow_ups: follow_ups.to_vec(),
+                ..first
+            })
+        );
+        assert_eq!(f.merges.open_unopened().await.unwrap(), None);
+        assert_eq!(f.merges.merges().await.unwrap()[0].follow_ups, follow_ups);
     });
 }

@@ -42,9 +42,9 @@ pub use flags::{
 };
 pub use http::{http_agent, slow_http_agent};
 pub use merging::{
-    Condition, ConflictSide, KeyPart, LeftOut, LeftOutReason, MergeConflict, MergeError, MergeGap,
-    MergeImport, MergeReport, ModuleMerge, RecognisedBy, RecordsReport, Reference, Side,
-    TableMerge, UniqueKey, merge_gaps,
+    AppliedMerge, Condition, ConflictSide, FollowUp, KeyPart, LeftOut, LeftOutReason,
+    MergeConflict, MergeError, MergeGap, MergeImport, MergeReport, ModuleMerge, RecognisedBy,
+    RecordsReport, Reference, Side, TableMerge, UniqueKey, merge_gaps,
 };
 pub use migrations::{
     AppliedMigration, Migration, MigrationError, MigrationId, ModuleMigrations, migrate,
@@ -77,6 +77,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         reminders::CREATE_REMINDER_DISMISSALS,
         backups::CREATE_BACKUP_SETTINGS,
         updates::CREATE_UPDATE_SETTINGS,
+        merging::CREATE_MERGES,
     ],
 };
 
@@ -104,5 +105,7 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             "Opções de atualização",
             RecognisedBy::SingleRow,
         ),
+        // The merges this machine applied, with their reports.
+        TableMerge::new("platform_merges", "Mesclagem", RecognisedBy::ThisMachine),
     ],
 };
