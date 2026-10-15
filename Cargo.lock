@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "mascate"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "embed-resource",
@@ -4312,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-affiliate"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4327,14 +4327,14 @@ dependencies = [
 
 [[package]]
 name = "mascate-architecture"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cargo_metadata",
 ]
 
 [[package]]
 name = "mascate-catalog"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4350,7 +4350,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-commerce"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4366,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-finance"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4381,7 +4381,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-integrations"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "calamine",
  "chrono",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-inventory"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4421,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-kernel"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "mascate-kernel",
@@ -4433,7 +4433,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-marketing"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "futures",
@@ -4448,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "mascate-platform"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "directories",

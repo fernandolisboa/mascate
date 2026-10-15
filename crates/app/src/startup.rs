@@ -425,13 +425,16 @@ mod tests {
         PromotionPlan, PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
-    use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, RecordId};
+    use mascate_kernel::{
+        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
+    };
     use mascate_marketing::{
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
         ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
-        CopySettings, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, OfferFacts, OfferPrice, PostStatus, QualityLevel, QualitySource,
-        QuestionStatus, Rating, ReputationColor, ReputationSource,
+        CopySettings, DateRule, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
+        NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PostStatus, PostTime,
+        QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor, ReputationSource,
+        default_posting_times,
     };
     use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
 
@@ -740,6 +743,32 @@ mod tests {
         }
     }
 
+    fn sample_posting_times() -> Vec<chrono::NaiveTime> {
+        vec![
+            chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            chrono::NaiveTime::from_hms_opt(19, 30, 0).unwrap(),
+        ]
+    }
+
+    /// Far enough ahead that writing the sample never finds it past.
+    fn sample_scheduled_at() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2099-01-02T12:00:00-03:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    fn sample_event() -> NewSalesEvent {
+        NewSalesEvent {
+            name: "Aniversário da loja".into(),
+            rule: DateRule::Yearly { day: 8, month: 7 },
+            lead_days: 10,
+            notes: "Cupom de 10% no canal".into(),
+        }
+    }
+
+    /// The default Sales Event the sample deletes, which never comes back.
+    const SAMPLE_DELETED_EVENT: &str = "Cyber Monday";
+
     fn sample_payout() -> ManualPayout {
         ManualPayout {
             platform: AffiliatePlatform::MercadoLivre,
@@ -930,8 +959,14 @@ mod tests {
                 .set_promotion_rules(commission.program, &sample_rules())
                 .await
                 .unwrap();
-            let channel = PromotionChannels::new(database.clone(), clock.clone(), ids.clone())
-                .create(&sample_channel())
+            let channels = PromotionChannels::new(database.clone(), clock.clone(), ids.clone());
+            let channel = channels.create(&sample_channel()).await.unwrap();
+            let channel = channels
+                .set_posting_times(channel.id, &sample_posting_times())
+                .await
+                .unwrap();
+            affiliate
+                .link_product(commission.program, "Produto de exemplo", product.id)
                 .await
                 .unwrap();
             let link = affiliate
@@ -954,6 +989,23 @@ mod tests {
                 .await
                 .unwrap();
             posts.copied(post.id).await.unwrap();
+            let request = posts.prepare(post.id).await.unwrap();
+            posts
+                .schedule(request.confirm(), PostTime::At(sample_scheduled_at()))
+                .await
+                .unwrap();
+            posts.set_queue_paused(true).await.unwrap();
+            let events = SalesEvents::new(database.clone(), clock.clone(), ids.clone());
+            events.record_defaults().await.unwrap();
+            let deleted = events
+                .events(clock.now())
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|event| event.name == SAMPLE_DELETED_EVENT)
+                .unwrap();
+            events.delete(deleted.id).await.unwrap();
+            events.create(&sample_event()).await.unwrap();
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
@@ -1404,9 +1456,65 @@ mod tests {
                 }
                 let kept_posts = posts.posts().await.unwrap();
                 assert_eq!(kept_posts.len(), 1, "{name}");
-                // Posts from before #103 were never published.
-                assert_eq!(kept_posts[0].status, PostStatus::Draft, "{name}");
                 assert_eq!(kept_posts[0].sent, None, "{name}");
+                // The queue, posting times, Product links and Sales Events
+                // arrived in 0.3.0; older samples start with the defaults.
+                let since_0_3_0 = Version::parse(released) >= Version::parse("0.3.0");
+                if since_0_3_0 {
+                    assert_eq!(kept_posts[0].status, PostStatus::Scheduled, "{name}");
+                    assert_eq!(
+                        kept_posts[0].scheduled_at,
+                        Some(sample_scheduled_at()),
+                        "{name}"
+                    );
+                    assert!(posts.queue_paused().await.unwrap(), "{name}");
+                    assert_eq!(kept[0].posting_times, sample_posting_times(), "{name}");
+                    let product = products
+                        .iter()
+                        .find(|product| product.sku.as_str() == SAMPLE_SKU)
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(
+                        affiliate
+                            .linked_product(program.id, "Produto de exemplo")
+                            .await
+                            .unwrap(),
+                        Some(product.id),
+                        "{name}"
+                    );
+                } else {
+                    assert_eq!(kept_posts[0].status, PostStatus::Draft, "{name}");
+                    assert!(!posts.queue_paused().await.unwrap(), "{name}");
+                    assert_eq!(kept[0].posting_times, default_posting_times(), "{name}");
+                }
+                let events = SalesEvents::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert_eq!(
+                    events.record_defaults().await.unwrap(),
+                    !since_0_3_0,
+                    "{name}"
+                );
+                let calendar = events.events(chrono::Utc::now()).await.unwrap();
+                assert_eq!(
+                    calendar
+                        .iter()
+                        .any(|event| event.name == SAMPLE_DELETED_EVENT),
+                    !since_0_3_0,
+                    "{name}"
+                );
+                let own = calendar
+                    .iter()
+                    .find(|event| event.name == sample_event().name);
+                if since_0_3_0 {
+                    let own = own.unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(own.rule, sample_event().rule, "{name}");
+                    assert_eq!(own.lead_days, sample_event().lead_days, "{name}");
+                    assert_eq!(own.notes, sample_event().notes, "{name}");
+                } else {
+                    assert!(own.is_none(), "{name}");
+                }
                 assert_eq!(
                     kept_posts[0].draft.text,
                     "Produto de exemplo por R$ 59,00\n\
