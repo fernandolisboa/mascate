@@ -619,6 +619,15 @@ fn a_taken_sku_and_a_line_of_a_missing_order_stay_out_with_their_reason() {
 
         let products = records(&report, "Produto");
         assert_eq!(products.changed_here, 0);
+        // The other side's change is newer, but staying out leaves this one.
+        assert_eq!(
+            products
+                .conflicts
+                .iter()
+                .map(|c| c.winner)
+                .collect::<Vec<_>>(),
+            [Side::Here]
+        );
         assert_eq!(
             products.left_out,
             [LeftOut {

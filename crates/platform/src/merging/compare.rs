@@ -442,6 +442,7 @@ async fn compare_table(
     state.swaps.insert(table.table, swaps);
 
     let mut fates = Vec::with_capacity(incoming.rows.len());
+    let mut conflicts = Vec::new();
     for (at, matched) in matches.iter().enumerate() {
         let Some(here) = *matched else {
             fates.push(Fate::New);
@@ -453,12 +454,15 @@ async fn compare_table(
             continue;
         }
         let winner = winner(&local, local_row, incoming_row);
-        report.conflicts.push(MergeConflict {
-            label: label(table, &incoming, incoming_row, state),
-            here: side(&local, local_row),
-            there: side(&local, incoming_row),
-            winner,
-        });
+        conflicts.push((
+            at,
+            MergeConflict {
+                label: label(table, &incoming, incoming_row, state),
+                here: side(&local, local_row),
+                there: side(&local, incoming_row),
+                winner,
+            },
+        ));
         fates.push(match winner {
             Side::Here => Fate::Kept(here),
             Side::There => Fate::Replaces(here),
@@ -468,6 +472,19 @@ async fn compare_table(
     let mut left_out: Vec<Option<LeftOutReason>> = vec![None; fates.len()];
     check_references(table, &local, &incoming, &fates, state, &mut left_out);
     check_keys(table, &local, &incoming, &fates, state, &mut left_out);
+
+    // A newer version that stays out leaves this machine's version in place.
+    report.conflicts = conflicts
+        .into_iter()
+        .map(|(at, conflict)| MergeConflict {
+            winner: if left_out[at].is_some() {
+                Side::Here
+            } else {
+                conflict.winner
+            },
+            ..conflict
+        })
+        .collect();
 
     for (at, (fate, out)) in fates.iter().zip(&left_out).enumerate() {
         match (fate, out) {
