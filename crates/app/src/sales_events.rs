@@ -106,9 +106,24 @@ fn weekday_name(weekday: Weekday) -> &'static str {
     }
 }
 
-/// "1º", "2º".
-fn ordinal(nth: u8) -> String {
-    format!("{nth}º")
+/// Segunda to sexta are feminine in Portuguese: "2ª terça", "2º domingo".
+fn is_feminine(weekday: Weekday) -> bool {
+    !matches!(weekday, Weekday::Sat | Weekday::Sun)
+}
+
+/// "2º" before `weekday`, or "2ª".
+fn ordinal(nth: u8, weekday: Weekday) -> String {
+    format!("{nth}{}", if is_feminine(weekday) { "ª" } else { "º" })
+}
+
+/// "2º domingo de maio", "1ª segunda de setembro".
+fn nth_weekday_text(nth: u8, weekday: Weekday, month: u32) -> String {
+    format!(
+        "{} {} de {}",
+        ordinal(nth, weekday),
+        weekday_name(weekday),
+        month_name(month)
+    )
 }
 
 /// A date rule as the owner reads it: "todo ano em 15/03", "2º domingo de
@@ -120,12 +135,7 @@ pub(crate) fn rule_text(rule: DateRule) -> String {
             nth,
             weekday,
             month,
-        } => format!(
-            "{} {} de {}",
-            ordinal(nth),
-            weekday_name(weekday),
-            month_name(month)
-        ),
+        } => nth_weekday_text(nth, weekday, month),
         DateRule::AfterThanksgiving { days: 0 } => "4ª quinta de novembro".into(),
         DateRule::AfterThanksgiving { days: 1 } => "dia seguinte à 4ª quinta de novembro".into(),
         DateRule::AfterThanksgiving { days } => {
@@ -526,7 +536,8 @@ impl CalendarSection {
         };
         table_row(&t)
             .flex_wrap()
-            .child(kit::tag(
+            // A fixed width keeps the names in one column.
+            .child(div().flex_none().w(px(210.)).child(kit::tag(
                 when,
                 if next.is_some() {
                     t.accent_text
@@ -534,7 +545,7 @@ impl CalendarSection {
                     t.text2
                 },
                 cx,
-            ))
+            )))
             .child(
                 v_flex()
                     .flex_1()
@@ -626,7 +637,7 @@ impl CalendarSection {
                 .child(div().text_sm().child("Qual"))
                 .child(self.chips(
                     "event-nth",
-                    (1..=4).map(|nth| (nth, ordinal(nth))),
+                    (1..=4).map(|nth| (nth, ordinal(nth, self.weekday))),
                     self.nth,
                     |this, nth| this.nth = nth,
                     cx,
@@ -646,10 +657,13 @@ impl CalendarSection {
                     cx,
                 ))
                 .child(div().text_xs().text_color(t.text2).child(format!(
-                    "Cai no {} {} de {}, como o Dia das Mães no 2º domingo de maio.",
-                    ordinal(self.nth),
-                    weekday_name(self.weekday),
-                    month_name(self.month)
+                    "Todo ano, {} {}.",
+                    if is_feminine(self.weekday) {
+                        "na"
+                    } else {
+                        "no"
+                    },
+                    nth_weekday_text(self.nth, self.weekday, self.month)
                 )))
                 .into_any_element(),
         };
@@ -766,6 +780,14 @@ mod tests {
                 month: 5
             }),
             "2º domingo de maio"
+        );
+        assert_eq!(
+            rule_text(DateRule::NthWeekday {
+                nth: 1,
+                weekday: Weekday::Mon,
+                month: 9
+            }),
+            "1ª segunda de setembro"
         );
         assert_eq!(
             rule_text(DateRule::AfterThanksgiving { days: 1 }),
