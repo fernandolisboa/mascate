@@ -13,11 +13,11 @@ use mascate_marketing::{
     ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
-    Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
-    OpenError, Opened, Registry, ReleaseChannel, Reminder, Reminders, UpdateSettings, Updater,
-    Version, apply_staged_restore, default_backup_folder, default_database_path,
-    default_owner_folder, load_appearance, load_update_settings, open_and_migrate,
-    undo_applied_restore,
+    Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, MergeImport,
+    ModuleMerge, ModuleMigrations, OpenError, Opened, Registry, ReleaseChannel, Reminder,
+    Reminders, UpdateSettings, Updater, Version, apply_staged_restore, default_backup_folder,
+    default_database_path, default_owner_folder, load_appearance, load_update_settings,
+    open_and_migrate, undo_applied_restore,
 };
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
@@ -29,6 +29,18 @@ pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
     mascate_marketing::MIGRATIONS,
     mascate_finance::MIGRATIONS,
     mascate_affiliate::MIGRATIONS,
+];
+
+/// How every module's tables come together in a Merge Import (ADR 0032).
+/// Modules add theirs here, next to their migrations.
+pub const MODULE_MERGES: &[ModuleMerge] = &[
+    mascate_platform::MERGE,
+    mascate_catalog::MERGE,
+    mascate_inventory::MERGE,
+    mascate_commerce::MERGE,
+    mascate_marketing::MERGE,
+    mascate_finance::MERGE,
+    mascate_affiliate::MERGE,
 ];
 
 /// Every module's flags, in the order the settings screen lists them.
@@ -53,6 +65,7 @@ pub struct Started {
     pub flags: Arc<Flags>,
     pub reminders: Arc<Reminders>,
     pub backups: Arc<Backups>,
+    pub merge_import: Arc<MergeImport>,
     pub catalog: Arc<Catalog>,
     pub inventory: Arc<Inventory>,
     pub purchase_orders: Arc<PurchaseOrders>,
@@ -212,6 +225,13 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let merge_import = MergeImport::new(
+                database.clone(),
+                MODULE_MIGRATIONS,
+                MODULE_MERGES,
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let catalog = Catalog::new(
                 database.clone(),
                 product_files,
@@ -328,6 +348,7 @@ pub fn prepare() -> Outcome {
                 flags: Arc::new(flags),
                 reminders: Arc::new(reminders),
                 backups: Arc::new(backups),
+                merge_import: Arc::new(merge_import),
                 catalog: Arc::new(catalog),
                 inventory,
                 purchase_orders: Arc::new(purchase_orders),

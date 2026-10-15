@@ -27,6 +27,7 @@ mod listing_copy;
 mod listings;
 mod low_stock;
 mod mercado_livre;
+mod merge_import;
 mod monetizze;
 mod offer_posts;
 mod offers;
@@ -290,6 +291,7 @@ fn main() {
                 cx.set_global(AppProductAds(started.product_ads.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
+                    merge_import: started.merge_import.clone(),
                     settings: started.backup_settings.clone(),
                     restore: started.restore.clone(),
                     daily_failure: Default::default(),

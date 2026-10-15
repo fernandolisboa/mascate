@@ -52,6 +52,14 @@ pub enum AdjustmentKind {
     Count,
 }
 
+/// The stored reasons of units that left or came back for an Order.
+pub(crate) const ORDER_REASONS: &[&str] = &["sale", "sale_cancelled", "sale_returned"];
+/// The stored reason of units received from a Purchase Order.
+pub(crate) const RECEIPT_REASONS: &[&str] = &["purchase_receipt"];
+/// The stored reasons of Stock Adjustments.
+pub(crate) const ADJUSTMENT_REASONS: &[&str] =
+    &["adjustment_loss", "adjustment_damage", "adjustment_count"];
+
 impl MovementReason {
     fn code(self) -> &'static str {
         match self {
@@ -954,4 +962,34 @@ fn movement_from(row: &Row) -> Result<StockMovement, InventoryError> {
         at: row.time_at(8)?,
         note: row.get(9)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_stored_reason_is_listed_with_what_its_reference_points_to() {
+        let order = RecordId::from_u128(1);
+        for reason in [
+            MovementReason::PurchaseReceipt {
+                purchase_order: order,
+            },
+            MovementReason::Adjustment(AdjustmentKind::Loss),
+            MovementReason::Adjustment(AdjustmentKind::Damage),
+            MovementReason::Adjustment(AdjustmentKind::Count),
+            MovementReason::Sale { order },
+            MovementReason::SaleCancelled { order },
+            MovementReason::SaleReturned { order },
+        ] {
+            let listed = match reason {
+                MovementReason::PurchaseReceipt { .. } => RECEIPT_REASONS,
+                MovementReason::Adjustment(_) => ADJUSTMENT_REASONS,
+                MovementReason::Sale { .. }
+                | MovementReason::SaleCancelled { .. }
+                | MovementReason::SaleReturned { .. } => ORDER_REASONS,
+            };
+            assert!(listed.contains(&reason.code()), "{reason:?}");
+        }
+    }
 }

@@ -273,7 +273,7 @@ pub async fn stage_restore_without_backup(
     Ok(())
 }
 
-async fn check_restore(
+pub(crate) async fn check_restore(
     modules: &[ModuleMigrations],
     file: &Path,
 ) -> Result<ReadOnlyFile, RestoreError> {
@@ -429,7 +429,7 @@ fn move_database(from: &Path, to: &Path) -> Result<(), BackupError> {
     Ok(())
 }
 
-fn remove_database(path: &Path) -> Result<(), BackupError> {
+pub(crate) fn remove_database(path: &Path) -> Result<(), BackupError> {
     for file in std::iter::once(path.to_path_buf())
         .chain(SIDECARS.map(|sidecar| with_suffix(path, sidecar)))
     {
@@ -456,10 +456,10 @@ fn rename(from: &Path, to: &Path) -> Result<(), BackupError> {
 const SQLITE_CORRUPT: std::ffi::c_int = 11;
 
 /// A file opened only to check and copy it.
-struct ReadOnlyFile {
+pub(crate) struct ReadOnlyFile {
     // Keeps the underlying database alive for as long as the connection.
     _database: libsql::Database,
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
 
 fn staged_restore_path(database_path: &Path) -> PathBuf {
@@ -472,7 +472,7 @@ fn replaced_path(database_path: &Path) -> PathBuf {
 
 /// Whether `path` is the database or one of the files kept beside it
 /// (journals, a staged or replaced restore).
-fn is_database_file(database_path: &Path, path: &Path) -> bool {
+pub(crate) fn is_database_file(database_path: &Path, path: &Path) -> bool {
     let folder = |path: &Path| path.parent().and_then(|folder| folder.canonicalize().ok());
     let name = |path: &Path| {
         let name = path.file_name()?.to_str()?;
@@ -488,7 +488,7 @@ fn is_database_file(database_path: &Path, path: &Path) -> bool {
         && matches!((name(path), name(database_path)), (Some(path), Some(database)) if path.starts_with(&database))
 }
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
@@ -540,7 +540,7 @@ fn create_folder(folder: &Path) -> Result<(), BackupError> {
     })
 }
 
-fn text(path: &Path) -> Result<&str, BackupError> {
+pub(crate) fn text(path: &Path) -> Result<&str, BackupError> {
     path.to_str()
         .ok_or_else(|| BackupError::PathNotText(path.to_path_buf()))
 }
@@ -548,7 +548,7 @@ fn text(path: &Path) -> Result<&str, BackupError> {
 /// Writes a consistent copy of the database behind `connection` to `to`,
 /// through `temporary` in the same folder. `VACUUM INTO` reads one snapshot,
 /// so writes made meanwhile are either all in the copy or not at all.
-async fn copy_database(
+pub(crate) async fn copy_database(
     connection: &libsql::Connection,
     to: &Path,
     temporary: &Path,

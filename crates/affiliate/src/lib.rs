@@ -3,6 +3,7 @@
 mod affiliate_links;
 mod commissions;
 mod links;
+mod merge;
 mod payouts;
 mod report;
 mod rules;
@@ -16,6 +17,7 @@ pub use commissions::{
     LastSync, ManualCommission, Reading, Recorded, StatusChange,
 };
 pub use links::PromotedProduct;
+pub use merge::MERGE;
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use rules::{

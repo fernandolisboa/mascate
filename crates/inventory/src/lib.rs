@@ -2,6 +2,7 @@
 //! and each Product's Reorder Point.
 
 mod ledger;
+mod merge;
 mod valuation;
 
 pub use ledger::{
@@ -9,6 +10,7 @@ pub use ledger::{
     LocationBalance, LowStock, MovementReason, NewEntry, NewExit, NewReturn, ProductStock, Stock,
     StockAdjustment, StockLocation, StockMovement,
 };
+pub use merge::MERGE;
 pub use valuation::Valuation;
 
 use mascate_platform::ModuleMigrations;
