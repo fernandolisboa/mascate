@@ -7,6 +7,7 @@ use crate::affiliate::AffiliateScreen;
 use crate::appearance;
 use crate::dashboard::DashboardScreen;
 use crate::drafts::StartDraft;
+use crate::event_alerts::OpenCalendar;
 use crate::home::Home;
 use crate::layout;
 use crate::listings::ListingsScreen;
@@ -157,6 +158,17 @@ impl Shell {
                 |shell, _, _: &OpenOrders, _, cx| {
                     shell.orders.update(cx, OrdersScreen::refresh);
                     shell.place = Place::Orders;
+                    cx.notify();
+                },
+            ),
+            cx.subscribe_in(
+                &home.read(cx).event_alerts.clone(),
+                window,
+                |shell, _, _: &OpenCalendar, window, cx| {
+                    shell
+                        .promotion
+                        .update(cx, |promotion, cx| promotion.refresh(window, cx));
+                    shell.place = Place::Promotion;
                     cx.notify();
                 },
             ),

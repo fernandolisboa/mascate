@@ -10,11 +10,12 @@
 //! and confirms; one that may have gone out waits for the owner to look.
 //! Confirmed for a time instead, it waits in the Telegram queue (#104),
 //! listed with what is late, unconfirmed, failed or published today.
+//! Scheduling offers the dates of the coming Sales Events (#105).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{NaiveDate, NaiveTime, Utc};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -33,7 +34,8 @@ use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
     ChannelKind, Contact, LATE_AFTER_MINUTES, OfferFacts, OfferPost, OfferPosts, OfferPrice,
     PRICE_KEEPS_HOURS, PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus,
-    PostTime, PromotionChannel, PublishFailure, PublishRequest, check_post, post_limits,
+    PostTime, PromotionChannel, PublishFailure, PublishRequest, UpcomingEvent, check_post,
+    post_limits,
 };
 use mascate_platform::Flag;
 
@@ -41,11 +43,12 @@ use crate::affiliate::{affiliate, failure};
 use crate::affiliate_links::{promotion, warning_text};
 use crate::appearance::look;
 use crate::catalog::{self, day_and_time};
-use crate::forms::{Outcome, input, notice};
+use crate::forms::{Outcome, day_text, input, notice};
 use crate::kit;
 use crate::post_queue::{post_time, typed_moment};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
+use crate::sales_events::{event_date_text, sales_events};
 use crate::telegram;
 
 /// The app's Offer Posts; absent when the database did not open.
@@ -85,13 +88,26 @@ struct Confirming {
     schedule: Option<ScheduleChoice>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ScheduleChoice {
+    channel: RecordId,
     /// The channel's next free posting time; `None` without posting times.
     next_free: Option<Timestamp>,
     /// The owner types a day and time instead.
     picking: bool,
+    /// The Sales Events coming soon, whose dates the owner can pick.
+    events: Vec<UpcomingEvent>,
 }
+
+/// How far ahead the Sales Events offered when scheduling are.
+const EVENTS_OFFERED_DAYS: u32 = 60;
+
+/// How many Sales Events scheduling offers at most.
+const EVENTS_OFFERED: usize = 4;
+
+/// The time a post scheduled for an event's day starts at, when its
+/// channel has no posting times.
+const EVENT_POST_TIME: NaiveTime = NaiveTime::from_hms_opt(8, 0, 0).expect("a valid time");
 
 /// What a post knows of its offer before the price: the link, its
 /// Program, and the Product's name and photos when the link's product is
@@ -908,14 +924,30 @@ impl OfferPostsSection {
         };
         self.outcome = None;
         self.busy = true;
+        let calendar = sales_events(cx);
         let working = cx.background_executor().spawn(async move {
             let request = posts.prepare(id).await?;
             let schedule = if scheduling {
                 let channel = posts.post(id).await?.draft.channel;
                 let next_free = posts.next_free(channel, Some(id)).await?;
+                let mut events = match calendar {
+                    // The dates only help to pick: an unreadable calendar
+                    // never stops the scheduling.
+                    Some(calendar) => calendar
+                        .upcoming(Utc::now(), EVENTS_OFFERED_DAYS)
+                        .await
+                        .unwrap_or_else(|error| {
+                            eprintln!("could not read the Sales Events: {error}");
+                            Vec::new()
+                        }),
+                    None => Vec::new(),
+                };
+                events.truncate(EVENTS_OFFERED);
                 Some(ScheduleChoice {
+                    channel,
                     next_free,
                     picking: next_free.is_none(),
+                    events,
                 })
             } else {
                 None
@@ -1157,6 +1189,29 @@ impl OfferPostsSection {
     }
 
     /// What will go out, and when, for the owner to confirm.
+    /// Fills the day and time to schedule with a Sales Event's `date`, at
+    /// the channel's first posting time, for the owner to confirm or change.
+    fn pick_event_day(&mut self, date: NaiveDate, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Confirming {
+            schedule: Some(choice),
+            ..
+        }) = self.confirming.as_mut()
+        else {
+            return;
+        };
+        choice.picking = true;
+        let time = self
+            .channels
+            .iter()
+            .find(|channel| channel.id == choice.channel)
+            .and_then(|channel| channel.posting_times.first().copied())
+            .unwrap_or(EVENT_POST_TIME);
+        let moment = format!("{} {}", day_text(date), time.format("%H:%M"));
+        self.when
+            .update(cx, |field, cx| field.set_value(moment, window, cx));
+        cx.notify();
+    }
+
     fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let request = &confirming.request;
@@ -1173,7 +1228,7 @@ impl OfferPostsSection {
             Some(PostImage::Url(url)) => format!("Foto da plataforma: {url}"),
             None => "Sem foto: o Telegram mostra a prévia do link.".to_owned(),
         };
-        let Some(choice) = confirming.schedule else {
+        let Some(choice) = confirming.schedule.as_ref() else {
             return self.render_publish_now(request, picture, off, cx);
         };
         let pick = |label: String, picking: bool, index: usize| {
@@ -1208,6 +1263,28 @@ impl OfferPostsSection {
                 )
             }))
             .child(pick("Escolher dia e hora".into(), true, 1));
+        let events = (!choice.events.is_empty()).then(|| {
+            h_flex()
+                .gap_1()
+                .flex_wrap()
+                .items_center()
+                .child(div().text_xs().text_color(t.text2).child("Datas de venda:"))
+                .children(choice.events.iter().enumerate().map(|(index, near)| {
+                    let date = near.date;
+                    Button::new(("schedule-event", index))
+                        .label(format!(
+                            "{}: {}",
+                            near.event.name,
+                            event_date_text(near.date)
+                        ))
+                        .ghost()
+                        .small()
+                        .disabled(self.busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.pick_event_day(date, window, cx)
+                        }))
+                }))
+        });
         v_flex()
             .gap_2()
             .p_4()
@@ -1221,6 +1298,7 @@ impl OfferPostsSection {
                 request.chat()
             )))
             .child(choices)
+            .children(events)
             .when(choice.next_free.is_none(), |panel| {
                 panel.child(div().text_xs().text_color(t.text2).child(
                     "Este canal não tem horários de publicação: escolha dia e hora, ou defina os \

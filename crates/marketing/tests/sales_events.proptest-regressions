@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ec24f2fd9d3f9a4ec742cf4cbf5407a2d6704717b844a6ef52fe8c89acbd7372 # shrinks to rule = Once(2038-01-01), from = 2020-01-01
