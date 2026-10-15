@@ -67,7 +67,16 @@ pub fn start(cx: &mut App) {
 /// 16/10 às 08:00".
 pub fn post_time(at: Timestamp) -> String {
     let local = at.with_timezone(&brasilia());
-    let day = match local.weekday() {
+    format!(
+        "{}, {}",
+        short_weekday(local.weekday()),
+        local.format("%d/%m às %H:%M")
+    )
+}
+
+/// "seg", "sáb": a weekday as dates show it.
+pub fn short_weekday(weekday: Weekday) -> &'static str {
+    match weekday {
         Weekday::Mon => "seg",
         Weekday::Tue => "ter",
         Weekday::Wed => "qua",
@@ -75,8 +84,7 @@ pub fn post_time(at: Timestamp) -> String {
         Weekday::Fri => "sex",
         Weekday::Sat => "sáb",
         Weekday::Sun => "dom",
-    };
-    format!("{day}, {}", local.format("%d/%m às %H:%M"))
+    }
 }
 
 /// A time of day as the owner types it: `8`, `8h`, `8h30`, `08:30`.

@@ -5,6 +5,7 @@
 //! (ADR 0031, decision 5); Afiliação tags links with them. A Telegram
 //! channel is checked through the bot (#103): administrator, allowed to
 //! post; and has the posting times its scheduled posts go out at (#104).
+//! The Sales Events calendar sits between the posts and the channels (#105).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ use crate::offer_posts::{OfferPostsSection, StartPost, offer_posts, post_failure
 use crate::parts::ScreenParts;
 use crate::post_queue::{times_text, typed_times};
 use crate::sales::table_row;
+use crate::sales_events::CalendarSection;
 use crate::telegram;
 
 /// The app's Promotion Channels; absent when the database did not open.
@@ -107,6 +109,7 @@ struct TemplateEditor {
 
 pub struct PromotionScreen {
     posts: Entity<OfferPostsSection>,
+    calendar: Entity<CalendarSection>,
     channels: Vec<PromotionChannel>,
     template: Option<TemplateEditor>,
     times: Option<TimesEditor>,
@@ -135,6 +138,7 @@ impl PromotionScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut screen = Self {
             posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
+            calendar: cx.new(|cx| CalendarSection::new(window, cx)),
             channels: Vec::new(),
             template: None,
             times: None,
@@ -156,10 +160,12 @@ impl PromotionScreen {
         screen
     }
 
-    /// Reads the posts and the channels again, as when the screen comes
-    /// into view.
+    /// Reads the posts, the calendar and the channels again, as when the
+    /// screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.posts.update(cx, |posts, cx| posts.refresh(window, cx));
+        self.calendar
+            .update(cx, |calendar, cx| calendar.refresh(window, cx));
         self.run(window, cx, |_| async { Ok(()) }, |_, _, _, _| {});
     }
 
@@ -909,6 +915,7 @@ impl Render for PromotionScreen {
             }
         }
         parts.content.push(self.posts.clone().into_any_element());
+        parts.content.push(self.calendar.clone().into_any_element());
         parts.content.push(
             v_flex()
                 .gap_3()

@@ -1,6 +1,7 @@
 //! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy,
 //! Promotion Channels and Offer Posts, published through a destination's port
-//! now or from the queue at a time the owner confirmed.
+//! now or from the queue at a time the owner confirmed, and the Sales Events
+//! calendar they are planned around.
 
 mod ads;
 mod channels;
@@ -12,6 +13,7 @@ mod questions;
 mod queue;
 mod replies;
 mod reputation;
+mod sales_events;
 
 pub use ads::{
     ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
@@ -61,6 +63,10 @@ pub use reputation::{
     Reputation, ReputationColor, ReputationError, ReputationMetric, ReputationSource,
     ReputationStanding, ReputationSync, ReviewedItem, SellerTool,
 };
+pub use sales_events::{
+    DateRule, EVENT_NAME_MAX_CHARS, EVENT_NOTES_MAX_CHARS, EventError, MAX_DAYS_AFTER_THANKSGIVING,
+    MAX_LEAD_DAYS, NewSalesEvent, SalesEvent, SalesEvents, UpcomingEvent, default_sales_events,
+};
 
 use mascate_platform::{
     Flag, FlagKind, ModuleMigrations, Phase, Reminder, ReminderShows, ReminderTopic,
@@ -95,6 +101,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         offer_posts::CREATE_OFFER_POSTS,
         publishing::PUBLISH_OFFER_POSTS,
         queue::SCHEDULE_OFFER_POSTS,
+        sales_events::CREATE_SALES_EVENTS,
     ],
 };
 

@@ -1,6 +1,6 @@
 [package]
 name = "mascate-marketing"
-description = "Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy and Promotion Channels."
+description = "Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy, Promotion Channels, Offer Posts and Sales Events."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

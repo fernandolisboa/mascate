@@ -10,7 +10,7 @@ use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_marketing::{
     ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
-    ReplyTemplates, Reputation,
+    ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
     Appearance, BackupSettings, Backups, Database, Flag, Flags, Installation, ModuleMigrations,
@@ -69,6 +69,7 @@ pub struct Started {
     pub reply_templates: Arc<ReplyTemplates>,
     pub promotion_channels: Arc<PromotionChannels>,
     pub offer_posts: Arc<OfferPosts>,
+    pub sales_events: Arc<SalesEvents>,
     pub taxes: Arc<Taxes>,
     pub sales_volume: Arc<SalesVolume>,
     pub affiliate: Arc<Affiliate>,
@@ -298,6 +299,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(UuidV7Generator),
             );
             offer_posts.settle_interrupted().await?;
+            let sales_events = SalesEvents::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
+            sales_events.record_defaults().await?;
             let taxes = Taxes::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -337,6 +344,7 @@ pub fn prepare() -> Outcome {
                 reply_templates: Arc::new(reply_templates),
                 promotion_channels: Arc::new(promotion_channels),
                 offer_posts: Arc::new(offer_posts),
+                sales_events: Arc::new(sales_events),
                 taxes: Arc::new(taxes),
                 sales_volume: Arc::new(sales_volume),
                 affiliate: Arc::new(affiliate),

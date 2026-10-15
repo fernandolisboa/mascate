@@ -4,6 +4,7 @@ use gpui_kit::{Entity, SharedString, Subscription, Window, div};
 
 use crate::appearance::look;
 use crate::backups;
+use crate::event_alerts::EventAlertsArea;
 use crate::layout;
 use crate::low_stock::LowStockArea;
 use crate::order_alerts::OrderAlertsArea;
@@ -15,7 +16,8 @@ use crate::updates::UpdateNotice;
 
 /// The first screen: what needs attention today (Orders to dispatch or
 /// returns to receive, questions waiting for an answer, tools the
-/// Reputation unlocked, low Reviews and low stock), a
+/// Reputation unlocked, low Reviews, low stock and the Sales Events inside
+/// their lead time), a
 /// newer version of the app at its top and the Reminders at its foot.
 pub struct Home {
     /// Why the database is not ready, if it isn't.
@@ -25,6 +27,7 @@ pub struct Home {
     pub question_alerts: Entity<QuestionAlertsArea>,
     pub reputation_alerts: Entity<ReputationAlertsArea>,
     pub low_stock: Entity<LowStockArea>,
+    pub event_alerts: Entity<EventAlertsArea>,
     reminders: Entity<RemindersArea>,
     _subscriptions: Vec<Subscription>,
 }
@@ -35,12 +38,14 @@ impl Home {
         let order_alerts = cx.new(OrderAlertsArea::new);
         let question_alerts = cx.new(QuestionAlertsArea::new);
         let reputation_alerts = cx.new(ReputationAlertsArea::new);
+        let event_alerts = cx.new(EventAlertsArea::new);
         // Whether anything needs attention decides what the screen shows.
         let subscriptions = vec![
             cx.observe(&low_stock, |_, _, cx| cx.notify()),
             cx.observe(&order_alerts, |_, _, cx| cx.notify()),
             cx.observe(&question_alerts, |_, _, cx| cx.notify()),
             cx.observe(&reputation_alerts, |_, _, cx| cx.notify()),
+            cx.observe(&event_alerts, |_, _, cx| cx.notify()),
         ];
         Self {
             problem,
@@ -49,6 +54,7 @@ impl Home {
             question_alerts,
             reputation_alerts,
             low_stock,
+            event_alerts,
             reminders: cx.new(RemindersArea::new),
             _subscriptions: subscriptions,
         }
@@ -61,6 +67,7 @@ impl Home {
         self.reputation_alerts
             .update(cx, ReputationAlertsArea::refresh);
         self.low_stock.update(cx, LowStockArea::refresh);
+        self.event_alerts.update(cx, EventAlertsArea::refresh);
     }
 }
 
@@ -71,7 +78,8 @@ impl Render for Home {
             None => (
                 SharedString::from("Nada precisa da sua atenção agora"),
                 SharedString::from(
-                    "Pedidos, perguntas, avaliações baixas e estoque baixo vão aparecer aqui.",
+                    "Pedidos, perguntas, avaliações baixas, estoque baixo e datas de venda \
+                     chegando vão aparecer aqui.",
                 ),
             ),
             Some(problem) => ("O app não conseguiu iniciar".into(), problem.clone()),
@@ -82,7 +90,8 @@ impl Render for Home {
         let attention = !self.order_alerts.read(cx).is_empty()
             || !self.question_alerts.read(cx).is_empty()
             || !self.reputation_alerts.read(cx).is_empty()
-            || !self.low_stock.read(cx).is_empty();
+            || !self.low_stock.read(cx).is_empty()
+            || !self.event_alerts.read(cx).is_empty();
         if self.problem.is_none() && attention {
             parts
                 .content
@@ -96,6 +105,9 @@ impl Render for Home {
             parts
                 .content
                 .push(self.low_stock.clone().into_any_element());
+            parts
+                .content
+                .push(self.event_alerts.clone().into_any_element());
         } else {
             parts.content.push(
                 v_flex()
