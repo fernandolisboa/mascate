@@ -364,3 +364,60 @@ fn has_credential_tells_which_keys_are_stored() {
     assert_eq!(connections.has_credential("ML_CLIENT_ID"), Ok(true));
     assert_eq!(connections.has_credential("ML_CLIENT_SECRET"), Ok(false));
 }
+
+#[test]
+fn a_telegram_token_the_platform_refused_reads_expired_until_a_new_one_is_saved() {
+    let (connections, _) = connections();
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::NotConfigured
+    );
+    // Marking a Connection without credentials changes nothing.
+    connections.mark_expired(Connection::Telegram);
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::NotConfigured
+    );
+
+    connections
+        .save(Connection::Telegram, &[("TELEGRAM_BOT_TOKEN", "123:abc")])
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::Connected
+    );
+    connections.mark_expired(Connection::Telegram);
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::Expired
+    );
+    assert_eq!(
+        connections.state(Connection::Anthropic),
+        ConnectionState::NotConfigured
+    );
+    // A blank paste keeps the refused token, and the Connection expired.
+    connections
+        .save(Connection::Telegram, &[("TELEGRAM_BOT_TOKEN", " ")])
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::Expired
+    );
+    connections
+        .save(Connection::Telegram, &[("TELEGRAM_BOT_TOKEN", "123:def")])
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::Connected
+    );
+
+    connections.mark_expired(Connection::Telegram);
+    connections.remove(Connection::Telegram).unwrap();
+    connections
+        .save(Connection::Telegram, &[("TELEGRAM_BOT_TOKEN", "123:ghi")])
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Telegram),
+        ConnectionState::Connected
+    );
+}

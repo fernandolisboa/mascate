@@ -225,6 +225,34 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Telegram => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "No Telegram, abra o BotFather, o bot oficial que cria bots.",
+                        "Abrir o BotFather",
+                        "https://t.me/BotFather",
+                    ),
+                    step(
+                        "Mande /newbot, escolha um nome (como Mascate Ofertas) e um nome de \
+                     usuário que termine em bot. O BotFather responde com o token, um texto \
+                     como 123456789:AAH…; copie-o inteiro. Quem tem o token posta pelo bot: \
+                     não mande para ninguém.",
+                    ),
+                    step(
+                        "No seu canal, abra Administradores, Adicionar administrador, busque o \
+                     bot pelo nome de usuário e deixe ligada a permissão Publicar mensagens. \
+                     Repita em cada canal onde o app vai postar.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, informe o @nome do canal (ou o id -100… de um canal \
+                 privado) em Divulgação e use Conferir canal: o app confirma que o bot é \
+                 administrador e pode publicar.",
+                ),
+            };
+            GUIDE
+        }
     }
 }
 
@@ -253,6 +281,7 @@ mod tests {
             Connection::Monetizze => "app.monetizze.com.br",
             Connection::Kiwify => "dashboard.kiwify.com.br",
             Connection::Eduzz => "console.eduzz.com",
+            Connection::Telegram => "t.me",
         }
     }
 
@@ -264,7 +293,8 @@ mod tests {
             Connection::Hotmart
             | Connection::Monetizze
             | Connection::Kiwify
-            | Connection::Eduzz => 2,
+            | Connection::Eduzz
+            | Connection::Telegram => 2,
         }
     }
 

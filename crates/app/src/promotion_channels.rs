@@ -2,8 +2,11 @@
 //! Channels, each channel with the marking its affiliate links carry, the
 //! keywords of a paid-search channel, the chat of a Telegram channel and
 //! the template its posts start from. The channels live in the Marketing
-//! (ADR 0031, decision 5); Afiliação tags links with them.
+//! (ADR 0031, decision 5); Afiliação tags links with them. A Telegram
+//! channel is checked through the bot (#103): administrator, allowed to
+//! post.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -13,8 +16,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_kernel::RecordId;
 use mascate_marketing::{
-    CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, NewPromotionChannel,
-    PromotionChannel, PromotionChannels, suggested_tag,
+    CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, DestinationStanding,
+    NewPromotionChannel, PostDestination as _, PromotionChannel, PromotionChannels, suggested_tag,
 };
 
 use crate::appearance::look;
@@ -25,6 +28,7 @@ use crate::layout;
 use crate::offer_posts::{OfferPostsSection, StartPost, offer_posts, post_failure};
 use crate::parts::ScreenParts;
 use crate::sales::table_row;
+use crate::telegram;
 
 /// The app's Promotion Channels; absent when the database did not open.
 pub struct AppPromotionChannels(pub Arc<PromotionChannels>);
@@ -67,7 +71,9 @@ fn failure(error: &ChannelError) -> String {
 fn kind_note(kind: ChannelKind) -> &'static str {
     match kind {
         ChannelKind::TelegramChannel => {
-            "Publicar no canal pelo app chega numa próxima versão; o chat já fica guardado."
+            "Com o chat do canal e o token do bot em Configurações › Conexões › Telegram, os \
+             posts deste canal saem por \"Publicar agora\", sempre depois da sua confirmação. \
+             Use \"Conferir canal\" para ver se o bot pode publicar."
         }
         ChannelKind::PaidSearch => {
             "As palavras-chave entram na conferência das regras de cada programa: a Shopee não \
@@ -102,6 +108,10 @@ pub struct PromotionScreen {
     editing: Option<RecordId>,
     /// The channel asking to confirm its deletion.
     deleting: Option<RecordId>,
+    /// What "Conferir canal" found, per channel.
+    checks: HashMap<RecordId, Outcome>,
+    /// The channel being checked.
+    checking: Option<RecordId>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -122,6 +132,8 @@ impl PromotionScreen {
             kind: ChannelKind::TelegramChannel,
             editing: None,
             deleting: None,
+            checks: HashMap::new(),
+            checking: None,
             busy: false,
             reads: 0,
             form: None,
@@ -381,6 +393,8 @@ impl PromotionScreen {
                     }
                     .into(),
                 ));
+                // Its chat may have changed: an earlier check no longer says.
+                this.checks.remove(&saved.id);
                 this.clear(window, cx);
                 Self::changed(cx);
             },
@@ -444,6 +458,41 @@ impl PromotionScreen {
         );
     }
 
+    /// Asks Telegram whether the bot can post in `channel`'s chat.
+    fn check(&mut self, channel: &PromotionChannel, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(telegram), Some(chat)) = (telegram::adapter(cx), channel.telegram_chat.clone())
+        else {
+            return;
+        };
+        let id = channel.id;
+        self.checking = Some(id);
+        let working = cx
+            .background_executor()
+            .spawn(async move { telegram.check(&chat) });
+        cx.spawn_in(window, async move |this, cx| {
+            let checked = working.await;
+            let _ = this.update(cx, |this, cx| {
+                this.checking = None;
+                let outcome = match checked {
+                    Ok(check) if check.standing == DestinationStanding::CanPost => {
+                        Outcome::Done(telegram::check_text(&check).into())
+                    }
+                    Ok(check) => Outcome::Failed(telegram::check_text(&check).into()),
+                    Err(error) => {
+                        if error == mascate_kernel::PlatformError::Expired {
+                            telegram::expired(cx);
+                        }
+                        Outcome::Failed(telegram::check_failure(&error).into())
+                    }
+                };
+                this.checks.insert(id, outcome);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_channel(
         &self,
         index: usize,
@@ -466,7 +515,19 @@ impl PromotionScreen {
         };
         let edited = channel.clone();
         let templated = channel.clone();
+        let checked = channel.clone();
         let id = channel.id;
+        let check = (channel.kind == ChannelKind::TelegramChannel
+            && channel.telegram_chat.is_some())
+        .then(|| {
+            Button::new(("check-channel", index))
+                .label("Conferir canal")
+                .outline()
+                .small()
+                .loading(self.checking == Some(id))
+                .disabled(self.busy || self.checking.is_some())
+                .on_click(cx.listener(move |this, _, window, cx| this.check(&checked, window, cx)))
+        });
         let actions = if self.deleting == Some(id) {
             h_flex()
                 .gap_2()
@@ -495,6 +556,7 @@ impl PromotionScreen {
         } else {
             h_flex()
                 .gap_2()
+                .children(check)
                 .child(
                     Button::new(("channel-template", index))
                         .label("Modelo do post")
@@ -545,6 +607,11 @@ impl PromotionScreen {
                 cx,
             ))
             .child(actions)
+            .children(
+                self.checks
+                    .get(&id)
+                    .map(|outcome| div().w_full().child(notice(outcome, cx))),
+            )
             .into_any_element()
     }
 

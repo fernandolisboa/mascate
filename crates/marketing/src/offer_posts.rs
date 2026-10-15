@@ -1,8 +1,9 @@
 //! Offer Posts (#102, ADR 0031 decision 5): a post about one affiliate
 //! offer for one Promotion Channel, born from the channel's template and
 //! edited by the owner. The Marketing reads neither the Affiliate nor the
-//! Catalog: the caller hands over the facts of the offer. Nothing leaves
-//! the app here; the owner copies the text.
+//! Catalog: the caller hands over the facts of the offer. The owner copies
+//! the text, or publishes the post on a Telegram channel after confirming
+//! it (#103, `publishing`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,6 +18,9 @@ use rust_decimal::{Decimal, RoundingStrategy};
 
 use crate::AD_DISCLOSURE;
 use crate::channels::{ChannelError, ChannelKind, PromotionChannel, PromotionChannels};
+use crate::publishing::{
+    ConfirmedPost, PostDestination, PublishFailure, PublishRequest, PublishedPost,
+};
 use crate::replies::{Contact, contacts_in, unknown_variable};
 
 pub(crate) const CREATE_OFFER_POSTS: Migration = Migration {
@@ -233,20 +237,64 @@ pub struct PostDraft {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PostStatus {
     Draft,
+    /// Handed to the destination, its answer not back yet.
+    Sending,
+    Sent,
+    /// The request went out and nothing says whether the post did: the
+    /// owner looks at the channel, then marks it published or publishes it
+    /// again.
+    Unconfirmed,
+    /// The destination published nothing; the failure says why.
+    Failed,
 }
 
 impl PostStatus {
-    const ALL: [PostStatus; 1] = [PostStatus::Draft];
+    const ALL: [PostStatus; 5] = [
+        PostStatus::Draft,
+        PostStatus::Sending,
+        PostStatus::Sent,
+        PostStatus::Unconfirmed,
+        PostStatus::Failed,
+    ];
 
     fn code(self) -> &'static str {
         match self {
             PostStatus::Draft => "draft",
+            PostStatus::Sending => "sending",
+            PostStatus::Sent => "sent",
+            PostStatus::Unconfirmed => "unconfirmed",
+            PostStatus::Failed => "failed",
         }
+    }
+
+    /// Whether the owner may still change the post.
+    pub fn editable(self) -> bool {
+        matches!(self, PostStatus::Draft | PostStatus::Failed)
+    }
+
+    /// Whether the owner may publish the post: a draft, a failed one, or
+    /// again, one that may or may not have gone out.
+    pub fn publishable(self) -> bool {
+        matches!(
+            self,
+            PostStatus::Draft | PostStatus::Failed | PostStatus::Unconfirmed
+        )
     }
 
     fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.code() == code)
     }
+}
+
+/// A post in its channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentPost {
+    pub at: Timestamp,
+    /// The destination's id of the message; `None` when the owner marked
+    /// it published.
+    pub message_id: Option<String>,
+    /// Where the post opens, when the destination gave it.
+    pub link: Option<String>,
 }
 
 /// A saved Offer Post.
@@ -257,6 +305,10 @@ pub struct OfferPost {
     pub status: PostStatus,
     /// The last time the owner copied its text.
     pub copied_at: Option<Timestamp>,
+    /// Once [`PostStatus::Sent`].
+    pub sent: Option<SentPost>,
+    /// Why the last publishing failed or is unconfirmed.
+    pub failure: Option<PublishFailure>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -431,6 +483,14 @@ pub enum PostError {
     NoSuchChannel,
     #[error("no such Offer Post")]
     NotFound,
+    #[error("the post's channel is not one the app publishes to")]
+    NoDestination,
+    #[error("the Telegram channel has no chat yet")]
+    NoChat,
+    #[error("the post is {0:?}, which does not allow it")]
+    WrongStatus(PostStatus),
+    #[error("the post changed since it was confirmed")]
+    Changed,
     #[error("the posts hold a value this app cannot read: {0}")]
     Unreadable(String),
     #[error(transparent)]
@@ -459,7 +519,8 @@ impl From<ChannelError> for PostError {
 
 const POST_QUERY: &str = "SELECT id, channel_id, affiliate_link_id, link, product, platform,
          text, image_file, image_url, price, price_before, currency, price_seen_at,
-         price_needs_time, forbidden_contacts, status, copied_at, created_at, updated_at
+         price_needs_time, forbidden_contacts, status, copied_at, created_at, updated_at,
+         sent_at, message_id, post_link, failure, failure_detail
      FROM marketing_offer_posts WHERE deleted_at IS NULL";
 
 /// The owner's Offer Posts and the template of each Promotion Channel.
@@ -587,8 +648,13 @@ impl OfferPosts {
         self.post(record.id).await
     }
 
-    /// Saves `draft` over the post `id`, unless a problem blocks it.
+    /// Saves `draft` over the post `id`, unless a problem blocks it or the
+    /// post is no longer [`PostStatus::editable`].
     pub async fn update(&self, id: RecordId, draft: &PostDraft) -> Result<OfferPost, PostError> {
+        let status = self.post(id).await?.status;
+        if !status.editable() {
+            return Err(PostError::WrongStatus(status));
+        }
         let draft = self.ensure_savable(draft).await?;
         let mut values = row_values(&draft);
         values.extend([
@@ -604,12 +670,12 @@ impl OfferPosts {
                      platform = ?5, text = ?6, image_file = ?7, image_url = ?8, price = ?9,
                      price_before = ?10, currency = ?11, price_seen_at = ?12,
                      price_needs_time = ?13, forbidden_contacts = ?14, updated_at = ?15
-                 WHERE id = ?16 AND deleted_at IS NULL",
+                 WHERE id = ?16 AND deleted_at IS NULL AND status IN ('draft', 'failed')",
                 values,
             )
             .await?;
         if changed == 0 {
-            return Err(PostError::NotFound);
+            return Err(PostError::Changed);
         }
         self.post(id).await
     }
@@ -698,6 +764,177 @@ impl OfferPosts {
         self.post(id).await
     }
 
+    /// Checks the saved post `id` for its destination: what comes back
+    /// carries the final text, the picture and the chat for the owner to
+    /// read and confirm. Only a post on a Telegram channel with its chat,
+    /// [`PostStatus::publishable`] and with nothing blocking it gets one,
+    /// so a text over the destination's limits never reaches it.
+    pub async fn prepare(&self, id: RecordId) -> Result<PublishRequest, PostError> {
+        let post = self.post(id).await?;
+        if !post.status.publishable() {
+            return Err(PostError::WrongStatus(post.status));
+        }
+        let channel = self.channels.channel(post.draft.channel).await?;
+        if channel.kind != ChannelKind::TelegramChannel {
+            return Err(PostError::NoDestination);
+        }
+        let chat = channel.telegram_chat.clone().ok_or(PostError::NoChat)?;
+        let blocking: Vec<PostProblem> = check_post(&post.draft, post_limits(channel.kind))
+            .into_iter()
+            .filter(PostProblem::blocks)
+            .collect();
+        if !blocking.is_empty() {
+            return Err(PostError::Blocked(blocking));
+        }
+        Ok(PublishRequest {
+            post: post.id,
+            channel: channel.name,
+            chat,
+            text: post.draft.text,
+            image: post.draft.facts.image,
+            prepared_status: post.status,
+            prepared_at: post.updated_at,
+        })
+    }
+
+    /// Publishes the post the owner confirmed, once. It is marked
+    /// [`PostStatus::Sending`] before the destination is called, and only
+    /// if it is still as the owner read it; then [`PostStatus::Sent`],
+    /// [`PostStatus::Failed`] when nothing went out, or
+    /// [`PostStatus::Unconfirmed`] when it may have, which nothing sends
+    /// again on its own. A post that may have gone out without the
+    /// disclosure raises [`AD_DISCLOSURE`], as a copied one does.
+    pub async fn publish(
+        &self,
+        destination: &dyn PostDestination,
+        post: ConfirmedPost,
+    ) -> Result<OfferPost, PostError> {
+        let request = post.request();
+        let claimed = self
+            .database
+            .connection()
+            .execute(
+                "UPDATE marketing_offer_posts
+                 SET status = ?1, failure = NULL, failure_detail = NULL, updated_at = ?2
+                 WHERE id = ?3 AND deleted_at IS NULL AND status = ?4 AND updated_at = ?5",
+                params![
+                    PostStatus::Sending.code(),
+                    stored(self.clock.now()),
+                    request.post.to_string(),
+                    request.prepared_status.code(),
+                    stored(request.prepared_at)
+                ],
+            )
+            .await?;
+        if claimed == 0 {
+            return Err(PostError::Changed);
+        }
+        let published = destination.publish(&post);
+        let request = post.request();
+        let now = stored(self.clock.now());
+        let undisclosed = (!has_disclosure(&request.text)).then(|| now.clone());
+        match published {
+            Ok(PublishedPost { message_id, link }) => {
+                self.database
+                    .connection()
+                    .execute(
+                        "UPDATE marketing_offer_posts
+                         SET status = ?1, sent_at = ?2, message_id = ?3, post_link = ?4,
+                             updated_at = ?2,
+                             undisclosed_copied_at = coalesce(?5, undisclosed_copied_at)
+                         WHERE id = ?6",
+                        params![
+                            PostStatus::Sent.code(),
+                            now,
+                            message_id,
+                            link,
+                            undisclosed,
+                            request.post.to_string()
+                        ],
+                    )
+                    .await?;
+            }
+            Err(failure) => {
+                let (status, undisclosed) = if failure.may_have_gone_out() {
+                    (PostStatus::Unconfirmed, undisclosed)
+                } else {
+                    (PostStatus::Failed, None)
+                };
+                self.database
+                    .connection()
+                    .execute(
+                        "UPDATE marketing_offer_posts
+                         SET status = ?1, failure = ?2, failure_detail = ?3, updated_at = ?4,
+                             undisclosed_copied_at = coalesce(?5, undisclosed_copied_at)
+                         WHERE id = ?6",
+                        params![
+                            status.code(),
+                            failure.code(),
+                            failure.detail().map(str::to_owned),
+                            now,
+                            undisclosed,
+                            request.post.to_string()
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        self.post(request.post).await
+    }
+
+    /// The owner found the [`PostStatus::Unconfirmed`] post in the channel.
+    pub async fn mark_published(&self, id: RecordId) -> Result<OfferPost, PostError> {
+        let post = self.post(id).await?;
+        if post.status != PostStatus::Unconfirmed {
+            return Err(PostError::WrongStatus(post.status));
+        }
+        let now = stored(self.clock.now());
+        let undisclosed = (!has_disclosure(&post.draft.text)).then(|| now.clone());
+        let changed = self
+            .database
+            .connection()
+            .execute(
+                "UPDATE marketing_offer_posts
+                 SET status = ?1, sent_at = ?2, message_id = NULL, post_link = NULL,
+                     failure = NULL, failure_detail = NULL, updated_at = ?2,
+                     undisclosed_copied_at = coalesce(?3, undisclosed_copied_at)
+                 WHERE id = ?4 AND status = ?5",
+                params![
+                    PostStatus::Sent.code(),
+                    now,
+                    undisclosed,
+                    id.to_string(),
+                    PostStatus::Unconfirmed.code()
+                ],
+            )
+            .await?;
+        if changed == 0 {
+            return Err(PostError::Changed);
+        }
+        self.post(id).await
+    }
+
+    /// Marks [`PostStatus::Unconfirmed`] every post left
+    /// [`PostStatus::Sending`] when the app closed mid-way, on the next
+    /// start; how many there were.
+    pub async fn settle_interrupted(&self) -> Result<u64, PostError> {
+        Ok(self
+            .database
+            .connection()
+            .execute(
+                "UPDATE marketing_offer_posts
+                 SET status = ?1, failure = ?2, failure_detail = NULL, updated_at = ?3
+                 WHERE status = ?4 AND deleted_at IS NULL",
+                params![
+                    PostStatus::Unconfirmed.code(),
+                    PublishFailure::Interrupted.code(),
+                    stored(self.clock.now()),
+                    PostStatus::Sending.code()
+                ],
+            )
+            .await?)
+    }
+
     /// The Reminders the posts raise now: [`AD_DISCLOSURE`] while a post
     /// went out without the disclosure in the last
     /// [`DISCLOSURE_WINDOW_DAYS`] days.
@@ -781,6 +1018,21 @@ fn post_from(row: &libsql::Row) -> Result<OfferPost, PostError> {
         .map(|code| Contact::from_code(code).ok_or_else(|| PostError::Unreadable(code.into())))
         .collect::<Result<_, _>>()?;
     let status: String = row.get(15)?;
+    let status = PostStatus::from_code(&status).ok_or(PostError::Unreadable(status))?;
+    let sent = match row.optional_time_at(19)? {
+        Some(at) => Some(SentPost {
+            at,
+            message_id: row.get(20)?,
+            link: row.get(21)?,
+        }),
+        None => None,
+    };
+    let failure = match row.get::<Option<String>>(22)? {
+        Some(code) => Some(
+            PublishFailure::from_code(&code, row.get(23)?).ok_or(PostError::Unreadable(code))?,
+        ),
+        None => None,
+    };
     Ok(OfferPost {
         id: row.id_at(0)?,
         draft: PostDraft {
@@ -797,8 +1049,10 @@ fn post_from(row: &libsql::Row) -> Result<OfferPost, PostError> {
             },
             text: row.get(6)?,
         },
-        status: PostStatus::from_code(&status).ok_or(PostError::Unreadable(status))?,
+        status,
         copied_at: row.optional_time_at(16)?,
+        sent,
+        failure,
         created_at: row.time_at(17)?,
         updated_at: row.time_at(18)?,
     })

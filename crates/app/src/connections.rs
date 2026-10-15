@@ -33,6 +33,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Monetizze => "Monetizze",
         Connection::Kiwify => "Kiwify",
         Connection::Eduzz => "Eduzz",
+        Connection::Telegram => "Telegram",
     }
 }
 
@@ -55,6 +56,10 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
             "Comissões de afiliado e transferências: extrato, vendas, estornos e chargebacks, \
              lidos a cada hora."
         }
+        Connection::Telegram => {
+            "Bot que publica os posts de oferta nos seus canais do Telegram, sempre depois da \
+             sua confirmação."
+        }
     }
 }
 
@@ -74,6 +79,7 @@ fn credential_label(credential: Credential) -> &'static str {
         "KIWIFY_CLIENT_SECRET" => "Client Secret",
         "KIWIFY_ACCOUNT_ID" => "Account ID",
         "EDUZZ_PERSONAL_TOKEN" => "Token pessoal",
+        "TELEGRAM_BOT_TOKEN" => "Token do bot",
         other => other,
     }
 }
