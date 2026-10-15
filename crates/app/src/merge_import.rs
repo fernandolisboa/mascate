@@ -554,6 +554,15 @@ mod tests {
             samples.sort();
             assert!(!samples.is_empty());
 
+            let listing = || {
+                let mut names: Vec<_> = std::fs::read_dir(&released)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name())
+                    .collect();
+                names.sort();
+                names
+            };
+            let folder_before = listing();
             for sample in samples {
                 let before = std::fs::read(&sample).unwrap();
 
@@ -571,6 +580,7 @@ mod tests {
                 );
                 assert_eq!(std::fs::read(&sample).unwrap(), before);
             }
+            assert_eq!(listing(), folder_before);
         });
     }
 

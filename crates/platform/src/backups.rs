@@ -548,7 +548,7 @@ pub(crate) fn text(path: &Path) -> Result<&str, BackupError> {
 /// Writes a consistent copy of the database behind `connection` to `to`,
 /// through `temporary` in the same folder. `VACUUM INTO` reads one snapshot,
 /// so writes made meanwhile are either all in the copy or not at all.
-pub(crate) async fn copy_database(
+async fn copy_database(
     connection: &libsql::Connection,
     to: &Path,
     temporary: &Path,

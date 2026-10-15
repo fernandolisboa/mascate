@@ -11,9 +11,7 @@ use mascate_kernel::{Clock, IdGenerator, Timestamp};
 
 use super::coverage::{MergeGap, merge_gaps, ordered, table_columns_in};
 use super::declarations::{Condition, KeyPart, ModuleMerge, RecognisedBy, TableMerge, UniqueKey};
-use crate::backups::{
-    check_restore, copy_database, is_database_file, remove_database, text, with_suffix,
-};
+use crate::backups::{check_restore, is_database_file, remove_database, text, with_suffix};
 use crate::{
     BackupError, Database, DatabaseError, MigrationError, ModuleMigrations, RestoreError, migrate,
     read_stored,
@@ -173,16 +171,29 @@ impl MergeImport {
         Ok(report)
     }
 
-    /// Checks `file` as a Restore does, copies it beside the database and
-    /// runs this app's migrations on the copy; the file stays as it was.
+    /// Copies `file` beside the database, checks the copy as a Restore
+    /// does and runs this app's migrations on it. Only the copy is opened:
+    /// SQLite leaves journal files beside a database it reads, and the
+    /// owner's file and its folder stay as they were.
     async fn migrated_copy(&self, file: &Path) -> Result<TemporaryCopy, MergeError> {
-        let checked = check_restore(self.modules, file).await?;
+        if !file.is_file() {
+            return Err(RestoreError::NotMascate(file.to_path_buf()).into());
+        }
         let copy = TemporaryCopy(
             self.database
                 .path()
                 .with_file_name(format!(".mascate-merge-{}.db", self.ids.next_id())),
         );
-        copy_database(&checked.connection, &copy.0, &with_suffix(&copy.0, ".tmp")).await?;
+        copy_file(file, &copy.0)?;
+        // A database closed without its last checkpoint keeps part of it
+        // in its write-ahead log.
+        let log = with_suffix(file, "-wal");
+        if log.is_file() {
+            copy_file(&log, &with_suffix(&copy.0, "-wal"))?;
+        }
+        let checked = check_restore(self.modules, &copy.0)
+            .await
+            .map_err(|error| about(error, file))?;
         drop(checked);
         let database = Database::open(&copy.0).await?;
         database
@@ -191,6 +202,36 @@ impl MergeImport {
             .await?;
         migrate(&database, self.clock.as_ref(), self.modules).await?;
         Ok(copy)
+    }
+}
+
+fn copy_file(from: &Path, to: &Path) -> Result<(), BackupError> {
+    std::fs::copy(from, to)
+        .map(|_| ())
+        .map_err(|source| BackupError::File {
+            path: to.to_path_buf(),
+            source,
+        })
+}
+
+/// The Restore's refusal of the copy, told about the owner's `file`.
+fn about(error: RestoreError, file: &Path) -> RestoreError {
+    let path = file.to_path_buf();
+    match error {
+        RestoreError::NotMascate(_) => RestoreError::NotMascate(path),
+        RestoreError::Damaged { detail, .. } => RestoreError::Damaged { path, detail },
+        RestoreError::NewerThanApp {
+            module,
+            found,
+            known,
+            ..
+        } => RestoreError::NewerThanApp {
+            path,
+            module,
+            found,
+            known,
+        },
+        RestoreError::Backup(error) => RestoreError::Backup(error),
     }
 }
 

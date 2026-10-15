@@ -675,6 +675,24 @@ fn an_older_file_is_compared_through_a_migrated_copy_and_left_byte_for_byte() {
 }
 
 #[test]
+fn the_other_machines_own_database_file_is_read_through_a_copy_and_its_folder_left_alone() {
+    block_on(async {
+        let mut f = fixture().await;
+        product(f.there(), "p8", "PELICULA", "Película", 8).await;
+        f.there = None;
+        let file = f.path("other").join("mascate.db");
+        let before = std::fs::read(&file).unwrap();
+        let folder_before = file_names(&f.path("other"));
+
+        let report = f.compare(&file).await.unwrap();
+
+        assert_eq!(records(&report, "Produto").new, 1);
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        assert_eq!(file_names(&f.path("other")), folder_before);
+    });
+}
+
+#[test]
 fn the_same_file_twice_gives_the_same_report() {
     block_on(async {
         let mut f = fixture().await;
