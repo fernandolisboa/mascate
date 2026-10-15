@@ -29,6 +29,7 @@ embed-resource.workspace = true
 [dev-dependencies]
 image.workspace = true
 mascate-kernel = { workspace = true, features = ["test-support"] }
+mascate-platform = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

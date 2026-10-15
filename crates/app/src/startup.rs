@@ -453,6 +453,7 @@ mod tests {
         ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin, PromotionKind,
         PromotionPlan, PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
+    use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
         Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
@@ -465,7 +466,8 @@ mod tests {
         QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor, ReputationSource,
         default_posting_times,
     };
-    use mascate_platform::{LayoutId, UiTheme, UiThemePreference, save_appearance};
+    use mascate_platform::testing::MemorySecretStore;
+    use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
 
     use super::*;
 
@@ -475,6 +477,8 @@ mod tests {
     const SAMPLE_LOST: u32 = 1;
     const SAMPLE_REORDER_POINT: u32 = 5;
     const SAMPLE_TAX_PERCENT: u32 = 6;
+    const SAMPLE_OTHER_TAX_PERCENT: u32 = 7;
+    const SAMPLE_MERGED_SUPPLIER: &str = "Loja do outro computador";
 
     fn sample_discovery_settings() -> DiscoverySettings {
         DiscoverySettings {
@@ -1038,10 +1042,11 @@ mod tests {
             let backups = Backups::new(
                 database.clone(),
                 MODULE_MIGRATIONS,
-                PathBuf::from("/backups"),
+                std::env::temp_dir().join("mascate-sample-backups"),
                 clock,
                 ids,
             );
+            merge_another_computers_copy(&database, &backups, &catalog).await;
             backups
                 .save_settings(&BackupSettings {
                     folder: PathBuf::from(if cfg!(windows) {
@@ -1059,6 +1064,70 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    /// What 0.4.0 saves: a Merge Import of another computer's copy of the
+    /// sample, which brings a Supplier and loses the tax rate both sides
+    /// changed, with what is left by hand already seen.
+    async fn merge_another_computers_copy(
+        database: &Arc<Database>,
+        backups: &Backups,
+        catalog: &Catalog,
+    ) {
+        let other = std::env::temp_dir().join("mascate-outro-computador.db");
+        let _ = std::fs::remove_file(&other);
+        database
+            .connection()
+            .execute("VACUUM INTO ?1", [other.to_str().unwrap()])
+            .await
+            .unwrap();
+        {
+            let other = open(&other, &std::env::temp_dir()).await.unwrap().database;
+            Catalog::new(
+                other.clone(),
+                std::env::temp_dir().join("mascate-outro-computador-produtos"),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            )
+            .add_supplier(SAMPLE_MERGED_SUPPLIER)
+            .await
+            .unwrap();
+            Taxes::new(
+                other.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            )
+            .save_rate(Percentage::new(SAMPLE_OTHER_TAX_PERCENT.into()).unwrap())
+            .await
+            .unwrap();
+            other
+                .connection()
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .await
+                .unwrap();
+        }
+        // Changed here after the other computer did: this rate stays.
+        Taxes::new(
+            database.clone(),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        )
+        .save_rate(Percentage::new(SAMPLE_TAX_PERCENT.into()).unwrap())
+        .await
+        .unwrap();
+        let merge_import = MergeImport::new(
+            database.clone(),
+            MODULE_MIGRATIONS,
+            MODULE_MERGES,
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        );
+        let connections = Connections::new(Arc::new(MemorySecretStore::default()));
+        crate::merge_import::merge(&other, &merge_import, backups, catalog, &connections)
+            .await
+            .unwrap()
+            .expect("the other computer brings a Supplier");
+        merge_import.open_unopened().await.unwrap();
     }
 
     /// Every published version's database migrates to this one, after a
@@ -1555,6 +1624,52 @@ mod tests {
                     SAMPLE_POST_TEMPLATE,
                     "{name}"
                 );
+                // Merge Imports arrived in 0.4.0: older samples have none.
+                let merge_import = MergeImport::new(
+                    database.clone(),
+                    MODULE_MIGRATIONS,
+                    MODULE_MERGES,
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                let merges = merge_import.merges().await.unwrap();
+                let merged_supplier = catalog
+                    .suppliers()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .any(|supplier| supplier.name == SAMPLE_MERGED_SUPPLIER);
+                if Version::parse(released) >= Version::parse("0.4.0") {
+                    assert_eq!(merges.len(), 1, "{name}");
+                    let report = &merges[0].report;
+                    let suppliers = report
+                        .records
+                        .iter()
+                        .find(|records| records.noun == "Fornecedor")
+                        .unwrap_or_else(|| panic!("{name}: {report:#?}"));
+                    assert_eq!(suppliers.new, 1, "{name}");
+                    let tax = report
+                        .records
+                        .iter()
+                        .find(|records| records.noun == "Alíquota de imposto")
+                        .unwrap_or_else(|| panic!("{name}: {report:#?}"));
+                    assert_eq!(tax.conflicts.len(), 1, "{name}");
+                    assert_eq!(tax.conflicts[0].winner, Side::Here, "{name}");
+                    assert!(tax.conflicts[0].there.changed_at.is_some(), "{name}");
+                    assert!(!merges[0].follow_ups.is_empty(), "{name}");
+                    assert!(
+                        merges[0]
+                            .follow_ups
+                            .iter()
+                            .all(|follow_up| matches!(follow_up, FollowUp::ConnectHere { .. })),
+                        "{name}"
+                    );
+                    assert!(merged_supplier, "{name}");
+                } else {
+                    assert!(merges.is_empty(), "{name}");
+                    assert!(!merged_supplier, "{name}");
+                }
+                assert_eq!(merge_import.open_unopened().await.unwrap(), None, "{name}");
             });
         }
     }
