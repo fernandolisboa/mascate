@@ -1,6 +1,6 @@
 //! "Comparar com outro banco" (ADR 0032, decisions 2 to 6): what a Merge
 //! Import would bring from another database, worked out with nothing
-//! written to either one.
+//! written to either one, and the rows a merge writes from it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -8,18 +8,21 @@ use std::sync::Arc;
 
 use libsql::Value;
 use mascate_kernel::{Clock, IdGenerator, Timestamp};
+use serde::{Deserialize, Serialize};
 
 use super::coverage::{MergeGap, merge_gaps, ordered, table_columns_in};
-use super::declarations::{Condition, KeyPart, ModuleMerge, RecognisedBy, TableMerge, UniqueKey};
+use super::declarations::{
+    Condition, KeyPart, ModuleMerge, RecognisedBy, Reference, TableMerge, UniqueKey,
+};
 use crate::backups::{check_restore, is_database_file, remove_database, text, with_suffix};
 use crate::{
-    BackupError, Database, DatabaseError, MigrationError, ModuleMigrations, RestoreError, migrate,
-    read_stored,
+    BackupError, Connection, Database, DatabaseError, MigrationError, ModuleMigrations,
+    RestoreError, StoredValueError, migrate, read_stored,
 };
 
 /// What a Merge Import would do, per kind of record, in the order the
 /// modules declare them. Kinds with nothing to say are left out.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeReport {
     pub records: Vec<RecordsReport>,
 }
@@ -29,13 +32,22 @@ impl MergeReport {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+
+    /// Whether merging would write anything: records that come in or
+    /// replace this machine's. Conflicts this machine wins and records
+    /// left out change nothing here.
+    pub fn brings_changes(&self) -> bool {
+        self.records
+            .iter()
+            .any(|records| records.new > 0 || records.changed_here > 0)
+    }
 }
 
 /// One kind of record of one module.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordsReport {
-    pub module: &'static str,
-    pub noun: &'static str,
+    pub module: String,
+    pub noun: String,
     /// Records only the other database has, deleted ones too, that come in.
     pub new: usize,
     /// Records here that the other database's newer version replaces.
@@ -47,7 +59,7 @@ pub struct RecordsReport {
 }
 
 /// A Merge Conflict: one record, different on each side.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeConflict {
     pub label: String,
     pub here: ConflictSide,
@@ -55,15 +67,16 @@ pub struct MergeConflict {
     pub winner: Side,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictSide {
     /// When this side last changed the record; `None` when the stored time
     /// does not read as one.
+    #[serde(with = "stored_times")]
     pub changed_at: Option<Timestamp>,
     pub deleted: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     /// This machine's database.
     Here,
@@ -72,19 +85,37 @@ pub enum Side {
 }
 
 /// A record of the other database that stays out, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeftOut {
     pub label: String,
     pub reason: LeftOutReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LeftOutReason {
     /// Another live record already holds one of its unique keys, such as
     /// a SKU.
     KeyTaken { by: String },
     /// It points to a record of this kind that is in neither database.
-    MissingRecord { noun: &'static str },
+    MissingRecord { noun: String },
+}
+
+/// Times as every table stores them, in a stored report.
+mod stored_times {
+    use mascate_kernel::Timestamp;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::{read_stored, stored};
+
+    pub fn serialize<S: Serializer>(at: &Option<Timestamp>, to: S) -> Result<S::Ok, S::Error> {
+        at.map(stored).serialize(to)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(from: D) -> Result<Option<Timestamp>, D::Error> {
+        Ok(Option::<String>::deserialize(from)?
+            .as_deref()
+            .and_then(read_stored))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +132,12 @@ pub enum MergeError {
     Open(#[from] DatabaseError),
     #[error("could not bring the copy of the other database up to date: {0}")]
     Migration(#[from] MigrationError),
+    #[error("could not take the Backup before merging: {0}")]
+    Backup(BackupError),
+    #[error("a stored Merge Import report does not read: {0}")]
+    StoredReport(#[from] serde_json::Error),
+    #[error(transparent)]
+    Unreadable(#[from] StoredValueError),
     #[error(transparent)]
     Sql(#[from] libsql::Error),
 }
@@ -115,12 +152,12 @@ fn gaps(gaps: &[MergeGap]) -> String {
 /// Merge Imports into one database, from files of the same app or an
 /// older one.
 pub struct MergeImport {
-    database: Arc<Database>,
+    pub(super) database: Arc<Database>,
     /// Every module's migrations, to check and bring the other file up to date.
     modules: &'static [ModuleMigrations],
-    merges: &'static [ModuleMerge],
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
+    pub(super) merges: &'static [ModuleMerge],
+    pub(super) clock: Arc<dyn Clock>,
+    pub(super) ids: Arc<dyn IdGenerator>,
 }
 
 impl MergeImport {
@@ -144,6 +181,21 @@ impl MergeImport {
     /// the Restore's check; a copy of it, brought up to date beside the
     /// database, is read and removed. Neither database is written.
     pub async fn compare(&self, file: &Path) -> Result<MergeReport, MergeError> {
+        let copy = self.prepare(file).await?;
+        let connection = attach(&self.database, &copy).await?;
+        let compared = async {
+            let transaction = connection.transaction().await?;
+            let (report, _) = examine(&transaction, self.merges).await?;
+            transaction.rollback().await?;
+            Ok(report)
+        }
+        .await;
+        finish(connection, copy, compared).await
+    }
+
+    /// Checks that `file` can be merged here and brings a copy of it up to
+    /// date beside the database.
+    pub(super) async fn prepare(&self, file: &Path) -> Result<TemporaryCopy, MergeError> {
         if is_database_file(self.database.path(), file) {
             return Err(MergeError::OwnDatabase(file.to_path_buf()));
         }
@@ -151,24 +203,7 @@ impl MergeImport {
         if !gaps.is_empty() {
             return Err(MergeError::Undeclared(gaps));
         }
-        let copy = self.migrated_copy(file).await?;
-        let connection = self.database.connect_for_transaction().await?;
-        // Values from the other file are data: no SQL function runs from
-        // its schema.
-        connection
-            .execute("PRAGMA trusted_schema = OFF", ())
-            .await?;
-        connection
-            .execute("ATTACH DATABASE ?1 AS incoming", [text(&copy.0)?])
-            .await?;
-        let compared = compare_attached(&connection, self.merges).await;
-        let detached = connection.execute("DETACH DATABASE incoming", ()).await;
-        // Closed before the copy goes: Windows keeps an open file.
-        drop(connection);
-        drop(copy);
-        let report = compared?;
-        detached?;
-        Ok(report)
+        self.migrated_copy(file).await
     }
 
     /// Copies `file` beside the database, checks the copy as a Restore
@@ -236,7 +271,7 @@ fn about(error: RestoreError, file: &Path) -> RestoreError {
 }
 
 /// A copy of the other database, removed with its journals when dropped.
-struct TemporaryCopy(PathBuf);
+pub(super) struct TemporaryCopy(PathBuf);
 
 impl Drop for TemporaryCopy {
     fn drop(&mut self) {
@@ -244,27 +279,70 @@ impl Drop for TemporaryCopy {
     }
 }
 
-/// Compares `main` with the database attached as `incoming`, in one read
-/// snapshot of both.
-async fn compare_attached(
+/// A connection of its own with the copy attached as `incoming`.
+pub(super) async fn attach(
+    database: &Database,
+    copy: &TemporaryCopy,
+) -> Result<Connection, MergeError> {
+    let connection = database.connect_for_transaction().await?;
+    // Values from the other file are data: no SQL function runs from its
+    // schema.
+    connection
+        .execute("PRAGMA trusted_schema = OFF", ())
+        .await?;
+    connection
+        .execute("ATTACH DATABASE ?1 AS incoming", [text(&copy.0)?])
+        .await?;
+    Ok(connection)
+}
+
+/// Detaches and removes the copy, whatever became of the work done with it.
+pub(super) async fn finish<T>(
+    connection: Connection,
+    copy: TemporaryCopy,
+    outcome: Result<T, MergeError>,
+) -> Result<T, MergeError> {
+    let detached = connection.execute("DETACH DATABASE incoming", ()).await;
+    // Closed before the copy goes: Windows keeps an open file.
+    drop(connection);
+    drop(copy);
+    let outcome = outcome?;
+    detached?;
+    Ok(outcome)
+}
+
+/// The rows a merge writes into one table: this machine's records the other
+/// database's newer versions replace, under this machine's ids, and the
+/// records only the other database has.
+pub(super) struct TableWrites {
+    pub(super) table: &'static str,
+    pub(super) columns: Vec<String>,
+    pub(super) replaced: Vec<Row>,
+    pub(super) new: Vec<Row>,
+}
+
+/// Compares `main` with the database attached as `incoming`, inside the
+/// caller's transaction, so both are read in one snapshot: the report, and
+/// what merging writes, table by table with tables pointed to first.
+pub(super) async fn examine(
     connection: &libsql::Connection,
     merges: &[ModuleMerge],
-) -> Result<MergeReport, MergeError> {
+) -> Result<(MergeReport, Vec<TableWrites>), MergeError> {
     let declared: Vec<&TableMerge> = merges.iter().flat_map(|module| module.tables).collect();
     let tables =
         ordered(&declared).map_err(|cycle| MergeError::Undeclared(vec![MergeGap::Cycle(cycle)]))?;
-    let transaction = connection.transaction().await?;
     let mut state = State::default();
     let mut reports: HashMap<&str, RecordsReport> = HashMap::new();
+    let mut writes = Vec::new();
     for table in tables {
         let module = merges
             .iter()
             .find(|module| module.tables.iter().any(|t| t.table == table.table))
             .map_or("", |module| module.module);
-        let report = compare_table(&transaction, module, table, &mut state).await?;
+        let (report, written) = compare_table(connection, module, table, &mut state).await?;
         reports.insert(table.table, report);
+        writes.extend(written);
     }
-    transaction.rollback().await?;
     let records = declared
         .iter()
         .filter_map(|table| reports.remove(table.table))
@@ -275,12 +353,12 @@ async fn compare_attached(
                 || !report.left_out.is_empty()
         })
         .collect();
-    Ok(MergeReport { records })
+    Ok((MergeReport { records }, writes))
 }
 
 /// One stored value, comparable and hashable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Cell {
+pub(super) enum Cell {
     Null,
     Integer(i64),
     /// The bits of the float, so equal values compare equal.
@@ -297,6 +375,18 @@ impl From<Value> for Cell {
             Value::Real(real) => Cell::Real(real.to_bits()),
             Value::Text(text) => Cell::Text(text),
             Value::Blob(blob) => Cell::Blob(blob),
+        }
+    }
+}
+
+impl From<&Cell> for Value {
+    fn from(cell: &Cell) -> Self {
+        match cell {
+            Cell::Null => Value::Null,
+            Cell::Integer(integer) => Value::Integer(*integer),
+            Cell::Real(bits) => Value::Real(f64::from_bits(*bits)),
+            Cell::Text(text) => Value::Text(text.clone()),
+            Cell::Blob(blob) => Value::Blob(blob.clone()),
         }
     }
 }
@@ -323,7 +413,7 @@ impl Cell {
     }
 }
 
-type Row = Vec<Cell>;
+pub(super) type Row = Vec<Cell>;
 
 /// The rows of one table and where each column sits.
 struct Table {
@@ -397,7 +487,7 @@ async fn compare_table(
     module: &'static str,
     table: &TableMerge,
     state: &mut State,
-) -> Result<RecordsReport, libsql::Error> {
+) -> Result<(RecordsReport, Option<TableWrites>), libsql::Error> {
     let columns = table_columns_in(connection, "main", table.table).await?;
     let local = Table {
         rows: read(connection, "main", table.table, &columns).await?,
@@ -408,8 +498,8 @@ async fn compare_table(
         columns,
     };
     let mut report = RecordsReport {
-        module,
-        noun: table.noun,
+        module: module.to_owned(),
+        noun: table.noun.to_owned(),
         new: 0,
         changed_here: 0,
         conflicts: Vec::new(),
@@ -424,7 +514,7 @@ async fn compare_table(
                 labels,
             },
         );
-        return Ok(report);
+        return Ok((report, None));
     }
 
     swap_references(table, &mut incoming, state);
@@ -439,6 +529,7 @@ async fn compare_table(
             (local_id != incoming_id).then(|| (incoming_id.to_owned(), local_id.to_owned()))
         })
         .collect();
+    swap_own_references(table, &mut incoming, &swaps);
     state.swaps.insert(table.table, swaps);
 
     let mut fates = Vec::with_capacity(incoming.rows.len());
@@ -511,7 +602,48 @@ async fn compare_table(
             labels,
         },
     );
-    Ok(report)
+    let writes = writes(table, local, incoming, &fates, &left_out);
+    Ok((report, Some(writes)))
+}
+
+/// What merging writes into the table: each newer version that comes in
+/// under this machine's id with the older `created_at` of the two, and each
+/// new record as it is.
+fn writes(
+    table: &TableMerge,
+    local: Table,
+    incoming: Table,
+    fates: &[Fate],
+    left_out: &[Option<LeftOutReason>],
+) -> TableWrites {
+    let (id, created) = (local.at("id"), local.at("created_at"));
+    let mut writes = TableWrites {
+        table: table.table,
+        columns: local.columns.clone(),
+        replaced: Vec::new(),
+        new: Vec::new(),
+    };
+    for ((fate, out), mut row) in fates.iter().zip(left_out).zip(incoming.rows) {
+        match (fate, out) {
+            (_, Some(_)) | (Fate::Kept(_), _) => {}
+            (Fate::New, None) => writes.new.push(row),
+            (Fate::Replaces(here), None) => {
+                let here = &local.rows[*here];
+                row[id] = here[id].clone();
+                // The older of the two; a time that does not read keeps this
+                // machine's.
+                let older_there = matches!(
+                    (here[created].time(), row[created].time()),
+                    (Some(here), Some(there)) if there < here
+                );
+                if !older_there {
+                    row[created] = here[created].clone();
+                }
+                writes.replaced.push(row);
+            }
+        }
+    }
+    writes
 }
 
 fn local_labels(table: &TableMerge, local: &Table, state: &State) -> HashMap<String, String> {
@@ -551,19 +683,32 @@ fn merged_rows<'a>(
 /// to this machine's ids, so its rows compare and point as these do.
 fn swap_references(table: &TableMerge, incoming: &mut Table, state: &State) {
     for reference in table.references {
-        let Some(swaps) = state.swaps.get(reference.table) else {
+        if let Some(swaps) = state.swaps.get(reference.table) {
+            swap(reference, incoming, swaps);
+        }
+    }
+}
+
+/// The same for the references of a table to its own records, once they
+/// are recognised.
+fn swap_own_references(table: &TableMerge, incoming: &mut Table, swaps: &HashMap<String, String>) {
+    for reference in table.references {
+        if reference.table == table.table {
+            swap(reference, incoming, swaps);
+        }
+    }
+}
+
+fn swap(reference: &Reference, incoming: &mut Table, swaps: &HashMap<String, String>) {
+    let at = incoming.at(reference.column);
+    let when = reference.when.map(|when| (incoming.at(when.column), when));
+    for row in &mut incoming.rows {
+        if when.is_some_and(|(column, when)| !meets(&row[column], when)) {
             continue;
-        };
-        let at = incoming.at(reference.column);
-        let when = reference.when.map(|when| (incoming.at(when.column), when));
-        for row in &mut incoming.rows {
-            if when.is_some_and(|(column, when)| !meets(&row[column], when)) {
-                continue;
-            }
-            let swapped = row[at].text().and_then(|id| swaps.get(id));
-            if let Some(swapped) = swapped {
-                row[at] = Cell::Text(swapped.clone());
-            }
+        }
+        let swapped = row[at].text().and_then(|id| swaps.get(id));
+        if let Some(swapped) = swapped {
+            row[at] = Cell::Text(swapped.clone());
         }
     }
 }
@@ -763,7 +908,9 @@ fn check_references(
                 }
             };
             if !exists {
-                left_out[at] = Some(LeftOutReason::MissingRecord { noun });
+                left_out[at] = Some(LeftOutReason::MissingRecord {
+                    noun: noun.to_owned(),
+                });
                 break;
             }
         }

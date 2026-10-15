@@ -1,6 +1,7 @@
 //! Settings › Backup (#6): where Backups go and how many stay, a Backup on
-//! demand, export, restore, also when the database does not open (#8), and
-//! the comparison with another machine's database (#117).
+//! demand, export, restore, also when the database does not open (#8), the
+//! comparison with another machine's database (#117), the merge of it and
+//! the merges applied before (#118).
 //! The daily Backup runs in the background while the app is open or in the
 //! tray. The rules live in the platform module.
 
@@ -15,14 +16,16 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, PathPromptOptions, Subscription, Window, div, px};
 use mascate_platform::{
-    Backup, BackupError, BackupSettings, Backups, MAX_KEEP, MergeError, MergeImport, MergeReport,
-    RestoreError, stage_restore_without_backup,
+    AppliedMerge, Backup, BackupError, BackupSettings, Backups, MAX_KEEP, MergeError, MergeImport,
+    MergeReport, RestoreError, stage_restore_without_backup,
 };
 
 use crate::appearance::look;
-use crate::forms::Outcome;
+use crate::catalog::catalog;
+use crate::connections::AppConnections;
+use crate::forms::{self, Outcome};
 use crate::kit;
-use crate::merge_import;
+use crate::merge_import::{self, MergeFailed};
 use crate::ordered_saves::OrderedSaves;
 use crate::startup::MODULE_MIGRATIONS;
 use crate::updates;
@@ -37,6 +40,8 @@ pub struct AppBackups {
     pub merge_import: Arc<MergeImport>,
     pub settings: BackupSettings,
     pub restore: Option<Result<(), String>>,
+    /// The Merge Import applied before this start, until Settings opens it.
+    pub merged: Option<AppliedMerge>,
     /// Why the last daily Backup failed, until one succeeds.
     pub daily_failure: Arc<Mutex<Option<String>>>,
 }
@@ -117,14 +122,33 @@ fn restore_refused(error: RestoreError) -> String {
     file_refused(error, "restaurar").unwrap_or_else(backup_failed)
 }
 
-fn compare_refused(error: MergeError) -> String {
+/// Why comparing or merging, as `action` names it, did not happen.
+fn merge_refused(error: MergeError, action: &str) -> String {
     match error {
-        MergeError::Refused(error) => file_refused(error, "comparar")
+        MergeError::Refused(error) => file_refused(error, action)
             .unwrap_or_else(|error| format!("Não consegui ler o outro banco: {error}")),
         MergeError::OwnDatabase(_) => {
             "Esse arquivo é o próprio banco do app; escolha o do outro computador.".to_string()
         }
-        error => format!("Não consegui comparar: {error}"),
+        MergeError::Backup(error) => {
+            format!("Não consegui fazer o Backup antes de mesclar, então nada mudou: {error}")
+        }
+        error => format!("Não consegui {action}: {error}"),
+    }
+}
+
+fn merge_failed(failed: MergeFailed) -> String {
+    match failed {
+        MergeFailed::Products(error) => {
+            format!("Não consegui ler os produtos antes de mesclar, então nada mudou: {error}")
+        }
+        MergeFailed::Merge(error @ (MergeError::Refused(_) | MergeError::Backup(_))) => {
+            merge_refused(error, "mesclar")
+        }
+        MergeFailed::Merge(error) => format!(
+            "{} O banco ficou como estava antes.",
+            merge_refused(error, "mesclar")
+        ),
     }
 }
 
@@ -134,6 +158,12 @@ struct Compared {
     report: MergeReport,
 }
 
+/// The report open in place of the section.
+enum Opened {
+    Compared(Compared),
+    Merged(AppliedMerge),
+}
+
 pub struct BackupSection {
     /// The settings as last chosen on this screen.
     settings: BackupSettings,
@@ -141,7 +171,11 @@ pub struct BackupSection {
     newest: Option<Backup>,
     /// The file waiting for the owner to confirm the restore.
     confirming: Option<PathBuf>,
-    compared: Option<Compared>,
+    open: Option<Opened>,
+    /// The open comparison waits for the owner to confirm the merge.
+    confirming_merge: bool,
+    /// The merges applied here, newest first.
+    merges: Vec<AppliedMerge>,
     busy: bool,
     /// Settings saves still on their way to the database.
     saving: usize,
@@ -182,12 +216,19 @@ impl BackupSection {
                 }
             }
         })];
+        // The app restarted after a merge: it opens on its report.
+        let merged = cx
+            .has_global::<AppBackups>()
+            .then(|| cx.global_mut::<AppBackups>().merged.take())
+            .flatten();
         let mut section = Self {
             settings,
             keep,
             newest: None,
             confirming: None,
-            compared: None,
+            open: merged.map(Opened::Merged),
+            confirming_merge: false,
+            merges: Vec::new(),
             busy: false,
             saving: 0,
             outcome: None,
@@ -195,7 +236,57 @@ impl BackupSection {
             _subscriptions: subscriptions,
         };
         section.read_newest(cx);
+        section.read_merges(cx);
         section
+    }
+
+    fn read_merges(&mut self, cx: &mut Context<Self>) {
+        let Some(merge_import) = Self::merge_import(cx) else {
+            return;
+        };
+        let reading = cx
+            .background_executor()
+            .spawn(async move { merge_import.merges().await });
+        cx.spawn(async move |this, cx| {
+            let read = reading.await;
+            let _ = this.update(cx, |this, cx| {
+                match read {
+                    Ok(merges) => this.merges = merges,
+                    Err(error) => {
+                        this.outcome = Some(Outcome::Failed(
+                            format!("Não consegui ler as mesclagens feitas: {error}").into(),
+                        ));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn merge_import(cx: &App) -> Option<Arc<MergeImport>> {
+        cx.try_global::<AppBackups>()
+            .map(|app| app.merge_import.clone())
+    }
+
+    /// The title of the report open in place of the section, if one is.
+    pub fn report_title(&self) -> Option<String> {
+        Some(match self.open.as_ref()? {
+            Opened::Compared(compared) => {
+                format!("Comparação com {}", merge_import::file_name(&compared.file))
+            }
+            Opened::Merged(applied) => {
+                format!("Mesclagem de {}", merge_import::file_name(&applied.file))
+            }
+        })
+    }
+
+    pub fn close_report(&mut self, cx: &mut Context<Self>) {
+        self.open = None;
+        self.confirming_merge = false;
+        self.outcome = None;
+        self.read_merges(cx);
+        cx.notify();
     }
 
     fn backups(cx: &App) -> Option<Arc<Backups>> {
@@ -394,10 +485,7 @@ impl BackupSection {
     /// Compares `file` with this database off the UI thread, then shows the
     /// report. Nothing is written to either database.
     fn compare(&mut self, file: PathBuf, cx: &mut Context<Self>) {
-        let Some(merge_import) = cx
-            .try_global::<AppBackups>()
-            .map(|app| app.merge_import.clone())
-        else {
+        let Some(merge_import) = Self::merge_import(cx) else {
             return;
         };
         self.busy = true;
@@ -412,9 +500,13 @@ impl BackupSection {
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 match compared {
-                    Ok(report) => this.compared = Some(Compared { file, report }),
+                    Ok(report) => {
+                        this.open = Some(Opened::Compared(Compared { file, report }));
+                        this.confirming_merge = false;
+                    }
                     Err(error) => {
-                        this.outcome = Some(Outcome::Failed(compare_refused(error).into()));
+                        this.outcome =
+                            Some(Outcome::Failed(merge_refused(error, "comparar").into()));
                     }
                 }
                 cx.notify();
@@ -424,39 +516,197 @@ impl BackupSection {
         cx.notify();
     }
 
+    /// Merges the compared file after a Backup, then restarts the app,
+    /// which opens on the merge's report.
+    fn merge(&mut self, cx: &mut Context<Self>) {
+        let Some(Opened::Compared(compared)) = &self.open else {
+            return;
+        };
+        let file = compared.file.clone();
+        let (Some(app), Some(catalog), Some(connections)) = (
+            cx.try_global::<AppBackups>(),
+            catalog(cx),
+            cx.try_global::<AppConnections>().map(|app| app.0.clone()),
+        ) else {
+            return;
+        };
+        let (merge_import, backups) = (app.merge_import.clone(), app.backups.clone());
+        self.busy = true;
+        self.outcome = None;
+        let merging = cx.background_executor().spawn(async move {
+            merge_import::merge(&file, &merge_import, &backups, &catalog, &connections).await
+        });
+        cx.spawn(async move |this, cx| {
+            let merged = merging.await;
+            let _ = this.update(cx, |this, cx| {
+                match merged {
+                    Ok(Some(_)) => return updates::restart(cx),
+                    Ok(None) => {
+                        if let Some(Opened::Compared(compared)) = &mut this.open {
+                            compared.report = MergeReport::default();
+                        }
+                        this.outcome = Some(Outcome::Done(
+                            "Com o banco como está agora, o outro banco não traz nada para gravar \
+                             aqui: nada mudou."
+                                .into(),
+                        ));
+                    }
+                    Err(failed) => {
+                        this.outcome = Some(Outcome::Failed(merge_failed(failed).into()));
+                    }
+                }
+                this.busy = false;
+                this.confirming_merge = false;
+                this.read_newest(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_comparison(&self, compared: &Compared, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let name = compared.file.file_name().map_or_else(
-            || compared.file.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
+        let actions = if !compared.report.brings_changes() {
+            (!compared.report.is_empty()).then(|| {
+                kit::info_notice(
+                    "Mesclar não mudaria nada aqui: ficam as versões deste computador, e o que \
+                     fica de fora não entra.",
+                    cx,
+                )
+                .into_any_element()
+            })
+        } else if self.confirming_merge {
+            Some(self.render_merge_confirmation(&compared.file, cx))
+        } else {
+            Some(
+                h_flex()
+                    .child(
+                        Button::new("merge-database")
+                            .label("Mesclar…")
+                            .primary()
+                            .small()
+                            .disabled(self.blocked())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirming_merge = true;
+                                this.outcome = None;
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element(),
+            )
+        };
         v_flex()
             .gap_3()
+            .child(div().text_sm().text_color(t.text2).child(format!(
+                "O que um Merge Import traria de {}. Vence a alteração mais recente de cada \
+                 registro, e os registros diferentes nos dois lados aparecem como conflito. \
+                 Comparar não grava nada em nenhum dos dois bancos.",
+                compared.file.display()
+            )))
+            .children(actions)
+            .when_some(self.outcome.as_ref(), |view, outcome| {
+                view.child(forms::notice(outcome, cx))
+            })
+            .child(merge_import::report_view(&compared.report, cx))
+            .into_any_element()
+    }
+
+    fn render_merge_confirmation(&self, file: &Path, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.accent)
+            .child(
+                div()
+                    .text_sm()
+                    .font_medium()
+                    .child(format!("Mesclar {} neste banco?", file.display())),
+            )
+            .child(div().text_sm().text_color(t.text2).child(
+                "Antes, o app faz um Backup do banco atual. Depois compara de novo, com o banco \
+                 como estiver agora, grava tudo de uma vez e reinicia já no relatório. O que \
+                 fica de fora não entra; o resto entra.",
+            ))
             .child(
                 h_flex()
                     .gap_2()
-                    .items_center()
-                    .justify_between()
-                    .child(kit::section_heading(format!("Comparação com {name}")))
                     .child(
-                        Button::new("close-comparison")
-                            .label("Voltar")
+                        Button::new("confirm-merge")
+                            .label("Mesclar e reiniciar")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(self.blocked())
+                            .on_click(cx.listener(|this, _, _, cx| this.merge(cx))),
+                    )
+                    .child(
+                        Button::new("cancel-merge")
+                            .label("Cancelar")
                             .ghost()
                             .small()
+                            .disabled(self.busy)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.compared = None;
+                                this.confirming_merge = false;
                                 cx.notify();
                             })),
                     ),
             )
-            .child(div().text_sm().text_color(t.text2).child(format!(
-                "O que um Merge Import traria de {}. Vence a alteração mais recente de cada \
-                 registro, e os registros diferentes nos dois lados aparecem como conflito. \
-                 Nada foi gravado em nenhum dos dois bancos.",
-                compared.file.display()
-            )))
-            .child(merge_import::report_view(&compared.report, cx))
             .into_any_element()
+    }
+
+    fn render_merges(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.merges.is_empty() {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let rows: Vec<AnyElement> = self
+            .merges
+            .iter()
+            .enumerate()
+            .map(|(at, applied)| {
+                let open = applied.clone();
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .text_sm()
+                            .child(merge_import::merge_line(applied)),
+                    )
+                    .child(
+                        Button::new(("open-merge", at))
+                            .label("Abrir")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open = Some(Opened::Merged(open.clone()));
+                                this.outcome = None;
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        Some(
+            v_flex()
+                .gap_2()
+                .child(div().h_2())
+                .child(kit::section_heading("Mesclagens"))
+                .child(
+                    div().text_sm().text_color(t.text2).child(
+                        "Os Merge Imports feitos neste computador, o mais recente primeiro.",
+                    ),
+                )
+                .children(rows)
+                .into_any_element(),
+        )
     }
 
     /// Checks and stages the confirmed file, then restarts the app, which
@@ -620,8 +870,14 @@ impl Render for BackupSection {
                 });
         }
 
-        if let Some(compared) = &self.compared {
-            return v_flex().child(self.render_comparison(compared, cx));
+        match &self.open {
+            Some(Opened::Compared(compared)) => {
+                return v_flex().child(self.render_comparison(compared, cx));
+            }
+            Some(Opened::Merged(applied)) => {
+                return v_flex().child(merge_import::applied_view(applied, cx));
+            }
+            None => {}
         }
 
         let label = |text: &'static str| {
@@ -746,7 +1002,7 @@ impl Render for BackupSection {
                 "Exportar grava a mesma cópia onde você escolher. Restaurar troca o banco \
                  atual por um Backup ou export do Mascate, de versão igual ou anterior. \
                  Comparar mostra o que esse arquivo traria para este banco, registro por \
-                 registro, sem gravar nada.",
+                 registro, sem gravar nada; dali dá para mesclar, depois de um Backup.",
             ))
             .child(carry)
             .when_some(self.confirming.clone(), |section, file| {
@@ -758,5 +1014,6 @@ impl Render for BackupSection {
                     Outcome::Failed(text) => kit::error_notice(text.clone(), cx),
                 })
             })
+            .children(self.render_merges(cx))
     }
 }

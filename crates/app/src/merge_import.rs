@@ -1,18 +1,80 @@
-//! Settings › Backup › "Comparar com outro banco" (#117): the report of
-//! what a Merge Import would bring from another machine's database, with
-//! nothing written. The rules live in the platform module (ADR 0032).
+//! Settings › Backup › "Comparar com outro banco" (#117) and "Mesclar"
+//! (#118): the report of what a Merge Import brings from another machine's
+//! database, the merge itself with what the database cannot carry, and the
+//! merges applied before. The rules live in the platform module (ADR 0032).
+
+use std::path::Path;
 
 use chrono::Local;
 use gpui_kit::component::{StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Div, div};
+use mascate_catalog::{Catalog, CatalogError};
+use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::Timestamp;
 use mascate_platform::{
-    ConflictSide, LeftOut, LeftOutReason, MergeConflict, MergeReport, RecordsReport, Side,
+    AppliedMerge, Backups, ConflictSide, FollowUp, LeftOut, LeftOutReason, MergeConflict,
+    MergeError, MergeImport, MergeReport, RecordsReport, Side,
 };
 
 use crate::appearance::look;
+use crate::connections::connection_name;
 use crate::kit;
+
+/// Why nothing was merged.
+#[derive(Debug)]
+pub(crate) enum MergeFailed {
+    /// The Products could not be read before the merge, to follow their
+    /// folders after it.
+    Products(CatalogError),
+    Merge(MergeError),
+}
+
+impl From<MergeError> for MergeFailed {
+    fn from(error: MergeError) -> Self {
+        MergeFailed::Merge(error)
+    }
+}
+
+/// Merges `file` into this database, then lines up what the database
+/// cannot carry: the Connections without keys here and the Product folders
+/// (ADR 0032, decision 8). `None` when the file brought nothing to write.
+pub(crate) async fn merge(
+    file: &Path,
+    merge_import: &MergeImport,
+    backups: &Backups,
+    catalog: &Catalog,
+    connections: &Connections,
+) -> Result<Option<AppliedMerge>, MergeFailed> {
+    let before = catalog.products().await.map_err(MergeFailed::Products)?;
+    let Some(mut applied) = merge_import.merge(file, backups).await? else {
+        return Ok(None);
+    };
+    // Written already: what follows only tells the owner what is left.
+    applied.follow_ups = Connection::ALL
+        .into_iter()
+        .filter(|connection| {
+            matches!(
+                connections.state(*connection),
+                ConnectionState::NotConfigured | ConnectionState::AwaitingApproval
+            )
+        })
+        .map(|connection| FollowUp::ConnectHere {
+            connection: connection_name(connection).to_owned(),
+        })
+        .collect();
+    match catalog.follow_merge(&before).await {
+        Ok(folders) => applied.follow_ups.extend(folders),
+        Err(error) => eprintln!("could not bring the Product folders in line: {error}"),
+    }
+    if let Err(error) = merge_import
+        .save_follow_ups(applied.id, &applied.follow_ups)
+        .await
+    {
+        eprintln!("could not save what is left after the merge: {error}");
+    }
+    Ok(Some(applied))
+}
 
 /// How many conflicts and records left out each kind lists before
 /// summing up the rest.
@@ -123,7 +185,7 @@ pub fn report_view(report: &MergeReport, cx: &App) -> Div {
     let mut module = "";
     for records in &report.records {
         if records.module != module {
-            module = records.module;
+            module = &records.module;
             view = view.child(
                 div()
                     .pt_2()
@@ -137,14 +199,14 @@ pub fn report_view(report: &MergeReport, cx: &App) -> Div {
             records
                 .conflicts
                 .iter()
-                .map(|conflict| conflict_line(records.noun, conflict))
+                .map(|conflict| conflict_line(&records.noun, conflict))
                 .collect(),
         );
         let left_out = listed(
             records
                 .left_out
                 .iter()
-                .map(|left_out| left_out_line(records.noun, left_out))
+                .map(|left_out| left_out_line(&records.noun, left_out))
                 .collect(),
         );
         view = view.child(
@@ -158,7 +220,7 @@ pub fn report_view(report: &MergeReport, cx: &App) -> Div {
                     h_flex()
                         .gap_2()
                         .flex_wrap()
-                        .child(div().text_sm().font_medium().child(records.noun))
+                        .child(div().text_sm().font_medium().child(records.noun.clone()))
                         .child(div().text_sm().text_color(t.text2).child(counts(records))),
                 )
                 .children(
@@ -176,6 +238,108 @@ pub fn report_view(report: &MergeReport, cx: &App) -> Div {
     view
 }
 
+/// What the owner still has to do by hand after a merge, one line each;
+/// the Connections go in one line.
+pub(crate) fn follow_up_lines(follow_ups: &[FollowUp]) -> Vec<String> {
+    let connections: Vec<&str> = follow_ups
+        .iter()
+        .filter_map(|follow_up| match follow_up {
+            FollowUp::ConnectHere { connection } => Some(connection.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut lines = Vec::new();
+    if !connections.is_empty() {
+        lines.push(format!(
+            "Senhas e chaves não vêm no banco: ficam no cofre de cada computador. Este não tem \
+             as chaves de {}. Se você usa alguma delas no outro computador, ligue aqui também, \
+             em Configurações › Conexões.",
+            connections.join(", ")
+        ));
+    }
+    lines.extend(follow_ups.iter().filter_map(|follow_up| match follow_up {
+        FollowUp::ConnectHere { .. } => None,
+        FollowUp::CopyFolder { product } => Some(format!(
+            "{product}: a pasta de arquivos dele ficou no outro computador; copie-a de lá para \
+             a pasta de produtos daqui."
+        )),
+        FollowUp::FolderNotRenamed { product, reason } => Some(format!(
+            "{product}: a pasta de arquivos continua com o nome do SKU antigo ({reason}). \
+             Renomeie-a à mão para o SKU novo."
+        )),
+    }));
+    lines
+}
+
+/// "12 chegaram · 3 mudaram aqui · 2 conflitos", or that nothing came.
+pub(crate) fn merge_summary(report: &MergeReport) -> String {
+    let sum = |count: fn(&RecordsReport) -> usize| report.records.iter().map(count).sum();
+    let parts: Vec<String> = [
+        (sum(|r| r.new), "chegou", "chegaram"),
+        (sum(|r| r.changed_here), "mudou aqui", "mudaram aqui"),
+        (sum(|r| r.conflicts.len()), "conflito", "conflitos"),
+        (
+            sum(|r| r.left_out.len()),
+            "ficou de fora",
+            "ficaram de fora",
+        ),
+    ]
+    .into_iter()
+    .filter(|(count, ..)| *count > 0)
+    .map(|(count, one, many)| counted(count, one, many))
+    .collect();
+    if parts.is_empty() {
+        "nada novo".to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// The file's name without its folder.
+pub(crate) fn file_name(file: &Path) -> String {
+    file.file_name().map_or_else(
+        || file.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// One merge applied before, as Settings › Backup › Mesclagens lists it.
+pub(crate) fn merge_line(applied: &AppliedMerge) -> String {
+    format!(
+        "{}, {}: {}",
+        file_name(&applied.file),
+        when(Some(applied.merged_at)),
+        merge_summary(&applied.report)
+    )
+}
+
+/// A merge applied here: when and from where, the Backup taken before it,
+/// what is left to do by hand, and its report.
+pub fn applied_view(applied: &AppliedMerge, cx: &App) -> Div {
+    let t = look(cx).tokens;
+    let follow_ups = follow_up_lines(&applied.follow_ups);
+    v_flex()
+        .gap_3()
+        .child(div().text_sm().text_color(t.text2).child(format!(
+            "Mesclado {} a partir de {}. Venceu a alteração mais recente de cada registro. O \
+             banco de antes está no Backup {}.",
+            when(Some(applied.merged_at)),
+            applied.file.display(),
+            applied.backup.display()
+        )))
+        .when(!follow_ups.is_empty(), |view| {
+            view.child(kit::section_heading("Falta fazer à mão")).child(
+                v_flex().gap_1().children(
+                    follow_ups
+                        .into_iter()
+                        .map(|line| kit::info_notice(line, cx)),
+                ),
+            )
+        })
+        .child(kit::section_heading("O que a mesclagem fez"))
+        .child(report_view(&applied.report, cx))
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -191,13 +355,16 @@ mod tests {
         ChannelStock, ListingStatus, Listings, NewPurchaseLine, NewPurchaseOrder, OrderStatus,
         Orders, PurchaseOrders, Receiving, SaleFee, SalesChannel,
     };
+    use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, Inventory};
     use mascate_kernel::testing::ManualClock;
     use mascate_kernel::{
         Clock, Currency, IdGenerator, ListingType, Money, PlatformError, RecordId,
     };
     use mascate_marketing::SalesEvents;
-    use mascate_platform::{Database, MergeImport, merge_gaps, migrate};
+    use mascate_platform::{
+        Backups, Database, MergeImport, Secret, SecretStore, SecretStoreError, merge_gaps, migrate,
+    };
     use rust_decimal::Decimal;
 
     use super::*;
@@ -315,6 +482,7 @@ mod tests {
     struct Machine {
         database: Arc<Database>,
         catalog: Catalog,
+        inventory: Arc<Inventory>,
         listings: Listings,
         purchases: PurchaseOrders,
         orders: Orders,
@@ -344,7 +512,13 @@ mod tests {
                     clock.clone(),
                     ids.clone(),
                 ),
-                orders: Orders::new(database.clone(), inventory, clock.clone(), ids.clone()),
+                orders: Orders::new(
+                    database.clone(),
+                    inventory.clone(),
+                    clock.clone(),
+                    ids.clone(),
+                ),
+                inventory,
                 events: SalesEvents::new(database.clone(), clock, ids),
                 database,
             }
@@ -377,6 +551,31 @@ mod tests {
         }
         dumped.sort();
         dumped
+    }
+
+    /// A credential store with nothing in it: no Connection has its keys.
+    struct NoSecrets;
+
+    impl SecretStore for NoSecrets {
+        fn read(&self, _: &str) -> Result<Option<Secret>, SecretStoreError> {
+            Ok(None)
+        }
+
+        fn write(&self, _: &str, _: &Secret) -> Result<(), SecretStoreError> {
+            Ok(())
+        }
+
+        fn remove(&self, _: &str) -> Result<(), SecretStoreError> {
+            Ok(())
+        }
+    }
+
+    async fn export(database: &Database, to: &Path) {
+        database
+            .connection()
+            .execute("VACUUM INTO ?1", [to.to_str().unwrap()])
+            .await
+            .unwrap();
     }
 
     fn records<'a>(report: &'a MergeReport, noun: &str) -> Option<&'a RecordsReport> {
@@ -526,6 +725,205 @@ mod tests {
     }
 
     #[test]
+    fn two_machines_with_crossed_changes_merge_into_one_order_one_sale_and_the_newer_records() {
+        block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let clock = Arc::new(ManualClock::at(at(0)));
+            let channel = Channel::default();
+            let first = Machine::open(&dir.path().join("first.db"), clock.clone(), 1_000).await;
+            let supplier = first.catalog.add_supplier("Loja do Centro").await.unwrap();
+            let fone = first
+                .catalog
+                .add_product("Fone Bluetooth", "FONE-01")
+                .await
+                .unwrap();
+            std::fs::write(first.catalog.folder(&fone).join("nota.txt"), b"nota").unwrap();
+            first.listings.sync(&channel).await.unwrap();
+            let found = first.listings.listings().await.unwrap();
+            first.listings.link(found[0].id, fone.id).await.unwrap();
+            first.orders.sync(&channel).await.unwrap();
+            let purchase = first
+                .purchases
+                .create(NewPurchaseOrder {
+                    supplier: supplier.id,
+                    ordered_on: at(0).date_naive(),
+                    freight: brl(0),
+                    lines: vec![NewPurchaseLine {
+                        product: fone.id,
+                        quantity: 10,
+                        unit_price: brl(40),
+                    }],
+                })
+                .await
+                .unwrap();
+            first
+                .purchases
+                .receive(
+                    purchase.id,
+                    HOME_LOCATION,
+                    &[Receiving {
+                        line: purchase.lines[0].id,
+                        quantity: 10,
+                    }],
+                )
+                .await
+                .unwrap();
+            let second_path = dir.path().join("second.db");
+            export(&first.database, &second_path).await;
+            let second = Machine::open(&second_path, clock.clone(), 2_000_000).await;
+
+            // Both machines read the same sale; each one records its own
+            // things, and the second gives the fone a new SKU later.
+            clock.advance(TimeDelta::minutes(10));
+            channel.orders.lock().unwrap().push(sold_order(clock.now()));
+            first.orders.sync(&channel).await.unwrap();
+            first.events.record_defaults().await.unwrap();
+            first.catalog.add_product("Cabo", "CABO-01").await.unwrap();
+            clock.advance(TimeDelta::minutes(5));
+            second.orders.sync(&channel).await.unwrap();
+            second.events.record_defaults().await.unwrap();
+            second.catalog.add_product("Capa", "CAPA-01").await.unwrap();
+            clock.advance(TimeDelta::minutes(5));
+            second.catalog.rename_sku(fone.id, "FONE-BT").await.unwrap();
+            let file = dir.path().join("second-export.db");
+            export(&second.database, &file).await;
+            let merge_import = MergeImport::new(
+                first.database.clone(),
+                MODULE_MIGRATIONS,
+                MODULE_MERGES,
+                clock.clone(),
+                Arc::new(IdsFrom(AtomicU64::new(9_000_000))),
+            );
+            let backups = Backups::new(
+                first.database.clone(),
+                MODULE_MIGRATIONS,
+                dir.path().join("backups"),
+                clock.clone(),
+                Arc::new(IdsFrom(AtomicU64::new(9_500_000))),
+            );
+            let connections = Connections::new(Arc::new(NoSecrets));
+            clock.advance(TimeDelta::minutes(5));
+
+            let applied = merge(&file, &merge_import, &backups, &first.catalog, &connections)
+                .await
+                .unwrap()
+                .expect("the second machine brings changes");
+
+            let orders = first.orders.orders().await.unwrap();
+            assert_eq!(orders.len(), 1);
+            assert_eq!((orders[0].lines.len(), orders[0].units()), (1, 2));
+            // Stock and Average Cost are what one Sync gave on its own.
+            let stock_of = |stock: mascate_inventory::Stock| {
+                stock
+                    .products
+                    .into_iter()
+                    .find(|product| product.product == fone.id)
+                    .unwrap()
+                    .valuation
+            };
+            let merged = stock_of(first.inventory.stock().await.unwrap());
+            assert_eq!(merged, stock_of(second.inventory.stock().await.unwrap()));
+            assert_eq!(merged.quantity(), 8);
+            assert_eq!(
+                first.inventory.average_cost(fone.id).await.unwrap(),
+                Some(brl(40))
+            );
+            let skus: Vec<String> = first
+                .catalog
+                .products()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|product| product.sku.to_string())
+                .collect();
+            assert_eq!(skus, ["CABO-01", "CAPA-01", "FONE-BT"]);
+            // The fone's folder followed its new SKU, files and all.
+            let fone = first.catalog.product(fone.id).await.unwrap();
+            assert_eq!(
+                std::fs::read(first.catalog.folder(&fone).join("nota.txt")).unwrap(),
+                b"nota"
+            );
+            assert!(!dir.path().join("first.files/FONE-01").exists());
+            assert!(applied.follow_ups.contains(&FollowUp::CopyFolder {
+                product: "CAPA-01 · Capa".into()
+            }));
+            assert!(applied.follow_ups.contains(&FollowUp::ConnectHere {
+                connection: "Mercado Livre".into()
+            }));
+            let products = records(&applied.report, "Produto").unwrap();
+            assert_eq!((products.new, products.changed_here), (1, 1));
+            assert!(applied.backup.is_file());
+            assert_eq!(merge_import.merges().await.unwrap(), [applied]);
+            // The same file again brings nothing.
+            assert_eq!(
+                merge(&file, &merge_import, &backups, &first.catalog, &connections)
+                    .await
+                    .unwrap(),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn what_is_left_by_hand_reads_one_line_each_with_the_connections_together() {
+        let lines = follow_up_lines(&[
+            FollowUp::ConnectHere {
+                connection: "Mercado Livre".into(),
+            },
+            FollowUp::FolderNotRenamed {
+                product: "FONE-BT · Fone".into(),
+                reason: "arquivo aberto".into(),
+            },
+            FollowUp::ConnectHere {
+                connection: "Hotmart".into(),
+            },
+            FollowUp::CopyFolder {
+                product: "CAPA-01 · Capa".into(),
+            },
+        ]);
+
+        assert_eq!(lines.len(), 3);
+        assert!(
+            lines[0].contains("as chaves de Mercado Livre, Hotmart."),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[1].starts_with("FONE-BT · Fone: a pasta de arquivos continua com o nome"));
+        assert!(lines[1].contains("(arquivo aberto)"));
+        assert!(lines[2].starts_with("CAPA-01 · Capa: a pasta de arquivos dele ficou no outro"));
+    }
+
+    #[test]
+    fn a_merge_sums_up_what_came_and_says_when_nothing_did() {
+        let report = MergeReport {
+            records: vec![
+                RecordsReport {
+                    module: "catalog".into(),
+                    noun: "Produto".into(),
+                    new: 2,
+                    changed_here: 1,
+                    conflicts: vec![conflict(false, Side::There)],
+                    left_out: Vec::new(),
+                },
+                RecordsReport {
+                    module: "commerce".into(),
+                    noun: "Pedido".into(),
+                    new: 1,
+                    changed_here: 0,
+                    conflicts: Vec::new(),
+                    left_out: Vec::new(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            merge_summary(&report),
+            "3 chegaram · 1 mudou aqui · 1 conflito"
+        );
+        assert_eq!(merge_summary(&MergeReport::default()), "nada novo");
+    }
+
+    #[test]
     fn each_released_sample_database_compares_with_this_version() {
         block_on(async {
             let released = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/released-databases");
@@ -602,8 +1000,8 @@ mod tests {
     #[test]
     fn counts_leave_out_zeros_and_agree_in_number() {
         let records = RecordsReport {
-            module: "catalog",
-            noun: "Produto",
+            module: "catalog".into(),
+            noun: "Produto".into(),
             new: 3,
             changed_here: 1,
             conflicts: vec![conflict(false, Side::Here)],
@@ -631,7 +1029,9 @@ mod tests {
     fn a_record_left_out_says_why_and_falls_back_to_its_noun() {
         let missing = LeftOut {
             label: String::new(),
-            reason: LeftOutReason::MissingRecord { noun: "Pedido" },
+            reason: LeftOutReason::MissingRecord {
+                noun: "Pedido".into(),
+            },
         };
         let taken = LeftOut {
             label: "CABO · Fone".into(),

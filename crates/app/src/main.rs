@@ -294,6 +294,7 @@ fn main() {
                     merge_import: started.merge_import.clone(),
                     settings: started.backup_settings.clone(),
                     restore: started.restore.clone(),
+                    merged: started.merged.clone(),
                     daily_failure: Default::default(),
                 });
                 backups::start_daily(cx);

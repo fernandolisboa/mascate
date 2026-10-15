@@ -5,6 +5,7 @@ use mascate_kernel::RecordId;
 
 use crate::affiliate::AffiliateScreen;
 use crate::appearance;
+use crate::backups::AppBackups;
 use crate::dashboard::DashboardScreen;
 use crate::drafts::StartDraft;
 use crate::event_alerts::OpenCalendar;
@@ -64,6 +65,15 @@ impl Shell {
         let state = match problem {
             None => AppState::Ready,
             Some(_) => AppState::DatabaseUnavailable,
+        };
+        // Back from a merge, the app opens on its report in Settings.
+        let place = if cx
+            .try_global::<AppBackups>()
+            .is_some_and(|backups| backups.merged.is_some())
+        {
+            Place::Settings
+        } else {
+            Place::Today
         };
         let home = cx.new(|cx| Home::new(problem, cx));
         let opportunities = cx.new(|cx| OpportunitiesScreen::new(window, cx));
@@ -189,7 +199,7 @@ impl Shell {
             }),
         ];
         Self {
-            place: Place::Today,
+            place,
             state,
             home,
             opportunities,
