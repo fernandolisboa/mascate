@@ -249,8 +249,12 @@ Migração do banco que reescreve ou apaga dados que já existem, em vez de só 
 _Avoid_: migração destrutiva, migração grande
 
 **Merge Import**:
-Importação de outro banco do Mascate combinando registros linha a linha, em vez de substituir o banco atual.
+Importação de outro banco do Mascate, da mesma versão ou anterior, combinando registros linha a linha, em vez de substituir o banco atual. Vence a alteração mais recente de cada registro.
 _Avoid_: restore, sync
+
+**Merge Conflict**:
+Registro que existe nos dois bancos de um Merge Import com conteúdo diferente. Vence o de alteração mais recente, e o relatório mostra os dois lados.
+_Avoid_: divergência, duplicata
 
 ## Interface
 
