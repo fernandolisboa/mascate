@@ -9,7 +9,7 @@
 //! 0020). Settings › Pedidos sets how often, how long the buyer's data stays
 //! and how early the warning comes. The rules live in Commerce.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ use mascate_commerce::{
     Orders, RealizedMargin, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel, StockShort,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::{RecordId, Timestamp};
+use mascate_kernel::{RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::default_owner_folder;
 
 use crate::ads;
@@ -46,6 +46,7 @@ use crate::purchases::units_text;
 use crate::questions;
 use crate::reputation;
 use crate::sales;
+use crate::sales_channels::{self, ChannelFilter, ChannelPorts};
 use crate::stock::product_label;
 use crate::stock_mirror;
 
@@ -73,6 +74,8 @@ impl Global for OrderSyncs {}
 pub struct Round {
     pub synced: OrderSync,
     products: Vec<Product>,
+    /// Why a channel's Sync failed while the others went through.
+    failures: Vec<String>,
 }
 
 /// Why reading or saving the Orders failed, as the owner reads it.
@@ -147,42 +150,89 @@ pub fn start_polling(cx: &mut App) {
     .detach();
 }
 
-/// Runs an Order Sync off the UI thread and then sends the stock still to
-/// send, Orders first (ADR 0017). `Ok(None)` when the Connection is not up.
+/// Runs an Order Sync of every connected Sales Channel off the UI thread,
+/// in the owner's channel order, and only then sends the stock still to
+/// send, so every channel's Orders leave the stock first (ADR 0017, ADR
+/// 0033). `Ok(None)` when no channel is connected; a channel that fails
+/// leaves the others' Sync standing.
 pub fn sync_now(cx: &mut App) -> Option<Task<Result<Option<Round>, String>>> {
-    let (Some(orders), Some(mirror), Some(channel), Some(catalog)) = (
-        orders(cx),
-        stock_mirror::mirror(cx),
-        mercado_livre::adapter(cx),
-        catalog::catalog(cx),
-    ) else {
+    let (Some(orders), Some(mirror), Some(catalog)) =
+        (orders(cx), stock_mirror::mirror(cx), catalog::catalog(cx))
+    else {
         return None;
     };
-    let connections = cx.global::<AppConnections>().0.clone();
+    let reach = sales_channels::reach(cx);
     Some(cx.background_executor().spawn(async move {
-        if connections.state(Connection::MercadoLivre) != ConnectionState::Connected {
+        let channels = reach.connected().await;
+        if channels.is_empty() {
             return Ok(None);
         }
-        let synced = orders
-            .sync(channel.as_ref())
-            .await
-            .map_err(|e| failure(&e))?;
-        if let Err(error) = orders.import_fees(channel.as_ref()).await {
-            eprintln!("could not read the Orders' Fees: {error}");
+        let mut synced = OrderSync::default();
+        let mut failures = Vec::new();
+        for channel in &channels {
+            match orders.sync(channel.orders.as_ref()).await {
+                Ok(part) => add(&mut synced, part),
+                Err(error) => {
+                    failures.push(on_channel(channel.kind(), &failure(&error), &channels))
+                }
+            }
+            if let Some(billing) = &channel.billing
+                && let Err(error) = orders.import_fees(billing.as_ref()).await
+            {
+                eprintln!("could not read the Orders' Fees: {error}");
+            }
+            if let Some(payments) = &channel.payments
+                && let Err(error) = orders.import_releases(payments.as_ref()).await
+            {
+                eprintln!("could not read the Orders' Money Releases: {error}");
+            }
         }
-        if let Err(error) = orders.import_releases(channel.as_ref()).await {
-            eprintln!("could not read the Orders' Money Releases: {error}");
+        for channel in &channels {
+            if let Err(error) = mirror.send(channel.listings.as_ref()).await {
+                eprintln!("could not send the listings' stock: {error}");
+            }
         }
-        if let Err(error) = mirror.send(channel.as_ref()).await {
-            eprintln!("could not send the listings' stock: {error}");
+        if failures.len() == channels.len() {
+            return Err(failures.join(" "));
         }
         let products = if synced.reached_reorder_point.is_empty() {
             Vec::new()
         } else {
             catalog.products().await.unwrap_or_default()
         };
-        Ok(Some(Round { synced, products }))
+        Ok(Some(Round {
+            synced,
+            products,
+            failures,
+        }))
     }))
+}
+
+/// One channel's Sync added to the others'; the new Orders stay newest
+/// first.
+fn add(total: &mut OrderSync, part: OrderSync) {
+    total.read += part.read;
+    total.new += part.new;
+    total.changed += part.changed;
+    total.arrived.extend(part.arrived);
+    total
+        .arrived
+        .sort_by_key(|order| std::cmp::Reverse(order.sold.ordered_at));
+    total.taken += part.taken;
+    total.short += part.short;
+    total
+        .reached_reorder_point
+        .extend(part.reached_reorder_point);
+    total.restocked += part.restocked;
+}
+
+/// A failure named after its channel when more than one is connected.
+fn on_channel(kind: SalesChannelKind, text: &str, channels: &[ChannelPorts]) -> String {
+    if channels.len() > 1 {
+        format!("{}: {text}", kind.name())
+    } else {
+        text.to_owned()
+    }
 }
 
 /// Tells the owner what an Order Sync brought, and the screens that it ran.
@@ -193,7 +243,11 @@ pub fn finished(outcome: &Result<Option<Round>, String>, cx: &mut App) {
             low_stock::notify(*low, &round.products, cx);
         }
     }
-    let failure = outcome.as_ref().err().cloned();
+    let failure = match outcome {
+        Ok(Some(round)) if !round.failures.is_empty() => Some(round.failures.join(" ")),
+        Ok(_) => None,
+        Err(failure) => Some(failure.clone()),
+    };
     let syncs = cx.default_global::<OrderSyncs>();
     syncs.finished += 1;
     syncs.failure = failure;
@@ -215,7 +269,7 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
             .join("; ");
         cx.show_system_notification(SystemNotification {
             tag: "new-orders".into(),
-            title: format!("{} pedidos novos no Mercado Livre", arrived.len()).into(),
+            title: arrived_title(arrived).into(),
             body: format!("{body} e outros.").into(),
             actions: Vec::new(),
         });
@@ -228,10 +282,24 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
         }
         cx.show_system_notification(SystemNotification {
             tag: format!("order-{}", order.sold.id).into(),
-            title: "Pedido novo no Mercado Livre".into(),
+            title: format!("Pedido novo {}", sales_channels::on(order.channel)).into(),
             body: format!("{body}.").into(),
             actions: Vec::new(),
         });
+    }
+}
+
+/// "5 pedidos novos no Mercado Livre", or with no channel when they came
+/// from more than one.
+fn arrived_title(arrived: &[Order]) -> String {
+    let channels: BTreeSet<SalesChannelKind> = arrived.iter().map(|order| order.channel).collect();
+    match channels.iter().collect::<Vec<_>>()[..] {
+        [only] => format!(
+            "{} pedidos novos {}",
+            arrived.len(),
+            sales_channels::on(*only)
+        ),
+        _ => format!("{} pedidos novos", arrived.len()),
     }
 }
 
@@ -290,9 +358,17 @@ const LABELS_FOLDER: &str = "Etiquetas";
 /// Downloads the label of `order` off the UI thread, saves it in the
 /// labels folder and opens it in the system's PDF viewer, ready to print.
 /// Says what happened.
-pub fn print_label(order: RecordId, cx: &mut App) -> Option<Task<Result<String, String>>> {
-    let (Some(orders), Some(labels)) = (orders(cx), mercado_livre::adapter(cx)) else {
-        return None;
+pub fn print_label(
+    order: RecordId,
+    channel: SalesChannelKind,
+    cx: &mut App,
+) -> Option<Task<Result<String, String>>> {
+    let orders = orders(cx)?;
+    let Some(labels) = sales_channels::of(cx, channel).and_then(|channel| channel.labels) else {
+        return Some(Task::ready(Err(format!(
+            "O app ainda não baixa etiquetas {}.",
+            sales_channels::of_channel(channel)
+        ))));
     };
     let folder = default_owner_folder(LABELS_FOLDER)?;
     let saving = cx.background_executor().spawn(async move {
@@ -358,6 +434,7 @@ pub struct OrdersScreen {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
+    channel_filter: ChannelFilter,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -380,6 +457,7 @@ impl OrdersScreen {
             working_on: None,
             reads: 0,
             outcome: None,
+            channel_filter: ChannelFilter::default(),
             _subscriptions: subscriptions,
         };
         screen.refresh(cx);
@@ -472,8 +550,8 @@ impl OrdersScreen {
         self.connection == Some(ConnectionState::Connected)
     }
 
-    fn print_label(&mut self, order: RecordId, cx: &mut Context<Self>) {
-        let Some(printing) = print_label(order, cx) else {
+    fn print_label(&mut self, order: RecordId, channel: SalesChannelKind, cx: &mut Context<Self>) {
+        let Some(printing) = print_label(order, channel, cx) else {
             return;
         };
         self.working_on = Some(order);
@@ -630,6 +708,7 @@ impl OrdersScreen {
                                     .truncate()
                                     .child(format!("Pedido {}", sold.id)),
                             )
+                            .child(kit::tag(order.channel.name(), t.text2, cx))
                             .child(kit::tag(
                                 status_name(sold.status),
                                 status_ink(sold.status, &t),
@@ -662,6 +741,7 @@ impl OrdersScreen {
     ) -> Option<AnyElement> {
         let t = look(cx).tokens;
         let id = order.id;
+        let channel = order.channel;
         let busy = self.working_on.is_some();
         let waiting = order.sold.status != OrderStatus::Cancelled
             && order
@@ -688,7 +768,11 @@ impl OrdersScreen {
                             .small()
                             .loading(self.working_on == Some(id))
                             .disabled(busy || !self.connected())
-                            .on_click(cx.listener(move |this, _, _, cx| this.print_label(id, cx))),
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.print_label(id, channel, cx)
+                                }),
+                            ),
                     )
                 })
                 .when(awaiting > 0, |row| {
@@ -895,21 +979,31 @@ impl Render for OrdersScreen {
                 .into_any_element(),
             );
         }
-        let heading = match self.orders.len() {
-            0 => "Pedidos no Mercado Livre".to_owned(),
-            1 => "1 pedido".to_owned(),
-            count => format!("{count} pedidos"),
-        };
+        let held: BTreeSet<SalesChannelKind> =
+            self.orders.iter().map(|order| order.channel).collect();
         let cards: Vec<AnyElement> = self
             .orders
             .iter()
             .enumerate()
+            .filter(|(_, order)| self.channel_filter.shows(order.channel, &held))
             .map(|(index, order)| self.render_order(index, order, cx))
             .collect();
+        let heading = match cards.len() {
+            0 => "Pedidos".to_owned(),
+            1 => "1 pedido".to_owned(),
+            count => format!("{count} pedidos"),
+        };
+        let chips =
+            self.channel_filter
+                .chips("order-channel", &held, cx, |this: &mut Self, filter, cx| {
+                    this.channel_filter = filter;
+                    cx.notify();
+                });
         parts.content.push(
             v_flex()
                 .gap_3()
                 .child(kit::section_heading(heading))
+                .children(chips)
                 .when(self.orders.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(format!(
                         "Nenhum pedido ainda. Com a conta do Mercado Livre conectada, o app busca \
@@ -1114,6 +1208,29 @@ mod tests {
             }),
             "1 pedido alterado. 1 pedido cancelado antes do envio devolveu as unidades ao \
              estoque."
+        );
+    }
+
+    #[test]
+    fn the_syncs_of_every_channel_add_up() {
+        let mut total = OrderSync::default();
+        add(&mut total, sync(2, 1, 3, 0));
+        add(
+            &mut total,
+            OrderSync {
+                read: 4,
+                restocked: 1,
+                ..sync(1, 0, 1, 2)
+            },
+        );
+
+        assert_eq!(
+            total,
+            OrderSync {
+                read: 4,
+                restocked: 1,
+                ..sync(3, 1, 4, 2)
+            }
         );
     }
 }

@@ -29,7 +29,8 @@ use mascate_commerce::{
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{
-    Currency, Money, Percentage, PlatformError, RecordId, Timestamp, channel_day, parse_amount,
+    Currency, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp, channel_day,
+    parse_amount,
 };
 use mascate_marketing::SellerTool;
 
@@ -132,7 +133,12 @@ pub fn sync_now(cx: &mut App, forced: bool) -> Option<Task<Result<Option<Promoti
             return Ok(None);
         }
         let why = |error: PromotionError| failure(&error, None, &[]);
-        if !forced && !promotions.is_due().await.map_err(why)? {
+        if !forced
+            && !promotions
+                .is_due(SalesChannelKind::MercadoLivre)
+                .await
+                .map_err(why)?
+        {
             return Ok(None);
         }
         promotions
@@ -354,11 +360,7 @@ impl PromotionsScreen {
                 .map(|(listing, sold)| (listing, sold.name))
                 .collect();
             let mut open: Vec<Listing> = Vec::new();
-            for listing in listings
-                .listings()
-                .await
-                .map_err(|e| listings::failure(&e))?
-            {
+            for listing in listings::mercado_livre_listings(&listings).await? {
                 if listing.listed.status != ListingStatus::Closed
                     && !open.iter().any(|kept| kept.listed.id == listing.listed.id)
                 {
@@ -382,7 +384,10 @@ impl PromotionsScreen {
                         .iter()
                         .any(|(tool, unlocked)| *tool == SellerTool::Promotions && *unlocked)
                 }),
-                last_sync: promotions.last_sync().await.map_err(why)?,
+                last_sync: promotions
+                    .last_sync(SalesChannelKind::MercadoLivre)
+                    .await
+                    .map_err(why)?,
                 connection: connections.state(Connection::MercadoLivre),
             })
         });

@@ -16,11 +16,15 @@ use mascate_inventory::{
     HOME_LOCATION, Inventory, InventoryError, LowStock, MovementReason, NewExit, NewReturn,
 };
 use mascate_kernel::{
-    Clock, CurrencyMismatch, IdGenerator, ListingType, Money, PlatformError, RecordId, Timestamp,
+    Clock, CurrencyMismatch, IdGenerator, ListingType, Money, PlatformError, Record, RecordId,
+    SalesChannelKind, Timestamp,
 };
 use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
 };
+
+use crate::OnSalesChannel;
+use crate::channels::{load_cursors, save_cursor};
 
 pub(crate) const CREATE_ORDERS: Migration = Migration {
     version: 6,
@@ -392,9 +396,9 @@ impl ChannelOrder {
     }
 }
 
-/// The Orders of the owner's Sales Channel, as a Platform's adapter reports
-/// them. Calls block on the network, so they run off the UI thread.
-pub trait ChannelOrders: Send + Sync {
+/// The Orders of one of the owner's Sales Channels, as a Platform's adapter
+/// reports them. Calls block on the network, so they run off the UI thread.
+pub trait ChannelOrders: OnSalesChannel + Send + Sync {
     /// Every Order of the owner's created or changed at `since` or after,
     /// each with its shipment.
     fn orders_changed_since(&self, since: Timestamp) -> Result<Vec<ChannelOrder>, PlatformError>;
@@ -402,7 +406,7 @@ pub trait ChannelOrders: Send + Sync {
 
 /// The shipping labels of the owner's Orders, as a Platform's adapter prints
 /// them. Calls block on the network, so they run off the UI thread.
-pub trait ShippingLabels: Send + Sync {
+pub trait ShippingLabels: OnSalesChannel + Send + Sync {
     /// The label of the channel's shipment `shipment`, as a PDF document.
     fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError>;
 }
@@ -491,6 +495,7 @@ pub struct OrderLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Order {
     pub id: RecordId,
+    pub channel: SalesChannelKind,
     /// The Order as the channel last reported it; its lines are the ones
     /// below.
     pub sold: ChannelOrder,
@@ -644,6 +649,11 @@ pub enum OrderError {
     NoReturnAwaiting,
     #[error("the Order is not waiting to be dispatched, so it has no label to print")]
     NoLabel,
+    #[error("the Order is on {order:?}, not on {channel:?}")]
+    OtherChannel {
+        order: SalesChannelKind,
+        channel: SalesChannelKind,
+    },
     #[error(transparent)]
     Platform(#[from] PlatformError),
     #[error(transparent)]
@@ -665,23 +675,27 @@ impl From<StoredValueError> for OrderError {
     }
 }
 
-const ORDER_COLUMNS: &str = "id, ml_order_id, ml_pack_id, status, fulfillment_mode, ordered_at,
-     channel_updated_at, total, currency, paid, shipping_paid, ml_shipment_id, shipment_status,
-     dispatch_by, buyer_nickname, receiver_name, receiver_address, receiver_city,
-     receiver_state, receiver_zip_code, buyer_data_erased_at, synced_at, refunded,
-     shipment_seller_cost
+const ORDER_COLUMNS: &str = "id, channel_order_id, channel_pack_id, status, fulfillment_mode,
+     ordered_at, channel_updated_at, total, currency, paid, shipping_paid, channel_shipment_id,
+     shipment_status, dispatch_by, buyer_nickname, receiver_name, receiver_address,
+     receiver_city, receiver_state, receiver_zip_code, buyer_data_erased_at, synced_at,
+     refunded, shipment_seller_cost, sales_channel
      FROM commerce_orders WHERE deleted_at IS NULL";
 
-const LINE_COLUMNS: &str = "order_id, ml_item_id, ml_variation_id, title, variation_name,
-     quantity, unit_price, sale_fee, currency, listing_type, product_id, stock_movement_id,
-     stock_short, restocked, unsellable
+const LINE_COLUMNS: &str = "order_id, channel_item_id, channel_variation_id, title,
+     variation_name, quantity, unit_price, sale_fee, currency, listing_type, product_id,
+     stock_movement_id, stock_short, restocked, unsellable
      FROM commerce_order_lines WHERE deleted_at IS NULL";
 
-const RETURN_COLUMNS: &str = "order_id, ml_return_id, status, ml_item_id, ml_variation_id,
-     quantity
+const RETURN_COLUMNS: &str = "order_id, channel_return_id, status, channel_item_id,
+     channel_variation_id, quantity
      FROM commerce_order_returns WHERE deleted_at IS NULL";
 
-/// The first Order Sync and how far the last one read.
+/// When each channel's first Order Sync ran: its Orders sold before it
+/// never take units from the stock.
+type FirstSyncs = BTreeMap<SalesChannelKind, Timestamp>;
+
+/// A channel's first Order Sync and how far its last one read.
 struct SyncState {
     first_synced_at: Timestamp,
     synced_through: Timestamp,
@@ -710,16 +724,18 @@ impl Orders {
         }
     }
 
-    /// Reads every Order created or changed since the last Sync (the last
-    /// 30 days on the first), keeps each by the channel's id, and takes out
-    /// of the stock the units of each line sold since the first Sync that
-    /// have not left yet: the same Order read again never takes them twice.
-    /// The time the computer was off is covered by the next Sync, which
-    /// reads from where the last one stopped. Buyer data past its time is
-    /// erased on the way.
+    /// Reads every Order of the channel created or changed since its last
+    /// Sync (the last 30 days on the first), keeps each by the channel and
+    /// its id, and takes out of the stock the units of each line sold since
+    /// that channel's first Sync that have not left yet: the same Order read
+    /// again never takes them twice, and a Sync of one channel never touches
+    /// another's Orders. The time the computer was off is covered by the
+    /// next Sync, which reads from where the last one stopped. Buyer data
+    /// past its time is erased on the way.
     pub async fn sync(&self, channel: &dyn ChannelOrders) -> Result<OrderSync, OrderError> {
+        let on = channel.sales_channel();
         let started = self.clock.now();
-        let state = self.sync_state().await?;
+        let state = self.first_syncs_and_reads().await?.remove(&on);
         let since = match &state {
             Some(state) => state.synced_through - TimeDelta::minutes(OVERLAP_MINUTES),
             None => started - TimeDelta::days(FIRST_SYNC_DAYS),
@@ -754,8 +770,8 @@ impl Orders {
             }
             match read_orders(
                 &transaction,
-                "AND ml_order_id = ?1",
-                params![reported.id.clone()],
+                "AND sales_channel = ?1 AND channel_order_id = ?2",
+                params![on.code(), reported.id.clone()],
             )
             .await?
             .pop()
@@ -779,7 +795,7 @@ impl Orders {
                 None => {
                     report.new += 1;
                     let id = self.ids.next_id();
-                    insert_order(&transaction, id, &reported, started).await?;
+                    insert_order(&transaction, id, on, &reported, started).await?;
                     self.write_lines(&transaction, id, &reported.lines, started)
                         .await?;
                     self.write_returns(&transaction, id, &reported.returns, started)
@@ -791,18 +807,18 @@ impl Orders {
             }
         }
         let taken = self
-            .take_stock(&transaction, first_synced_at, started)
+            .take_stock(&transaction, on, first_synced_at, started)
             .await?;
         report.taken = taken.lines;
         report.reached_reorder_point = taken.reached_reorder_point;
         report.restocked = self.restock_cancelled(&transaction, started).await?;
         erase_buyer_data(&transaction, keep_since, started).await?;
-        save_single_row(
+        save_cursor(
             &transaction,
-            self.clock.as_ref(),
-            self.ids.as_ref(),
+            Record::new(self.ids.as_ref(), self.clock.as_ref()),
             SYNC_TABLE,
             SYNC_COLUMNS,
+            on,
             vec![
                 Value::Text(stored(first_synced_at)),
                 Value::Text(stored(started)),
@@ -810,7 +826,6 @@ impl Orders {
         )
         .await?;
         transaction.commit().await?;
-
         let orders = self.orders().await?;
         report.short = orders
             .iter()
@@ -824,22 +839,26 @@ impl Orders {
         Ok(report)
     }
 
-    /// Every Order, newest first.
+    /// Every Order of every channel, newest first.
     pub async fn orders(&self) -> Result<Vec<Order>, OrderError> {
-        let first_synced_at = self.sync_state().await?.map(|state| state.first_synced_at);
-        load_orders(self.database.connection(), None, first_synced_at).await
+        let first_syncs = self.first_syncs().await?;
+        load_orders(self.database.connection(), None, &first_syncs).await
     }
 
-    /// Units sold of each listing (the channel's id, every variation
-    /// together) in the Orders bought since `since`, cancelled ones left
-    /// out.
+    /// Units sold of each of `channel`'s listings (the channel's id, every
+    /// variation together) in the Orders bought since `since`, cancelled
+    /// ones left out.
     pub async fn units_sold_since(
         &self,
+        channel: SalesChannelKind,
         since: Timestamp,
     ) -> Result<BTreeMap<String, u32>, OrderError> {
         let mut sold = BTreeMap::new();
         for order in self.orders().await? {
-            if order.sold.status == OrderStatus::Cancelled || order.sold.ordered_at < since {
+            if order.channel != channel
+                || order.sold.status == OrderStatus::Cancelled
+                || order.sold.ordered_at < since
+            {
                 continue;
             }
             for line in &order.lines {
@@ -885,10 +904,16 @@ impl Orders {
         labels: &dyn ShippingLabels,
         order: RecordId,
     ) -> Result<ShippingLabel, OrderError> {
-        let found = load_orders(self.database.connection(), Some(order), None)
+        let found = load_orders(self.database.connection(), Some(order), &FirstSyncs::new())
             .await?
             .pop()
             .ok_or(OrderError::UnknownOrder(order))?;
+        if found.channel != labels.sales_channel() {
+            return Err(OrderError::OtherChannel {
+                order: found.channel,
+                channel: labels.sales_channel(),
+            });
+        }
         let shipment = match &found.sold.shipment {
             Some(shipment)
                 if shipment.status == ShipmentStatus::ReadyToShip
@@ -931,7 +956,7 @@ impl Orders {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        let found = load_orders(&transaction, Some(order), None)
+        let found = load_orders(&transaction, Some(order), &FirstSyncs::new())
             .await?
             .pop()
             .ok_or(OrderError::UnknownOrder(order))?;
@@ -975,9 +1000,15 @@ impl Orders {
         Ok(received)
     }
 
-    /// When the Orders were last synced; `None` before the first Sync.
+    /// When the Orders of any channel were last synced; `None` before the
+    /// first Sync.
     pub async fn last_sync(&self) -> Result<Option<Timestamp>, OrderError> {
-        Ok(self.sync_state().await?.map(|state| state.synced_through))
+        Ok(self
+            .first_syncs_and_reads()
+            .await?
+            .into_values()
+            .map(|state| state.synced_through)
+            .max())
     }
 
     pub async fn settings(&self) -> Result<OrderSettings, OrderError> {
@@ -1035,14 +1066,32 @@ impl Orders {
         .await
     }
 
-    async fn sync_state(&self) -> Result<Option<SyncState>, OrderError> {
-        match load_single_row(self.database.connection(), SYNC_TABLE, SYNC_COLUMNS).await? {
-            Some(row) => Ok(Some(SyncState {
-                first_synced_at: row.time_at(0)?,
-                synced_through: row.time_at(1)?,
-            })),
-            None => Ok(None),
-        }
+    /// Each synced channel's first Sync and how far its last one read.
+    async fn first_syncs_and_reads(
+        &self,
+    ) -> Result<BTreeMap<SalesChannelKind, SyncState>, OrderError> {
+        let states = load_cursors(
+            self.database.connection(),
+            SYNC_TABLE,
+            SYNC_COLUMNS,
+            |row| {
+                Ok(SyncState {
+                    first_synced_at: row.time_at(1)?,
+                    synced_through: row.time_at(2)?,
+                })
+            },
+        )
+        .await?;
+        Ok(states.into_iter().collect())
+    }
+
+    async fn first_syncs(&self) -> Result<FirstSyncs, OrderError> {
+        Ok(self
+            .first_syncs_and_reads()
+            .await?
+            .into_iter()
+            .map(|(channel, state)| (channel, state.first_synced_at))
+            .collect())
     }
 
     /// Writes `lines` over the Order's, keeping what each already took from
@@ -1057,11 +1106,11 @@ impl Orders {
         for (position, line) in lines.iter().enumerate() {
             on.execute(
                 "INSERT INTO commerce_order_lines
-                     (id, order_id, position, ml_item_id, ml_variation_id, title,
+                     (id, order_id, position, channel_item_id, channel_variation_id, title,
                       variation_name, quantity, unit_price, sale_fee, currency, listing_type,
                       created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
-                 ON CONFLICT (order_id, ml_item_id, COALESCE(ml_variation_id, ''))
+                 ON CONFLICT (order_id, channel_item_id, COALESCE(channel_variation_id, ''))
                      WHERE deleted_at IS NULL
                  DO UPDATE SET position = excluded.position, title = excluded.title,
                      variation_name = excluded.variation_name, quantity = excluded.quantity,
@@ -1102,11 +1151,11 @@ impl Orders {
             for item in &found.items {
                 on.execute(
                     "INSERT INTO commerce_order_returns
-                         (id, order_id, ml_return_id, status, ml_item_id, ml_variation_id,
-                          quantity, created_at, updated_at)
+                         (id, order_id, channel_return_id, status, channel_item_id,
+                          channel_variation_id, quantity, created_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-                     ON CONFLICT (order_id, ml_return_id, ml_item_id,
-                                  COALESCE(ml_variation_id, ''))
+                     ON CONFLICT (order_id, channel_return_id, channel_item_id,
+                                  COALESCE(channel_variation_id, ''))
                          WHERE deleted_at IS NULL
                      DO UPDATE SET status = excluded.status, quantity = excluded.quantity,
                          updated_at = excluded.updated_at",
@@ -1143,7 +1192,7 @@ impl Orders {
     ) -> Result<usize, OrderError> {
         let mut rows = on
             .query(
-                "SELECT line.order_id, line.ml_item_id, line.ml_variation_id,
+                "SELECT line.order_id, line.channel_item_id, line.channel_variation_id,
                      line.stock_movement_id, line.quantity - line.restocked - line.unsellable,
                      ord.shipment_status
                  FROM commerce_order_lines line
@@ -1195,35 +1244,38 @@ impl Orders {
         Ok(orders.len())
     }
 
-    /// Takes out of the stock the units of every line still to take: sold
-    /// since the first Sync, from the owner's stock, in an Order not
-    /// cancelled. A line whose Listing has no Product, or whose Product has
-    /// too few units, keeps why and waits for the next Sync.
+    /// Takes out of the stock the units of every line of `channel` still
+    /// to take: sold since its first Sync, from the owner's stock, in an
+    /// Order not cancelled. A line whose Listing has no Product, or whose
+    /// Product has too few units, keeps why and waits for the next Sync.
     async fn take_stock(
         &self,
         on: &Connection,
+        channel: SalesChannelKind,
         first_synced_at: Timestamp,
         now: Timestamp,
     ) -> Result<Taken, OrderError> {
         let mut rows = on
             .query(
-                "SELECT line.id, line.order_id, line.ml_item_id, line.ml_variation_id,
-                     line.quantity, listing.id, listing.product_id
+                "SELECT line.id, line.order_id, line.channel_item_id,
+                     line.channel_variation_id, line.quantity, listing.id, listing.product_id
                  FROM commerce_order_lines line
                  JOIN commerce_orders ord ON ord.id = line.order_id AND ord.deleted_at IS NULL
                  LEFT JOIN commerce_listings listing
-                     ON listing.ml_item_id = line.ml_item_id
-                     AND COALESCE(listing.ml_variation_id, '') =
-                         COALESCE(line.ml_variation_id, '')
+                     ON listing.sales_channel = ord.sales_channel
+                     AND listing.channel_item_id = line.channel_item_id
+                     AND COALESCE(listing.channel_variation_id, '') =
+                         COALESCE(line.channel_variation_id, '')
                      AND listing.deleted_at IS NULL
                  WHERE line.deleted_at IS NULL AND line.stock_movement_id IS NULL
                      AND ord.status <> ?1 AND ord.fulfillment_mode = ?2
-                     AND ord.ordered_at >= ?3
+                     AND ord.ordered_at >= ?3 AND ord.sales_channel = ?4
                  ORDER BY ord.ordered_at, ord.id, line.position",
                 params![
                     OrderStatus::Cancelled.code(),
                     FulfillmentMode::OwnStock.code(),
-                    stored(first_synced_at)
+                    stored(first_synced_at),
+                    channel.code()
                 ],
             )
             .await?;
@@ -1334,8 +1386,9 @@ async fn settle(
     on.execute(
         &format!(
             "UPDATE commerce_order_lines SET {column} = {column} + ?1, updated_at = ?2
-             WHERE order_id = ?3 AND ml_item_id = ?4
-                 AND COALESCE(ml_variation_id, '') = COALESCE(?5, '') AND deleted_at IS NULL"
+             WHERE order_id = ?3 AND channel_item_id = ?4
+                 AND COALESCE(channel_variation_id, '') = COALESCE(?5, '')
+                 AND deleted_at IS NULL"
         ),
         params![units, stored(now), order.to_string(), item, variation],
     )
@@ -1442,6 +1495,7 @@ fn order_values(order: &ChannelOrder) -> Vec<Value> {
 async fn insert_order(
     on: &Connection,
     id: RecordId,
+    channel: SalesChannelKind,
     order: &ChannelOrder,
     now: Timestamp,
 ) -> Result<(), OrderError> {
@@ -1450,16 +1504,17 @@ async fn insert_order(
     values.extend([
         Value::Text(FulfillmentMode::OwnStock.code().into()),
         Value::Text(stored(now)),
+        Value::Text(channel.code().into()),
     ]);
     on.execute(
         "INSERT INTO commerce_orders
-             (id, ml_order_id, ml_pack_id, status, ordered_at, channel_updated_at, total,
-              currency, paid, shipping_paid, ml_shipment_id, shipment_status, dispatch_by,
-              buyer_nickname, receiver_name, receiver_address, receiver_city, receiver_state,
-              receiver_zip_code, refunded, shipment_seller_cost, fulfillment_mode, synced_at,
-              created_at, updated_at)
+             (id, channel_order_id, channel_pack_id, status, ordered_at, channel_updated_at,
+              total, currency, paid, shipping_paid, channel_shipment_id, shipment_status,
+              dispatch_by, buyer_nickname, receiver_name, receiver_address, receiver_city,
+              receiver_state, receiver_zip_code, refunded, shipment_seller_cost,
+              fulfillment_mode, synced_at, created_at, updated_at, sales_channel)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?23, ?23)",
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?23, ?23, ?24)",
         values,
     )
     .await?;
@@ -1479,9 +1534,9 @@ async fn write_order(
     let mut values = order_values(order);
     values.extend([Value::Text(stored(now)), Value::Text(id.to_string())]);
     on.execute(
-        "UPDATE commerce_orders SET ml_order_id = ?1, ml_pack_id = ?2, status = ?3,
+        "UPDATE commerce_orders SET channel_order_id = ?1, channel_pack_id = ?2, status = ?3,
              ordered_at = ?4, channel_updated_at = ?5, total = ?6, currency = ?7, paid = ?8,
-             shipping_paid = ?9, ml_shipment_id = ?10, shipment_status = ?11,
+             shipping_paid = ?9, channel_shipment_id = ?10, shipment_status = ?11,
              dispatch_by = ?12,
              buyer_nickname = CASE WHEN buyer_data_erased_at IS NULL THEN ?13 END,
              receiver_name = CASE WHEN buyer_data_erased_at IS NULL THEN ?14 END,
@@ -1524,7 +1579,10 @@ async fn read_orders(
 ) -> Result<Vec<Order>, OrderError> {
     let mut rows = on
         .query(
-            &format!("SELECT {ORDER_COLUMNS} {filter} ORDER BY ordered_at DESC, ml_order_id DESC"),
+            &format!(
+                "SELECT {ORDER_COLUMNS} {filter}
+                 ORDER BY ordered_at DESC, channel_order_id DESC, sales_channel"
+            ),
             params,
         )
         .await?;
@@ -1575,6 +1633,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
     };
     Ok(Order {
         id: row.id_at(0)?,
+        channel: row.sales_channel_at(24)?,
         sold: ChannelOrder {
             id: row.get(1)?,
             pack: row.get(2)?,
@@ -1602,7 +1661,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
 async fn load_orders(
     on: &Connection,
     order: Option<RecordId>,
-    first_synced_at: Option<Timestamp>,
+    first_syncs: &FirstSyncs,
 ) -> Result<Vec<Order>, OrderError> {
     let (by_id, by_order, values) = match order {
         Some(order) => (
@@ -1623,7 +1682,7 @@ async fn load_orders(
             .into_iter()
             .map(|(sold, kept)| OrderLine {
                 back: units_back(&order.sold, &sold, &kept),
-                stock: line_stock(order, &kept, first_synced_at),
+                stock: line_stock(order, &kept, first_syncs.get(&order.channel).copied()),
                 sold,
             })
             .collect();
@@ -1700,7 +1759,8 @@ async fn read_returns(
         .query(
             &format!(
                 "SELECT {RETURN_COLUMNS} {filter}
-                 ORDER BY order_id, ml_return_id, ml_item_id, COALESCE(ml_variation_id, '')"
+                 ORDER BY order_id, channel_return_id, channel_item_id,
+                     COALESCE(channel_variation_id, '')"
             ),
             values,
         )

@@ -15,14 +15,16 @@ use chrono::{Datelike, NaiveDate, TimeDelta};
 use libsql::{Connection, TransactionBehavior, params};
 use mascate_inventory::StockMovement;
 use mascate_kernel::{
-    Currency, CurrencyMismatch, Margin, Money, Percentage, PlatformError, RecordId, Timestamp,
-    channel_day, channel_day_start,
+    Currency, CurrencyMismatch, Margin, Money, Percentage, PlatformError, RecordId,
+    SalesChannelKind, Timestamp, channel_day, channel_day_start,
 };
 use mascate_platform::{Migration, StoredRow, stored};
 use rust_decimal::Decimal;
 
 use crate::freight::split_by_value;
-use crate::{LineStock, Order, OrderError, OrderLine, OrderStatus, Orders, ShipmentStatus};
+use crate::{
+    LineStock, OnSalesChannel, Order, OrderError, OrderLine, OrderStatus, Orders, ShipmentStatus,
+};
 
 pub(crate) const ADD_FEES: Migration = Migration {
     version: 8,
@@ -111,9 +113,10 @@ pub struct BilledOrder {
     pub fees: Vec<ChannelFee>,
 }
 
-/// The billing of the owner's Sales Channel, as a Platform's adapter
-/// reports it. Calls block on the network, so they run off the UI thread.
-pub trait ChannelBilling: Send + Sync {
+/// The billing of one of the owner's Sales Channels, as a Platform's
+/// adapter reports it. Calls block on the network, so they run off the UI
+/// thread.
+pub trait ChannelBilling: OnSalesChannel + Send + Sync {
     /// What the channel billed on each of `orders` (the channel's ids). An
     /// Order the channel has not billed yet is left out, or comes without
     /// charges.
@@ -299,7 +302,7 @@ impl SalesSummary {
 /// An Order's state as the billing import reads it.
 struct FeeState {
     id: RecordId,
-    ml_id: String,
+    channel_id: String,
     /// As stored, to write over only if no Sync changed it meanwhile.
     checked_text: Option<String>,
     checked_at: Option<Timestamp>,
@@ -328,10 +331,11 @@ impl Orders {
     /// about since it last changed, and of each Order not billed yet, every
     /// few hours for its first 60 days, and keeps them by the channel's id
     /// of each charge: asking again changes nothing. An Order cancelled
-    /// before it shipped, and never billed, is not asked about.
+    /// before it shipped, and never billed, is not asked about. Only the
+    /// Orders of the billing's own channel are asked about.
     pub async fn import_fees(&self, billing: &dyn ChannelBilling) -> Result<FeeImport, OrderError> {
         let now = self.clock.now();
-        let due: Vec<FeeState> = fee_states(self.database.connection())
+        let due: Vec<FeeState> = fee_states(self.database.connection(), billing.sales_channel())
             .await?
             .into_iter()
             .filter(|state| state.due(now))
@@ -339,7 +343,7 @@ impl Orders {
         if due.is_empty() {
             return Ok(FeeImport::default());
         }
-        let asked: Vec<String> = due.iter().map(|state| state.ml_id.clone()).collect();
+        let asked: Vec<String> = due.iter().map(|state| state.channel_id.clone()).collect();
         let mut billed: BTreeMap<String, Vec<ChannelFee>> = BTreeMap::new();
         for found in billing.billed_fees(&asked)? {
             billed.entry(found.order).or_default().extend(found.fees);
@@ -354,7 +358,10 @@ impl Orders {
             billed: 0,
         };
         for state in &due {
-            if let Some(fees) = billed.remove(&state.ml_id).filter(|fees| !fees.is_empty()) {
+            if let Some(fees) = billed
+                .remove(&state.channel_id)
+                .filter(|fees| !fees.is_empty())
+            {
                 self.write_fees(&transaction, state.id, &fees, now).await?;
                 report.billed += 1;
             }
@@ -451,10 +458,10 @@ impl Orders {
         for fee in fees {
             on.execute(
                 "INSERT INTO commerce_order_fees
-                     (id, order_id, ml_charge_id, kind, description, amount, currency,
+                     (id, order_id, channel_charge_id, kind, description, amount, currency,
                       created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-                 ON CONFLICT (order_id, ml_charge_id) WHERE deleted_at IS NULL
+                 ON CONFLICT (order_id, channel_charge_id) WHERE deleted_at IS NULL
                  DO UPDATE SET kind = excluded.kind, description = excluded.description,
                      amount = excluded.amount, currency = excluded.currency,
                      updated_at = excluded.updated_at",
@@ -481,17 +488,22 @@ impl Orders {
     }
 }
 
-/// What each Order's lines, status and billing say to the billing import.
-async fn fee_states(on: &Connection) -> Result<Vec<FeeState>, OrderError> {
+/// What each of `channel`'s Orders' lines, status and billing say to the
+/// billing import.
+async fn fee_states(
+    on: &Connection,
+    channel: SalesChannelKind,
+) -> Result<Vec<FeeState>, OrderError> {
     let mut rows = on
         .query(
-            "SELECT ord.id, ord.ml_order_id, ord.fees_checked_at, ord.status,
+            "SELECT ord.id, ord.channel_order_id, ord.fees_checked_at, ord.status,
                  ord.shipment_status, ord.ordered_at,
                  EXISTS (SELECT 1 FROM commerce_order_fees fee
                          WHERE fee.order_id = ord.id AND fee.deleted_at IS NULL)
-             FROM commerce_orders ord WHERE ord.deleted_at IS NULL
+             FROM commerce_orders ord
+             WHERE ord.deleted_at IS NULL AND ord.sales_channel = ?1
              ORDER BY ord.ordered_at, ord.id",
-            (),
+            params![channel.code()],
         )
         .await?;
     let mut states = Vec::new();
@@ -505,7 +517,7 @@ async fn fee_states(on: &Connection) -> Result<Vec<FeeState>, OrderError> {
         };
         states.push(FeeState {
             id: row.id_at(0)?,
-            ml_id: row.get(1)?,
+            channel_id: row.get(1)?,
             checked_text: row.get(2)?,
             checked_at: row.optional_time_at(2)?,
             cancelled_before_shipping: cancelled && !shipped,
@@ -521,7 +533,7 @@ async fn read_fees(on: &Connection) -> Result<BTreeMap<RecordId, Vec<Fee>>, Orde
     let mut rows = on
         .query(
             "SELECT order_id, kind, description, amount, currency FROM commerce_order_fees
-             WHERE deleted_at IS NULL ORDER BY order_id, ml_charge_id",
+             WHERE deleted_at IS NULL ORDER BY order_id, channel_charge_id",
             (),
         )
         .await?;

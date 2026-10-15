@@ -1,11 +1,13 @@
 //! The owner's listings, for commerce's Sales Channel port: read them, the
 //! sale fee at a price, a new price once the owner approves it, the stock
-//! that follows the app's, and pausing and reactivating.
+//! that follows the app's, and pausing and reactivating. Every port this
+//! adapter implements speaks for Mercado Livre.
 
 use mascate_commerce::{
-    ChannelCategory, ChannelListing, ChannelStock, ListingStatus, SaleFee, SalesChannel, Variation,
+    ChannelCategory, ChannelListing, ChannelStock, ListingStatus, OnSalesChannel, SaleFee,
+    SalesChannel, Variation,
 };
-use mascate_kernel::{ListingType, Money, Percentage, PlatformError};
+use mascate_kernel::{ListingType, Money, Percentage, PlatformError, SalesChannelKind};
 use rust_decimal::Decimal;
 
 use super::MercadoLivre;
@@ -25,6 +27,12 @@ pub(super) fn listing_type_id(listing: ListingType) -> &'static str {
     match listing {
         ListingType::Classic => "gold_special",
         ListingType::Premium => "gold_pro",
+    }
+}
+
+impl OnSalesChannel for MercadoLivre {
+    fn sales_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
     }
 }
 

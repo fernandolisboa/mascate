@@ -10,12 +10,13 @@ use std::sync::Arc;
 use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_inventory::InventoryError;
 use mascate_kernel::{
-    Clock, IdGenerator, ListingType, Money, PlatformError, RecordId, Timestamp, fold, folded_words,
+    Clock, IdGenerator, ListingType, Money, PlatformError, RecordId, SalesChannelKind, Timestamp,
+    fold, folded_words,
 };
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
-use crate::{ChannelCategory, ChecklistItem, SaleFee};
+use crate::{ChannelCategory, ChecklistItem, OnSalesChannel, SaleFee};
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -93,9 +94,9 @@ pub struct ChannelStock {
     pub available_quantity: u32,
 }
 
-/// The Sales Channel the owner sells in, as a Platform's adapter reports it.
+/// A Sales Channel the owner sells in, as a Platform's adapter reports it.
 /// Calls block on the network, so they run off the UI thread.
-pub trait SalesChannel: Send + Sync {
+pub trait SalesChannel: OnSalesChannel + Send + Sync {
     /// The ids of the owner's active and paused listings.
     fn listing_ids(&self) -> Result<Vec<String>, PlatformError>;
 
@@ -135,6 +136,7 @@ pub trait SalesChannel: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub id: RecordId,
+    pub channel: SalesChannelKind,
     pub listed: ChannelListing,
     pub product: Option<RecordId>,
     pub synced_at: Timestamp,
@@ -205,6 +207,13 @@ pub enum ListingError {
     NotPaused,
     #[error("the listing has no units available to sell")]
     NoStockToSell,
+    #[error("the Listing is on {listing:?}, not on {channel:?}")]
+    OtherChannel {
+        listing: SalesChannelKind,
+        channel: SalesChannelKind,
+    },
+    #[error("a ranking of the Sales Channels has each channel ranked now, once")]
+    NotTheRanking,
     #[error(transparent)]
     Stock(#[from] InventoryError),
     #[error(transparent)]
@@ -272,10 +281,10 @@ pub(crate) const ADD_CATEGORY_NAMES: Migration = Migration {
         ON commerce_channel_categories (ml_category_id) WHERE deleted_at IS NULL;",
 };
 
-const LISTING_COLUMNS: &str = "id, ml_item_id, ml_variation_id, variation_name, title, price,
-     currency, available_quantity, status, link, listing_type, category_id, seller_sku,
-     product_id, synced_at
-     FROM commerce_listings WHERE deleted_at IS NULL AND ml_item_id IS NOT NULL";
+const LISTING_COLUMNS: &str = "id, channel_item_id, channel_variation_id, variation_name, title,
+     price, currency, available_quantity, status, link, listing_type, category_id, seller_sku,
+     product_id, synced_at, sales_channel
+     FROM commerce_listings WHERE deleted_at IS NULL AND channel_item_id IS NOT NULL";
 
 /// The owner's Listings in the Sales Channel.
 pub struct Listings {
@@ -296,13 +305,15 @@ impl Listings {
     /// Reads the owner's active and paused listings, and the ones synced
     /// before that are no longer either, so a listing paused, closed or held
     /// for review in the channel shows it here. Each listing is kept by the
-    /// channel's id, so a second Sync with the same answers changes nothing;
+    /// channel and its id, so a second Sync with the same answers changes
+    /// nothing, and a Sync of one channel never touches another's Listings;
     /// the Product a Listing is linked to always stays. The name of each
     /// category is asked once, the first time a listing is in it.
     pub async fn sync(&self, channel: &dyn SalesChannel) -> Result<ListingSync, ListingError> {
+        let on = channel.sales_channel();
         let mut wanted = channel.listing_ids()?;
         let mut seen: HashSet<String> = wanted.iter().cloned().collect();
-        for id in self.open_channel_ids().await? {
+        for id in self.open_channel_ids(on).await? {
             if seen.insert(id.clone()) {
                 wanted.push(id);
             }
@@ -316,7 +327,7 @@ impl Listings {
         for listing in reported {
             fresh.insert(key_of(&listing), listing);
         }
-        let named = self.category_names().await?;
+        let named = self.category_names(on).await?;
         let mut categories: Vec<ChannelCategory> = Vec::new();
         for id in fresh
             .values()
@@ -338,7 +349,7 @@ impl Listings {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        let known = read(&transaction, "", ()).await?;
+        let known = read(&transaction, "AND sales_channel = ?1", params![on.code()]).await?;
         let mut report = ListingSync {
             read: fresh.len(),
             ..ListingSync::default()
@@ -383,10 +394,11 @@ impl Listings {
             transaction
                 .execute(
                     "INSERT INTO commerce_listings
-                         (id, ml_item_id, ml_variation_id, variation_name, title, price,
-                          currency, available_quantity, status, link, listing_type,
-                          category_id, seller_sku, synced_at, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                         (id, sales_channel, channel_item_id, channel_variation_id,
+                          variation_name, title, price, currency, available_quantity, status,
+                          link, listing_type, category_id, seller_sku, synced_at, created_at,
+                          updated_at)
+                     VALUES (?1, ?15, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                              ?14, ?14)",
                     params![
                         self.ids.next_id().to_string(),
@@ -402,7 +414,8 @@ impl Listings {
                         reported.listing_type.map(ListingType::code),
                         reported.category.clone(),
                         reported.seller_sku.clone(),
-                        stored(now)
+                        stored(now),
+                        on.code()
                     ],
                 )
                 .await?;
@@ -411,11 +424,13 @@ impl Listings {
             transaction
                 .execute(
                     "INSERT INTO commerce_channel_categories
-                         (id, ml_category_id, name, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?4)
-                     ON CONFLICT (ml_category_id) WHERE deleted_at IS NULL DO NOTHING",
+                         (id, sales_channel, channel_category_id, name, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                     ON CONFLICT (sales_channel, channel_category_id) WHERE deleted_at IS NULL
+                     DO NOTHING",
                     params![
                         self.ids.next_id().to_string(),
+                        on.code(),
                         category.id.clone(),
                         category.name.clone(),
                         stored(now)
@@ -427,16 +442,19 @@ impl Listings {
         Ok(report)
     }
 
-    /// The name of each category of the channel a listing was synced in, by
+    /// The name of each category of `channel` a listing was synced in, by
     /// the channel's id.
-    pub async fn category_names(&self) -> Result<BTreeMap<String, String>, ListingError> {
+    pub async fn category_names(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<BTreeMap<String, String>, ListingError> {
         let mut rows = self
             .database
             .connection()
             .query(
-                "SELECT ml_category_id, name FROM commerce_channel_categories
-                 WHERE deleted_at IS NULL",
-                (),
+                "SELECT channel_category_id, name FROM commerce_channel_categories
+                 WHERE deleted_at IS NULL AND sales_channel = ?1",
+                params![channel.code()],
             )
             .await?;
         let mut names = BTreeMap::new();
@@ -462,7 +480,7 @@ impl Listings {
         }
     }
 
-    /// Every Listing, by title.
+    /// Every Listing of every channel, by title.
     pub async fn listings(&self) -> Result<Vec<Listing>, ListingError> {
         read(self.database.connection(), "", ()).await
     }
@@ -526,25 +544,46 @@ impl Listings {
         price: Money,
         channel: &dyn SalesChannel,
     ) -> Result<Vec<Listing>, ListingError> {
-        let listed = self.listing(listing).await?.listed;
+        let listed = self
+            .listing_on(listing, channel.sales_channel())
+            .await?
+            .listed;
         let price = price.rounded();
         if price.currency() != listed.price.currency() || price.amount() <= Decimal::ZERO {
             return Err(ListingError::InvalidPrice);
         }
         channel.set_price(&listed.id, price)?;
+        let on = channel.sales_channel();
         self.database
             .connection()
             .execute(
                 "UPDATE commerce_listings SET price = ?1, updated_at = ?2
-                 WHERE ml_item_id = ?3 AND deleted_at IS NULL",
+                 WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL",
                 params![
                     price.amount().to_string(),
                     stored(self.clock.now()),
+                    on.code(),
                     listed.id.clone()
                 ],
             )
             .await?;
-        self.sharing_price(&listed.id).await
+        self.sharing_price(on, &listed.id).await
+    }
+
+    /// The Listing `id`, when it is on `channel`.
+    pub(crate) async fn listing_on(
+        &self,
+        id: RecordId,
+        channel: SalesChannelKind,
+    ) -> Result<Listing, ListingError> {
+        let listing = self.listing(id).await?;
+        if listing.channel != channel {
+            return Err(ListingError::OtherChannel {
+                listing: listing.channel,
+                channel,
+            });
+        }
+        Ok(listing)
     }
 
     /// Pauses the channel listing of an active Listing, every variation of
@@ -555,12 +594,16 @@ impl Listings {
         listing: RecordId,
         channel: &dyn SalesChannel,
     ) -> Result<Vec<Listing>, ListingError> {
-        let listed = self.listing(listing).await?.listed;
+        let listed = self
+            .listing_on(listing, channel.sales_channel())
+            .await?
+            .listed;
         if listed.status != ListingStatus::Active {
             return Err(ListingError::NotActive);
         }
         channel.pause(&listed.id)?;
-        self.set_status(&listed.id, ListingStatus::Paused).await
+        self.set_status(channel.sales_channel(), &listed.id, ListingStatus::Paused)
+            .await
     }
 
     /// Puts the channel listing of a paused Listing back on sale, every
@@ -571,12 +614,16 @@ impl Listings {
         listing: RecordId,
         channel: &dyn SalesChannel,
     ) -> Result<Vec<Listing>, ListingError> {
-        let listed = self.listing(listing).await?.listed;
+        let listed = self
+            .listing_on(listing, channel.sales_channel())
+            .await?
+            .listed;
         if listed.status != ListingStatus::Paused {
             return Err(ListingError::NotPaused);
         }
+        let on = channel.sales_channel();
         if self
-            .sharing_price(&listed.id)
+            .sharing_price(on, &listed.id)
             .await?
             .iter()
             .all(|listing| listing.listed.available_quantity == 0)
@@ -584,11 +631,12 @@ impl Listings {
             return Err(ListingError::NoStockToSell);
         }
         channel.activate(&listed.id)?;
-        self.set_status(&listed.id, ListingStatus::Active).await
+        self.set_status(on, &listed.id, ListingStatus::Active).await
     }
 
     async fn set_status(
         &self,
+        channel: SalesChannelKind,
         id: &str,
         status: ListingStatus,
     ) -> Result<Vec<Listing>, ListingError> {
@@ -596,17 +644,23 @@ impl Listings {
             .connection()
             .execute(
                 "UPDATE commerce_listings SET status = ?1, updated_at = ?2
-                 WHERE ml_item_id = ?3 AND deleted_at IS NULL",
-                params![status.code(), stored(self.clock.now()), id.to_owned()],
+                 WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL",
+                params![
+                    status.code(),
+                    stored(self.clock.now()),
+                    channel.code(),
+                    id.to_owned()
+                ],
             )
             .await?;
-        self.sharing_price(id).await
+        self.sharing_price(channel, id).await
     }
 
-    /// Writes what the channel reports now over the Listings it matches, as
-    /// a Sync would, leaving every other Listing as it is.
+    /// Writes what `channel` reports now over its Listings it matches, as a
+    /// Sync would, leaving every other Listing as it is.
     pub(crate) async fn take_reported(
         &self,
+        channel: SalesChannelKind,
         reported: Vec<ChannelListing>,
     ) -> Result<(), ListingError> {
         let now = self.clock.now();
@@ -614,7 +668,12 @@ impl Listings {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        let known = read(&transaction, "", ()).await?;
+        let known = read(
+            &transaction,
+            "AND sales_channel = ?1",
+            params![channel.code()],
+        )
+        .await?;
         for reported in reported {
             if let Some(listing) = known
                 .iter()
@@ -628,12 +687,16 @@ impl Listings {
         Ok(())
     }
 
-    /// The Listings of the channel listing `id`: one, or one per variation.
-    pub(crate) async fn sharing_price(&self, id: &str) -> Result<Vec<Listing>, ListingError> {
+    /// The Listings of `channel`'s listing `id`: one, or one per variation.
+    pub(crate) async fn sharing_price(
+        &self,
+        channel: SalesChannelKind,
+        id: &str,
+    ) -> Result<Vec<Listing>, ListingError> {
         read(
             self.database.connection(),
-            "AND ml_item_id = ?1",
-            params![id.to_owned()],
+            "AND sales_channel = ?1 AND channel_item_id = ?2",
+            params![channel.code(), id.to_owned()],
         )
         .await
     }
@@ -676,17 +739,21 @@ impl Listings {
         self.listing(listing).await
     }
 
-    /// The channel ids of the Listings a Sync still reads: every one not
-    /// closed.
-    async fn open_channel_ids(&self) -> Result<Vec<String>, ListingError> {
+    /// The channel ids of `channel`'s Listings a Sync still reads: every
+    /// one not closed.
+    async fn open_channel_ids(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<Vec<String>, ListingError> {
         let mut rows = self
             .database
             .connection()
             .query(
-                "SELECT DISTINCT ml_item_id FROM commerce_listings
-                 WHERE deleted_at IS NULL AND ml_item_id IS NOT NULL AND status <> ?1
-                 ORDER BY ml_item_id",
-                params![ListingStatus::Closed.code()],
+                "SELECT DISTINCT channel_item_id FROM commerce_listings
+                 WHERE deleted_at IS NULL AND channel_item_id IS NOT NULL AND status <> ?1
+                     AND sales_channel = ?2
+                 ORDER BY channel_item_id",
+                params![ListingStatus::Closed.code(), channel.code()],
             )
             .await?;
         let mut ids = Vec::new();
@@ -748,7 +815,8 @@ async fn read(
         .query(
             &format!(
                 "SELECT {LISTING_COLUMNS} {filter}
-                 ORDER BY title COLLATE NOCASE, variation_name COLLATE NOCASE, ml_item_id"
+                 ORDER BY title COLLATE NOCASE, variation_name COLLATE NOCASE, sales_channel,
+                     channel_item_id"
             ),
             params,
         )
@@ -772,6 +840,7 @@ fn listing_from(row: &Row) -> Result<Listing, ListingError> {
     let listing_type: Option<String> = row.get(10)?;
     Ok(Listing {
         id: row.id_at(0)?,
+        channel: row.sales_channel_at(15)?,
         listed: ChannelListing {
             id: row.get(1)?,
             variation,

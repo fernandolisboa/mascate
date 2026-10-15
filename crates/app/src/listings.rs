@@ -7,6 +7,7 @@
 //! queue shows what is still to send and why it did not go, and each
 //! listing can be paused and reactivated.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
@@ -22,10 +23,10 @@ use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
     MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
-    StockSend, SuggestedBy,
+    SalesChannel, StockMirror, StockSend, SuggestedBy,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::{Money, Percentage, RecordId, Timestamp, parse_amount};
+use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
 use mascate_marketing::QualitySync;
 use rust_decimal::Decimal;
 
@@ -41,6 +42,7 @@ use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::quality;
+use crate::sales_channels::{self, ChannelFilter};
 use crate::stock_mirror;
 
 /// The app's Listings; absent when the database did not open.
@@ -62,7 +64,20 @@ pub(crate) struct ListingProduct {
     pub open: bool,
 }
 
-/// What each listing sells, by the channel's id.
+/// The Mercado Livre Listings: the only ones Marketing (quality, questions,
+/// Reputation, Product Ads) and Promotions read until their tables say the
+/// channel too (ADR 0033).
+pub(crate) async fn mercado_livre_listings(listings: &Listings) -> Result<Vec<Listing>, String> {
+    Ok(listings
+        .listings()
+        .await
+        .map_err(|e| failure(&e))?
+        .into_iter()
+        .filter(|listing| listing.channel == SalesChannelKind::MercadoLivre)
+        .collect())
+}
+
+/// What each Mercado Livre listing sells, by the channel's id.
 pub(crate) async fn listing_products(
     listings: &Listings,
     catalog: &Catalog,
@@ -75,7 +90,7 @@ pub(crate) async fn listing_products(
         .map(|product| (product.id, product.name))
         .collect();
     let mut sold = std::collections::BTreeMap::new();
-    for listing in listings.listings().await.map_err(|e| failure(&e))? {
+    for listing in mercado_livre_listings(listings).await? {
         let open = listing.listed.status != ListingStatus::Closed;
         let linked = listing
             .product
@@ -227,6 +242,7 @@ pub struct ListingsScreen {
     price: Option<PricePanel>,
     simulator: Simulator,
     drafts: Entity<DraftsSection>,
+    channel_filter: ChannelFilter,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -273,6 +289,7 @@ impl ListingsScreen {
             price: None,
             simulator,
             drafts,
+            channel_filter: ChannelFilter::default(),
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
@@ -403,16 +420,15 @@ impl ListingsScreen {
         self.products.iter().find(|product| product.id == id)
     }
 
-    /// Reads the listings, sends the stock still to send, then reads the
-    /// quality of each listing (#23).
+    /// Reads the listings of every connected Sales Channel, sends the stock
+    /// still to send, then reads the quality of each Mercado Livre listing
+    /// (#23).
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(mirror), Some(rated)) = (
-            mercado_livre::adapter(cx),
-            stock_mirror::mirror(cx),
-            quality::quality(cx),
-        ) else {
+        let (Some(mirror), Some(rated)) = (stock_mirror::mirror(cx), quality::quality(cx)) else {
             return;
         };
+        let reach = sales_channels::reach(cx);
+        let rating = mercado_livre::adapter(cx);
         self.outcome = None;
         self.step = None;
         self.price = None;
@@ -421,25 +437,42 @@ impl ListingsScreen {
             window,
             cx,
             move |listings, _| async move {
-                let report = listings
-                    .sync(channel.as_ref())
-                    .await
-                    .map_err(|e| failure(&e))?;
-                let sent = mirror
-                    .send(channel.as_ref())
-                    .await
-                    .map_err(|e| failure(&e))?;
-                let rated = quality::sync(&listings, &rated, channel.as_ref()).await;
+                let channels = reach.connected().await;
+                let mut report = ListingSync::default();
+                for channel in &channels {
+                    let synced = listings
+                        .sync(channel.listings.as_ref())
+                        .await
+                        .map_err(|e| failure(&e))?;
+                    report.read += synced.read;
+                    report.new += synced.new;
+                    report.changed += synced.changed;
+                    report.gone += synced.gone;
+                }
+                let sent = send_every_channel(&mirror, &channels).await?;
+                let rated = match rating.filter(|_| {
+                    channels
+                        .iter()
+                        .any(|channel| channel.kind() == SalesChannelKind::MercadoLivre)
+                }) {
+                    Some(rating) => Some(quality::sync(&listings, &rated, rating.as_ref()).await),
+                    None => None,
+                };
                 Ok(Some((report, sent, rated)))
             },
             |this,
-             (report, sent, rated): (ListingSync, StockSend, Result<QualitySync, String>),
+             (report, sent, rated): (
+                ListingSync,
+                StockSend,
+                Option<Result<QualitySync, String>>,
+            ),
              _,
              _| {
                 let mut text = synced(&report);
                 text.push_str(&stock_sent(&sent));
                 this.outcome = Some(match rated {
-                    Ok(rated) => {
+                    None => Outcome::Done(text.into()),
+                    Some(Ok(rated)) => {
                         text.push(' ');
                         text.push_str(&quality::synced(&rated));
                         if rated.pending > 0 {
@@ -447,7 +480,7 @@ impl ListingsScreen {
                         }
                         Outcome::Done(text.into())
                     }
-                    Err(error) => {
+                    Some(Err(error)) => {
                         text.push_str(&format!(" Não li a qualidade dos anúncios: {error}"));
                         Outcome::Failed(text.into())
                     }
@@ -458,20 +491,18 @@ impl ListingsScreen {
 
     /// Sends the stock in the queue now.
     fn send_stock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(mirror)) = (mercado_livre::adapter(cx), stock_mirror::mirror(cx))
-        else {
+        let Some(mirror) = stock_mirror::mirror(cx) else {
             return;
         };
+        let reach = sales_channels::reach(cx);
         self.outcome = None;
         self.run(
             window,
             cx,
             move |_, _| async move {
-                mirror
-                    .send(channel.as_ref())
+                send_every_channel(&mirror, &reach.connected().await)
                     .await
                     .map(Some)
-                    .map_err(|e| failure(&e))
             },
             |this, sent: StockSend, _, _| {
                 this.outcome = Some(match sent.failed {
@@ -480,6 +511,20 @@ impl ListingsScreen {
                 });
             },
         );
+    }
+
+    /// The Sales Channel `listing` is on, with the adapter that reaches it.
+    fn channel_of(
+        &self,
+        listing: RecordId,
+        cx: &App,
+    ) -> Option<(SalesChannelKind, Arc<dyn SalesChannel>)> {
+        let kind = self
+            .listings
+            .iter()
+            .find(|known| known.id == listing)?
+            .channel;
+        sales_channels::of(cx, kind).map(|channel| (kind, channel.listings))
     }
 
     /// Pauses or reactivates the listing in Mercado Livre, every variation
@@ -491,7 +536,7 @@ impl ListingsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some((kind, channel)) = self.channel_of(listing, cx) else {
             return;
         };
         self.outcome = None;
@@ -510,12 +555,11 @@ impl ListingsScreen {
             },
             move |this, changed: Vec<Listing>, _, _| {
                 let what = if pause { "pausado" } else { "reativado" };
+                let on = sales_channels::on(kind);
                 this.outcome = Some(Outcome::Done(
                     match changed.len() {
-                        0 | 1 => format!("Anúncio {what} no Mercado Livre."),
-                        count => format!(
-                            "Anúncio {what} no Mercado Livre, com as {count} variações dele."
-                        ),
+                        0 | 1 => format!("Anúncio {what} {on}."),
+                        count => format!("Anúncio {what} {on}, com as {count} variações dele."),
                     }
                     .into(),
                 ));
@@ -692,8 +736,8 @@ impl ListingsScreen {
     /// channel's fee at today's price, in the simulator, and the Price
     /// Suggestion. Nothing is sent to the channel.
     fn open_price(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(pricing), Some(taxes), Some(catalog)) = (
-            mercado_livre::adapter(cx),
+        let (Some((_, channel)), Some(pricing), Some(taxes), Some(catalog)) = (
+            self.channel_of(listing, cx),
             pricing::pricing(cx),
             pricing::taxes(cx),
             catalog::catalog(cx),
@@ -764,7 +808,7 @@ impl ListingsScreen {
         cx.notify();
     }
 
-    /// Sends `price` to Mercado Livre for the listing and its variations:
+    /// Sends `price` to the listing's channel for it and its variations:
     /// only ever on the owner's click.
     fn send_price(
         &mut self,
@@ -773,7 +817,7 @@ impl ListingsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some((kind, channel)) = self.channel_of(listing, cx) else {
             return;
         };
         self.row_outcome = None;
@@ -790,12 +834,12 @@ impl ListingsScreen {
             move |this, changed: Vec<Listing>, _, _| {
                 this.price = None;
                 let price = price.rounded().to_pt_br();
+                let to = sales_channels::to(kind);
                 this.outcome = Some(Outcome::Done(
                     match changed.len() {
-                        0 | 1 => format!("Preço de {price} enviado ao Mercado Livre."),
+                        0 | 1 => format!("Preço de {price} enviado {to}."),
                         count => format!(
-                            "Preço de {price} enviado ao Mercado Livre para as {count} variações \
-                             do anúncio."
+                            "Preço de {price} enviado {to} para as {count} variações do anúncio."
                         ),
                     }
                     .into(),
@@ -1198,7 +1242,7 @@ impl ListingsScreen {
             listed
                 .seller_sku
                 .as_ref()
-                .map(|sku| format!("SKU no ML: {sku}")),
+                .map(|sku| format!("SKU {}: {sku}", sales_channels::on(listing.channel))),
         );
         v_flex()
             .min_w_0()
@@ -1215,6 +1259,7 @@ impl ListingsScreen {
                             .truncate()
                             .child(listed.title.clone()),
                     )
+                    .child(kit::tag(listing.channel.name(), t.text2, cx))
                     .child(kit::tag(
                         status_name(listed.status),
                         status_ink(listed.status, &t),
@@ -1568,15 +1613,39 @@ impl Render for ListingsScreen {
             );
         }
 
-        let heading = match self.listings.len() {
-            0 => "Anúncios no Mercado Livre".to_owned(),
-            1 => "1 anúncio no Mercado Livre".to_owned(),
-            count => format!("{count} anúncios no Mercado Livre"),
+        let held: BTreeSet<SalesChannelKind> = self
+            .listings
+            .iter()
+            .map(|listing| listing.channel)
+            .collect();
+        let shown: Vec<usize> = (0..self.listings.len())
+            .filter(|index| {
+                self.channel_filter
+                    .shows(self.listings[*index].channel, &held)
+            })
+            .collect();
+        let mut heading = match shown.len() {
+            0 => "Anúncios".to_owned(),
+            1 => "1 anúncio".to_owned(),
+            count => format!("{count} anúncios"),
         };
+        if let [only] = held.iter().collect::<Vec<_>>()[..] {
+            heading = format!("{heading} {}", sales_channels::on(*only));
+        }
+        let chips = self.channel_filter.chips(
+            "listing-channel",
+            &held,
+            cx,
+            |this: &mut Self, filter, cx| {
+                this.channel_filter = filter;
+                cx.notify();
+            },
+        );
         parts.content.push(
             v_flex()
                 .gap_3()
                 .child(kit::section_heading(heading))
+                .children(chips)
                 .when(self.listings.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
                         "Nenhum anúncio ainda. Sincronize para trazer os anúncios ativos e \
@@ -1584,7 +1653,7 @@ impl Render for ListingsScreen {
                          produto que ela vende.",
                     ))
                 })
-                .children((0..self.listings.len()).map(|index| self.render_listing(index, cx)))
+                .children(shown.into_iter().map(|index| self.render_listing(index, cx)))
                 .into_any_element(),
         );
         layout::screen(parts, cx)
@@ -1674,6 +1743,23 @@ fn stock_sent(sent: &StockSend) -> String {
     text
 }
 
+/// Sends the stock still to send to each channel, one after the other.
+async fn send_every_channel(
+    mirror: &StockMirror,
+    channels: &[sales_channels::ChannelPorts],
+) -> Result<StockSend, String> {
+    let mut sent = StockSend::default();
+    for channel in channels {
+        let part = mirror
+            .send(channel.listings.as_ref())
+            .await
+            .map_err(|e| failure(&e))?;
+        sent.sent += part.sent;
+        sent.failed += part.failed;
+    }
+    Ok(sent)
+}
+
 /// What the Sync did, in one line.
 fn synced(report: &ListingSync) -> String {
     let mut text = format!(
@@ -1704,6 +1790,14 @@ pub(crate) fn failure(error: &ListingError) -> String {
         ListingError::NoStockToSell => "O anúncio está sem estoque no Mercado Livre e \
              continuaria pausado. Dê entrada no estoque em Compras: quando o estoque chega ao \
              anúncio, o Mercado Livre reativa sozinho o que pausou por falta de estoque."
+            .into(),
+        ListingError::OtherChannel { listing, channel } => format!(
+            "Esse anúncio é {}, não {}; a lista foi atualizada.",
+            sales_channels::of_channel(*listing),
+            sales_channels::of_channel(*channel)
+        ),
+        ListingError::NotTheRanking => "A ordem precisa ter cada canal conectado uma vez só; \
+             a lista foi atualizada."
             .into(),
         ListingError::Stock(_) => format!("Não consegui ler o estoque: {error}"),
         ListingError::Platform(error) => mercado_livre::failure(error),

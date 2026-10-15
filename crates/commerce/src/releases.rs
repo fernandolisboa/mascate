@@ -8,10 +8,10 @@ use std::collections::BTreeMap;
 
 use chrono::TimeDelta;
 use libsql::{Connection, TransactionBehavior, params};
-use mascate_kernel::{Money, PlatformError, RecordId, Timestamp};
+use mascate_kernel::{Money, PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Migration, StoredRow, stored};
 
-use crate::{OrderError, OrderStatus, Orders};
+use crate::{OnSalesChannel, OrderError, OrderStatus, Orders};
 
 pub(crate) const CREATE_MONEY_RELEASES: Migration = Migration {
     version: 11,
@@ -58,10 +58,9 @@ pub struct PaymentRelease {
     pub release_at: Option<Timestamp>,
 }
 
-/// The wallet the Sales Channel pays the owner into, as a Platform's
-/// adapter reports it. Calls block on the network, so they run off the UI
-/// thread.
-pub trait ChannelPayments: Send + Sync {
+/// The wallet a Sales Channel pays the owner into, as a Platform's adapter
+/// reports it. Calls block on the network, so they run off the UI thread.
+pub trait ChannelPayments: OnSalesChannel + Send + Sync {
     /// The payments of each of `orders` (the channel's ids) that brought
     /// money in, with when it is released. A refunded or cancelled payment
     /// brings none and is left out.
@@ -80,7 +79,7 @@ pub struct ReleaseImport {
 /// An Order's state as the release import reads it.
 struct ReleaseState {
     id: RecordId,
-    ml_id: String,
+    channel_id: String,
     /// As stored, to write over only if no Sync changed it meanwhile.
     checked_text: Option<String>,
     checked_at: Option<Timestamp>,
@@ -115,21 +114,23 @@ impl Orders {
     /// changed and, every few hours for its first 90 days, about each one
     /// with money still held whose date has come or is not known. Keeps
     /// each payment by the wallet's id; a payment the wallet no longer
-    /// reports for an Order asked about goes.
+    /// reports for an Order asked about goes. Only the Orders of the
+    /// wallet's own channel are asked about.
     pub async fn import_releases(
         &self,
         wallet: &dyn ChannelPayments,
     ) -> Result<ReleaseImport, OrderError> {
         let now = self.clock.now();
-        let due: Vec<ReleaseState> = release_states(self.database.connection())
-            .await?
-            .into_iter()
-            .filter(|state| state.due(now))
-            .collect();
+        let due: Vec<ReleaseState> =
+            release_states(self.database.connection(), wallet.sales_channel())
+                .await?
+                .into_iter()
+                .filter(|state| state.due(now))
+                .collect();
         if due.is_empty() {
             return Ok(ReleaseImport::default());
         }
-        let asked: Vec<String> = due.iter().map(|state| state.ml_id.clone()).collect();
+        let asked: Vec<String> = due.iter().map(|state| state.channel_id.clone()).collect();
         let mut reported: BTreeMap<String, Vec<PaymentRelease>> = BTreeMap::new();
         for payment in wallet.releases(&asked)? {
             reported
@@ -147,7 +148,7 @@ impl Orders {
             payments: 0,
         };
         for state in &due {
-            let payments = reported.remove(&state.ml_id).unwrap_or_default();
+            let payments = reported.remove(&state.channel_id).unwrap_or_default();
             report.payments += payments.len();
             self.write_releases(&transaction, state.id, &payments, now)
                 .await?;
@@ -176,12 +177,12 @@ impl Orders {
             .database
             .connection()
             .query(
-                "SELECT ord.ml_order_id, rel.ml_payment_id, rel.amount, rel.currency,
+                "SELECT ord.channel_order_id, rel.channel_payment_id, rel.amount, rel.currency,
                      rel.released, rel.release_at
                  FROM commerce_money_releases rel
                  JOIN commerce_orders ord ON ord.id = rel.order_id
                  WHERE rel.deleted_at IS NULL AND ord.deleted_at IS NULL
-                 ORDER BY rel.release_at IS NULL, rel.release_at, rel.ml_payment_id",
+                 ORDER BY rel.release_at IS NULL, rel.release_at, rel.channel_payment_id",
                 (),
             )
             .await?;
@@ -210,10 +211,10 @@ impl Orders {
         for payment in payments {
             on.execute(
                 "INSERT INTO commerce_money_releases
-                     (id, order_id, ml_payment_id, amount, currency, released, release_at,
-                      created_at, updated_at)
+                     (id, order_id, channel_payment_id, amount, currency, released,
+                      release_at, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-                 ON CONFLICT (order_id, ml_payment_id) WHERE deleted_at IS NULL
+                 ON CONFLICT (order_id, channel_payment_id) WHERE deleted_at IS NULL
                  DO UPDATE SET amount = excluded.amount, currency = excluded.currency,
                      released = excluded.released, release_at = excluded.release_at,
                      updated_at = excluded.updated_at",
@@ -240,18 +241,22 @@ impl Orders {
     }
 }
 
-/// What each Order's status and kept payments say to the release import.
-async fn release_states(on: &Connection) -> Result<Vec<ReleaseState>, OrderError> {
+/// What each of `channel`'s Orders' status and kept payments say to the
+/// release import.
+async fn release_states(
+    on: &Connection,
+    channel: SalesChannelKind,
+) -> Result<Vec<ReleaseState>, OrderError> {
     let mut rows = on
         .query(
-            "SELECT ord.id, ord.ml_order_id, ord.releases_checked_at, ord.status,
+            "SELECT ord.id, ord.channel_order_id, ord.releases_checked_at, ord.status,
                  ord.ordered_at, rel.released, rel.release_at
              FROM commerce_orders ord
              LEFT JOIN commerce_money_releases rel
                  ON rel.order_id = ord.id AND rel.deleted_at IS NULL
-             WHERE ord.deleted_at IS NULL
+             WHERE ord.deleted_at IS NULL AND ord.sales_channel = ?1
              ORDER BY ord.ordered_at, ord.id",
-            (),
+            params![channel.code()],
         )
         .await?;
     let mut states: Vec<ReleaseState> = Vec::new();
@@ -260,7 +265,7 @@ async fn release_states(on: &Connection) -> Result<Vec<ReleaseState>, OrderError
         if states.last().is_none_or(|state| state.id != id) {
             states.push(ReleaseState {
                 id,
-                ml_id: row.get(1)?,
+                channel_id: row.get(1)?,
                 checked_text: row.get(2)?,
                 checked_at: row.optional_time_at(2)?,
                 cancelled: row.get::<String>(3)? == OrderStatus::Cancelled.code(),
