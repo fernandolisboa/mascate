@@ -45,7 +45,7 @@ _Avoid_: destaque, top, campeão de vendas
 ## Venda
 
 **Sales Channel**:
-Platform onde o Fernando vende como vendedor (Mercado Livre na fase 1).
+Platform onde o Fernando vende como vendedor: Mercado Livre desde a fase 1; Amazon, Shopee e Magalu na fase 3. Uma conta por Platform, numa ordem que o Fernando define e que decide quem recebe primeiro as unidades da Stock Share.
 _Avoid_: canal (sozinho), marketplace, loja
 
 **Listing**:
@@ -57,8 +57,12 @@ Listing ainda não publicado, montado a partir de um Product: título, descriç�
 _Avoid_: pré-anúncio, rascunho de produto
 
 **Stock Mirror**:
-Regra pela qual o estoque de cada Listing publicado e ligado a um Product segue o saldo dele no app. Depois de cada Stock Movement e de cada Sync, o app envia ao Sales Channel o saldo que mudou desde o último envio; o que não foi fica na fila de reenvio, com o motivo. Um Product que nunca entrou no estoque ainda não é espelhado.
+Regra pela qual o estoque de cada Listing publicado e ligado a um Product segue o saldo dele no app. Depois de cada Stock Movement e de cada Sync, o app envia ao Sales Channel a Stock Share que mudou desde o último envio, as que diminuem antes das que aumentam; o que não foi fica na fila de reenvio, com o motivo. Um Product que nunca entrou no estoque ainda não é espelhado.
 _Avoid_: sincronização de estoque (Sync é leitura), estoque automático
+
+**Stock Share**:
+Parte do saldo de um Product que um Listing mostra no Sales Channel. O saldo é dividido uma unidade por vez, em rodízio, entre os Listings à venda (ou pausados pelo canal por falta de estoque), na ordem dos Sales Channels e, dentro de um canal, do Listing mais antigo para o mais novo. A soma das partes é sempre o saldo, então a mesma unidade nunca está à venda em dois lugares; com 1 unidade só o primeiro Listing mostra.
+_Avoid_: reserva, cota, estoque do canal
 
 **Checklist**:
 O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (título, categoria, preço, atributos obrigatórios, mínimo de 3 fotos, erros do validador do canal) impedem a publicação; os avisos (GTIN e atributos recomendados, descrição vazia, estoque zero, avisos do validador) não.
@@ -99,6 +103,10 @@ _Avoid_: markup, margem mínima (reservada para Promotions)
 **Price Suggestion**:
 Menor preço, em centavos, em que um Listing chega à Target Margin depois das Fees e do Average Cost; as variações do mesmo anúncio dividem o preço. Só vai ao Sales Channel quando o Fernando aprova.
 _Avoid_: reprecificação, preço automático
+
+**Automatic Repricing**:
+Preço de um Listing ajustado sem confirmação a cada mudança, entre um mínimo e um máximo que o Fernando confirma, seguindo o preço que o Sales Channel diz ganhar a disputa (a automação de preços do Mercado Livre, a oferta em destaque da Amazon). O mínimo nunca fica abaixo do preço que mantém a Minimum Margin. Desligada por flag até o Fernando ligar; cada mudança fica no histórico de preço do Listing.
+_Avoid_: preço dinâmico, robô de preço
 
 **Estimated Margin**:
 Margem prevista de uma Opportunity ou Listing antes de vender.
