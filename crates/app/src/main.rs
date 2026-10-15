@@ -36,6 +36,7 @@ mod orders;
 mod palette;
 mod parts;
 mod payouts;
+mod post_queue;
 mod preferences;
 mod pricing;
 mod product_links;
@@ -291,6 +292,7 @@ fn main() {
                 });
                 backups::start_daily(cx);
                 orders::start_polling(cx);
+                post_queue::start(cx);
                 affiliate::start_syncing(cx);
             } else if let Some(path) = problem
                 .as_ref()

@@ -1,5 +1,6 @@
 //! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy,
-//! Promotion Channels and Offer Posts, published through a destination's port.
+//! Promotion Channels and Offer Posts, published through a destination's port
+//! now or from the queue at a time the owner confirmed.
 
 mod ads;
 mod channels;
@@ -8,6 +9,7 @@ mod offer_posts;
 mod publishing;
 mod quality;
 mod questions;
+mod queue;
 mod replies;
 mod reputation;
 
@@ -43,6 +45,10 @@ pub use quality::{
 pub use questions::{
     AnswerRequest, ChannelAnswer, ChannelQuestion, ChannelQuestions, ConfirmedAnswer, Question,
     QuestionError, QuestionStatus, QuestionSync, Questions, SentAnswer,
+};
+pub use queue::{
+    CHAT_SPACING, LATE_AFTER_MINUTES, PRICE_KEEPS_HOURS, PostQueue, PostTime, QueueRound,
+    default_posting_times, next_free_time,
 };
 pub use replies::{
     ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,
@@ -88,6 +94,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         channels::CREATE_PROMOTION_CHANNELS,
         offer_posts::CREATE_OFFER_POSTS,
         publishing::PUBLISH_OFFER_POSTS,
+        queue::SCHEDULE_OFFER_POSTS,
     ],
 };
 

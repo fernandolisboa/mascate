@@ -3,7 +3,7 @@
 //! edited by the owner. The Marketing reads neither the Affiliate nor the
 //! Catalog: the caller hands over the facts of the offer. The owner copies
 //! the text, or publishes the post on a Telegram channel after confirming
-//! it (#103, `publishing`).
+//! it (#103, `publishing`), now or at a time of its queue (#104, `queue`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use crate::channels::{ChannelError, ChannelKind, PromotionChannel, PromotionChan
 use crate::publishing::{
     ConfirmedPost, PostDestination, PublishFailure, PublishRequest, PublishedPost,
 };
+use crate::queue::price_fresh_at;
 use crate::replies::{Contact, contacts_in, unknown_variable};
 
 pub(crate) const CREATE_OFFER_POSTS: Migration = Migration {
@@ -237,6 +238,14 @@ pub struct PostDraft {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PostStatus {
     Draft,
+    /// Confirmed for a time: the queue publishes it then.
+    Scheduled,
+    /// Its time passed by more than [`crate::LATE_AFTER_MINUTES`] with the
+    /// app closed: it waits for the owner to publish it now or reschedule.
+    Late,
+    /// Its price got older than its Program keeps one before it went out:
+    /// it waits for the owner to see the price again.
+    PriceExpired,
     /// Handed to the destination, its answer not back yet.
     Sending,
     Sent,
@@ -249,17 +258,23 @@ pub enum PostStatus {
 }
 
 impl PostStatus {
-    const ALL: [PostStatus; 5] = [
+    const ALL: [PostStatus; 8] = [
         PostStatus::Draft,
+        PostStatus::Scheduled,
+        PostStatus::Late,
+        PostStatus::PriceExpired,
         PostStatus::Sending,
         PostStatus::Sent,
         PostStatus::Unconfirmed,
         PostStatus::Failed,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             PostStatus::Draft => "draft",
+            PostStatus::Scheduled => "scheduled",
+            PostStatus::Late => "late",
+            PostStatus::PriceExpired => "price_expired",
             PostStatus::Sending => "sending",
             PostStatus::Sent => "sent",
             PostStatus::Unconfirmed => "unconfirmed",
@@ -267,17 +282,39 @@ impl PostStatus {
         }
     }
 
-    /// Whether the owner may still change the post.
+    /// Whether the owner may still change the post. Changing one waiting
+    /// in the queue takes it out, until the owner confirms it again.
     pub fn editable(self) -> bool {
-        matches!(self, PostStatus::Draft | PostStatus::Failed)
+        matches!(
+            self,
+            PostStatus::Draft
+                | PostStatus::Scheduled
+                | PostStatus::Late
+                | PostStatus::PriceExpired
+                | PostStatus::Failed
+        )
     }
 
-    /// Whether the owner may publish the post: a draft, a failed one, or
-    /// again, one that may or may not have gone out.
+    /// Whether the owner may publish or schedule the post: a draft, one in
+    /// the queue or late, a failed one, or again, one that may or may not
+    /// have gone out. One whose price expired needs the price first.
     pub fn publishable(self) -> bool {
         matches!(
             self,
-            PostStatus::Draft | PostStatus::Failed | PostStatus::Unconfirmed
+            PostStatus::Draft
+                | PostStatus::Scheduled
+                | PostStatus::Late
+                | PostStatus::Failed
+                | PostStatus::Unconfirmed
+        )
+    }
+
+    /// Whether the post waits in the queue or for the owner to pick its
+    /// time again.
+    pub fn queued(self) -> bool {
+        matches!(
+            self,
+            PostStatus::Scheduled | PostStatus::Late | PostStatus::PriceExpired
         )
     }
 
@@ -305,6 +342,8 @@ pub struct OfferPost {
     pub status: PostStatus,
     /// The last time the owner copied its text.
     pub copied_at: Option<Timestamp>,
+    /// When the queue publishes it, or was to.
+    pub scheduled_at: Option<Timestamp>,
     /// Once [`PostStatus::Sent`].
     pub sent: Option<SentPost>,
     /// Why the last publishing failed or is unconfirmed.
@@ -491,6 +530,14 @@ pub enum PostError {
     WrongStatus(PostStatus),
     #[error("the post changed since it was confirmed")]
     Changed,
+    #[error("the time has passed")]
+    PastTime,
+    #[error("another post of the channel is scheduled at that time")]
+    TimeTaken,
+    #[error("the channel has no posting times")]
+    NoPostingTimes,
+    #[error("the price would be older than its Program keeps one")]
+    OldPrice,
     #[error("the posts hold a value this app cannot read: {0}")]
     Unreadable(String),
     #[error(transparent)]
@@ -517,18 +564,19 @@ impl From<ChannelError> for PostError {
     }
 }
 
-const POST_QUERY: &str = "SELECT id, channel_id, affiliate_link_id, link, product, platform,
+pub(crate) const POST_QUERY: &str =
+    "SELECT id, channel_id, affiliate_link_id, link, product, platform,
          text, image_file, image_url, price, price_before, currency, price_seen_at,
          price_needs_time, forbidden_contacts, status, copied_at, created_at, updated_at,
-         sent_at, message_id, post_link, failure, failure_detail
+         sent_at, message_id, post_link, failure, failure_detail, scheduled_at
      FROM marketing_offer_posts WHERE deleted_at IS NULL";
 
 /// The owner's Offer Posts and the template of each Promotion Channel.
 pub struct OfferPosts {
-    database: Arc<Database>,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
-    channels: PromotionChannels,
+    pub(crate) database: Arc<Database>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) ids: Arc<dyn IdGenerator>,
+    pub(crate) channels: PromotionChannels,
 }
 
 impl OfferPosts {
@@ -649,7 +697,8 @@ impl OfferPosts {
     }
 
     /// Saves `draft` over the post `id`, unless a problem blocks it or the
-    /// post is no longer [`PostStatus::editable`].
+    /// post is no longer [`PostStatus::editable`]. A post in the queue
+    /// leaves it as a draft: the owner confirms the new text again.
     pub async fn update(&self, id: RecordId, draft: &PostDraft) -> Result<OfferPost, PostError> {
         let status = self.post(id).await?.status;
         if !status.editable() {
@@ -669,8 +718,11 @@ impl OfferPosts {
                  SET channel_id = ?1, affiliate_link_id = ?2, link = ?3, product = ?4,
                      platform = ?5, text = ?6, image_file = ?7, image_url = ?8, price = ?9,
                      price_before = ?10, currency = ?11, price_seen_at = ?12,
-                     price_needs_time = ?13, forbidden_contacts = ?14, updated_at = ?15
-                 WHERE id = ?16 AND deleted_at IS NULL AND status IN ('draft', 'failed')",
+                     price_needs_time = ?13, forbidden_contacts = ?14, updated_at = ?15,
+                     status = CASE status WHEN 'failed' THEN 'failed' ELSE 'draft' END,
+                     scheduled_at = NULL
+                 WHERE id = ?16 AND deleted_at IS NULL
+                     AND status IN ('draft', 'scheduled', 'late', 'price_expired', 'failed')",
                 values,
             )
             .await?;
@@ -767,12 +819,16 @@ impl OfferPosts {
     /// Checks the saved post `id` for its destination: what comes back
     /// carries the final text, the picture and the chat for the owner to
     /// read and confirm. Only a post on a Telegram channel with its chat,
-    /// [`PostStatus::publishable`] and with nothing blocking it gets one,
-    /// so a text over the destination's limits never reaches it.
+    /// [`PostStatus::publishable`], with nothing blocking it and with a
+    /// price its Program still keeps gets one, so a text over the
+    /// destination's limits never reaches it.
     pub async fn prepare(&self, id: RecordId) -> Result<PublishRequest, PostError> {
         let post = self.post(id).await?;
         if !post.status.publishable() {
             return Err(PostError::WrongStatus(post.status));
+        }
+        if !price_fresh_at(&post.draft.facts, self.clock.now()) {
+            return Err(PostError::OldPrice);
         }
         let channel = self.channels.channel(post.draft.channel).await?;
         if channel.kind != ChannelKind::TelegramChannel {
@@ -990,7 +1046,7 @@ fn row_values(draft: &PostDraft) -> Vec<Value> {
     ]
 }
 
-fn post_from(row: &libsql::Row) -> Result<OfferPost, PostError> {
+pub(crate) fn post_from(row: &libsql::Row) -> Result<OfferPost, PostError> {
     let image = match (row.get::<Option<String>>(7)?, row.get::<Option<String>>(8)?) {
         (Some(file), _) => Some(PostImage::File(PathBuf::from(file))),
         (None, Some(url)) => Some(PostImage::Url(url)),
@@ -1051,6 +1107,7 @@ fn post_from(row: &libsql::Row) -> Result<OfferPost, PostError> {
         },
         status,
         copied_at: row.optional_time_at(16)?,
+        scheduled_at: row.optional_time_at(24)?,
         sent,
         failure,
         created_at: row.time_at(17)?,

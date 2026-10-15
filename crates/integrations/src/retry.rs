@@ -4,20 +4,7 @@
 use std::time::Duration;
 
 use mascate_kernel::PlatformError;
-
-/// Waits between attempts. Injected, so tests never sleep.
-pub trait Pause: Send + Sync {
-    fn pause(&self, duration: Duration);
-}
-
-/// Blocks the calling thread, which is never the UI's.
-pub struct ThreadPause;
-
-impl Pause for ThreadPause {
-    fn pause(&self, duration: Duration) {
-        std::thread::sleep(duration);
-    }
-}
+pub use mascate_kernel::{Pause, ThreadPause};
 
 /// How long to wait before the first retry, doubling before each next one,
 /// and how many retries to make.
