@@ -6,6 +6,7 @@
 mod ads;
 mod channels;
 mod copy;
+mod merge;
 mod offer_posts;
 mod publishing;
 mod quality;
@@ -29,6 +30,7 @@ pub use copy::{
     CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, GeneratedCopy,
     ListingCopy, MODEL_MAX_CHARS, WrittenCopy, check_copy,
 };
+pub use merge::MERGE;
 pub use offer_posts::{
     DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice, POST_BEFORE,
     POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES,

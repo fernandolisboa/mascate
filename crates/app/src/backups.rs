@@ -1,5 +1,6 @@
 //! Settings › Backup (#6): where Backups go and how many stay, a Backup on
-//! demand, export, and restore, also when the database does not open (#8).
+//! demand, export, restore, also when the database does not open (#8), and
+//! the comparison with another machine's database (#117).
 //! The daily Backup runs in the background while the app is open or in the
 //! tray. The rules live in the platform module.
 
@@ -14,13 +15,14 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, PathPromptOptions, Subscription, Window, div, px};
 use mascate_platform::{
-    Backup, BackupError, BackupSettings, Backups, MAX_KEEP, RestoreError,
-    stage_restore_without_backup,
+    Backup, BackupError, BackupSettings, Backups, MAX_KEEP, MergeError, MergeImport, MergeReport,
+    RestoreError, stage_restore_without_backup,
 };
 
 use crate::appearance::look;
 use crate::forms::Outcome;
 use crate::kit;
+use crate::merge_import;
 use crate::ordered_saves::OrderedSaves;
 use crate::startup::MODULE_MIGRATIONS;
 use crate::updates;
@@ -32,6 +34,7 @@ const DAILY_CHECK: Duration = Duration::from_secs(60 * 60);
 /// absent when the database did not open.
 pub struct AppBackups {
     pub backups: Arc<Backups>,
+    pub merge_import: Arc<MergeImport>,
     pub settings: BackupSettings,
     pub restore: Option<Result<(), String>>,
     /// Why the last daily Backup failed, until one succeeds.
@@ -91,20 +94,44 @@ fn backup_failed(error: BackupError) -> String {
     format!("Não consegui fazer o Backup: {error}")
 }
 
-fn restore_refused(error: RestoreError) -> String {
+/// Why `action` refused a file the Restore's check turned down; `Err` when
+/// the check itself failed.
+fn file_refused(error: RestoreError, action: &str) -> Result<String, BackupError> {
     match error {
         RestoreError::NotMascate(path) => {
-            format!("{} não é um banco do Mascate.", path.display())
+            Ok(format!("{} não é um banco do Mascate.", path.display()))
         }
-        RestoreError::Damaged { path, .. } => {
-            format!("{} está danificado; escolha outro Backup.", path.display())
-        }
-        RestoreError::NewerThanApp { path, .. } => format!(
-            "{} veio de uma versão mais nova do Mascate; atualize o app antes de restaurar.",
+        RestoreError::Damaged { path, .. } => Ok(format!(
+            "{} está danificado; escolha outro arquivo.",
             path.display()
-        ),
-        RestoreError::Backup(error) => backup_failed(error),
+        )),
+        RestoreError::NewerThanApp { path, .. } => Ok(format!(
+            "{} veio de uma versão mais nova do Mascate; atualize o app antes de {action}.",
+            path.display()
+        )),
+        RestoreError::Backup(error) => Err(error),
     }
+}
+
+fn restore_refused(error: RestoreError) -> String {
+    file_refused(error, "restaurar").unwrap_or_else(backup_failed)
+}
+
+fn compare_refused(error: MergeError) -> String {
+    match error {
+        MergeError::Refused(error) => file_refused(error, "comparar")
+            .unwrap_or_else(|error| format!("Não consegui ler o outro banco: {error}")),
+        MergeError::OwnDatabase(_) => {
+            "Esse arquivo é o próprio banco do app; escolha o do outro computador.".to_string()
+        }
+        error => format!("Não consegui comparar: {error}"),
+    }
+}
+
+/// A finished comparison, shown until the owner goes back.
+struct Compared {
+    file: PathBuf,
+    report: MergeReport,
 }
 
 pub struct BackupSection {
@@ -114,6 +141,7 @@ pub struct BackupSection {
     newest: Option<Backup>,
     /// The file waiting for the owner to confirm the restore.
     confirming: Option<PathBuf>,
+    compared: Option<Compared>,
     busy: bool,
     /// Settings saves still on their way to the database.
     saving: usize,
@@ -159,6 +187,7 @@ impl BackupSection {
             keep,
             newest: None,
             confirming: None,
+            compared: None,
             busy: false,
             saving: 0,
             outcome: None,
@@ -337,6 +366,99 @@ impl BackupSection {
         .detach();
     }
 
+    fn choose_compare(&mut self, cx: &mut Context<Self>) {
+        let picking = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Comparar com este banco".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = picking.await;
+            let _ = this.update(cx, |this, cx| match picked {
+                Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
+                    this.compare(paths.swap_remove(0), cx);
+                }
+                Ok(Err(error)) => {
+                    this.outcome = Some(Outcome::Failed(
+                        format!("Não consegui abrir o seletor de arquivos: {error}").into(),
+                    ));
+                    cx.notify();
+                }
+                _ => {}
+            });
+        })
+        .detach();
+    }
+
+    /// Compares `file` with this database off the UI thread, then shows the
+    /// report. Nothing is written to either database.
+    fn compare(&mut self, file: PathBuf, cx: &mut Context<Self>) {
+        let Some(merge_import) = cx
+            .try_global::<AppBackups>()
+            .map(|app| app.merge_import.clone())
+        else {
+            return;
+        };
+        self.busy = true;
+        self.outcome = None;
+        self.confirming = None;
+        let comparing = cx.background_executor().spawn({
+            let file = file.clone();
+            async move { merge_import.compare(&file).await }
+        });
+        cx.spawn(async move |this, cx| {
+            let compared = comparing.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match compared {
+                    Ok(report) => this.compared = Some(Compared { file, report }),
+                    Err(error) => {
+                        this.outcome = Some(Outcome::Failed(compare_refused(error).into()));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn render_comparison(&self, compared: &Compared, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let name = compared.file.file_name().map_or_else(
+            || compared.file.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        v_flex()
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .child(kit::section_heading(format!("Comparação com {name}")))
+                    .child(
+                        Button::new("close-comparison")
+                            .label("Voltar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.compared = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(div().text_sm().text_color(t.text2).child(format!(
+                "O que um Merge Import traria de {}. Vence a alteração mais recente de cada \
+                 registro, e os registros diferentes nos dois lados aparecem como conflito. \
+                 Nada foi gravado em nenhum dos dois bancos.",
+                compared.file.display()
+            )))
+            .child(merge_import::report_view(&compared.report, cx))
+            .into_any_element()
+    }
+
     /// Checks and stages the confirmed file, then restarts the app, which
     /// swaps it in before opening the database. A database that does not
     /// open has no Backup taken first: it stays beside the restored one.
@@ -498,6 +620,10 @@ impl Render for BackupSection {
                 });
         }
 
+        if let Some(compared) = &self.compared {
+            return v_flex().child(self.render_comparison(compared, cx));
+        }
+
         let label = |text: &'static str| {
             div()
                 .w(px(140.))
@@ -594,6 +720,14 @@ impl Render for BackupSection {
                     .small()
                     .disabled(self.blocked())
                     .on_click(cx.listener(|this, _, _, cx| this.choose_restore(cx))),
+            )
+            .child(
+                Button::new("compare-database")
+                    .label("Comparar com outro banco…")
+                    .outline()
+                    .small()
+                    .disabled(self.blocked())
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_compare(cx))),
             );
 
         v_flex()
@@ -610,7 +744,9 @@ impl Render for BackupSection {
             .child(kit::section_heading("Outro computador"))
             .child(div().text_sm().text_color(t.text2).child(
                 "Exportar grava a mesma cópia onde você escolher. Restaurar troca o banco \
-                 atual por um Backup ou export do Mascate, de versão igual ou anterior.",
+                 atual por um Backup ou export do Mascate, de versão igual ou anterior. \
+                 Comparar mostra o que esse arquivo traria para este banco, registro por \
+                 registro, sem gravar nada.",
             ))
             .child(carry)
             .when_some(self.confirming.clone(), |section, file| {

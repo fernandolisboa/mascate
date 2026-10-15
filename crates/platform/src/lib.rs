@@ -8,6 +8,7 @@ mod backups;
 mod database;
 mod flags;
 mod http;
+mod merging;
 mod migrations;
 mod opening;
 mod registry;
@@ -40,6 +41,11 @@ pub use flags::{
     TurnOnRequest, system_user,
 };
 pub use http::{http_agent, slow_http_agent};
+pub use merging::{
+    Condition, ConflictSide, KeyPart, LeftOut, LeftOutReason, MergeConflict, MergeError, MergeGap,
+    MergeImport, MergeReport, ModuleMerge, RecognisedBy, RecordsReport, Reference, Side,
+    TableMerge, UniqueKey, merge_gaps,
+};
 pub use migrations::{
     AppliedMigration, Migration, MigrationError, MigrationId, ModuleMigrations, migrate,
 };
@@ -71,5 +77,32 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         reminders::CREATE_REMINDER_DISMISSALS,
         backups::CREATE_BACKUP_SETTINGS,
         updates::CREATE_UPDATE_SETTINGS,
+    ],
+};
+
+/// How this module's tables come together in a Merge Import (ADR 0032).
+pub const MERGE: ModuleMerge = ModuleMerge {
+    module: "platform",
+    tables: &[
+        TableMerge::new("platform_appearance", "Aparência", RecognisedBy::SingleRow),
+        TableMerge::new("platform_flag_changes", "Mudança de flag", RecognisedBy::Id)
+            .label(&["flag"]),
+        TableMerge::new(
+            "platform_reminder_dismissals",
+            "Lembrete dispensado",
+            RecognisedBy::Id,
+        )
+        .label(&["reminder"]),
+        // The Backup folder is a path on this machine's disk.
+        TableMerge::new(
+            "platform_backup_settings",
+            "Opções de Backup",
+            RecognisedBy::ThisMachine,
+        ),
+        TableMerge::new(
+            "platform_update_settings",
+            "Opções de atualização",
+            RecognisedBy::SingleRow,
+        ),
     ],
 };

@@ -5,6 +5,7 @@ mod demand;
 mod files;
 mod found_offers;
 mod link;
+mod merge;
 mod offer_source;
 mod opportunities;
 mod sku;
@@ -17,6 +18,7 @@ pub use demand::{BestSeller, CatalogMatch, Competition, DemandCategory, DemandSo
 pub use files::{AddedFiles, NotCopied, ProductFile};
 pub use found_offers::{KeptOffers, SearchedOffer};
 pub use link::{InvalidLink, OfferLink};
+pub use merge::MERGE;
 pub use offer_source::{Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource};
 pub use opportunities::{
     CategoryBestSellers, Charge, DemandSync, DiscoverySettings, MATCHES_PER_OFFER, Opportunity,

@@ -5,6 +5,7 @@ mod drafts;
 mod fees;
 mod freight;
 mod listings;
+mod merge;
 mod orders;
 mod pricing;
 mod promotions;
@@ -27,6 +28,7 @@ pub use listings::{
     CatalogProduct, ChannelListing, ChannelStock, LinkSuggestion, Listing, ListingError,
     ListingStatus, ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
 };
+pub use merge::MERGE;
 pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
     DispatchDue, FulfillmentMode, LineStock, Order, OrderError, OrderLine, OrderSettings,
