@@ -240,6 +240,31 @@ fn a_listing_mercado_livre_no_longer_has_is_left_out() {
 }
 
 #[test]
+fn a_listing_mercado_livre_paused_for_lack_of_stock_is_out_of_stock() {
+    let fake = Fake::connected();
+    fake.serve(
+        "/items?ids=MLB4100000004%2CMLB4100000005&include_attributes=all",
+        "items-out-of-stock.json",
+    );
+    let ids = ["MLB4100000004", "MLB4100000005"].map(String::from);
+
+    let listings = fake.adapter.listings(&ids).unwrap();
+
+    let read: Vec<_> = listings
+        .iter()
+        .map(|listing| (listing.id.as_str(), listing.status))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("MLB4100000004", ListingStatus::OutOfStock),
+            // Paused by the owner: units coming in leave it paused.
+            ("MLB4100000005", ListingStatus::Paused)
+        ]
+    );
+}
+
+#[test]
 fn waiting_asked_by_mercado_livre_stops_the_read() {
     let fake = Fake::connected();
     fake.server.serve(ACTIVE, 429, fixture("error-429.json"));

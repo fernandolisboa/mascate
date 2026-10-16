@@ -255,7 +255,7 @@ fn channel_listings(item: SellerItem) -> Result<Vec<ChannelListing>, PlatformErr
         title: item.title,
         price,
         available_quantity: item.available_quantity,
-        status: status(&item.status),
+        status: item_status(&item.status, item.sub_status.as_deref().unwrap_or_default()),
         link: item.permalink.filter(|link| is_web_link(link)),
         listing_type: item.listing_type_id.as_deref().and_then(listing_type),
         category: item.category_id,
@@ -314,6 +314,17 @@ pub(super) fn status(code: &str) -> ListingStatus {
         "under_review" => ListingStatus::UnderReview,
         // `inactive`, `payment_required`, `not_yet_active` and any new one.
         _ => ListingStatus::Inactive,
+    }
+}
+
+/// A listing's status; Mercado Livre pauses one left with no stock with the
+/// sub-status `out_of_stock`, and puts it back on sale when units arrive.
+fn item_status(code: &str, sub_status: &[String]) -> ListingStatus {
+    match status(code) {
+        ListingStatus::Paused if sub_status.iter().any(|sub| sub == "out_of_stock") => {
+            ListingStatus::OutOfStock
+        }
+        status => status,
     }
 }
 

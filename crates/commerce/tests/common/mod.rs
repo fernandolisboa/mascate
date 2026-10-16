@@ -4,9 +4,9 @@
 
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
@@ -61,6 +61,9 @@ pub fn product(id: u128, sku: &str, name: &str) -> CatalogProduct {
     }
 }
 
+/// Each stock set on a channel, with the channel's kind and the listing id.
+pub type StockLog = Arc<Mutex<Vec<(SalesChannelKind, String, Vec<ChannelStock>)>>>;
+
 /// A Sales Channel answering from memory: the listings it has, which of
 /// them it lists as active or paused, its sale fee by price band, and what
 /// it was asked.
@@ -83,10 +86,11 @@ pub struct Channel {
     pub stocks_set: Mutex<Vec<(String, Vec<ChannelStock>)>>,
     /// Fails only stock calls while set.
     pub stock_failure: Mutex<Option<PlatformError>>,
+    /// Each stock set, in order, with the channel's kind: two channels
+    /// sharing it show the order across them.
+    pub stock_log: StockLog,
     /// Each listing id paused or activated, in order: `true` for paused.
     pub statuses_set: Mutex<Vec<(String, bool)>>,
-    /// Listings the owner paused, which units coming back do not reactivate.
-    pub paused_by_seller: Mutex<HashSet<String>>,
     /// The owner's Orders, as the channel has them now.
     pub orders: Mutex<Vec<ChannelOrder>>,
     /// The time each read of Orders started from, in order.
@@ -131,8 +135,8 @@ impl Default for Channel {
             prices_set: Mutex::default(),
             stocks_set: Mutex::default(),
             stock_failure: Mutex::default(),
+            stock_log: Arc::default(),
             statuses_set: Mutex::default(),
-            paused_by_seller: Mutex::default(),
             orders: Mutex::default(),
             orders_asked: Mutex::default(),
             labels_asked: Mutex::default(),
@@ -191,7 +195,7 @@ impl Channel {
     }
 
     /// A buyer buys `order`; like Mercado Livre, the listings sold lose the
-    /// units at once.
+    /// units at once, and one left with none is paused for lack of stock.
     pub fn sells(&self, order: ChannelOrder) {
         for line in &order.lines {
             self.change(&line.item, |listing| {
@@ -200,8 +204,30 @@ impl Channel {
                         listing.available_quantity.saturating_sub(line.quantity);
                 }
             });
+            self.pause_or_reactivate(&line.item);
         }
         self.orders.lock().unwrap().push(order);
+    }
+
+    /// Like Mercado Livre: pauses a listing left with no units for lack of
+    /// stock and puts it back on sale when units return; one the owner
+    /// paused stays paused.
+    fn pause_or_reactivate(&self, id: &str) {
+        let total: u32 = self
+            .listings
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|listing| listing.id == id)
+            .map(|listing| listing.available_quantity)
+            .sum();
+        self.change(id, |listing| {
+            listing.status = match (listing.status, total) {
+                (ListingStatus::Active, 0) => ListingStatus::OutOfStock,
+                (ListingStatus::OutOfStock, 1..) => ListingStatus::Active,
+                (status, _) => status,
+            }
+        });
     }
 
     /// The channel changes the Order `id`, as of `at`.
@@ -245,7 +271,7 @@ impl SalesChannel for Channel {
         for listing in self.listings.lock().unwrap().iter() {
             if matches!(
                 listing.status,
-                ListingStatus::Active | ListingStatus::Paused
+                ListingStatus::Active | ListingStatus::Paused | ListingStatus::OutOfStock
             ) && !ids.contains(&listing.id)
             {
                 ids.push(listing.id.clone());
@@ -303,6 +329,10 @@ impl SalesChannel for Channel {
             .lock()
             .unwrap()
             .push((id.to_owned(), stock.to_vec()));
+        self.stock_log
+            .lock()
+            .unwrap()
+            .push((self.kind, id.to_owned(), stock.to_vec()));
         for wanted in stock {
             self.change(id, |listing| {
                 if listing.variation.as_ref().map(|v| v.id.clone()) == wanted.variation {
@@ -310,22 +340,7 @@ impl SalesChannel for Channel {
                 }
             });
         }
-        let total: u32 = self
-            .listings
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|listing| listing.id == id)
-            .map(|listing| listing.available_quantity)
-            .sum();
-        let by_seller = self.paused_by_seller.lock().unwrap().contains(id);
-        self.change(id, |listing| {
-            listing.status = match (listing.status, total) {
-                (ListingStatus::Active, 0) => ListingStatus::Paused,
-                (ListingStatus::Paused, 1..) if !by_seller => ListingStatus::Active,
-                (status, _) => status,
-            }
-        });
+        self.pause_or_reactivate(id);
         Ok(())
     }
 
@@ -335,7 +350,6 @@ impl SalesChannel for Channel {
             .lock()
             .unwrap()
             .push((id.to_owned(), true));
-        self.paused_by_seller.lock().unwrap().insert(id.to_owned());
         self.change(id, |listing| listing.status = ListingStatus::Paused);
         Ok(())
     }
@@ -346,7 +360,6 @@ impl SalesChannel for Channel {
             .lock()
             .unwrap()
             .push((id.to_owned(), false));
-        self.paused_by_seller.lock().unwrap().remove(id);
         self.change(id, |listing| listing.status = ListingStatus::Active);
         Ok(())
     }

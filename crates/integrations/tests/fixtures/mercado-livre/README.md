@@ -28,6 +28,7 @@ conta de vendedor do Fernando.
 | `users-me.json` | `GET /users/me` (o id do vendedor) | Consulta de usuários |
 | `user-items-active.json`, `user-items-active-end.json`, `user-items-paused.json` | `GET /users/{id}/items/search` com `status` e `search_type=scan` (página com `scroll_id` e a última, vazia) | Itens e buscas |
 | `items-seller.json` | `GET /items?ids=...&include_attributes=all` dos anúncios do vendedor: simples, com variações e pausado | Itens e buscas; Variações |
+| `items-out-of-stock.json` | o mesmo, com um anúncio pausado pelo Mercado Livre por falta de estoque (`sub_status: ["out_of_stock"]`, consultado em 16/10/2026) e um pausado pelo vendedor | Sincronização de publicações (Paused) |
 | `items-seller-gone.json` | o mesmo multiget depois: um anúncio encerrado e outro apagado (`code` 404) | Itens e buscas |
 | `domain-discovery.json` | `GET /sites/MLB/domain_discovery/search` (preditor de categorias) | Primeiros passos; Categorias e atributos |
 | `category-attributes-MLB196208.json` | `GET /categories/{id}/attributes`, com as tags `required`, `catalog_required`, `conditional_required`, `new_required` e `read_only` | Atributos; Identificadores de produtos (GTIN) |

@@ -22,7 +22,11 @@ use crate::{ChannelCategory, ChecklistItem, OnSalesChannel, SaleFee};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ListingStatus {
     Active,
+    /// Paused by the owner; units coming in do not put it back on sale.
     Paused,
+    /// Paused by the channel for lack of stock; it goes back on sale when
+    /// units are sent to it.
+    OutOfStock,
     /// Ended for good; the channel never sells it again.
     Closed,
     /// Held by the channel for review.
@@ -33,9 +37,10 @@ pub enum ListingStatus {
 }
 
 impl ListingStatus {
-    const ALL: [ListingStatus; 5] = [
+    const ALL: [ListingStatus; 6] = [
         ListingStatus::Active,
         ListingStatus::Paused,
+        ListingStatus::OutOfStock,
         ListingStatus::Closed,
         ListingStatus::UnderReview,
         ListingStatus::Inactive,
@@ -45,6 +50,7 @@ impl ListingStatus {
         match self {
             ListingStatus::Active => "active",
             ListingStatus::Paused => "paused",
+            ListingStatus::OutOfStock => "out_of_stock",
             ListingStatus::Closed => "closed",
             ListingStatus::UnderReview => "under_review",
             ListingStatus::Inactive => "inactive",

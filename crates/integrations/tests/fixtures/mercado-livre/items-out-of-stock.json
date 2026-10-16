@@ -1,0 +1,54 @@
+[
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000004",
+      "site_id": "MLB",
+      "title": "Fone De Ouvido Bluetooth Tws",
+      "seller_id": 1234567,
+      "category_id": "MLB3697",
+      "price": 89.9,
+      "base_price": 89.9,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 3,
+      "available_quantity": 0,
+      "sold_quantity": 3,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000004-fone-de-ouvido-bluetooth-tws-_JM",
+      "status": "paused",
+      "sub_status": ["out_of_stock"],
+      "seller_custom_field": "FON-TWS-001",
+      "attributes": [],
+      "variations": []
+    }
+  },
+  {
+    "code": 200,
+    "body": {
+      "id": "MLB4100000005",
+      "site_id": "MLB",
+      "title": "Capa De Celular Transparente",
+      "seller_id": 1234567,
+      "category_id": "MLB3697",
+      "price": 29.9,
+      "base_price": 29.9,
+      "original_price": null,
+      "currency_id": "BRL",
+      "initial_quantity": 10,
+      "available_quantity": 4,
+      "sold_quantity": 6,
+      "buying_mode": "buy_it_now",
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "permalink": "https://produto.mercadolivre.com.br/MLB-4100000005-capa-de-celular-transparente-_JM",
+      "status": "paused",
+      "sub_status": [],
+      "seller_custom_field": "CAP-TRA-001",
+      "attributes": [],
+      "variations": []
+    }
+  }
+]
