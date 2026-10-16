@@ -1881,7 +1881,9 @@ pub(crate) fn channel_failure(kind: SalesChannelKind, error: &ListingError) -> S
         | ListingError::Published(_)
         | ListingError::Blocked(_)
         | ListingError::Picture { .. }
-        | ListingError::DescriptionNotSent(..) => drafts::failure(error),
+        | ListingError::DescriptionNotSent(..)
+        | ListingError::InvalidGtin
+        | ListingError::NotACatalogOffer(_) => drafts::failure(error),
     }
 }
 

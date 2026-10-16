@@ -27,7 +27,7 @@ const INCLUDED: &str = "summaries,offers,fulfillmentAvailability,relationships";
 
 /// The seller's own fulfillment; anything else is Amazon's, left out of
 /// this epic (ADR 0033).
-const OWN_FULFILLMENT: &str = "DEFAULT";
+pub(super) const OWN_FULFILLMENT: &str = "DEFAULT";
 
 /// Amazon's referral fee for "Demais categorias", the highest of its table,
 /// 15% of the sale and at least R$ 2,00 a unit (venda.amazon.com.br/precos,
@@ -186,12 +186,7 @@ impl SalesChannel for Amazon {
     }
 
     fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError> {
-        let value = format!(
-            r#"[{{"marketplace_id":"{MARKETPLACE}","currency":"{}","audience":"ALL","our_price":[{{"schedule":[{{"value_with_tax":{}}}]}}]}}]"#,
-            price.currency().code(),
-            price.rounded().amount()
-        );
-        self.patch(id, "/attributes/purchasable_offer", &value)
+        self.patch(id, "/attributes/purchasable_offer", &offer_value(price))
     }
 
     /// An Amazon listing has no variations: `stock` names only it.
@@ -244,7 +239,7 @@ impl SalesChannel for Amazon {
 }
 
 impl Amazon {
-    fn items_path(&self) -> Result<String, PlatformError> {
+    pub(super) fn items_path(&self) -> Result<String, PlatformError> {
         Ok(format!("/listings/2021-08-01/items/{}", self.seller()?))
     }
 
@@ -289,8 +284,18 @@ impl Amazon {
     }
 }
 
+/// The `purchasable_offer` attribute's value at `price`: the amount goes as
+/// its decimal text, a JSON number, never a float.
+pub(super) fn offer_value(price: Money) -> String {
+    format!(
+        r#"[{{"marketplace_id":"{MARKETPLACE}","currency":"{}","audience":"ALL","our_price":[{{"schedule":[{{"value_with_tax":{}}}]}}]}}]"#,
+        price.currency().code(),
+        price.rounded().amount()
+    )
+}
+
 /// The store's summary of `item`.
-fn summary(item: &Item) -> Option<&Summary> {
+pub(super) fn summary(item: &Item) -> Option<&Summary> {
     item.summaries
         .iter()
         .find(|summary| summary.marketplace_id == MARKETPLACE)

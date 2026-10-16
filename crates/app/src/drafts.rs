@@ -1,9 +1,11 @@
 //! Rascunhos de anúncio (#16), on the Anúncios screen: a draft from a
 //! Product with the category Mercado Livre predicts, the category's
 //! attributes, pictures from the Product's folder and the suggested price;
-//! the checklist of what is missing, Mercado Livre's validator, and
+//! the checklist of what is missing, the channel's validator, and
 //! publishing, only on the owner's click. Title and description can be
-//! written with AI (#17) into the fields, for the owner to review.
+//! written with AI (#17) into the fields, for the owner to review. On
+//! Amazon a draft is an offer on a product its catalog already has, found by
+//! the GTIN (#128): the owner confirms condition, price and units.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,11 +20,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, EventEmitter, Window, div, px};
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
-    AttributeValue, CatalogProduct, CategoryPrediction, Check, ChecklistItem, Condition,
-    CostSource, DraftEdit, DraftPrice, DraftStart, Listing, ListingDraft, ListingError, Listings,
-    MIN_PICTURES, PricingError, Requirement, is_blocked, is_picture,
+    AttributeValue, CatalogItem, CatalogMatch, CatalogProduct, CategoryPrediction, Check,
+    ChecklistItem, Condition, CostSource, DraftEdit, DraftKind, DraftPrice, DraftStart, Listing,
+    ListingDraft, ListingError, ListingPublisher, Listings, MIN_PICTURES, PricingError,
+    Requirement, SalesChannel, is_blocked, is_picture,
 };
-use mascate_kernel::{ListingType, Money, RecordId, parse_amount};
+use mascate_kernel::{ListingType, Money, RecordId, SalesChannelKind, parse_amount};
 use mascate_marketing::{BriefAttribute, CopyBrief, GeneratedCopy};
 
 use crate::appearance::look;
@@ -33,9 +36,10 @@ use crate::listing_copy;
 use crate::listings;
 use crate::mercado_livre;
 use crate::pricing;
+use crate::sales_channels;
 use crate::stock;
 
-/// A draft went out to Mercado Livre: the listings need reading again.
+/// A draft went out to its Sales Channel: the listings need reading again.
 pub struct DraftPublished;
 
 /// The owner asked for a draft of the Product, from its sheet.
@@ -50,6 +54,7 @@ struct Snapshot {
 /// The draft open for editing, below its row.
 struct Editor {
     draft: RecordId,
+    channel: SalesChannelKind,
     title: Entity<InputState>,
     description: Entity<TextareaState>,
     price: Entity<InputState>,
@@ -67,7 +72,12 @@ struct Editor {
     price_suggestion: Option<Result<DraftPrice, String>>,
     /// Categories Mercado Livre predicts for the title, once asked.
     predictions: Option<Vec<CategoryPrediction>>,
-    /// The checklist with Mercado Livre's validator, until the next change.
+    /// The barcode a catalog offer looks its product up by.
+    gtin: Entity<InputState>,
+    /// The products of the channel's catalog with that barcode, when more
+    /// than one came back, for the owner to pick.
+    found: Option<Vec<CatalogItem>>,
+    /// The checklist with the channel's validator, until the next change.
     validated: Option<Vec<ChecklistItem>>,
     /// The last title and description written with AI, as it came.
     written: Option<GeneratedCopy>,
@@ -76,6 +86,8 @@ struct Editor {
 }
 
 pub struct DraftsSection {
+    /// Where a new draft goes.
+    channel: SalesChannelKind,
     drafts: Vec<ListingDraft>,
     products: Vec<Product>,
     product_pick: Picker,
@@ -91,6 +103,7 @@ impl EventEmitter<DraftPublished> for DraftsSection {}
 impl DraftsSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            channel: SalesChannelKind::MercadoLivre,
             drafts: Vec::new(),
             products: Vec::new(),
             product_pick: picker(window, cx),
@@ -177,24 +190,22 @@ impl DraftsSection {
         self.products = snapshot.products;
     }
 
-    fn connected(&self, cx: &App) -> bool {
-        mercado_livre::adapter(cx).is_some()
-            && cx
-                .global::<crate::connections::AppConnections>()
-                .0
-                .state(mascate_integrations::Connection::MercadoLivre)
-                == mascate_integrations::ConnectionState::Connected
-    }
-
     fn draft(&self, id: RecordId) -> Option<&ListingDraft> {
         self.drafts.iter().find(|draft| draft.id == id)
+    }
+
+    /// Where the open draft goes, with its channel.
+    fn editor_ports(&self, cx: &App) -> Option<(RecordId, SalesChannelKind, Ports)> {
+        let editor = self.editor.as_ref()?;
+        Some((editor.draft, editor.channel, ports(cx, editor.channel)?))
     }
 
     /// A new draft of `product`, with its units on hand, its folder's
     /// pictures and the suggested price; it opens for editing.
     pub fn start(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(pricing), Some(taxes), Some(inventory)) = (
-            mercado_livre::adapter(cx),
+        let kind = self.channel;
+        let (Some((publisher, channel)), Some(pricing), Some(taxes), Some(inventory)) = (
+            ports(cx, kind),
             pricing::pricing(cx),
             pricing::taxes(cx),
             stock::inventory(cx),
@@ -238,7 +249,7 @@ impl DraftsSection {
                             available_quantity: u32::try_from(on_hand.max(0)).unwrap_or(u32::MAX),
                             pictures,
                         },
-                        channel.as_ref(),
+                        publisher.as_ref(),
                     )
                     .await
                     .map_err(|e| failure(&e))?;
@@ -264,11 +275,22 @@ impl DraftsSection {
                 }
                 Ok(Some(draft.id))
             },
-            |this, draft: RecordId, window, cx| {
+            move |this, draft: RecordId, window, cx| {
                 this.outcome = Some(Outcome::Done(
-                    "Rascunho criado. Revise o que o checklist pede e publique quando quiser; \
-                     nada vai ao Mercado Livre antes disso."
-                        .into(),
+                    match DraftKind::on(kind) {
+                        DraftKind::OwnPage => format!(
+                            "Rascunho criado. Revise o que o checklist pede e publique quando \
+                             quiser; nada vai {} antes disso.",
+                            sales_channels::to(kind)
+                        ),
+                        DraftKind::CatalogOffer => format!(
+                            "Rascunho criado. Busque pelo GTIN o produto {} que você vai \
+                             oferecer; nada vai {} antes de você publicar.",
+                            sales_channels::of_channel(kind),
+                            sales_channels::to(kind)
+                        ),
+                    }
+                    .into(),
                 ));
                 this.open(draft, window, cx);
             },
@@ -300,6 +322,7 @@ impl DraftsSection {
         let price = input("0,00", window, cx);
         let quantity = input("0", window, cx);
         let warranty = input("Ex.: 90 dias", window, cx);
+        let gtin = input("Ex.: 7891234567895", window, cx);
         title.update(cx, |field, cx| {
             field.set_value(draft.title.clone(), window, cx)
         });
@@ -328,6 +351,7 @@ impl DraftsSection {
             .collect();
         self.editor = Some(Editor {
             draft: id,
+            channel: draft.channel,
             title,
             description,
             price,
@@ -340,6 +364,8 @@ impl DraftsSection {
             pictures: draft.pictures.iter().map(|p| p.path.clone()).collect(),
             price_suggestion: None,
             predictions: None,
+            gtin,
+            found: None,
             validated: None,
             written: None,
             writing: None,
@@ -351,12 +377,15 @@ impl DraftsSection {
     /// The Product's pictures and the suggested price at the draft's
     /// category and type, off the UI thread.
     fn read_folder_and_price(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(pricing), Some(taxes), Some(catalog), Some(draft)) = (
-            mercado_livre::adapter(cx),
+        let Some(draft) = self.draft(id).cloned() else {
+            return;
+        };
+        let kind = draft.channel;
+        let (Some((_, channel)), Some(pricing), Some(taxes), Some(catalog)) = (
+            ports(cx, kind),
             pricing::pricing(cx),
             pricing::taxes(cx),
             catalog::catalog(cx),
-            self.draft(id).cloned(),
         ) else {
             return;
         };
@@ -381,7 +410,7 @@ impl DraftsSection {
                 pricing
                     .draft_price(id, channel.as_ref(), assumptions, offer)
                     .await
-                    .map_err(|e| price_failure(&e))
+                    .map_err(|e| price_failure(&e, kind))
             }
             .await;
             (folder, price)
@@ -410,8 +439,13 @@ impl DraftsSection {
     fn typed(&self, cx: &App) -> Option<(RecordId, DraftEdit)> {
         let editor = self.editor.as_ref()?;
         let draft = self.draft(editor.draft)?;
-        let price = parse_amount(&editor.price.read(cx).value())
-            .filter(|amount| !amount.is_sign_negative())?;
+        let typed_price = editor.price.read(cx).value();
+        // No price yet is zero, which the checklist asks for.
+        let price = if typed_price.trim().is_empty() {
+            rust_decimal::Decimal::ZERO
+        } else {
+            parse_amount(&typed_price).filter(|amount| !amount.is_sign_negative())?
+        };
         let quantity = editor
             .quantity
             .read(cx)
@@ -492,10 +526,10 @@ impl DraftsSection {
         );
     }
 
-    /// Saves, uploads the pictures and asks Mercado Livre's validator;
+    /// Saves, uploads the pictures and asks the channel's validator;
     /// nothing is published.
     fn validate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some((_, kind, (publisher, _))) = self.editor_ports(cx) else {
             return;
         };
         self.save_then(
@@ -503,16 +537,20 @@ impl DraftsSection {
             cx,
             move |listings, saved| async move {
                 listings
-                    .validate_draft(saved.id, channel.as_ref())
+                    .validate_draft(saved.id, publisher.as_ref())
                     .await
                     .map_err(|e| failure(&e))
             },
-            |this, checklist: Vec<ChecklistItem>, _, _| {
+            move |this, checklist: Vec<ChecklistItem>, _, _| {
                 this.outcome = Some(if is_blocked(&checklist) {
                     Outcome::Failed("O checklist ainda tem itens que impedem publicar.".into())
                 } else {
                     Outcome::Done(
-                        "O Mercado Livre validou o anúncio; ele pode ser publicado.".into(),
+                        format!(
+                            "{} validou o anúncio; ele pode ser publicado.",
+                            sales_channels::opening(kind)
+                        )
+                        .into(),
                     )
                 });
                 if let Some(editor) = this.editor.as_mut() {
@@ -523,9 +561,9 @@ impl DraftsSection {
     }
 
     /// Saves and publishes: the owner's click is the only way a draft
-    /// reaches Mercado Livre.
+    /// reaches its channel.
     fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some((_, kind, (publisher, _))) = self.editor_ports(cx) else {
             return;
         };
         self.save_then(
@@ -533,7 +571,7 @@ impl DraftsSection {
             cx,
             move |listings, saved| async move {
                 listings
-                    .publish(saved.id, channel.as_ref())
+                    .publish(saved.id, publisher.as_ref())
                     .await
                     .map(Ok)
                     .map_err(PublishFailure::from)
@@ -542,10 +580,10 @@ impl DraftsSection {
                         PublishFailure::Other(text) => Err(text),
                     })
             },
-            |this, published: Result<Listing, Vec<ChecklistItem>>, _, cx| match published {
+            move |this, published: Result<Listing, Vec<ChecklistItem>>, _, cx| match published {
                 Ok(listing) => {
                     this.editor = None;
-                    this.outcome = Some(Outcome::Done(published_text(&listing).into()));
+                    this.outcome = Some(Outcome::Done(published_text(&listing, kind).into()));
                     cx.emit(DraftPublished);
                 }
                 Err(checklist) => {
@@ -563,7 +601,10 @@ impl DraftsSection {
     /// Sends what is left of a draft already in Mercado Livre: its
     /// description.
     fn finish(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some(kind) = self.draft(id).map(|draft| draft.channel) else {
+            return;
+        };
+        let Some((publisher, _)) = ports(cx, kind) else {
             return;
         };
         self.outcome = None;
@@ -572,13 +613,13 @@ impl DraftsSection {
             cx,
             move |listings, _| async move {
                 listings
-                    .publish(id, channel.as_ref())
+                    .publish(id, publisher.as_ref())
                     .await
                     .map(Some)
                     .map_err(|e| failure(&e))
             },
-            |this, listing: Listing, _, cx| {
-                this.outcome = Some(Outcome::Done(published_text(&listing).into()));
+            move |this, listing: Listing, _, cx| {
+                this.outcome = Some(Outcome::Done(published_text(&listing, kind).into()));
                 cx.emit(DraftPublished);
             },
         );
@@ -605,7 +646,8 @@ impl DraftsSection {
 
     /// Asks Mercado Livre which categories fit the title as typed.
     fn predict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(channel), Some(editor)) = (mercado_livre::adapter(cx), self.editor.as_ref())
+        let (Some((_, _, (publisher, _))), Some(editor)) =
+            (self.editor_ports(cx), self.editor.as_ref())
         else {
             return;
         };
@@ -616,7 +658,7 @@ impl DraftsSection {
             cx,
             move |listings, _| async move {
                 listings
-                    .predict_categories(&title, channel.as_ref())
+                    .predict_categories(&title, publisher.as_ref())
                     .map(Some)
                     .map_err(|e| failure(&e))
             },
@@ -643,7 +685,7 @@ impl DraftsSection {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(channel) = mercado_livre::adapter(cx) else {
+        let Some((_, _, (publisher, _))) = self.editor_ports(cx) else {
             return;
         };
         self.save_then(
@@ -655,7 +697,7 @@ impl DraftsSection {
                         saved.id,
                         prediction.category,
                         &prediction.attributes,
-                        channel.as_ref(),
+                        publisher.as_ref(),
                     )
                     .await
                     .map_err(|e| failure(&e))
@@ -672,6 +714,82 @@ impl DraftsSection {
                     .into(),
                 ));
                 this.open(moved.id, window, cx);
+            },
+        );
+    }
+
+    /// Saves, then looks the GTIN typed up in the channel's catalog: one
+    /// product and the draft offers it; several and the owner picks one;
+    /// none and nothing changes.
+    fn find_catalog_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some((_, kind, (publisher, _))), Some(editor)) =
+            (self.editor_ports(cx), self.editor.as_ref())
+        else {
+            return;
+        };
+        let gtin = editor.gtin.read(cx).value().to_string();
+        if let Some(editor) = self.editor.as_mut() {
+            editor.found = None;
+        }
+        self.save_then(
+            window,
+            cx,
+            move |listings, saved| async move {
+                listings
+                    .match_catalog_item(saved.id, &gtin, publisher.as_ref())
+                    .await
+                    .map_err(|e| failure(&e))
+            },
+            move |this, matched: CatalogMatch, window, cx| match matched {
+                CatalogMatch::NotFound => {
+                    this.outcome = Some(Outcome::Failed(
+                        format!(
+                            "{} não tem produto com esse GTIN. Confira os números na embalagem; \
+                             cadastrar um produto novo {} fica fora do app, pelo Seller Central.",
+                            sales_channels::opening(kind),
+                            sales_channels::on(kind)
+                        )
+                        .into(),
+                    ));
+                }
+                CatalogMatch::Offered(draft) => {
+                    this.outcome = Some(Outcome::Done(offered_text(&draft, kind).into()));
+                    this.open(draft.id, window, cx);
+                }
+                CatalogMatch::Several(items) => {
+                    this.outcome = Some(Outcome::Done(
+                        format!(
+                            "{} tem {} produtos com esse GTIN; escolha o que você vende.",
+                            sales_channels::opening(kind),
+                            items.len()
+                        )
+                        .into(),
+                    ));
+                    if let Some(editor) = this.editor.as_mut() {
+                        editor.found = Some(items);
+                    }
+                }
+            },
+        );
+    }
+
+    /// Saves, then makes the draft an offer on `item`.
+    fn offer(&mut self, item: CatalogItem, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, kind, (publisher, _))) = self.editor_ports(cx) else {
+            return;
+        };
+        self.save_then(
+            window,
+            cx,
+            move |listings, saved| async move {
+                listings
+                    .offer_catalog_item(saved.id, item, publisher.as_ref())
+                    .await
+                    .map_err(|e| failure(&e))
+            },
+            move |this, offered: ListingDraft, window, cx| {
+                this.outcome = Some(Outcome::Done(offered_text(&offered, kind).into()));
+                this.open(offered.id, window, cx);
             },
         );
     }
@@ -787,10 +905,31 @@ impl DraftsSection {
     }
 
     fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
+        let channels = publishing_channels(cx);
         h_flex()
             .flex_wrap()
             .gap_2()
             .items_center()
+            .when(channels.len() > 1, |row| {
+                row.child(
+                    h_flex()
+                        .gap_1()
+                        .children(channels.into_iter().enumerate().map(|(index, kind)| {
+                            let button = Button::new(("draft-channel", index))
+                                .label(kind.name())
+                                .small()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.channel = kind;
+                                    cx.notify();
+                                }));
+                            if kind == self.channel {
+                                button.primary()
+                            } else {
+                                button.outline()
+                            }
+                        })),
+                )
+            })
             .child(
                 div().w(px(320.)).child(
                     Select::new(&self.product_pick)
@@ -806,7 +945,11 @@ impl DraftsSection {
                     .outline()
                     .small()
                     .loading(self.busy && self.editor.is_none())
-                    .disabled(self.busy || !self.connected(cx) || self.products.is_empty())
+                    .disabled(
+                        self.busy
+                            || !sales_channels::is_connected(cx, self.channel)
+                            || self.products.is_empty(),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| this.start_picked(window, cx))),
             )
             .into_any_element()
@@ -819,18 +962,29 @@ impl DraftsSection {
         let open = self.editor.as_ref().is_some_and(|e| e.draft == id);
         let checklist = draft.checklist();
         let missing = checklist.iter().filter(|item| item.blocks).count();
-        let mut facts = vec![draft.seller_sku.clone()];
-        facts.push(
-            draft
-                .category
-                .as_ref()
-                .map_or("sem categoria".to_owned(), |c| c.name.clone()),
-        );
-        facts.push(draft.listing_type.name().to_owned());
+        let connected = sales_channels::is_connected(cx, draft.channel);
+        let mut facts = vec![draft.channel.name().to_owned(), draft.seller_sku.clone()];
+        match draft.kind() {
+            DraftKind::OwnPage => {
+                facts.push(
+                    draft
+                        .category
+                        .as_ref()
+                        .map_or("sem categoria".to_owned(), |c| c.name.clone()),
+                );
+                facts.push(draft.listing_type.name().to_owned());
+            }
+            DraftKind::CatalogOffer => facts.push(match catalog_id(draft) {
+                Some(id) => format!("ASIN {id}"),
+                None => "sem produto escolhido".to_owned(),
+            }),
+        }
         if draft.price.amount() > rust_decimal::Decimal::ZERO {
             facts.push(draft.price.rounded().to_pt_br());
         }
-        facts.push(format!("{} fotos", draft.pictures.len()));
+        if draft.kind() == DraftKind::OwnPage {
+            facts.push(format!("{} fotos", draft.pictures.len()));
+        }
         let state = match (&draft.published, missing) {
             (Some(_), _) => kit::tag("publicado, falta a descrição", t.danger, cx),
             (None, 0) => kit::tag("pronto para publicar", t.success, cx),
@@ -844,7 +998,7 @@ impl DraftsSection {
                     .primary()
                     .small()
                     .loading(self.busy)
-                    .disabled(self.busy || !self.connected(cx))
+                    .disabled(self.busy || !connected)
                     .on_click(cx.listener(move |this, _, window, cx| this.finish(id, window, cx))),
             ),
             None if open => h_flex(),
@@ -918,6 +1072,8 @@ impl DraftsSection {
                 .child(Input::new(input).small())
         };
         let title_length = editor.title.read(cx).value().chars().count();
+        let of_channel = sales_channels::of_channel(draft.channel);
+        let on_channel = sales_channels::on(draft.channel);
         let choice = |id: &'static str, text: &'static str, on: bool| {
             let button = Button::new(id).label(text).small();
             if on {
@@ -944,7 +1100,7 @@ impl DraftsSection {
                             .label("Sugerir pelo título")
                             .ghost()
                             .small()
-                            .disabled(self.busy || !self.connected(cx))
+                            .disabled(self.busy || !sales_channels::is_connected(cx, draft.channel))
                             .on_click(cx.listener(|this, _, window, cx| this.predict(window, cx))),
                     ),
             )
@@ -965,58 +1121,49 @@ impl DraftsSection {
                     }))
             }));
 
-        let kind =
+        let listing_type = v_flex().gap_1().child(label("Tipo")).child(
             h_flex()
-                .gap_4()
-                .flex_wrap()
+                .gap_1()
                 .child(
-                    v_flex().gap_1().child(label("Tipo")).child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                choice(
-                                    "type-classic",
-                                    "Clássico",
-                                    editor.listing_type == ListingType::Classic,
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| this.set_type(ListingType::Classic, cx),
-                                )),
-                            )
-                            .child(
-                                choice(
-                                    "type-premium",
-                                    "Premium",
-                                    editor.listing_type == ListingType::Premium,
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| this.set_type(ListingType::Premium, cx),
-                                )),
-                            ),
+                    choice(
+                        "type-classic",
+                        "Clássico",
+                        editor.listing_type == ListingType::Classic,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.set_type(ListingType::Classic, cx)),
                     ),
                 )
                 .child(
-                    v_flex().gap_1().child(label("Condição")).child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                choice("condition-new", "Novo", editor.condition == Condition::New)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.set_condition(Condition::New, cx)
-                                    })),
-                            )
-                            .child(
-                                choice(
-                                    "condition-used",
-                                    "Usado",
-                                    editor.condition == Condition::Used,
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| this.set_condition(Condition::Used, cx),
-                                )),
-                            ),
+                    choice(
+                        "type-premium",
+                        "Premium",
+                        editor.listing_type == ListingType::Premium,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.set_type(ListingType::Premium, cx)),
                     ),
-                );
+                ),
+        );
+        let condition = v_flex().gap_1().child(label("Condição")).child(
+            h_flex()
+                .gap_1()
+                .child(
+                    choice("condition-new", "Novo", editor.condition == Condition::New).on_click(
+                        cx.listener(|this, _, _, cx| this.set_condition(Condition::New, cx)),
+                    ),
+                )
+                .child(
+                    choice(
+                        "condition-used",
+                        "Usado",
+                        editor.condition == Condition::Used,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.set_condition(Condition::Used, cx)),
+                    ),
+                ),
+        );
 
         let suggestion = match &editor.price_suggestion {
             None => Some(
@@ -1150,17 +1297,22 @@ impl DraftsSection {
             .unwrap_or_else(|| draft.checklist());
         let checklist_card = v_flex()
             .gap_1()
-            .child(label(if editor.validated.is_some() {
-                "Checklist com o validador do Mercado Livre"
-            } else {
-                "Checklist (salve para atualizar)"
-            }))
+            .child(
+                div()
+                    .text_xs()
+                    .font_medium()
+                    .child(if editor.validated.is_some() {
+                        format!("Checklist com o validador {of_channel}")
+                    } else {
+                        "Checklist (salve para atualizar)".to_owned()
+                    }),
+            )
             .when(checklist.is_empty(), |list| {
                 list.child(
                     div()
                         .text_sm()
                         .text_color(t.success)
-                        .child("Nada falta. Valide no Mercado Livre ou publique."),
+                        .child(format!("Nada falta. Valide {on_channel} ou publique.")),
                 )
             })
             .children(checklist.iter().map(|item| {
@@ -1172,10 +1324,81 @@ impl DraftsSection {
                         if item.blocks { t.danger } else { t.text2 },
                         cx,
                     ))
-                    .child(div().text_sm().child(check_text(&item.check)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(check_text(&item.check, draft.channel)),
+                    )
             }));
 
-        let can_publish = !self.busy && self.connected(cx);
+        let can_publish = !self.busy && sales_channels::is_connected(cx, draft.channel);
+        let actions = h_flex()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                Button::new("publish-draft")
+                    .label(format!("Publicar {on_channel}"))
+                    .icon(IconName::Upload)
+                    .primary()
+                    .small()
+                    .loading(self.busy)
+                    .disabled(!can_publish || is_blocked(&checklist))
+                    .on_click(cx.listener(|this, _, window, cx| this.publish(window, cx))),
+            )
+            .child(
+                Button::new("validate-draft")
+                    .label(format!("Validar {on_channel}"))
+                    .outline()
+                    .small()
+                    .disabled(!can_publish || draft.category.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| this.validate(window, cx))),
+            )
+            .child(
+                Button::new("save-draft")
+                    .label("Salvar")
+                    .outline()
+                    .small()
+                    .disabled(self.busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
+            )
+            .child(
+                Button::new("discard-draft")
+                    .label("Descartar")
+                    .ghost()
+                    .small()
+                    .disabled(self.busy)
+                    .on_click({
+                        let id = draft.id;
+                        cx.listener(move |this, _, window, cx| this.discard(id, window, cx))
+                    }),
+            )
+            .child(
+                Button::new("close-draft")
+                    .label("Fechar")
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
+            );
+        let prices = h_flex()
+            .gap_2()
+            .flex_wrap()
+            .child(field("Preço (R$)", 120., &editor.price))
+            .child(field("Estoque", 100., &editor.quantity));
+        if draft.kind() == DraftKind::CatalogOffer {
+            return v_flex()
+                .gap_3()
+                .pt_3()
+                .border_t(t.border_width)
+                .border_color(t.frame)
+                .child(self.render_catalog(editor, draft, cx))
+                .child(condition)
+                .child(prices)
+                .children(suggestion)
+                .child(checklist_card)
+                .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+                .child(actions)
+                .into_any_element();
+        }
         let title_count = match &editor.written {
             Some(written) => format!(
                 "{title_length} de {} caracteres",
@@ -1201,15 +1424,14 @@ impl DraftsSection {
             )
             .child(self.render_writing(editor, draft, cx))
             .child(category)
-            .child(kind)
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_4()
                     .flex_wrap()
-                    .child(field("Preço (R$)", 120., &editor.price))
-                    .child(field("Estoque", 100., &editor.quantity))
-                    .child(field("Garantia do vendedor", 180., &editor.warranty)),
+                    .child(listing_type)
+                    .child(condition),
             )
+            .child(prices.child(field("Garantia do vendedor", 180., &editor.warranty)))
             .children(suggestion)
             .child(attributes)
             .child(pictures)
@@ -1221,55 +1443,113 @@ impl DraftsSection {
             )
             .child(checklist_card)
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .child(actions)
+            .into_any_element()
+    }
+
+    /// The product of the channel's catalog the offer joins, and the search
+    /// by GTIN that finds it.
+    fn render_catalog(
+        &self,
+        editor: &Editor,
+        draft: &ListingDraft,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        let kind = draft.channel;
+        let chosen = match (catalog_id(draft), &draft.category) {
+            (Some(id), Some(category)) => v_flex()
+                .gap_0p5()
+                .child(div().text_sm().font_medium().child(draft.title.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(t.text2)
+                        .child(format!("ASIN {id} · {}", category.name)),
+                ),
+            _ => v_flex().child(div().text_xs().text_color(t.text2).child(format!(
+                "Digite o GTIN (o código de barras da embalagem) e busque o produto {}. Ele já \
+                 tem fotos e descrição; você confirma a condição, o preço e o estoque.",
+                sales_channels::of_channel(kind)
+            ))),
+        };
+        let connected = sales_channels::is_connected(cx, kind);
+        v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .font_medium()
+                    .child(format!("Produto {}", sales_channels::of_channel(kind))),
+            )
+            .child(chosen)
             .child(
                 h_flex()
                     .gap_2()
+                    .items_end()
                     .flex_wrap()
                     .child(
-                        Button::new("publish-draft")
-                            .label("Publicar no Mercado Livre")
-                            .icon(IconName::Upload)
-                            .primary()
+                        v_flex()
+                            .gap_1()
+                            .w(px(220.))
+                            .child(div().text_xs().font_medium().child("GTIN"))
+                            .child(Input::new(&editor.gtin).small()),
+                    )
+                    .child(
+                        Button::new("find-catalog-item")
+                            .label(format!("Buscar {}", sales_channels::on(kind)))
+                            .icon(IconName::Search)
+                            .outline()
                             .small()
                             .loading(self.busy)
-                            .disabled(!can_publish || is_blocked(&checklist))
-                            .on_click(cx.listener(|this, _, window, cx| this.publish(window, cx))),
-                    )
-                    .child(
-                        Button::new("validate-draft")
-                            .label("Validar no Mercado Livre")
-                            .outline()
-                            .small()
-                            .disabled(!can_publish || draft.category.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| this.validate(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-draft")
-                            .label("Salvar")
-                            .outline()
-                            .small()
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    )
-                    .child(
-                        Button::new("discard-draft")
-                            .label("Descartar")
-                            .ghost()
-                            .small()
-                            .disabled(self.busy)
-                            .on_click({
-                                let id = draft.id;
-                                cx.listener(move |this, _, window, cx| this.discard(id, window, cx))
-                            }),
-                    )
-                    .child(
-                        Button::new("close-draft")
-                            .label("Fechar")
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
+                            .disabled(self.busy || !connected)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.find_catalog_item(window, cx)
+                            })),
                     ),
             )
+            .children(editor.found.as_ref().map(|items| {
+                v_flex()
+                    .gap_2()
+                    .children(items.iter().enumerate().map(|(index, item)| {
+                        let picked = item.clone();
+                        let mut facts =
+                            vec![format!("ASIN {}", item.id), item.category.name.clone()];
+                        if let Some(brand) = &item.brand {
+                            facts.insert(0, brand.clone());
+                        }
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .p_2()
+                            .rounded(t.radius_lg)
+                            .border(t.border_width)
+                            .border_color(t.frame)
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .gap_0p5()
+                                    .child(div().text_sm().truncate().child(item.title.clone()))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(t.text2)
+                                            .child(facts.join(" · ")),
+                                    ),
+                            )
+                            .child(
+                                Button::new(("offer-catalog-item", index))
+                                    .label("Oferecer este")
+                                    .outline()
+                                    .small()
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.offer(picked.clone(), window, cx)
+                                    })),
+                            )
+                    }))
+            }))
             .into_any_element()
     }
 
@@ -1285,7 +1565,7 @@ impl DraftsSection {
         let off = listing_copy::writing_off(&listing_copy::anthropic_state(cx))
             .map(str::to_owned)
             .or_else(|| {
-                (!self.connected(cx)).then(|| {
+                (!sales_channels::is_connected(cx, SalesChannelKind::MercadoLivre)).then(|| {
                     "Conecte a conta do Mercado Livre em Configurações › Conexões: o limite do \
                      título e os termos em alta vêm da categoria."
                         .to_owned()
@@ -1359,8 +1639,8 @@ impl Render for DraftsSection {
                     .items_baseline()
                     .child(kit::section_heading(heading))
                     .child(div().text_xs().text_color(t.text2).child(
-                        "anúncios novos montados a partir de um produto; nada vai ao Mercado \
-                         Livre antes de você publicar",
+                        "anúncios novos montados a partir de um produto; nada vai ao canal \
+                         antes de você publicar",
                     )),
             )
             .child(self.render_new(cx))
@@ -1369,6 +1649,47 @@ impl Render for DraftsSection {
             })
             .children((0..self.drafts.len()).map(|index| self.render_draft(index, cx)))
     }
+}
+
+/// A channel's publisher and its Sales Channel, which prices the draft.
+type Ports = (Arc<dyn ListingPublisher>, Arc<dyn SalesChannel>);
+
+fn ports(cx: &App, kind: SalesChannelKind) -> Option<Ports> {
+    let channel = sales_channels::of(cx, kind)?;
+    Some((channel.publisher?, channel.listings))
+}
+
+/// The channels a draft can go to, in the app's order.
+fn publishing_channels(cx: &App) -> Vec<SalesChannelKind> {
+    cx.try_global::<sales_channels::SalesChannels>()
+        .map(|channels| {
+            channels
+                .0
+                .iter()
+                .filter(|channel| channel.publisher.is_some())
+                .map(|channel| channel.kind())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The id, in the channel's catalog, of the product a catalog offer joins:
+/// the value its product filled first.
+fn catalog_id(draft: &ListingDraft) -> Option<&str> {
+    draft
+        .attributes
+        .first()
+        .map(|attribute| attribute.value.as_str())
+        .filter(|id| !id.is_empty())
+}
+
+fn offered_text(draft: &ListingDraft, kind: SalesChannelKind) -> String {
+    format!(
+        "O rascunho oferece {} (ASIN {}) {}. Confirme a condição, o preço e o estoque e publique.",
+        draft.title,
+        catalog_id(draft).unwrap_or("—"),
+        sales_channels::on(kind)
+    )
 }
 
 /// What the owner typed, before any change: the draft's own values.
@@ -1421,19 +1742,32 @@ fn price_text(price: Money) -> String {
     }
 }
 
-fn published_text(listing: &Listing) -> String {
-    format!(
-        "Anúncio {} publicado no Mercado Livre e vinculado ao produto; ele já aparece na lista \
-         abaixo.",
-        listing.listed.id
-    )
+fn published_text(listing: &Listing, kind: SalesChannelKind) -> String {
+    match DraftKind::on(kind) {
+        DraftKind::OwnPage => format!(
+            "Anúncio {} publicado {} e vinculado ao produto; ele já aparece na lista abaixo.",
+            listing.listed.id,
+            sales_channels::on(kind)
+        ),
+        DraftKind::CatalogOffer => format!(
+            "Oferta {} enviada {} e vinculada ao produto. {} leva alguns minutos para pô-la à \
+             venda; o próximo Sync mostra o status dela na lista abaixo.",
+            listing.listed.id,
+            sales_channels::to(kind),
+            sales_channels::opening(kind)
+        ),
+    }
 }
 
 /// What a checklist item asks for, as the owner reads it.
-fn check_text(check: &Check) -> String {
+fn check_text(check: &Check, kind: SalesChannelKind) -> String {
     match check {
         Check::Title => "Escreva o título.".into(),
         Check::Category => "Escolha a categoria: use Sugerir pelo título.".into(),
+        Check::CatalogItem => format!(
+            "Busque pelo GTIN o produto {} que o anúncio oferece.",
+            sales_channels::of_channel(kind)
+        ),
         Check::Price => "Digite o preço.".into(),
         Check::Attribute { name, .. } => format!("Preencha {name}."),
         Check::Pictures { selected } => format!(
@@ -1444,8 +1778,11 @@ fn check_text(check: &Check) -> String {
         Check::Description => {
             "Sem descrição: o anúncio sai, mas uma descrição evita perguntas.".into()
         }
-        Check::Stock => "Estoque zero: o anúncio nasce pausado.".into(),
-        Check::Channel(message) => format!("Mercado Livre: {message}"),
+        Check::Stock => match DraftKind::on(kind) {
+            DraftKind::OwnPage => "Estoque zero: o anúncio nasce pausado.".into(),
+            DraftKind::CatalogOffer => "Estoque zero: a oferta nasce fora de venda.".into(),
+        },
+        Check::Channel(message) => format!("{}: {message}", kind.name()),
     }
 }
 
@@ -1465,6 +1802,13 @@ pub(crate) fn failure(error: &ListingError) -> String {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default()
         ),
+        ListingError::InvalidGtin => "Digite o GTIN só com os números do código de barras: 8, 12, \
+             13 ou 14 dígitos, como na embalagem. O último dígito confere os outros; se ele não \
+             bate, algum número foi digitado errado."
+            .into(),
+        ListingError::NotACatalogOffer(_) => {
+            "Esse rascunho é um anúncio próprio; a busca pelo GTIN é para ofertas da Amazon.".into()
+        }
         ListingError::DescriptionNotSent(_, error) => format!(
             "O anúncio foi publicado, mas a descrição não foi: {} Use Enviar a descrição no \
              rascunho.",
@@ -1491,19 +1835,26 @@ impl From<ListingError> for PublishFailure {
 }
 
 /// Why a draft has no suggested price, as the owner reads it.
-fn price_failure(error: &PricingError) -> String {
+fn price_failure(error: &PricingError, kind: SalesChannelKind) -> String {
     match error {
-        PricingError::NoFeeBasis => "Escolha a categoria para o app saber a tarifa.".into(),
+        PricingError::NoFeeBasis => match DraftKind::on(kind) {
+            DraftKind::OwnPage => "Escolha a categoria para o app saber a tarifa.".into(),
+            DraftKind::CatalogOffer => format!(
+                "Busque o produto {} pelo GTIN para o app saber a tarifa.",
+                sales_channels::of_channel(kind)
+            ),
+        },
         PricingError::NoCost(_) => "O produto não tem custo médio nem oferta de fornecedor; \
              digite o preço."
             .into(),
         PricingError::Unreachable => "Nenhum preço chega à margem alvo: tarifa, imposto e \
              margem alvo somam 100% ou mais."
             .into(),
-        PricingError::Unsettled => "A tarifa do Mercado Livre mudou a cada preço consultado; \
-             digite o preço."
-            .into(),
-        PricingError::Platform(error) => mercado_livre::failure(error),
+        PricingError::Unsettled => format!(
+            "A tarifa {} mudou a cada preço consultado; digite o preço.",
+            sales_channels::of_channel(kind)
+        ),
+        PricingError::Platform(error) => sales_channels::failure(kind, error),
         PricingError::Listing(error) => failure(error),
         other => format!("Não consegui calcular: {other}"),
     }

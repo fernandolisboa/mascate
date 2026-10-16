@@ -1,0 +1,14 @@
+{
+  "sku": "FON-TWS-001",
+  "status": "VALID",
+  "submissionId": "b2a45cb931234faea118fa24001f8a6f",
+  "issues": [
+    {
+      "code": "100708",
+      "message": "A oferta não pode ser a oferta em destaque porque o preço não é competitivo.",
+      "severity": "WARNING",
+      "attributeNames": ["our_price"],
+      "categories": ["INVALID_ATTRIBUTE", "INVALID_PRICE"]
+    }
+  ]
+}

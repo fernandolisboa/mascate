@@ -2,7 +2,8 @@
 //! category the Sales Channel predicts, the category's attributes, pictures
 //! from the Product's folder and a price, checked before it goes out, and
 //! published only on the owner's click. The same Listing then carries the
-//! channel's id (ADR 0016).
+//! channel's id (ADR 0016). On Amazon a draft is an offer on a product its
+//! catalog already has, found by the GTIN (#128, ADR 0033).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -83,6 +84,85 @@ pub fn is_picture(path: &Path) -> bool {
                 .iter()
                 .any(|taken| extension.eq_ignore_ascii_case(taken))
         })
+}
+
+/// How a Sales Channel takes a listing the app publishes (ADR 0033,
+/// decisions 6 and 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftKind {
+    /// A page of its own: title, category, attributes, pictures and
+    /// description.
+    OwnPage,
+    /// An offer on a product the channel's catalog already has, found by
+    /// its GTIN: the product's page, pictures and description are the
+    /// channel's. Amazon, where creating a new ASIN is out of epic #32.
+    CatalogOffer,
+}
+
+impl DraftKind {
+    pub fn on(channel: SalesChannelKind) -> Self {
+        match channel {
+            SalesChannelKind::Amazon => DraftKind::CatalogOffer,
+            SalesChannelKind::MercadoLivre
+            | SalesChannelKind::Shopee
+            | SalesChannelKind::Magalu => DraftKind::OwnPage,
+        }
+    }
+}
+
+/// A product barcode: 8, 12, 13 or 14 digits whose last one checks the
+/// others (GS1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gtin(String);
+
+impl Gtin {
+    /// `text` as a GTIN, spaces around it aside; `None` when it is not one.
+    pub fn parse(text: &str) -> Option<Self> {
+        let digits = text.trim();
+        if !matches!(digits.len(), 8 | 12 | 13 | 14) || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut values = digits.bytes().rev().map(|b| u32::from(b - b'0'));
+        let check = values.next()?;
+        // From the right, the digits before the check one weigh 3, 1, 3...
+        let sum: u32 = values
+            .enumerate()
+            .map(|(at, value)| if at % 2 == 0 { value * 3 } else { value })
+            .sum();
+        ((10 - sum % 10) % 10 == check).then(|| Gtin(digits.to_owned()))
+    }
+
+    /// Its digits.
+    pub fn digits(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A product the channel's catalog already has, which an offer joins:
+/// Amazon's ASIN.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogItem {
+    /// The channel's id for it.
+    pub id: String,
+    pub title: String,
+    pub brand: Option<String>,
+    /// Where the channel files it, which its fee depends on.
+    pub category: ChannelCategory,
+    /// The attribute values an offer on it carries, such as its id.
+    pub attributes: Vec<AttributeValue>,
+    pub link: Option<String>,
+}
+
+/// What a search of the channel's catalog by GTIN came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogMatch {
+    /// The channel has no product with the GTIN.
+    NotFound,
+    /// One product: the draft now offers it.
+    Offered(Box<ListingDraft>),
+    /// More than one: the owner picks the one the draft offers.
+    Several(Vec<CatalogItem>),
 }
 
 /// What the item is, as the channel asks.
@@ -216,6 +296,8 @@ pub struct ListingDraft {
     pub available_quantity: u32,
     /// As "90 dias"; empty for none.
     pub warranty: String,
+    /// On a catalog offer, the values the chosen product fills, its id
+    /// first.
     pub attributes: Vec<DraftAttribute>,
     /// In order: the first is the cover.
     pub pictures: Vec<DraftPicture>,
@@ -231,6 +313,9 @@ pub struct ListingDraft {
 pub enum Check {
     Title,
     Category,
+    /// A catalog offer without the product of the channel's catalog it
+    /// joins.
+    CatalogItem,
     Price,
     /// An attribute the category has, without a value.
     Attribute {
@@ -268,18 +353,32 @@ pub fn is_blocked(checklist: &[ChecklistItem]) -> bool {
 }
 
 impl ListingDraft {
+    pub fn kind(&self) -> DraftKind {
+        DraftKind::on(self.channel)
+    }
+
     /// What the draft lacks, blocking items first, without asking the
     /// channel: title, category, price, the attributes the category
     /// requires and at least [`MIN_PICTURES`] pictures block; a missing
-    /// recommended attribute, description or stock is a warning.
+    /// recommended attribute, description or stock is a warning. A catalog
+    /// offer needs its product of the channel's catalog in place of the
+    /// category, and no pictures or description: they are the channel's.
     pub fn checklist(&self) -> Vec<ChecklistItem> {
+        let own_page = self.kind() == DraftKind::OwnPage;
         let mut items = Vec::new();
         let mut add = |check, blocks| items.push(ChecklistItem { check, blocks });
         if self.title.trim().is_empty() {
             add(Check::Title, true);
         }
         if self.category.is_none() {
-            add(Check::Category, true);
+            add(
+                if own_page {
+                    Check::Category
+                } else {
+                    Check::CatalogItem
+                },
+                true,
+            );
         }
         if self.price.amount() <= Decimal::ZERO {
             add(Check::Price, true);
@@ -295,7 +394,7 @@ impl ListingDraft {
                 );
             }
         }
-        if self.pictures.len() < MIN_PICTURES {
+        if own_page && self.pictures.len() < MIN_PICTURES {
             add(
                 Check::Pictures {
                     selected: self.pictures.len(),
@@ -303,7 +402,7 @@ impl ListingDraft {
                 true,
             );
         }
-        if self.description.trim().is_empty() {
+        if own_page && self.description.trim().is_empty() {
             add(Check::Description, false);
         }
         if self.available_quantity == 0 {
@@ -393,6 +492,13 @@ pub trait ListingPublisher: OnSalesChannel + Send + Sync {
 
     /// The owner's listings with `seller_sku`, in any status.
     fn find_by_seller_sku(&self, seller_sku: &str) -> Result<Vec<PublishedListing>, PlatformError>;
+
+    /// The products of the channel's catalog with `gtin`, for a catalog
+    /// offer. A channel whose listings are pages of their own offers on
+    /// none.
+    fn catalog_items(&self, _gtin: &Gtin) -> Result<Vec<CatalogItem>, PlatformError> {
+        Ok(Vec::new())
+    }
 }
 
 const DRAFT_COLUMNS: &str = "l.id, l.product_id, l.seller_sku, l.title, d.description,
@@ -408,17 +514,23 @@ impl Listings {
     /// category the channel predicts likeliest for it with the attribute
     /// values the channel read in the name, Classic, new, with `start`'s
     /// units and pictures, and no price yet. The channel is asked before
-    /// anything is written.
+    /// anything is written. A catalog offer starts without its product of
+    /// the channel's catalog, which the GTIN finds, and without pictures.
     pub async fn create_draft(
         &self,
         product: &CatalogProduct,
         start: DraftStart,
         publisher: &dyn ListingPublisher,
     ) -> Result<ListingDraft, ListingError> {
-        let prediction = publisher
-            .predict_categories(&product.name)?
-            .into_iter()
-            .next();
+        let own_page = DraftKind::on(publisher.sales_channel()) == DraftKind::OwnPage;
+        let prediction = if own_page {
+            publisher
+                .predict_categories(&product.name)?
+                .into_iter()
+                .next()
+        } else {
+            None
+        };
         let attributes = match &prediction {
             Some(prediction) => draft_attributes(
                 publisher.category_attributes(&prediction.category.id)?,
@@ -429,7 +541,7 @@ impl Listings {
         let pictures: Vec<DraftPicture> = start
             .pictures
             .into_iter()
-            .filter(|path| is_picture(path))
+            .filter(|path| own_page && is_picture(path))
             .map(|path| DraftPicture {
                 path,
                 uploaded: None,
@@ -525,17 +637,88 @@ impl Listings {
         publisher: &dyn ListingPublisher,
     ) -> Result<ListingDraft, ListingError> {
         let draft = self.editable(id).await?;
-        let mut kept: Vec<AttributeValue> = draft
-            .attributes
-            .iter()
-            .filter(|attribute| !attribute.value.trim().is_empty())
-            .map(|attribute| AttributeValue {
-                id: attribute.id.clone(),
-                value: attribute.value.clone(),
-            })
-            .collect();
-        kept.extend(guessed.iter().cloned());
-        let attributes = draft_attributes(publisher.category_attributes(&category.id)?, &kept);
+        let mut values = typed_values(&draft);
+        values.extend(guessed.iter().cloned());
+        self.move_to(&draft, category, &values, None, publisher)
+            .await
+    }
+
+    /// The products of the channel's catalog with the barcode `gtin`, for
+    /// a catalog offer.
+    pub fn catalog_items(
+        &self,
+        gtin: &str,
+        publisher: &dyn ListingPublisher,
+    ) -> Result<Vec<CatalogItem>, ListingError> {
+        let gtin = Gtin::parse(gtin).ok_or(ListingError::InvalidGtin)?;
+        Ok(publisher.catalog_items(&gtin)?)
+    }
+
+    /// Looks the barcode `gtin` up in the channel's catalog for the
+    /// catalog offer `id`: with one product the draft offers it at once;
+    /// with several, the owner picks one with
+    /// [`Listings::offer_catalog_item`].
+    pub async fn match_catalog_item(
+        &self,
+        id: RecordId,
+        gtin: &str,
+        publisher: &dyn ListingPublisher,
+    ) -> Result<CatalogMatch, ListingError> {
+        let draft = catalog_offer(on_publisher(self.editable(id).await?, publisher)?)?;
+        let mut found = self.catalog_items(gtin, publisher)?;
+        match found.len() {
+            0 => Ok(CatalogMatch::NotFound),
+            1 => {
+                let item = found.remove(0);
+                Ok(CatalogMatch::Offered(Box::new(
+                    self.offer(&draft, item, publisher).await?,
+                )))
+            }
+            _ => Ok(CatalogMatch::Several(found)),
+        }
+    }
+
+    /// Makes the catalog offer `id` an offer on `item`: its title, category
+    /// and the values the item fills.
+    pub async fn offer_catalog_item(
+        &self,
+        id: RecordId,
+        item: CatalogItem,
+        publisher: &dyn ListingPublisher,
+    ) -> Result<ListingDraft, ListingError> {
+        let draft = catalog_offer(on_publisher(self.editable(id).await?, publisher)?)?;
+        self.offer(&draft, item, publisher).await
+    }
+
+    async fn offer(
+        &self,
+        draft: &ListingDraft,
+        item: CatalogItem,
+        publisher: &dyn ListingPublisher,
+    ) -> Result<ListingDraft, ListingError> {
+        // The item's values come first: an earlier item's never stay.
+        let mut values = item.attributes;
+        values.extend(typed_values(draft));
+        self.move_to(draft, item.category, &values, Some(item.title), publisher)
+            .await
+    }
+
+    /// Moves `draft` to `category` with its attributes, filled by the first
+    /// of `values` for each, and to `title` when given.
+    async fn move_to(
+        &self,
+        draft: &ListingDraft,
+        category: ChannelCategory,
+        values: &[AttributeValue],
+        title: Option<String>,
+        publisher: &dyn ListingPublisher,
+    ) -> Result<ListingDraft, ListingError> {
+        let id = draft.id;
+        let attributes = draft_attributes(publisher.category_attributes(&category.id)?, values);
+        let title = title
+            .map(|title| title.trim().to_owned())
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| draft.title.clone());
         let now = stored(self.clock.now());
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection
@@ -543,8 +726,9 @@ impl Listings {
             .await?;
         transaction
             .execute(
-                "UPDATE commerce_listings SET category_id = ?1, updated_at = ?2 WHERE id = ?3",
-                params![category.id.clone(), now.clone(), id.to_string()],
+                "UPDATE commerce_listings SET category_id = ?1, title = ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![category.id.clone(), title, now.clone(), id.to_string()],
             )
             .await?;
         transaction
@@ -569,7 +753,7 @@ impl Listings {
 
     /// Saves what the owner changed in the draft. A picture already
     /// uploaded keeps the channel's id; only files of the channel's kinds
-    /// are kept.
+    /// are kept, and none on a catalog offer.
     pub async fn save_draft(
         &self,
         id: RecordId,
@@ -579,13 +763,18 @@ impl Listings {
         if edit.price.currency() != draft.price.currency() || edit.price.amount() < Decimal::ZERO {
             return Err(ListingError::InvalidPrice);
         }
+        let own_page = draft.kind() == DraftKind::OwnPage;
         let uploaded: HashMap<PathBuf, String> = draft
             .pictures
             .into_iter()
             .filter_map(|picture| Some((picture.path, picture.uploaded?)))
             .collect();
         let mut pictures: Vec<DraftPicture> = Vec::new();
-        for path in edit.pictures.into_iter().filter(|path| is_picture(path)) {
+        for path in edit
+            .pictures
+            .into_iter()
+            .filter(|path| own_page && is_picture(path))
+        {
             if !pictures.iter().any(|picture| picture.path == path) {
                 pictures.push(DraftPicture {
                     uploaded: uploaded.get(&path).cloned(),
@@ -1196,6 +1385,27 @@ fn read_picture(path: &Path) -> Result<(String, Vec<u8>), ListingError> {
 /// its paths are valid text on every system it runs on.
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// The values typed in `draft`'s attributes.
+fn typed_values(draft: &ListingDraft) -> Vec<AttributeValue> {
+    draft
+        .attributes
+        .iter()
+        .filter(|attribute| !attribute.value.trim().is_empty())
+        .map(|attribute| AttributeValue {
+            id: attribute.id.clone(),
+            value: attribute.value.clone(),
+        })
+        .collect()
+}
+
+/// `draft`, when it is a catalog offer.
+fn catalog_offer(draft: ListingDraft) -> Result<ListingDraft, ListingError> {
+    match draft.kind() {
+        DraftKind::CatalogOffer => Ok(draft),
+        DraftKind::OwnPage => Err(ListingError::NotACatalogOffer(draft.id)),
+    }
 }
 
 /// `draft`, when `publisher` speaks for the channel it is drafted for.

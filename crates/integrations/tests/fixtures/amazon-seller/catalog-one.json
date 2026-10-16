@@ -1,0 +1,29 @@
+{
+  "numberOfResults": 1,
+  "pagination": {},
+  "refinements": { "brands": [], "classifications": [] },
+  "items": [
+    {
+      "asin": "B0CFONE001",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "brand": "Mascate",
+          "browseClassification": {
+            "displayName": "Fones de ouvido intra-auriculares",
+            "classificationId": "16243890011"
+          },
+          "color": "Preto",
+          "itemClassification": "BASE_PRODUCT",
+          "itemName": "Fone de Ouvido Bluetooth Mascate Preto",
+          "manufacturer": "Mascate",
+          "modelNumber": "FBT-001",
+          "packageQuantity": 1
+        }
+      ],
+      "productTypes": [
+        { "marketplaceId": "A2Q3Y263D00KWC", "productType": "HEADPHONES" }
+      ]
+    }
+  ]
+}

@@ -6,11 +6,13 @@
 //! units. It reads the Orders the owner ships, their Fees from Amazon's
 //! finances, and confirms each shipment with its tracking code. Only
 //! official endpoints, with the Login with Amazon token alone (no AWS
-//! signing since 2023).
+//! signing since 2023). A draft goes up as an offer on a product Amazon's
+//! catalog already has, found by the GTIN.
 
 mod answers;
 mod billing;
 mod orders;
+mod publisher;
 mod sales_channel;
 mod shipments;
 mod tokens;
@@ -152,6 +154,7 @@ impl Amazon {
             let url = format!("{}{path}", self.api);
             let mut request = match method {
                 "PATCH" => self.agent.patch(url),
+                "PUT" => self.agent.put(url),
                 _ => self.agent.post(url),
             }
             .header("Accept", "application/json")

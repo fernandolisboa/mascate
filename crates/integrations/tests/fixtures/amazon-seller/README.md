@@ -23,6 +23,10 @@ com a conta de vendedor do Fernando.
 | `orders-without-recipient.json` | o mesmo sem `RECIPIENT`, quando falta o papel Direct-to-Consumer Shipping: só cidade e estado | searchOrders; Roles in the Selling Partner API |
 | `orders-empty.json` | o mesmo sem pedidos | searchOrders |
 | `order-701.json`, `order-704.json` | `GET /orders/2026-01-01/orders/{orderId}` (`getOrder`) com `includedData=FULFILLMENT,PACKAGES`: um a enviar e um já entregue | getOrder |
+| `catalog-one.json`, `catalog-several.json`, `catalog-empty.json` | `GET /catalog/2022-04-01/items` (`searchCatalogItems`) com `identifiers` (o GTIN), `identifiersType` (`EAN`, `UPC` ou `GTIN`), `includedData=summaries,productTypes` e `locale=pt_BR`: um produto, três (um sem tipo de produto) e nenhum | searchCatalogItems; Catalog Items API v2022-04-01 reference |
+| `put-preview-valid.json` | `PUT /listings/2021-08-01/items/{sellerId}/{sku}` (`putListingsItem`) com `requirements=LISTING_OFFER_ONLY` e `mode=VALIDATION_PREVIEW`: válido (`VALID`), com um aviso | putListingsItem; Preview errors before creating a listing |
+| `put-accepted.json`, `put-invalid.json` | o mesmo sem `mode`: aceito (`ACCEPTED`) e inválido (`INVALID`), com um problema `ERROR` e outro `WARNING` | putListingsItem; Submit listings data (offer-only) |
+| `listing-item.json` | `GET /listings/2021-08-01/items/{sellerId}/{sku}` (`getListingsItem`) com `includedData=summaries,fulfillmentAvailability`, a oferta criada | getListingsItem |
 | `error-400-page-token.json` | `searchOrders` com o `paginationToken` vencido (vale 24 horas) | searchOrders |
 | `transactions-701-page-1.json`, `transactions-701-page-2.json` | `GET /finances/2024-06-19/transactions` (`listTransactions`) com `relatedIdentifierName=ORDER_ID`: a primeira com `nextToken` e `breakdowns` em lista, a segunda com `breakdowns` dentro de um objeto, como em alguns exemplos | listTransactions; Finances API v2024-06-19 |
 | `transactions-empty.json` | o mesmo antes de a Amazon lançar as transações do pedido (até 48 horas) | listTransactions |
@@ -45,5 +49,10 @@ Inventados ou completados (conferir no regression pass):
 - Os tipos dos `breakdowns` em `Expenses` (`Commission`, `ShippingChargeback`) e se um estorno de
   tarifa vem positivo dentro de `Expenses`, como na segunda página.
 - O texto do erro do `paginationToken` vencido.
+- Os ASINs, marcas e classificações das buscas no catálogo, a mensagem em português de cada
+  problema do `putListingsItem` (pedida com `issueLocale=pt_BR`) e o código do problema de marca
+  que pede aprovação.
+- Se um produto do catálogo pode vir sem tipo de produto, como o terceiro de
+  `catalog-several.json`; o adapter o deixa de fora, porque a oferta precisa do tipo.
 - Se, sem o papel Direct-to-Consumer Shipping, a Amazon recusa a busca com `RECIPIENT` (403, como
   aqui) ou só omite o endereço.

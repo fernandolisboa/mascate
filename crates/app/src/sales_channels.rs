@@ -12,8 +12,8 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Window, div, px};
 use mascate_commerce::{
-    ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, ChannelShipments, SalesChannel,
-    ShippingLabels,
+    ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, ChannelShipments,
+    ListingPublisher, SalesChannel, ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
@@ -35,6 +35,8 @@ pub struct ChannelPorts {
     pub labels: Option<Arc<dyn ShippingLabels>>,
     /// Where the owner confirms a shipment they sent themselves.
     pub shipments: Option<Arc<dyn ChannelShipments>>,
+    /// Where a draft goes up.
+    pub publisher: Option<Arc<dyn ListingPublisher>>,
 }
 
 impl ChannelPorts {
@@ -154,6 +156,13 @@ pub fn of(cx: &App, kind: SalesChannelKind) -> Option<ChannelPorts> {
         .iter()
         .find(|channel| channel.kind() == kind)
         .cloned()
+}
+
+/// Whether the channel `kind`'s Connection is up.
+pub fn is_connected(cx: &App, kind: SalesChannelKind) -> bool {
+    of(cx, kind).is_some_and(|channel| {
+        cx.global::<AppConnections>().0.state(channel.connection) == ConnectionState::Connected
+    })
 }
 
 /// Why the channel's Connection is not usable, and what is shown meanwhile.
