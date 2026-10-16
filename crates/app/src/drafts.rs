@@ -439,8 +439,13 @@ impl DraftsSection {
     fn typed(&self, cx: &App) -> Option<(RecordId, DraftEdit)> {
         let editor = self.editor.as_ref()?;
         let draft = self.draft(editor.draft)?;
-        let price = parse_amount(&editor.price.read(cx).value())
-            .filter(|amount| !amount.is_sign_negative())?;
+        let typed_price = editor.price.read(cx).value();
+        // No price yet is zero, which the checklist asks for.
+        let price = if typed_price.trim().is_empty() {
+            rust_decimal::Decimal::ZERO
+        } else {
+            parse_amount(&typed_price).filter(|amount| !amount.is_sign_negative())?
+        };
         let quantity = editor
             .quantity
             .read(cx)
