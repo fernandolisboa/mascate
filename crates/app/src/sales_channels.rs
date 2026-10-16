@@ -12,8 +12,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Window, div, px};
 use mascate_commerce::{
-    ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, ChannelShipments,
-    ListingPublisher, SalesChannel, ShippingLabels,
+    ChannelBilling, ChannelOrders, ChannelPayments, ChannelPriceAutomation, ChannelRanking,
+    ChannelShipments, FeaturedOfferPrices, ListingPublisher, RepricingPort, SalesChannel,
+    ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
@@ -37,6 +38,27 @@ pub struct ChannelPorts {
     pub shipments: Option<Arc<dyn ChannelShipments>>,
     /// Where a draft goes up.
     pub publisher: Option<Arc<dyn ListingPublisher>>,
+    /// How the channel reprices; absent where it tells no competitor's
+    /// price.
+    pub repricing: Option<ChannelRepricing>,
+}
+
+/// The port a Sales Channel reprices through (#135).
+#[derive(Clone)]
+pub enum ChannelRepricing {
+    /// The channel's own price automation (Mercado Livre).
+    Automation(Arc<dyn ChannelPriceAutomation>),
+    /// The featured offer's expected price, which the app follows (Amazon).
+    FeaturedOffer(Arc<dyn FeaturedOfferPrices>),
+}
+
+impl ChannelRepricing {
+    pub fn port(&self) -> RepricingPort<'_> {
+        match self {
+            ChannelRepricing::Automation(port) => RepricingPort::Automation(port.as_ref()),
+            ChannelRepricing::FeaturedOffer(port) => RepricingPort::FeaturedOffer(port.as_ref()),
+        }
+    }
 }
 
 impl ChannelPorts {
@@ -224,6 +246,14 @@ pub fn on(kind: SalesChannelKind) -> String {
 /// "do Mercado Livre", "da Amazon": what belongs to the channel.
 pub fn of_channel(kind: SalesChannelKind) -> String {
     format!("d{} {}", article(kind), kind.name())
+}
+
+/// "pelo Mercado Livre", "pela Amazon": who did something.
+pub fn by(kind: SalesChannelKind) -> String {
+    match article(kind) {
+        "o" => format!("pelo {}", kind.name()),
+        _ => format!("pela {}", kind.name()),
+    }
 }
 
 /// "ao Mercado Livre", "à Amazon": where something is sent.

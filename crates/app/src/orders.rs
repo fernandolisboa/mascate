@@ -45,6 +45,7 @@ use crate::pricing;
 use crate::promotions;
 use crate::purchases::units_text;
 use crate::questions;
+use crate::repricing;
 use crate::reputation;
 use crate::sales;
 use crate::sales_channels::{self, ChannelFilter, ChannelPorts};
@@ -136,9 +137,10 @@ fn failure_on(kind: SalesChannelKind, error: &OrderError) -> String {
 
 /// Erases the buyer data past its time, then runs an Order Sync now and
 /// every few minutes after, for as long as the app runs, window open or
-/// not, each followed by a Sync of the buyers' questions (#24) and, hourly,
-/// of the Reputation and the Reviews (#25) and the Promotions (#26). The
-/// first one covers the time the app was closed.
+/// not, each followed by a round of Automatic Repricing (#135), a Sync of
+/// the buyers' questions (#24) and, hourly, of the Reputation and the
+/// Reviews (#25) and the Promotions (#26). The first one covers the time
+/// the app was closed.
 pub fn start_polling(cx: &mut App) {
     let Some(orders) = orders(cx) else {
         return;
@@ -157,6 +159,9 @@ pub fn start_polling(cx: &mut App) {
             if let Some(round) = cx.update(sync_now) {
                 let outcome = round.await;
                 cx.update(|cx| finished(&outcome, cx));
+            }
+            if let Some(round) = cx.update(repricing::sync_now) {
+                repricing::finished(&round.await);
             }
             if let Some(round) = cx.update(questions::sync_now) {
                 let outcome = round.await;

@@ -219,6 +219,12 @@ recursos vizinhos (conferir no regression pass):
   vendedor sem Product Ads.
 | `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
 | `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |
+| `pricing-automation-rules.json`, `pricing-automation-rules-int.json` | `GET /pricing-automation/items/{id}/rules` (Automatic Repricing, #135): um item com `INT` e `INT_EXT` e outro só com `INT` | Automatizações de preços (pt_br e es_ar, consultadas em 16/10/2026) |
+| `pricing-automation-active.json`, `pricing-automation-changed.json` | `GET`, `POST` e `PUT /pricing-automation/items/{id}/automation`: automação `ACTIVE` com `item_rule`, `min_price` e `max_price`, e a mesma com novos limites | Automatizações de preços |
+| `pricing-automation-paused-promotion.json`, `pricing-automation-paused-inactive.json` | o mesmo `GET` com `status: PAUSED` e `status_detail` (`cause`, `message`): pausada por uma promoção e por item inativo (`ITEM_NO_ACTIVE`, o exemplo da página) | Automatizações de preços |
+| `error-404-pricing-automation.json`, `error-412-not-automatizable.json` | um item sem automação (404) e um item que não aceita automação (412 `item_not_automatizable`) | Automatizações de preços (Possíveis erros) |
+| `error-400-price-not-modifiable.json` | `PUT /items/{id}` com preço num item com automação ativa (400 `item.price.not_modifiable`, o exemplo da página) | Automatizações de preços |
+| `price-to-win-MLB4100000001.json` | `GET /items/{id}/price_to_win?version=v2` de um item de catálogo competindo | Concorrência em catálogo |
 - Listing Copy (#17): a página de categorias mostra `settings` com `max_title_length` e
   `max_description_length` num exemplo `MLA`; os valores de `category-MLB196208.json` (60 e
   50.000) são os usuais no MLB e foram escritos à mão. Sem eles (como em `category-MLB3697.json`),
@@ -226,3 +232,11 @@ recursos vizinhos (conferir no regression pass):
   `keyword` e `url`; a lista aqui é inventada e mais curta. O corpo do 404 de uma categoria sem
   tendências segue o formato de erro da API; conferir no regression pass se a categoria sem
   tendências responde 404 ou uma lista vazia e se `/trends` pede o token do vendedor.
+- Automatizações de preços (#135): a documentação diz que a automação pausa sozinha quando o item
+  entra numa promoção, mas só mostra a causa `ITEM_NO_ACTIVE`; `ITEM_IN_PROMOTION` e a mensagem de
+  `pricing-automation-paused-promotion.json` são inventadas, e o adapter reconhece qualquer causa
+  com `PROMOTION`. A página mostra `min_price` e `max_price` de um exemplo `MLA` (100000); os
+  valores aqui estão em reais. Conferir no regression pass: a causa real da pausa por promoção, se
+  o `DELETE` responde 200 ou 204, se um item fora do catálogo responde 404 ao `price_to_win` e se
+  o `POST` de um item que já tem automação responde 412 `automation_already_created` (o adapter lê
+  a automação antes e usa `PUT`).

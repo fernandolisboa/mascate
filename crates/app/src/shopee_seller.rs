@@ -250,6 +250,7 @@ mod tests {
                 labels: None,
                 shipments: None,
                 publisher: None,
+                repricing: None,
             }
         }
 

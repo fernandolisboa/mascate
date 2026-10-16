@@ -1,0 +1,6 @@
+{
+  "message": "Item is not automatizable",
+  "error": "item_not_automatizable",
+  "status": 412,
+  "cause": []
+}

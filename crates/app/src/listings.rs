@@ -42,6 +42,7 @@ use crate::orders;
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::quality;
+use crate::repricing::{self, RepricingPanel};
 use crate::sales_channels::{self, ChannelFilter};
 use crate::stock_mirror;
 
@@ -122,6 +123,9 @@ enum Step {
 struct PricePanel {
     listing: RecordId,
     loading: bool,
+    /// Its Automatic Repricing and price history (#135).
+    repricing: Entity<RepricingPanel>,
+    _repricing_changes: Subscription,
     /// Today's sale, where the simulator starts, or why there is none.
     today: Option<Result<PriceScenario, String>>,
     /// The Price Suggestion, or why there is none.
@@ -435,6 +439,7 @@ impl ListingsScreen {
         };
         let reach = sales_channels::reach(cx);
         let rating = mercado_livre::adapter(cx);
+        let repricing = repricing::repricing(cx).zip(pricing::taxes(cx));
         self.outcome = None;
         self.step = None;
         self.price = None;
@@ -461,6 +466,12 @@ impl ListingsScreen {
                     return Err(failures.join(" "));
                 }
                 let round = orders::round(&kept, &mirror, &catalog, &channels).await;
+                let repriced = match &repricing {
+                    Some((repricing, taxes)) => {
+                        repricing::round(repricing, &catalog, taxes, &channels).await
+                    }
+                    None => Default::default(),
+                };
                 let rated = match rating.filter(|_| {
                     channels
                         .iter()
@@ -469,20 +480,23 @@ impl ListingsScreen {
                     Some(rating) => Some(quality::sync(&listings, &rated, rating.as_ref()).await),
                     None => None,
                 };
-                Ok(Some((report, failures, round, rated)))
+                Ok(Some((report, failures, round, repriced, rated)))
             },
             |this,
-             (report, failures, round, rated): (
+             (report, failures, round, repriced, rated): (
                 ListingSync,
                 Vec<String>,
                 orders::RoundOutcome,
+                repricing::RepricingOutcome,
                 Option<Result<QualitySync, String>>,
             ),
              _,
              cx| {
                 let mut text = synced(&report);
                 text.push_str(&stock_sent(&sent_in(&round)));
+                text.push_str(&repricing::sent_text(&repriced));
                 orders::finished(&round, cx);
+                repricing::finished(&repriced);
                 for failed in &failures {
                     text.push(' ');
                     text.push_str(failed);
@@ -778,9 +792,15 @@ impl ListingsScreen {
         self.step = None;
         self.outcome = None;
         self.row_outcome = None;
+        let products = self.products.clone();
+        let repricing = cx.new(|cx| RepricingPanel::new(listing, kind, products, window, cx));
+        // The price buttons follow whether repricing is on.
+        let repricing_changes = cx.observe(&repricing, |_, _, cx| cx.notify());
         self.price = Some(PricePanel {
             listing,
             loading: true,
+            repricing,
+            _repricing_changes: repricing_changes,
             today: None,
             suggestion: None,
         });
@@ -918,6 +938,7 @@ impl ListingsScreen {
         let t = look(cx).tokens;
         let listing = panel.listing;
         let kind = self.kind_of(listing);
+        let repriced = panel.repricing.read(cx).is_repriced();
         let mut body = v_flex().gap_3();
         if panel.loading {
             body = body.child(div().text_sm().text_color(t.text2).child(format!(
@@ -988,22 +1009,30 @@ impl ListingsScreen {
                                 .gap_2()
                                 .flex_wrap()
                                 .pt_1()
-                                .child(
-                                    Button::new("approve-price")
-                                        .label(format!(
-                                            "Aprovar e enviar {} {}",
-                                            price.to_pt_br(),
-                                            send_to(kind)
-                                        ))
-                                        .icon(IconName::Check)
-                                        .primary()
-                                        .small()
-                                        .loading(self.busy)
-                                        .disabled(self.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.send_price(listing, price, window, cx)
-                                        })),
-                                )
+                                .when(repriced, |row| {
+                                    row.child(div().text_xs().text_color(t.text2).child(
+                                        "A reprecificação automática cuida do preço deste \
+                                         anúncio; desligue-a abaixo para aprovar um preço seu.",
+                                    ))
+                                })
+                                .when(!repriced, |row| {
+                                    row.child(
+                                        Button::new("approve-price")
+                                            .label(format!(
+                                                "Aprovar e enviar {} {}",
+                                                price.to_pt_br(),
+                                                send_to(kind)
+                                            ))
+                                            .icon(IconName::Check)
+                                            .primary()
+                                            .small()
+                                            .loading(self.busy)
+                                            .disabled(self.busy)
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.send_price(listing, price, window, cx)
+                                            })),
+                                    )
+                                })
                                 .child(
                                     Button::new("simulate-suggestion")
                                         .label("Levar ao simulador")
@@ -1025,8 +1054,9 @@ impl ListingsScreen {
             None => {}
         }
         if let Some(Ok(like)) = &panel.today {
-            body = body.child(self.render_simulator(listing, like, cx));
+            body = body.child(self.render_simulator(listing, like, repriced, cx));
         }
+        body = body.child(panel.repricing.clone());
         v_flex()
             .gap_2()
             .pt_3()
@@ -1054,6 +1084,7 @@ impl ListingsScreen {
         &self,
         listing: RecordId,
         like: &PriceScenario,
+        repriced: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
@@ -1136,7 +1167,7 @@ impl ListingsScreen {
                         })
                         .outline()
                         .small()
-                        .disabled(self.busy || send.is_none())
+                        .disabled(self.busy || repriced || send.is_none())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.send_simulated(listing, window, cx)
                         })),
@@ -1889,6 +1920,9 @@ pub(crate) fn channel_failure(kind: SalesChannelKind, error: &ListingError) -> S
             "Esse anúncio não existe mais; a lista foi atualizada.".into()
         }
         ListingError::InvalidPrice => "O preço precisa ser maior que zero, em reais.".into(),
+        ListingError::Repriced => "A reprecificação automática cuida do preço deste anúncio; \
+             desligue-a abaixo para enviar um preço seu."
+            .into(),
         ListingError::NotActive => "Só um anúncio ativo pode ser pausado; sincronize para ver o \
              status de agora."
             .into(),

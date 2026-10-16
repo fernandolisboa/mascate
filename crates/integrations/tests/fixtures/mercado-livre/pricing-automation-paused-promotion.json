@@ -1,0 +1,13 @@
+{
+  "item_id": "MLB4100000001",
+  "status": "PAUSED",
+  "item_rule": {
+    "rule_id": "INT_EXT"
+  },
+  "min_price": 60.00,
+  "max_price": 120.00,
+  "status_detail": {
+    "cause": "ITEM_IN_PROMOTION",
+    "message": "Automation paused because the item has an active promotion"
+  }
+}

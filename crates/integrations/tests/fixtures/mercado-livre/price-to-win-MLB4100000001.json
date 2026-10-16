@@ -1,0 +1,23 @@
+{
+  "item_id": "MLB4100000001",
+  "current_price": 99.90,
+  "currency_id": "BRL",
+  "price_to_win": 92.50,
+  "status": "competing",
+  "consistent": true,
+  "visit_share": "medium",
+  "competitors_sharing_first_place": 0,
+  "catalog_product_id": "MLB19615318",
+  "boosts": [
+    {
+      "id": "free_shipping",
+      "status": "boosted",
+      "description": "Frete grátis"
+    }
+  ],
+  "winner": {
+    "item_id": "MLB4199999999",
+    "price": 92.49,
+    "currency_id": "BRL"
+  }
+}

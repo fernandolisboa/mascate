@@ -1,0 +1,11 @@
+{
+  "item_id": "MLB4100000001",
+  "rules": [
+    {
+      "rule_id": "INT"
+    },
+    {
+      "rule_id": "INT_EXT"
+    }
+  ]
+}

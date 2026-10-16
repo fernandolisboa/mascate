@@ -53,6 +53,7 @@ mod quality;
 mod question_alerts;
 mod questions;
 mod reminders;
+mod repricing;
 mod reputation;
 mod reputation_alerts;
 mod resell_or_promote;
@@ -111,9 +112,10 @@ use crate::purchases::AppPurchaseOrders;
 use crate::quality::AppQuality;
 use crate::questions::AppQuestions;
 use crate::reminders::AppReminders;
+use crate::repricing::AppRepricing;
 use crate::reputation::AppReputation;
 use crate::restricted::AppFlags;
-use crate::sales_channels::{AppChannelRanking, ChannelPorts, SalesChannels};
+use crate::sales_channels::{AppChannelRanking, ChannelPorts, ChannelRepricing, SalesChannels};
 use crate::sales_events::AppSalesEvents;
 use crate::shell::Shell;
 use crate::shopee::AppShopee;
@@ -260,6 +262,9 @@ fn main() {
                     labels: Some(mercado_livre.clone()),
                     shipments: None,
                     publisher: Some(mercado_livre.clone()),
+                    // Mercado Livre reprices the listing itself within the
+                    // limits.
+                    repricing: Some(ChannelRepricing::Automation(mercado_livre.clone())),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -273,7 +278,9 @@ fn main() {
                     shipments: Some(amazon.clone()),
                     // A draft goes up as an offer on an ASIN found by the
                     // GTIN.
-                    publisher: Some(amazon),
+                    publisher: Some(amazon.clone()),
+                    // The app follows the featured offer after each Sync.
+                    repricing: Some(ChannelRepricing::FeaturedOffer(amazon)),
                 },
                 // Shopee prints the label once the shipment is arranged, and
                 // the label arranges it: no shipment to confirm.
@@ -287,6 +294,8 @@ fn main() {
                     shipments: None,
                     // A draft goes up with its pictures, then its models.
                     publisher: Some(shopee_seller.clone()),
+                    // Shopee and Magalu tell no competitor's price.
+                    repricing: None,
                 },
                 // The owner sends the NF-e and ships in Magalu's panel:
                 // nothing to print or confirm here. Publishing is out of the
@@ -300,6 +309,7 @@ fn main() {
                     labels: None,
                     shipments: None,
                     publisher: None,
+                    repricing: None,
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));
@@ -373,6 +383,7 @@ fn main() {
                 });
                 cx.set_global(AppReputation(started.reputation.clone()));
                 cx.set_global(AppPromotions(started.promotions.clone()));
+                cx.set_global(AppRepricing(started.repricing.clone()));
                 cx.set_global(AppProductAds(started.product_ads.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),

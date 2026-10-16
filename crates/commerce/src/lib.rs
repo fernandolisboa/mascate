@@ -1,4 +1,5 @@
-//! Commerce: Listings and their drafts, prices and Promotions, Orders with their Fees and
+//! Commerce: Listings and their drafts, prices, their history and Automatic
+//! Repricing, Promotions, Orders with their Fees and
 //! Money Releases, Purchase Orders and shipping on each Sales Channel, and
 //! the order the owner ranks the channels in.
 
@@ -13,6 +14,7 @@ mod pricing;
 mod promotions;
 mod purchase_orders;
 mod releases;
+mod repricing;
 mod shipments;
 mod stock_mirror;
 
@@ -58,10 +60,16 @@ pub use purchase_orders::{
     PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
 };
 pub use releases::{ChannelPayments, PaymentRelease, ReleaseImport};
+pub use repricing::{
+    AUTOMATIC_REPRICING, ChannelAutomation, ChannelPriceAutomation, ConfirmedRepricing,
+    FeaturedOffer, FeaturedOfferPrices, PriceChange, PriceChangeReason, RepricedListing, Repricing,
+    RepricingError, RepricingLimits, RepricingPort, RepricingReading, RepricingRequest,
+    RepricingRound, RepricingStatus, RepricingWay,
+};
 pub use shipments::{ChannelShipments, SentShipment};
 pub use stock_mirror::{MirroredStock, StockMirror, StockNotSent, StockSend, StockSent};
 
-use mascate_platform::{ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
+use mascate_platform::{Flag, ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
 
 pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     key: "commerce.buyer_personal_data",
@@ -126,6 +134,9 @@ pub const REMINDERS: &[Reminder] = &[
     MAGALU_SALE_INVOICE,
 ];
 
+/// This module's flags.
+pub const FLAGS: &[Flag] = &[AUTOMATIC_REPRICING];
+
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "commerce",
@@ -144,5 +155,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         channels::ADD_SALES_CHANNELS,
         drafts::ADD_DRAFT_VARIATIONS,
         listings::ADD_SENT_PRICES,
+        repricing::CREATE_PRICE_HISTORY,
     ],
 };
