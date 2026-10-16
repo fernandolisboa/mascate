@@ -1,0 +1,8 @@
+# Escrito à mão para os testes, no formato do robots.txt de uma busca: não é
+# uma cópia do robots.txt do Mercado Livre.
+User-agent: *
+Allow: /
+Disallow: /jms/
+Disallow: /*_NoIndex_True
+
+Sitemap: https://lista.mercadolivre.com.br/sitemap.xml

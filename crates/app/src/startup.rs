@@ -50,6 +50,7 @@ const MODULE_FLAGS: &[&[Flag]] = &[
     mascate_marketing::FLAGS,
     mascate_affiliate::FLAGS,
     mascate_commerce::FLAGS,
+    mascate_integrations::FLAGS,
 ];
 
 /// Every module's Reminders, in the order the home screen shows them.

@@ -1,0 +1,411 @@
+//! Buscar no site por crawler (#152), on the Ofertas screen: searches a
+//! site's public pages for items and keeps the chosen ones as Supplier
+//! Offers. Shown only while the site's Restricted Feature is on; while the
+//! site keeps the crawler blocked, says until when and searches nothing.
+
+use std::sync::Arc;
+
+use chrono::Utc;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{AnyElement, Entity, EventEmitter, Subscription, Window, div, px};
+use mascate_catalog::{
+    CatalogError, FoundOffer, OfferOrder, OfferSearch, OfferSource, SearchedOffer,
+};
+use mascate_platform::FlagError;
+
+use crate::appearance::look;
+use crate::catalog;
+use crate::crawlers::{self, CrawledSite, crawlers};
+use crate::forms::{Outcome, input, notice};
+use crate::found_offers;
+use crate::kit;
+use crate::restricted::AppFlags;
+use crate::shopee_search::OffersKept;
+
+pub struct CrawlerSearch {
+    site: CrawledSite,
+    keyword: Entity<InputState>,
+    order: OfferOrder,
+    /// The crawler, while its flag is on.
+    source: Option<Arc<dyn OfferSource>>,
+    items: Vec<SearchedOffer>,
+    /// The last page read, 0 before a search.
+    page: u32,
+    more: bool,
+    busy: bool,
+    /// Numbers each search and flag read, so a slow one never lands over a
+    /// newer one.
+    searches: u64,
+    outcome: Option<Outcome>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<OffersKept> for CrawlerSearch {}
+
+impl CrawlerSearch {
+    pub fn new(site: CrawledSite, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let keyword = input("O que procurar, como fone bluetooth", window, cx);
+        let subscriptions = vec![cx.subscribe_in(
+            &keyword,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.search(1, window, cx);
+                }
+            },
+        )];
+        let mut search = Self {
+            site,
+            keyword,
+            order: OfferOrder::Relevance,
+            source: None,
+            items: Vec::new(),
+            page: 0,
+            more: false,
+            busy: false,
+            searches: 0,
+            outcome: None,
+            _subscriptions: subscriptions,
+        };
+        search.refresh(cx);
+        search
+    }
+
+    /// Whether the site's flag is on, as last read.
+    pub fn is_on(&self) -> bool {
+        self.source.is_some()
+    }
+
+    /// Reads the site's flag again: on, it builds the crawler; off, it drops
+    /// it with what it found.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let (Some(app), Some(engine)) = (
+            cx.try_global::<AppFlags>(),
+            crawlers(cx).map(|crawlers| crawlers.engine.clone()),
+        ) else {
+            return;
+        };
+        let flags = app.flags.clone();
+        let site = self.site.clone();
+        self.searches += 1;
+        let reading = self.searches;
+        let working = cx
+            .background_executor()
+            .spawn(async move { crawlers::source_if_on(&flags, &site, engine).await });
+        cx.spawn(async move |this, cx| {
+            let source: Result<_, FlagError> = working.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.searches != reading {
+                    return;
+                }
+                this.source = source.ok().flatten();
+                if let Some(source) = &this.source {
+                    if !source.orders().contains(&this.order) {
+                        this.order = source.orders().first().copied().unwrap_or_default();
+                    }
+                } else {
+                    this.items.clear();
+                    this.page = 0;
+                    this.outcome = None;
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Searches for page `page`: the first replaces the list, the next ones
+    /// add to it.
+    fn search(&mut self, page: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(catalog), Some(source)) = (catalog::catalog(cx), self.source.clone()) else {
+            return;
+        };
+        if source.blocked_until().is_some() {
+            cx.notify();
+            return;
+        }
+        let keyword = self.keyword.read(cx).value().trim().to_owned();
+        if keyword.is_empty() {
+            self.outcome = Some(Outcome::Failed("Digite o que procurar.".into()));
+            cx.notify();
+            return;
+        }
+        let search = OfferSearch {
+            keyword,
+            order: self.order,
+            page,
+            ..OfferSearch::default()
+        };
+        self.searches += 1;
+        let searching = self.searches;
+        self.busy = true;
+        self.outcome = None;
+        let site = self.site.clone();
+        let working = cx.background_executor().spawn(async move {
+            catalog
+                .search_offers(source.as_ref(), &search)
+                .await
+                .map_err(|error| reading(&site, &error))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let found = working.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.searches != searching {
+                    return;
+                }
+                this.busy = false;
+                match found {
+                    Ok(found) => {
+                        if page == 1 {
+                            this.items.clear();
+                        }
+                        this.items.extend(found.items);
+                        this.page = page;
+                        this.more = found.more;
+                    }
+                    Err(text) => this.outcome = Some(Outcome::Failed(text.into())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Keeps `offers` as Supplier Offers, then marks the list again.
+    fn keep(&mut self, offers: Vec<FoundOffer>, cx: &mut Context<Self>) {
+        let (Some(catalog), Some(source)) = (catalog::catalog(cx), self.source.clone()) else {
+            return;
+        };
+        let listed: Vec<FoundOffer> = self.items.iter().map(|item| item.found.clone()).collect();
+        self.searches += 1;
+        let searching = self.searches;
+        self.busy = true;
+        self.outcome = None;
+        let site = self.site.clone();
+        let working = cx.background_executor().spawn(async move {
+            found_offers::keep(&catalog, source.source(), &offers, listed)
+                .await
+                .map_err(|error| reading(&site, &error))
+        });
+        cx.spawn(async move |this, cx| {
+            let kept = working.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match kept {
+                    Ok((report, items)) => {
+                        if this.searches == searching {
+                            this.items = items;
+                        }
+                        this.outcome = Some(Outcome::Done(found_offers::kept_text(&report).into()));
+                        cx.emit(OffersKept);
+                    }
+                    Err(text) => this.outcome = Some(Outcome::Failed(text.into())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn render_controls(
+        &self,
+        source: &Arc<dyn OfferSource>,
+        blocked: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let orders: Vec<AnyElement> = source
+            .orders()
+            .iter()
+            .map(|&value| {
+                let on = self.order == value;
+                Button::new(("crawler-order", value as usize))
+                    .label(found_offers::order_name(value))
+                    .small()
+                    .map(|button| if on { button.primary() } else { button.ghost() })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.order = value;
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .items_center()
+                    .child(div().w(px(320.)).child(Input::new(&self.keyword).small()))
+                    .child(
+                        Button::new("search-crawler")
+                            .label("Buscar")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(blocked || self.busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.search(1, window, cx)),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(look(cx).tokens.text2)
+                            .child("Ordem:"),
+                    )
+                    .children(orders),
+            )
+            .into_any_element()
+    }
+
+    fn render_results(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.page == 0 {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let pending: Vec<FoundOffer> = self
+            .items
+            .iter()
+            .filter(|item| !item.up_to_date())
+            .map(|item| item.found.clone())
+            .collect();
+        let cards: Vec<AnyElement> = (0..self.items.len())
+            .map(|index| {
+                let action = found_offers::keep_action(
+                    index,
+                    &self.items[index],
+                    self.busy,
+                    |this: &mut Self, offers, cx| this.keep(offers, cx),
+                    cx,
+                );
+                found_offers::item_card(
+                    "crawler-item-link",
+                    index,
+                    &self.items[index],
+                    false,
+                    vec![action],
+                    None,
+                    cx,
+                )
+            })
+            .collect();
+        let list = v_flex()
+            .gap_2()
+            .when(self.items.is_empty(), |list| {
+                list.child(div().text_sm().text_color(t.text2).child(format!(
+                    "O {} não achou nada com essa busca.",
+                    self.site.name
+                )))
+            })
+            .when(!self.items.is_empty(), |list| {
+                list.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_1().text_xs().text_color(t.text2).child(format!(
+                            "A busca do {} não diz quanto custa a entrega até você: a oferta \
+                             guardada entra com frete zero. Registre o mesmo link à mão com o \
+                             frete para corrigir.",
+                            self.site.name
+                        )))
+                        .when(!pending.is_empty(), |row| {
+                            let count = pending.len();
+                            row.child(
+                                Button::new("keep-all-crawled")
+                                    .label(format!("Guardar todas ({count})"))
+                                    .outline()
+                                    .small()
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.keep(pending.clone(), cx)
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .children(cards)
+            .when(self.more, |list| {
+                let next = self.page + 1;
+                list.child(
+                    Button::new("more-crawled")
+                        .label("Mais resultados")
+                        .ghost()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(self.busy)
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.search(next, window, cx)),
+                        ),
+                )
+            });
+        Some(list.into_any_element())
+    }
+}
+
+impl Render for CrawlerSearch {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(source) = self.source.clone() else {
+            return div().into_any_element();
+        };
+        let t = look(cx).tokens;
+        let blocked = source.blocked_until().filter(|until| *until > Utc::now());
+        let about = format!(
+            "Lê as páginas públicas de busca do {}: uma página a cada 3 segundos ou mais, como o \
+             robots.txt do site pedir, e a mesma busca dentro de 1 hora vem da memória.{}",
+            self.site.name,
+            if source.finds_shops() {
+                ""
+            } else {
+                " A busca de lojas não existe no crawler."
+            }
+        );
+        v_flex()
+            .gap_3()
+            .p_4()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.surface)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .items_center()
+                    .child(kit::section_heading(format!(
+                        "Buscar no {}",
+                        self.site.name
+                    )))
+                    .child(kit::tag("Crawler ligado", t.danger, cx)),
+            )
+            .child(div().text_sm().text_color(t.text2).child(about))
+            .children(
+                blocked
+                    .map(|until| kit::error_notice(crawlers::blocked_text(&self.site, until), cx)),
+            )
+            .child(self.render_controls(&source, blocked.is_some(), cx))
+            .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(self.render_results(cx))
+            .into_any_element()
+    }
+}
+
+/// Why a search or a keep failed, as the owner reads it.
+fn reading(site: &CrawledSite, error: &CatalogError) -> String {
+    match error {
+        CatalogError::Platform(error) => crawlers::failure(site, error),
+        error => catalog::failure(error),
+    }
+}

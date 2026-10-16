@@ -40,7 +40,7 @@ pub use flags::{
     ConfirmedTurnOn, Flag, FlagChange, FlagError, FlagKind, FlagStatus, Flags, Phase,
     TurnOnRequest, system_user,
 };
-pub use http::{http_agent, slow_http_agent};
+pub use http::{crawling_agent, http_agent, slow_http_agent};
 pub use merging::{
     AppliedMerge, Condition, ConflictSide, FollowUp, KeyPart, LeftOut, LeftOutReason,
     MergeConflict, MergeError, MergeGap, MergeImport, MergeReport, ModuleMerge, RecognisedBy,
