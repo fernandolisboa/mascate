@@ -380,24 +380,6 @@ impl CrawlerSearch {
             .into_any_element()
     }
 
-    /// What the list leaves out: the price, when no item shows one, else
-    /// the delivery.
-    fn results_note(&self) -> String {
-        if self.items.iter().all(|item| item.found.price.is_none()) {
-            format!(
-                "A página {} não mostra o preço: sem preço, o item não vira oferta guardada. \
-                 Abra o link para ver o preço no site.",
-                self.site.of()
-            )
-        } else {
-            format!(
-                "A busca {} não diz quanto custa a entrega até você: a oferta guardada entra \
-                 com frete zero. Registre o mesmo link à mão com o frete para corrigir.",
-                self.site.of()
-            )
-        }
-    }
-
     fn render_results(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.page == 0 {
             return None;
@@ -446,9 +428,10 @@ impl CrawlerSearch {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
                                 .text_xs()
                                 .text_color(t.text2)
-                                .child(self.results_note()),
+                                .child(results_note(&self.site, &self.items)),
                         )
                         .when(!pending.is_empty(), |row| {
                             let count = pending.len();
@@ -519,6 +502,27 @@ impl Render for CrawlerSearch {
     }
 }
 
+/// What the list leaves out: the delivery, for the items with a price,
+/// and the price itself, for the items the page shows without one.
+fn results_note(site: &CrawledSite, items: &[SearchedOffer]) -> String {
+    let mut notes = Vec::new();
+    if items.iter().any(|item| item.found.price.is_some()) {
+        notes.push(format!(
+            "A busca {} não diz quanto custa a entrega até você: a oferta guardada entra com \
+             frete zero. Registre o mesmo link à mão com o frete para corrigir.",
+            site.of()
+        ));
+    }
+    if items.iter().any(|item| item.found.price.is_none()) {
+        notes.push(format!(
+            "Item sem preço na página {} não vira oferta guardada: abra o link para ver o preço \
+             no site.",
+            site.of()
+        ));
+    }
+    notes.join(" ")
+}
+
 /// What the crawler reads and how, as the panel says it.
 fn about(site: &CrawledSite, source: &dyn OfferSource) -> String {
     let what = if site.browses() {
@@ -549,5 +553,79 @@ fn reading(site: &CrawledSite, error: &CatalogError) -> String {
     match error {
         CatalogError::Platform(error) => crawlers::failure(site, error),
         error => catalog::failure(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mascate_catalog::FoundShop;
+    use mascate_integrations::{Crawler, HotmartCrawler, MagaluCrawler};
+    use mascate_kernel::{Currency, Money, SystemClock};
+    use mascate_platform::{Build, Environment};
+
+    use super::*;
+
+    fn sites() -> (CrawledSite, CrawledSite) {
+        let environment = Box::new(|_: &str| None) as Environment;
+        (
+            CrawledSite::hotmart(Build::Release, &environment),
+            CrawledSite::magalu(Build::Release, &environment),
+        )
+    }
+
+    fn searched(price: Option<u32>) -> SearchedOffer {
+        let price = price.map(|reais| Money::new(reais.into(), Currency::Brl));
+        SearchedOffer {
+            found: FoundOffer {
+                id: "1".into(),
+                title: "Curso".into(),
+                link: "https://hotmart.com/pt-br/marketplace/produtos/curso/A1".into(),
+                image: None,
+                shop: FoundShop {
+                    id: "P1".into(),
+                    name: "Produtora".into(),
+                    link: "https://hotmart.com/pt-br/marketplace".into(),
+                    commission: None,
+                    rating: None,
+                },
+                price,
+                highest_price: price,
+                sales: 0,
+                commission: None,
+                rating: None,
+            },
+            kept: None,
+        }
+    }
+
+    #[test]
+    fn the_hotmart_panel_says_why_it_browses_categories_instead_of_words() {
+        let (hotmart, magalu) = sites();
+        let engine = Arc::new(Crawler::new("Mascate/test", Arc::new(SystemClock)));
+        let browsing = about(
+            &hotmart,
+            &HotmartCrawler::new(&hotmart.listing, engine.clone()),
+        );
+        let searching = about(&magalu, &MagaluCrawler::new(&magalu.listing, engine));
+
+        assert!(browsing.contains("robots.txt da Hotmart proíbe robôs na busca por palavras"));
+        assert!(browsing.contains("escolhe uma categoria"));
+        assert!(browsing.ends_with("A busca de lojas não existe no crawler."));
+        assert!(!searching.contains("categoria"));
+    }
+
+    #[test]
+    fn the_list_explains_the_missing_price_and_the_missing_delivery_as_each_applies() {
+        let (hotmart, _) = sites();
+
+        let priceless = results_note(&hotmart, &[searched(None)]);
+        let priced = results_note(&hotmart, &[searched(Some(97))]);
+        let both = results_note(&hotmart, &[searched(Some(97)), searched(None)]);
+
+        assert!(priceless.starts_with("Item sem preço na página da Hotmart"));
+        assert!(!priceless.contains("frete"));
+        assert!(priced.contains("frete zero"));
+        assert!(!priced.contains("sem preço"));
+        assert!(both.contains("frete zero") && both.contains("Item sem preço"));
     }
 }

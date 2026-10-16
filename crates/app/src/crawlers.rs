@@ -319,9 +319,10 @@ mod tests {
                 Arc::new(SequentialIds::default()),
             );
             let environment = Box::new(|_: &str| None) as Environment;
-            let (amazon, magalu) = (
+            let (amazon, magalu, hotmart) = (
                 CrawledSite::amazon(Build::Release, &environment),
                 CrawledSite::magalu(Build::Release, &environment),
+                CrawledSite::hotmart(Build::Release, &environment),
             );
             let engine = Arc::new(Crawler::new("Mascate/test", Arc::new(SystemClock)));
 
@@ -329,13 +330,25 @@ mod tests {
             assert_eq!(request.flag().risk, AMAZON_CRAWLER.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let amazon_on = source_if_on(&flags, &amazon, engine.clone()).await.unwrap();
-            let magalu_off = source_if_on(&flags, &magalu, engine).await.unwrap();
+            let magalu_off = source_if_on(&flags, &magalu, engine.clone()).await.unwrap();
+            let hotmart_off = source_if_on(&flags, &hotmart, engine.clone())
+                .await
+                .unwrap();
+            let request = flags.request_turn_on(hotmart.flag.key).unwrap();
+            assert_eq!(request.flag().risk, HOTMART_CRAWLER.risk);
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let hotmart_on = source_if_on(&flags, &hotmart, engine).await.unwrap();
 
             assert_eq!(
                 amazon_on.map(|source| source.source()),
                 Some(ProductSource::AmazonCrawler)
             );
             assert!(magalu_off.is_none());
+            assert!(hotmart_off.is_none());
+            assert_eq!(
+                hotmart_on.map(|source| source.source()),
+                Some(ProductSource::HotmartCrawler)
+            );
         });
     }
 }
