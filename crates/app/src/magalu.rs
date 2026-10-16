@@ -60,12 +60,12 @@ pub fn login_failure(error: &PlatformError) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use chrono::{NaiveDate, TimeZone, Utc};
+    use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
     use futures::executor::block_on;
     use mascate_catalog::Catalog;
     use mascate_commerce::{
-        Listings, NewPurchaseLine, NewPurchaseOrder, Orders, PriceAssumptions, Pricing,
-        PurchaseOrders, Receiving, SaleFee, StockMirror,
+        ChannelBilling, ChannelOrders, Listings, NewPurchaseLine, NewPurchaseOrder, Orders,
+        PriceAssumptions, Pricing, PurchaseOrders, Receiving, SaleFee, StockMirror,
     };
     use mascate_integrations::Connection;
     use mascate_inventory::{HOME_LOCATION, Inventory};
@@ -142,6 +142,7 @@ mod tests {
     /// through a purchase: 2 camisetas, 3 fones and 4 canecas at R$ 20.
     struct LinkedStore {
         _dir: tempfile::TempDir,
+        manual: Arc<ManualClock>,
         database: Arc<Database>,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
@@ -164,7 +165,7 @@ mod tests {
         migrate(&database, manual.as_ref(), MODULE_MIGRATIONS)
             .await
             .unwrap();
-        let clock: Arc<dyn Clock> = manual;
+        let clock: Arc<dyn Clock> = manual.clone();
         let ids: Arc<dyn IdGenerator> = Arc::new(SequentialIds::default());
         let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
         let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
@@ -216,6 +217,7 @@ mod tests {
         }
         LinkedStore {
             _dir: dir,
+            manual,
             database,
             clock,
             ids,
@@ -288,6 +290,173 @@ mod tests {
                     ),
                     ("/seller/v1/portfolios/stocks/FONE-TWS".to_owned(), body(3)),
                 ]
+            );
+        });
+    }
+
+    /// The linked store with Orders and Fees, its Orders read and its
+    /// stock sent by each round.
+    struct SellingStore {
+        store: LinkedStore,
+        orders: Orders,
+        mirror: StockMirror,
+        catalog: Catalog,
+    }
+
+    impl SellingStore {
+        async fn new() -> Self {
+            let store = linked_store().await;
+            Self {
+                orders: Orders::new(
+                    store.database.clone(),
+                    store.inventory.clone(),
+                    store.clock.clone(),
+                    store.ids.clone(),
+                ),
+                mirror: StockMirror::new(
+                    store.database.clone(),
+                    store.inventory.clone(),
+                    store.clock.clone(),
+                    store.ids.clone(),
+                ),
+                catalog: Catalog::new(
+                    store.database.clone(),
+                    store._dir.path().join("files"),
+                    store.clock.clone(),
+                    store.ids.clone(),
+                ),
+                store,
+            }
+        }
+
+        /// Magalu answers every Order search with the fixture `orders`, and
+        /// the financial analysis of the delivered Order.
+        fn sold(&self, orders: &str) {
+            let server = &self.store.server;
+            server.serve_any_query("/seller/v1/orders", 200, fixture(orders));
+            server.serve_any_query(
+                "/seller/v1/financial-analysis/orders",
+                200,
+                fixture("financial-analysis-delivered.json"),
+            );
+        }
+
+        async fn round(&self) -> orders::Round {
+            let adapter = &self.store.adapter;
+            let ports = ChannelPorts {
+                connection: Connection::Magalu,
+                listings: adapter.clone(),
+                orders: Some(adapter.clone() as Arc<dyn ChannelOrders>),
+                billing: Some(adapter.clone() as Arc<dyn ChannelBilling>),
+                payments: None,
+                labels: None,
+                shipments: None,
+                publisher: None,
+            };
+            orders::round(&self.orders, &self.mirror, &self.catalog, &[ports])
+                .await
+                .unwrap()
+                .unwrap()
+        }
+
+        /// The last units each SKU was sent.
+        fn last_sent(&self, sku: &str) -> Option<String> {
+            self.store
+                .server
+                .received()
+                .into_iter()
+                .rev()
+                .find(|request| {
+                    request.method == "PATCH"
+                        && request.path == format!("/seller/v1/portfolios/stocks/{sku}")
+                })
+                .map(|request| request.body)
+        }
+    }
+
+    #[test]
+    fn a_magalu_sale_leaves_the_stock_once_before_the_next_stock_send() {
+        block_on(async {
+            // The first Order Sync, at noon, finds nothing.
+            let shop = SellingStore::new().await;
+            shop.sold("orders-empty.json");
+            assert_eq!(shop.round().await.synced.taken, 0);
+
+            // By two o'clock a camiseta and three fones sold, and a cup sold
+            // and was cancelled before it shipped.
+            shop.store.manual.advance(TimeDelta::hours(2));
+            shop.sold("orders-page.json");
+            let second = shop.round().await;
+            assert_eq!((second.synced.new, second.synced.taken), (4, 3));
+            let units = |left: u32| {
+                Some(format!(
+                    r#"{{"quantity":{left},"type":"AVAILABLE","channel":{{"id":"9fe0d853-732b-4e4a-a0b0-cff988ed043d"}}}}"#
+                ))
+            };
+            // What is left is all Magalu is offered: no fone sold twice.
+            assert_eq!(shop.last_sent("CAM-PRETA-M"), units(1));
+            assert_eq!(shop.last_sent("FONE-TWS"), units(0));
+
+            // Read again, the same Orders change nothing.
+            shop.store.manual.advance(TimeDelta::minutes(5));
+            let third = shop.round().await;
+            assert_eq!(
+                (third.synced.new, third.synced.changed, third.synced.taken),
+                (0, 0, 0)
+            );
+            let stock = shop.store.inventory.stock().await.unwrap();
+            let left: Vec<i64> = [0xca, 0xf0, 0xcc]
+                .into_iter()
+                .map(|product| {
+                    stock
+                        .products
+                        .iter()
+                        .find(|found| found.product == RecordId::from_u128(product))
+                        .map_or(0, |found| found.valuation.quantity())
+                })
+                .collect();
+            assert_eq!(left, [1, 0, 4]);
+        });
+    }
+
+    #[test]
+    fn the_financial_analysis_turns_a_delivered_sales_margin_realized() {
+        block_on(async {
+            let shop = SellingStore::new().await;
+            shop.sold("orders-empty.json");
+            shop.round().await;
+            shop.store.manual.advance(TimeDelta::hours(2));
+            shop.sold("orders-page.json");
+            shop.round().await;
+
+            let now = shop.store.clock.now();
+            let period = shop
+                .orders
+                .sales(
+                    Percentage::new(0.into()).unwrap(),
+                    now - TimeDelta::days(1)..now,
+                    &[],
+                )
+                .await
+                .unwrap();
+            let margin = |id: &str| {
+                period
+                    .sales
+                    .iter()
+                    .find(|sale| sale.order.sold.id == id)
+                    .map(|sale| (sale.margin.provisional, sale.margin.fees_total()))
+                    .unwrap()
+            };
+            let brl = |amount: &str| Money::new(amount.parse().unwrap(), Currency::Brl);
+            // Delivered: commission, two fixed fees, the payment fee and the
+            // freight less what Magalu covered.
+            assert_eq!(margin("1502070665817671"), (false, brl("64.46")));
+            // Waiting for the NF-e: the commission the Order reports, for
+            // now.
+            assert_eq!(margin("1502070665817670"), (true, brl("14.98")));
+            assert_eq!(
+                shop.orders.raised_reminders().await.unwrap(),
+                [mascate_commerce::MAGALU_SALE_INVOICE.key]
             );
         });
     }

@@ -1,0 +1,13 @@
+{
+  "detail": [
+    {
+      "loc": [
+        "query",
+        "purchased_at__gte,purchased_at__lte,updated_at__gte,updated_at__lte,order_id"
+      ],
+      "msg": "Informe order_id ou um par completo de datas (purchased_at__gte/lte ou updated_at__gte/lte).",
+      "type": "orders_window_required",
+      "ctx": {}
+    }
+  ]
+}

@@ -12,14 +12,10 @@ use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, Sa
 use rust_decimal::Decimal;
 
 use super::answers::{ChannelRef, Prices, Sku, SkuPage, Stocks};
-use super::{Magalu, sku_segment};
+use super::{MAX_OFFSET, Magalu, in_units, sku_segment};
 
 /// The most SKUs a page takes.
 const PAGE_SIZE: usize = 100;
-
-/// Magalu pages through at most 5,000 records of a list; past them a
-/// store's SKUs are not read.
-const MAX_OFFSET: usize = 5_000;
 
 /// The channel name of the Magazine Luiza site in a SKU's addresses.
 const MAGAZINE_LUIZA: &str = "magazineluiza";
@@ -207,11 +203,11 @@ fn price_in(prices: &Prices, channel: &str) -> Option<Money> {
         .results
         .iter()
         .find(|price| is_in(&price.channel, channel))?;
-    if price.normalizer <= 0 || price.price <= 0 {
+    if price.price <= 0 {
         return None;
     }
     Some(Money::new(
-        Decimal::from(price.price) / Decimal::from(price.normalizer),
+        in_units(price.price, price.normalizer)?,
         Currency::from_code(&price.currency)?,
     ))
 }
@@ -265,7 +261,7 @@ fn channel_listing(sku: Sku, price: Money, available: u32) -> ChannelListing {
 }
 
 /// The published table's fee at `price`.
-fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
+pub(super) fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
     let rate = Percentage::new(TABLE_RATE)
         .map_err(|_| PlatformError::Failed("Magalu's fee table has a rate out of range".into()))?;
     let fixed = if price.amount() > FIXED_ABOVE {

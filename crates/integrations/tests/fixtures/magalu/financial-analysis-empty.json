@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "page": {
+      "count": 0,
+      "limit": 100,
+      "max_limit": 100,
+      "offset": 0
+    },
+    "links": {
+      "self": "?_offset=0&_limit=100"
+    }
+  },
+  "results": []
+}

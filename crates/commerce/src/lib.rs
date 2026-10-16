@@ -103,11 +103,27 @@ pub const SHOPEE_SALE_INVOICE: Reminder = Reminder {
     shows: ReminderShows::WhenRaised,
 };
 
+/// Raised while a Magalu Order waits for its NF-e (#134): Magalu ships a
+/// delivery only after the store sends its NF-e, and the app never holds
+/// the Order or the stock back for it.
+pub const MAGALU_SALE_INVOICE: Reminder = Reminder {
+    key: "commerce.magalu_sale_invoice",
+    topic: ReminderTopic::Fiscal,
+    title: "NF-e dos pedidos da Magalu",
+    text: "A Magalu só libera o envio de um pedido depois que a loja envia a NF-e da entrega, e \
+           o pedido aparece em Pedidos como \"Aguardando NF-e\". Quem vende com CNPJ emite a \
+           nota e a informa no Portal do Seller da Magalu (seller.magalu.com). O app segue com \
+           a baixa no estoque e o prazo de envio normalmente.",
+    reappears_after_days: 7,
+    shows: ReminderShows::WhenRaised,
+};
+
 /// This module's Reminders.
 pub const REMINDERS: &[Reminder] = &[
     BUYER_PERSONAL_DATA,
     AMAZON_SALE_INVOICE,
     SHOPEE_SALE_INVOICE,
+    MAGALU_SALE_INVOICE,
 ];
 
 /// This module's own tables.
