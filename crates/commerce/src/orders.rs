@@ -204,6 +204,10 @@ pub enum ShipmentStatus {
     Pending,
     /// Waiting for the owner to dispatch it.
     ReadyToShip,
+    /// Waiting for the owner's NF-e before the channel lets it ship, as
+    /// Shopee asks of an Order outside the Correios: a fiscal matter that
+    /// shows as a Reminder and never holds the stock back.
+    AwaitingInvoice,
     Shipped,
     Delivered,
     /// Came back without reaching the buyer.
@@ -212,9 +216,10 @@ pub enum ShipmentStatus {
 }
 
 impl ShipmentStatus {
-    const ALL: [ShipmentStatus; 6] = [
+    const ALL: [ShipmentStatus; 7] = [
         ShipmentStatus::Pending,
         ShipmentStatus::ReadyToShip,
+        ShipmentStatus::AwaitingInvoice,
         ShipmentStatus::Shipped,
         ShipmentStatus::Delivered,
         ShipmentStatus::NotDelivered,
@@ -225,6 +230,7 @@ impl ShipmentStatus {
         match self {
             ShipmentStatus::Pending => "pending",
             ShipmentStatus::ReadyToShip => "ready_to_ship",
+            ShipmentStatus::AwaitingInvoice => "awaiting_invoice",
             ShipmentStatus::Shipped => "shipped",
             ShipmentStatus::Delivered => "delivered",
             ShipmentStatus::NotDelivered => "not_delivered",
@@ -234,6 +240,15 @@ impl ShipmentStatus {
 
     pub(crate) fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.code() == code)
+    }
+
+    /// Whether the owner still has to dispatch it by its time, with or
+    /// without the invoice the channel waits for.
+    pub fn awaits_dispatch(self) -> bool {
+        matches!(
+            self,
+            ShipmentStatus::ReadyToShip | ShipmentStatus::AwaitingInvoice
+        )
     }
 
     /// Whether the units already left the owner's hands.
@@ -525,7 +540,7 @@ impl Order {
             return None;
         }
         let shipment = self.sold.shipment.as_ref()?;
-        if shipment.status != ShipmentStatus::ReadyToShip {
+        if !shipment.status.awaits_dispatch() {
             return None;
         }
         let by = shipment.dispatch_by?;
@@ -1035,28 +1050,58 @@ impl Orders {
     }
 
     /// The keys of this module's Reminders that apply now: the Amazon
-    /// invoice one while an Amazon Order is not cancelled.
+    /// invoice one while an Amazon Order is not cancelled, and the Shopee
+    /// one while a Shopee Order waits for its NF-e.
     pub async fn raised_reminders(&self) -> Result<Vec<&'static str>, OrderError> {
-        let mut rows = self
-            .database
-            .connection()
-            .query(
-                "SELECT EXISTS (SELECT 1 FROM commerce_orders
-                     WHERE deleted_at IS NULL AND sales_channel = ?1 AND status <> ?2)",
+        let mut raised = Vec::new();
+        if self
+            .any_order(
+                "sales_channel = ?1 AND status <> ?2",
                 params![
                     SalesChannelKind::Amazon.code(),
                     OrderStatus::Cancelled.code()
                 ],
             )
+            .await?
+        {
+            raised.push(crate::AMAZON_SALE_INVOICE.key);
+        }
+        if self
+            .any_order(
+                "sales_channel = ?1 AND status <> ?2 AND shipment_status = ?3",
+                params![
+                    SalesChannelKind::Shopee.code(),
+                    OrderStatus::Cancelled.code(),
+                    ShipmentStatus::AwaitingInvoice.code()
+                ],
+            )
+            .await?
+        {
+            raised.push(crate::SHOPEE_SALE_INVOICE.key);
+        }
+        Ok(raised)
+    }
+
+    /// Whether an Order kept matches `condition`.
+    async fn any_order(
+        &self,
+        condition: &str,
+        values: impl libsql::params::IntoParams,
+    ) -> Result<bool, OrderError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                &format!(
+                    "SELECT EXISTS (SELECT 1 FROM commerce_orders
+                         WHERE deleted_at IS NULL AND {condition})"
+                ),
+                values,
+            )
             .await?;
-        let sold_on_amazon = match rows.next().await? {
+        Ok(match rows.next().await? {
             Some(row) => row.get::<i64>(0)? != 0,
             None => false,
-        };
-        Ok(if sold_on_amazon {
-            vec![crate::AMAZON_SALE_INVOICE.key]
-        } else {
-            Vec::new()
         })
     }
 

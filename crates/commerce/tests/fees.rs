@@ -839,3 +839,56 @@ fn each_channel_sums_its_own_sales_and_an_amazon_order_turns_realized_once_bille
         assert_eq!(total.orders, ml.orders + on_amazon.orders);
     });
 }
+
+#[test]
+fn a_shopee_order_turns_realized_once_its_escrow_settles() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = Channel::on(SalesChannelKind::Shopee);
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        let at = fx.later(1);
+        let mut on_shopee = order("260920DNE0005E", at, vec![sold("800001", None, 1)]);
+        // Shopee takes the shipping out of the escrow.
+        on_shopee.shipment.as_mut().unwrap().seller_cost = None;
+        shopee.sells(on_shopee);
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+
+        // Shopee changes the escrow until the Order is completed: its
+        // adapter bills nothing yet, and the reported fee stands.
+        fx.orders.import_fees(&shopee).await.unwrap();
+        let provisional = fx.margin("260920DNE0005E", "0").await;
+        assert!(provisional.provisional);
+        assert_eq!(provisional.fees_total(), brl("12.59"));
+
+        // Completed: the Order changes, and its escrow brings the Fees.
+        shopee.billed.lock().unwrap().push(BilledOrder {
+            order: "260920DNE0005E".into(),
+            fees: vec![
+                charge("commission_fee", FeeKind::SaleFee, "Comissão", "12.59"),
+                charge("service_fee", FeeKind::SaleFee, "Taxa de serviço", "4.00"),
+                charge("shipping", FeeKind::Shipping, "Frete", "4.50"),
+            ],
+        });
+        let at = fx.later(1);
+        shopee.change_order("260920DNE0005E", at, |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+        });
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        fx.orders.import_fees(&shopee).await.unwrap();
+
+        let realized = fx.margin("260920DNE0005E", "0").await;
+        assert!(!realized.provisional);
+        assert_eq!(realized.fees_total(), brl("21.09"));
+        assert_eq!(realized.fees_of(FeeKind::Shipping), brl("4.50"));
+        // Read again, the escrow counts once.
+        fx.later(7 * 60);
+        fx.orders.import_fees(&shopee).await.unwrap();
+        assert_eq!(
+            fx.margin("260920DNE0005E", "0").await.fees_total(),
+            brl("21.09")
+        );
+    });
+}

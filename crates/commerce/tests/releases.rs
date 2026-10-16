@@ -12,7 +12,7 @@ use futures::executor::block_on;
 use mascate_commerce::{OrderStatus, Orders, PaymentRelease, ReleaseImport};
 use mascate_inventory::Inventory;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, Timestamp};
+use mascate_kernel::{Clock, SalesChannelKind, Timestamp};
 use mascate_platform::{Database, migrate};
 
 use common::{Channel, brl, order, sold};
@@ -116,7 +116,11 @@ fn each_payment_is_kept_once_with_when_its_money_is_released() {
         fx.later(7);
         fx.import().await;
 
-        let kept = fx.orders.money_releases().await.unwrap();
+        let kept = fx
+            .orders
+            .money_releases(SalesChannelKind::MercadoLivre)
+            .await
+            .unwrap();
         assert_eq!(
             kept,
             [
@@ -154,7 +158,13 @@ fn money_held_is_asked_about_again_once_its_date_comes_and_never_once_released()
         fx.clock.advance(TimeDelta::days(3));
         fx.pays("O1", "P1", "77.31", true, Some(due));
         assert_eq!(fx.import().await.asked, 1);
-        assert!(fx.orders.money_releases().await.unwrap()[0].released);
+        assert!(
+            fx.orders
+                .money_releases(SalesChannelKind::MercadoLivre)
+                .await
+                .unwrap()[0]
+                .released
+        );
 
         fx.later(24 * 10);
         let asked = fx.times_asked();
@@ -195,7 +205,13 @@ fn a_changed_order_is_asked_about_again_and_a_payment_no_longer_reported_goes() 
         fx.orders.sync(&fx.channel).await.unwrap();
 
         assert_eq!(fx.import().await.asked, 1);
-        assert!(fx.orders.money_releases().await.unwrap().is_empty());
+        assert!(
+            fx.orders
+                .money_releases(SalesChannelKind::MercadoLivre)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         fx.later(24);
         assert_eq!(
             fx.import().await.asked,
@@ -234,5 +250,54 @@ fn an_old_order_with_money_held_stops_being_asked_about() {
 
         fx.clock.advance(TimeDelta::days(91));
         assert_eq!(fx.import().await.asked, 0);
+    });
+}
+
+#[test]
+fn each_channels_wallet_keeps_its_own_payments() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.sell("O1").await;
+        fx.pays("O1", "P1", "77.31", true, Some(fx.clock.now()));
+        fx.import().await;
+        let shopee = Channel::on(SalesChannelKind::Shopee);
+        fx.orders.sync(&shopee).await.unwrap();
+        let at = fx.later(1);
+        shopee.sells(order("260920DNE0005E", at, vec![sold("800001", None, 1)]));
+        fx.orders.sync(&shopee).await.unwrap();
+        shopee.payments.lock().unwrap().push(PaymentRelease {
+            order: "260920DNE0005E".into(),
+            payment: "260920DNE0005E".into(),
+            amount: brl("87.21"),
+            released: false,
+            release_at: None,
+        });
+
+        fx.orders.import_releases(&shopee).await.unwrap();
+
+        let mut kept = Vec::new();
+        for channel in [
+            SalesChannelKind::MercadoLivre,
+            SalesChannelKind::Shopee,
+            SalesChannelKind::Amazon,
+        ] {
+            let payments: Vec<String> = fx
+                .orders
+                .money_releases(channel)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|payment| payment.payment)
+                .collect();
+            kept.push(payments);
+        }
+        assert_eq!(
+            kept,
+            [
+                vec!["P1".to_owned()],
+                vec!["260920DNE0005E".to_owned()],
+                vec![]
+            ]
+        );
     });
 }

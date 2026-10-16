@@ -402,7 +402,7 @@ fn dispatch_by(order: &Order) -> Option<Timestamp> {
         .sold
         .shipment
         .as_ref()
-        .filter(|shipment| shipment.status == ShipmentStatus::ReadyToShip)
+        .filter(|shipment| shipment.status.awaits_dispatch())
         .and_then(|shipment| shipment.dispatch_by)
 }
 
@@ -835,7 +835,7 @@ impl OrdersScreen {
             let mut text = shipment_name(shipment.status).to_owned();
             if let Some(by) = shipment
                 .dispatch_by
-                .filter(|_| shipment.status == ShipmentStatus::ReadyToShip)
+                .filter(|_| shipment.status.awaits_dispatch())
             {
                 text.push_str(&format!(" até {}", catalog::day_and_time(by)));
             }
@@ -1158,6 +1158,7 @@ fn shipment_name(status: ShipmentStatus) -> &'static str {
     match status {
         ShipmentStatus::Pending => "Envio pendente",
         ShipmentStatus::ReadyToShip => "Despachar",
+        ShipmentStatus::AwaitingInvoice => "Aguardando NF-e",
         ShipmentStatus::Shipped => "Enviado",
         ShipmentStatus::Delivered => "Entregue",
         ShipmentStatus::NotDelivered => "Não entregue",
@@ -1167,7 +1168,7 @@ fn shipment_name(status: ShipmentStatus) -> &'static str {
 
 fn shipment_ink(status: ShipmentStatus, t: &Tokens) -> Hsla {
     match status {
-        ShipmentStatus::ReadyToShip => t.accent_text,
+        ShipmentStatus::ReadyToShip | ShipmentStatus::AwaitingInvoice => t.accent_text,
         ShipmentStatus::Delivered => t.success,
         ShipmentStatus::NotDelivered => t.danger,
         ShipmentStatus::Pending | ShipmentStatus::Shipped | ShipmentStatus::Cancelled => t.text2,

@@ -2,13 +2,16 @@
 //! Platform v2, as commerce's Sales Channel (ADR 0033). It reads the
 //! listings, one per model (ADR 0014), sends a price once the owner
 //! approves it and the stock that follows the app's Stock Share, and
-//! unlists and relists an item. Every call is signed with HMAC-SHA256 of
+//! unlists and relists an item; it reads the Orders with their returns
+//! (#130), and their Fees and money from the escrow. Every call is signed with HMAC-SHA256 of
 //! the partner key; the shop's login comes from Shopee's authorization page
 //! and its refresh token is single use. Shopee has no fee estimate, so the
 //! sale fee is its published table. Separate from Shopee Afiliados, which is
 //! another API with other keys.
 
 mod answers;
+mod escrow;
+mod orders;
 mod sales_channel;
 mod tokens;
 
@@ -443,6 +446,11 @@ fn read_json<T: DeserializeOwned>(
 /// reached.
 fn is_numeric_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 20 && id.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Shopee's Order numbers are letters and digits, as `201218V2Y6E59M`.
+fn is_order_sn(order: &str) -> bool {
+    !order.is_empty() && order.len() <= 32 && order.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// `text` as a query value: anything but letters, digits and `-._~`

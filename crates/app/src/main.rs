@@ -265,14 +265,13 @@ fn main() {
                     // GTIN.
                     publisher: Some(amazon),
                 },
-                // Listings, stock and price for now: Shopee's Orders,
-                // labels and publishing come in their own slices.
+                // Shopee's labels and publishing come in their own slices.
                 ChannelPorts {
                     connection: Connection::ShopeeSeller,
                     listings: shopee_seller.clone(),
-                    orders: None,
-                    billing: None,
-                    payments: None,
+                    orders: Some(shopee_seller.clone()),
+                    billing: Some(shopee_seller.clone()),
+                    payments: Some(shopee_seller.clone()),
                     labels: None,
                     shipments: None,
                     publisher: None,
