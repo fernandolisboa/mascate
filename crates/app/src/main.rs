@@ -288,13 +288,14 @@ fn main() {
                     // A draft goes up with its pictures, then its models.
                     publisher: Some(shopee_seller.clone()),
                 },
-                // SKUs, stock and price for now: Magalu's Orders and Fees
-                // come in their own slice; publishing is out of the epic.
+                // The owner sends the NF-e and ships in Magalu's panel:
+                // nothing to print or confirm here. Publishing is out of the
+                // epic.
                 ChannelPorts {
                     connection: Connection::Magalu,
                     listings: magalu.clone(),
-                    orders: None,
-                    billing: None,
+                    orders: Some(magalu.clone()),
+                    billing: Some(magalu.clone()),
                     payments: None,
                     labels: None,
                     shipments: None,

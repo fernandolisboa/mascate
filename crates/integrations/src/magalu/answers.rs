@@ -164,3 +164,183 @@ pub(super) struct Stock {
     pub kind: String,
     pub quantity: i64,
 }
+
+/// An amount in units of the Order's currency times `normalizer`, as
+/// Magalu sends every value of an Order.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(super) struct Amount {
+    pub total: Option<i64>,
+    pub normalizer: Option<i64>,
+}
+
+/// One page of `orders`.
+#[derive(Debug, Deserialize)]
+pub(super) struct OrderPage {
+    #[serde(default)]
+    pub results: Vec<OrderAnswer>,
+}
+
+/// An Order with its deliveries, each with its items.
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct OrderAnswer {
+    /// The Order's number on Magalu, the one the seller sees.
+    #[serde(deserialize_with = "crate::answers::numeric_id")]
+    pub code: String,
+    /// `new`, `approved`, `cancelled` or `finished`.
+    pub status: Option<String>,
+    pub purchased_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub amounts: OrderAmounts,
+    #[serde(default)]
+    pub deliveries: Vec<Delivery>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(super) struct OrderAmounts {
+    /// What the buyer paid, shipping included.
+    pub total: Option<i64>,
+    pub normalizer: Option<i64>,
+    pub currency: Option<String>,
+    pub freight: Option<Amount>,
+}
+
+/// A delivery: the items of the Order one parcel takes.
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Delivery {
+    pub id: String,
+    /// `new`, `approved`, `invoiced`, `shipped`, `delivered`, `cancelled`,
+    /// or `frozen` for a while in between.
+    pub status: Option<String>,
+    #[serde(default)]
+    pub items: Vec<DeliveryItem>,
+    pub shipping: Option<Shipping>,
+    #[serde(default)]
+    pub invoices: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct DeliveryItem {
+    pub info: ItemInfo,
+    pub quantity: u32,
+    pub unit_price: UnitPrice,
+    pub amounts: Option<ItemAmounts>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct ItemInfo {
+    pub sku: String,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub attributes: Vec<Attribute>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Attribute {
+    pub name: Option<String>,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct UnitPrice {
+    pub value: i64,
+    #[serde(default = "cents")]
+    pub normalizer: i64,
+    #[serde(default = "brl")]
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct ItemAmounts {
+    /// Magalu's commission on the item, every unit together.
+    pub commission: Option<Amount>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Shipping {
+    pub handling_time: Option<Deadline>,
+    /// When the parcel was posted: it left the seller.
+    pub posting_date: Option<String>,
+    pub recipient: Option<Recipient>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Deadline {
+    /// A date, or a date and time, in UTC.
+    pub limit_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Recipient {
+    pub name: Option<String>,
+    pub address: Option<Address>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct Address {
+    pub street: Option<String>,
+    pub number: Option<String>,
+    pub complement: Option<String>,
+    pub district: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub zipcode: Option<String>,
+}
+
+/// One page of `financial-analysis/orders`.
+#[derive(Debug, Deserialize)]
+pub(super) struct AnalysisPage {
+    pub results: Option<Vec<Analysis>>,
+}
+
+/// What Magalu kept and paid on an Order, line by line.
+#[derive(Debug, Deserialize)]
+pub(super) struct Analysis {
+    pub extras: Option<AnalysisExtras>,
+    pub transactions: Option<Vec<Transaction>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AnalysisExtras {
+    /// Text in the documentation; a number is read the same.
+    #[serde(default, deserialize_with = "optional_numeric_id")]
+    pub order_code: Option<String>,
+}
+
+fn optional_numeric_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(
+        Option::<serde_json::Value>::deserialize(deserializer)?.and_then(|value| match value {
+            serde_json::Value::String(text) => Some(text),
+            serde_json::Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        }),
+    )
+}
+
+/// A credit to the seller, a debit, or a line for information only.
+#[derive(Debug, Deserialize)]
+pub(super) struct Transaction {
+    pub category: String,
+    pub subcategory: Option<String>,
+    /// `CREDIT`, `DEBIT` or `INFO`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub identifier: Option<String>,
+    pub description: Option<String>,
+    pub value: i64,
+    #[serde(default = "cents")]
+    pub normalizer: i64,
+    #[serde(default = "brl")]
+    pub currency: String,
+    pub entity: Option<Entity>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Entity {
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+}

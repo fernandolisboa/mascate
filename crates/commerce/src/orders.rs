@@ -205,8 +205,9 @@ pub enum ShipmentStatus {
     /// Waiting for the owner to dispatch it.
     ReadyToShip,
     /// Waiting for the owner's NF-e before the channel lets it ship, as
-    /// Shopee asks of an Order outside the Correios: a fiscal matter that
-    /// shows as a Reminder and never holds the stock back.
+    /// Shopee asks of an Order outside the Correios and Magalu of every
+    /// delivery: a fiscal matter that shows as a Reminder and never holds
+    /// the stock back.
     AwaitingInvoice,
     Shipped,
     Delivered,
@@ -1088,7 +1089,7 @@ impl Orders {
 
     /// The keys of this module's Reminders that apply now: the Amazon
     /// invoice one while an Amazon Order is not cancelled, and the Shopee
-    /// one while a Shopee Order waits for its NF-e.
+    /// and Magalu ones while an Order of theirs waits for its NF-e.
     pub async fn raised_reminders(&self) -> Result<Vec<&'static str>, OrderError> {
         let mut raised = Vec::new();
         if self
@@ -1103,18 +1104,23 @@ impl Orders {
         {
             raised.push(crate::AMAZON_SALE_INVOICE.key);
         }
-        if self
-            .any_order(
-                "sales_channel = ?1 AND status <> ?2 AND shipment_status = ?3",
-                params![
-                    SalesChannelKind::Shopee.code(),
-                    OrderStatus::Cancelled.code(),
-                    ShipmentStatus::AwaitingInvoice.code()
-                ],
-            )
-            .await?
-        {
-            raised.push(crate::SHOPEE_SALE_INVOICE.key);
+        for (channel, reminder) in [
+            (SalesChannelKind::Shopee, crate::SHOPEE_SALE_INVOICE.key),
+            (SalesChannelKind::Magalu, crate::MAGALU_SALE_INVOICE.key),
+        ] {
+            if self
+                .any_order(
+                    "sales_channel = ?1 AND status <> ?2 AND shipment_status = ?3",
+                    params![
+                        channel.code(),
+                        OrderStatus::Cancelled.code(),
+                        ShipmentStatus::AwaitingInvoice.code()
+                    ],
+                )
+                .await?
+            {
+                raised.push(reminder);
+            }
         }
         Ok(raised)
     }

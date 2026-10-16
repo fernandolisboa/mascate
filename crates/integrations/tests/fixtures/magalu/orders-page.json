@@ -1,0 +1,794 @@
+{
+  "meta": {
+    "page": {
+      "count": 4,
+      "limit": 100,
+      "max_limit": 100,
+      "offset": 0
+    },
+    "links": {
+      "self": "?_offset=0&_limit=100"
+    }
+  },
+  "results": [
+    {
+      "id": "c93e8b79-d31a-46a0-b756-5dfe86427670",
+      "code": "1502070665817670",
+      "status": "approved",
+      "channel": {
+        "id": "9fe0d853-732b-4e4a-a0b0-cff988ed043d",
+        "extras": {
+          "alias": "Magazine Luiza"
+        },
+        "marketplace": {
+          "document": "47960950000121"
+        }
+      },
+      "created_at": "2026-10-16T13:05:00+00:00",
+      "purchased_at": "2026-10-16T13:05:00+00:00",
+      "approved_at": "2026-10-16T13:05:00+00:00",
+      "updated_at": "2026-10-16T13:06:00+00:00",
+      "customer": {
+        "name": "Ana Souza",
+        "customer_type": "cpf",
+        "document_number": "12312312311",
+        "email": "ana@dominio.br",
+        "birth_date": "1990-03-14",
+        "phones": []
+      },
+      "amounts": {
+        "currency": "BRL",
+        "normalizer": 100,
+        "total": 6980,
+        "commission": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1498,
+          "type": "Liquidação"
+        },
+        "discount": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "shared": 0
+        },
+        "freight": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1990,
+          "shared": 0
+        },
+        "tax": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "description": "ICMS",
+          "type": "icms"
+        }
+      },
+      "payments": [
+        {
+          "amount": 6980,
+          "currency": "BRL",
+          "normalizer": 100,
+          "description": "Pix",
+          "method": "pix",
+          "installments": 1
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "6c764444-436d-4659-8cec-304414b05001",
+          "code": "1502070665817670-1",
+          "status": "approved",
+          "purchased_at": "2026-10-16T13:05:00+00:00",
+          "seller": {
+            "id": "GENPUB.e83ed3c7-7bae-47c4-9dcd-d12f6329fe1a",
+            "name": "Loja Mascate"
+          },
+          "amounts": {
+            "currency": "BRL",
+            "normalizer": 100,
+            "total": 6980,
+            "commission": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1498,
+              "type": "Liquidação"
+            },
+            "discount": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 0,
+              "shared": 0
+            },
+            "freight": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1990,
+              "shared": 0
+            }
+          },
+          "items": [
+            {
+              "sequencial": 1,
+              "quantity": 1,
+              "measure_unit": "PC",
+              "unit_price": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "value": 4990
+              },
+              "info": {
+                "id": "00839163-486f-4557-8173-c454d22edd64",
+                "sku": "CAM-PRETA-M",
+                "name": "Camiseta preta M",
+                "description": "Camiseta preta M",
+                "attributes": [
+                  {
+                    "name": "Cor",
+                    "value": "Preta"
+                  },
+                  {
+                    "name": "Tamanho",
+                    "value": "M"
+                  }
+                ],
+                "images": [],
+                "extras": {
+                  "categories": "UD"
+                }
+              },
+              "amounts": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "total": 4990,
+                "commission": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 1498,
+                  "type": "..."
+                },
+                "discounts": [],
+                "freight": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 0,
+                  "shared": 0
+                },
+                "taxes": []
+              }
+            }
+          ],
+          "shipping": {
+            "deadline": {
+              "limit_date": "2026-10-24",
+              "precision": "days",
+              "value": 8,
+              "workday": true
+            },
+            "handling_time": {
+              "limit_date": "2026-10-18",
+              "precision": "days",
+              "value": 2,
+              "workday": false
+            },
+            "provider": {
+              "id": "magalu-entregas",
+              "name": "Magalu Entregas",
+              "description": "Entrega pelo parceiro"
+            },
+            "recipient": {
+              "name": "Ana Souza",
+              "customer_type": "cpf",
+              "document_number": "12312312311",
+              "email": "ana@dominio.br",
+              "phones": [
+                {
+                  "area_code": "11",
+                  "country_code": "+55",
+                  "number": "998746332",
+                  "type": "mobile"
+                }
+              ],
+              "address": {
+                "street": "Avenida Paulista",
+                "number": "1000",
+                "complement": "Apto 101",
+                "district": "Bela Vista",
+                "city": "São Paulo",
+                "state": "SP",
+                "country": "Brasil",
+                "zipcode": "01310-100",
+                "reference": "Próximo ao MASP"
+              }
+            },
+            "tracking_url": "https://rastreio.magalu.com/1502070665817670-1"
+          },
+          "events": [],
+          "invoices": []
+        }
+      ]
+    },
+    {
+      "id": "c93e8b79-d31a-46a0-b756-5dfe86427671",
+      "code": "1502070665817671",
+      "status": "finished",
+      "channel": {
+        "id": "9fe0d853-732b-4e4a-a0b0-cff988ed043d",
+        "extras": {
+          "alias": "Magazine Luiza"
+        },
+        "marketplace": {
+          "document": "47960950000121"
+        }
+      },
+      "created_at": "2026-10-16T13:10:00+00:00",
+      "purchased_at": "2026-10-16T13:10:00+00:00",
+      "approved_at": "2026-10-16T13:10:00+00:00",
+      "updated_at": "2026-10-16T13:40:00+00:00",
+      "customer": {
+        "name": "Ana Souza",
+        "customer_type": "cpf",
+        "document_number": "12312312311",
+        "email": "ana@dominio.br",
+        "birth_date": "1990-03-14",
+        "phones": []
+      },
+      "amounts": {
+        "currency": "BRL",
+        "normalizer": 100,
+        "total": 19970,
+        "commission": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 4596,
+          "type": "Liquidação"
+        },
+        "discount": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "shared": 0
+        },
+        "freight": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1990,
+          "shared": 0
+        },
+        "tax": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "description": "ICMS",
+          "type": "icms"
+        }
+      },
+      "payments": [
+        {
+          "amount": 19970,
+          "currency": "BRL",
+          "normalizer": 100,
+          "description": "Pix",
+          "method": "pix",
+          "installments": 1
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "6c764444-436d-4659-8cec-304414b05002",
+          "code": "1502070665817671-1",
+          "status": "delivered",
+          "purchased_at": "2026-10-16T13:10:00+00:00",
+          "seller": {
+            "id": "GENPUB.e83ed3c7-7bae-47c4-9dcd-d12f6329fe1a",
+            "name": "Loja Mascate"
+          },
+          "amounts": {
+            "currency": "BRL",
+            "normalizer": 100,
+            "total": 19970,
+            "commission": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 4596,
+              "type": "Liquidação"
+            },
+            "discount": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 0,
+              "shared": 0
+            },
+            "freight": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1990,
+              "shared": 0
+            }
+          },
+          "items": [
+            {
+              "sequencial": 1,
+              "quantity": 2,
+              "measure_unit": "PC",
+              "unit_price": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "value": 8990
+              },
+              "info": {
+                "id": "00839163-486f-4557-8173-c454d22edd64",
+                "sku": "FONE-TWS",
+                "name": "Fone de ouvido TWS",
+                "description": "Fone de ouvido TWS",
+                "attributes": [],
+                "images": [],
+                "extras": {
+                  "categories": "UD"
+                }
+              },
+              "amounts": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "total": 17980,
+                "commission": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 4596,
+                  "type": "..."
+                },
+                "discounts": [],
+                "freight": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 0,
+                  "shared": 0
+                },
+                "taxes": []
+              }
+            }
+          ],
+          "shipping": {
+            "deadline": {
+              "limit_date": "2026-10-24",
+              "precision": "days",
+              "value": 8,
+              "workday": true
+            },
+            "handling_time": {
+              "limit_date": "2026-10-18",
+              "precision": "days",
+              "value": 2,
+              "workday": false
+            },
+            "provider": {
+              "id": "magalu-entregas",
+              "name": "Magalu Entregas",
+              "description": "Entrega pelo parceiro"
+            },
+            "recipient": {
+              "name": "Ana Souza",
+              "customer_type": "cpf",
+              "document_number": "12312312311",
+              "email": "ana@dominio.br",
+              "phones": [
+                {
+                  "area_code": "11",
+                  "country_code": "+55",
+                  "number": "998746332",
+                  "type": "mobile"
+                }
+              ],
+              "address": {
+                "street": "Avenida Paulista",
+                "number": "1000",
+                "complement": "Apto 101",
+                "district": "Bela Vista",
+                "city": "São Paulo",
+                "state": "SP",
+                "country": "Brasil",
+                "zipcode": "01310-100",
+                "reference": "Próximo ao MASP"
+              }
+            },
+            "tracking_url": "https://rastreio.magalu.com/1502070665817671-1",
+            "posting_date": "2026-10-16T13:20:00+00:00"
+          },
+          "events": [],
+          "invoices": [
+            {
+              "key": "35261047960950000121550010000084461899899699",
+              "issued_at": "2026-10-15T15:00:00+00:00",
+              "status": {
+                "id": "approved",
+                "description": "Nota Fiscal Aprovada"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c93e8b79-d31a-46a0-b756-5dfe86427672",
+      "code": "1502070665817672",
+      "status": "cancelled",
+      "channel": {
+        "id": "9fe0d853-732b-4e4a-a0b0-cff988ed043d",
+        "extras": {
+          "alias": "Magazine Luiza"
+        },
+        "marketplace": {
+          "document": "47960950000121"
+        }
+      },
+      "created_at": "2026-10-16T13:15:00+00:00",
+      "purchased_at": "2026-10-16T13:15:00+00:00",
+      "approved_at": "2026-10-16T13:15:00+00:00",
+      "updated_at": "2026-10-16T13:30:00+00:00",
+      "customer": {
+        "name": "Ana Souza",
+        "customer_type": "cpf",
+        "document_number": "12312312311",
+        "email": "ana@dominio.br",
+        "birth_date": "1990-03-14",
+        "phones": []
+      },
+      "amounts": {
+        "currency": "BRL",
+        "normalizer": 100,
+        "total": 5490,
+        "commission": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1200,
+          "type": "Liquidação"
+        },
+        "discount": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "shared": 0
+        },
+        "freight": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1990,
+          "shared": 0
+        },
+        "tax": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "description": "ICMS",
+          "type": "icms"
+        }
+      },
+      "payments": [
+        {
+          "amount": 5490,
+          "currency": "BRL",
+          "normalizer": 100,
+          "description": "Pix",
+          "method": "pix",
+          "installments": 1
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "6c764444-436d-4659-8cec-304414b05003",
+          "code": "1502070665817672-1",
+          "status": "cancelled",
+          "purchased_at": "2026-10-16T13:15:00+00:00",
+          "seller": {
+            "id": "GENPUB.e83ed3c7-7bae-47c4-9dcd-d12f6329fe1a",
+            "name": "Loja Mascate"
+          },
+          "amounts": {
+            "currency": "BRL",
+            "normalizer": 100,
+            "total": 5490,
+            "commission": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1200,
+              "type": "Liquidação"
+            },
+            "discount": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 0,
+              "shared": 0
+            },
+            "freight": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1990,
+              "shared": 0
+            }
+          },
+          "items": [
+            {
+              "sequencial": 1,
+              "quantity": 1,
+              "measure_unit": "PC",
+              "unit_price": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "value": 3500
+              },
+              "info": {
+                "id": "00839163-486f-4557-8173-c454d22edd64",
+                "sku": "CANECA-300",
+                "name": "Caneca 300 ml",
+                "description": "Caneca 300 ml",
+                "attributes": [],
+                "images": [],
+                "extras": {
+                  "categories": "UD"
+                }
+              },
+              "amounts": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "total": 3500,
+                "commission": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 1200,
+                  "type": "..."
+                },
+                "discounts": [],
+                "freight": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 0,
+                  "shared": 0
+                },
+                "taxes": []
+              }
+            }
+          ],
+          "shipping": {
+            "deadline": {
+              "limit_date": "2026-10-24",
+              "precision": "days",
+              "value": 8,
+              "workday": true
+            },
+            "handling_time": {
+              "limit_date": "2026-10-18",
+              "precision": "days",
+              "value": 2,
+              "workday": false
+            },
+            "provider": {
+              "id": "magalu-entregas",
+              "name": "Magalu Entregas",
+              "description": "Entrega pelo parceiro"
+            },
+            "recipient": {
+              "name": "Ana Souza",
+              "customer_type": "cpf",
+              "document_number": "12312312311",
+              "email": "ana@dominio.br",
+              "phones": [
+                {
+                  "area_code": "11",
+                  "country_code": "+55",
+                  "number": "998746332",
+                  "type": "mobile"
+                }
+              ],
+              "address": {
+                "street": "Avenida Paulista",
+                "number": "1000",
+                "complement": "Apto 101",
+                "district": "Bela Vista",
+                "city": "São Paulo",
+                "state": "SP",
+                "country": "Brasil",
+                "zipcode": "01310-100",
+                "reference": "Próximo ao MASP"
+              }
+            },
+            "tracking_url": "https://rastreio.magalu.com/1502070665817672-1"
+          },
+          "events": [],
+          "invoices": []
+        }
+      ]
+    },
+    {
+      "id": "c93e8b79-d31a-46a0-b756-5dfe86427673",
+      "code": "1502070665817673",
+      "status": "new",
+      "channel": {
+        "id": "9fe0d853-732b-4e4a-a0b0-cff988ed043d",
+        "extras": {
+          "alias": "Magazine Luiza"
+        },
+        "marketplace": {
+          "document": "47960950000121"
+        }
+      },
+      "created_at": "2026-10-16T13:25:00+00:00",
+      "purchased_at": "2026-10-16T13:25:00+00:00",
+      "approved_at": null,
+      "updated_at": "2026-10-16T13:25:00+00:00",
+      "customer": {
+        "name": "Ana Souza",
+        "customer_type": "cpf",
+        "document_number": "12312312311",
+        "email": "ana@dominio.br",
+        "birth_date": "1990-03-14",
+        "phones": []
+      },
+      "amounts": {
+        "currency": "BRL",
+        "normalizer": 100,
+        "total": 10980,
+        "commission": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 2298,
+          "type": "Liquidação"
+        },
+        "discount": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "shared": 0
+        },
+        "freight": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 1990,
+          "shared": 0
+        },
+        "tax": {
+          "currency": "BRL",
+          "normalizer": 100,
+          "total": 0,
+          "description": "ICMS",
+          "type": "icms"
+        }
+      },
+      "payments": [
+        {
+          "amount": 10980,
+          "currency": "BRL",
+          "normalizer": 100,
+          "description": "Pix",
+          "method": "pix",
+          "installments": 1
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "6c764444-436d-4659-8cec-304414b05004",
+          "code": "1502070665817673-1",
+          "status": "new",
+          "purchased_at": "2026-10-16T13:25:00+00:00",
+          "seller": {
+            "id": "GENPUB.e83ed3c7-7bae-47c4-9dcd-d12f6329fe1a",
+            "name": "Loja Mascate"
+          },
+          "amounts": {
+            "currency": "BRL",
+            "normalizer": 100,
+            "total": 10980,
+            "commission": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 2298,
+              "type": "Liquidação"
+            },
+            "discount": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 0,
+              "shared": 0
+            },
+            "freight": {
+              "currency": "BRL",
+              "normalizer": 100,
+              "total": 1990,
+              "shared": 0
+            }
+          },
+          "items": [
+            {
+              "sequencial": 1,
+              "quantity": 1,
+              "measure_unit": "PC",
+              "unit_price": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "value": 8990
+              },
+              "info": {
+                "id": "00839163-486f-4557-8173-c454d22edd64",
+                "sku": "FONE-TWS",
+                "name": "Fone de ouvido TWS",
+                "description": "Fone de ouvido TWS",
+                "attributes": [],
+                "images": [],
+                "extras": {
+                  "categories": "UD"
+                }
+              },
+              "amounts": {
+                "currency": "BRL",
+                "normalizer": 100,
+                "total": 8990,
+                "commission": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 2298,
+                  "type": "..."
+                },
+                "discounts": [],
+                "freight": {
+                  "currency": "BRL",
+                  "normalizer": 100,
+                  "total": 0,
+                  "shared": 0
+                },
+                "taxes": []
+              }
+            }
+          ],
+          "shipping": {
+            "deadline": {
+              "limit_date": "2026-10-24",
+              "precision": "days",
+              "value": 8,
+              "workday": true
+            },
+            "handling_time": {
+              "limit_date": "2026-10-19",
+              "precision": "days",
+              "value": 2,
+              "workday": false
+            },
+            "provider": {
+              "id": "magalu-entregas",
+              "name": "Magalu Entregas",
+              "description": "Entrega pelo parceiro"
+            },
+            "recipient": {
+              "name": "Ana Souza",
+              "customer_type": "cpf",
+              "document_number": "12312312311",
+              "email": "ana@dominio.br",
+              "phones": [
+                {
+                  "area_code": "11",
+                  "country_code": "+55",
+                  "number": "998746332",
+                  "type": "mobile"
+                }
+              ],
+              "address": {
+                "street": "Avenida Paulista",
+                "number": "1000",
+                "complement": "Apto 101",
+                "district": "Bela Vista",
+                "city": "São Paulo",
+                "state": "SP",
+                "country": "Brasil",
+                "zipcode": "01310-100",
+                "reference": "Próximo ao MASP"
+              }
+            },
+            "tracking_url": "https://rastreio.magalu.com/1502070665817673-1"
+          },
+          "events": [],
+          "invoices": []
+        }
+      ]
+    }
+  ]
+}

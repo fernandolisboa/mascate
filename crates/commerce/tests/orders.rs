@@ -1519,21 +1519,26 @@ fn the_amazon_invoice_reminder_is_raised_while_an_amazon_order_stands() {
 /// A Shopee channel whose item "800001" sells the fones, synced and linked,
 /// with its first Order Sync done.
 async fn on_shopee(fx: &Fixture) -> Channel {
-    let shopee = Channel::on(SalesChannelKind::Shopee);
-    shopee.has(vec![listing("800001", "Fone Bluetooth")]);
-    fx.listings.sync(&shopee).await.unwrap();
+    on_channel(fx, SalesChannelKind::Shopee, "800001").await
+}
+
+/// `kind` selling the fone as `item`, linked, after a first Order Sync.
+async fn on_channel(fx: &Fixture, kind: SalesChannelKind, item: &str) -> Channel {
+    let channel = Channel::on(kind);
+    channel.has(vec![listing(item, "Fone Bluetooth")]);
+    fx.listings.sync(&channel).await.unwrap();
     let found = fx
         .listings
         .listings()
         .await
         .unwrap()
         .into_iter()
-        .find(|found| found.channel == SalesChannelKind::Shopee)
+        .find(|found| found.channel == kind)
         .unwrap();
     fx.listings.link(found.id, fone()).await.unwrap();
     fx.later(5);
-    fx.orders.sync(&shopee).await.unwrap();
-    shopee
+    fx.orders.sync(&channel).await.unwrap();
+    channel
 }
 
 #[test]
@@ -1656,6 +1661,36 @@ fn a_shopee_order_waiting_for_its_invoice_raises_the_reminder_and_keeps_its_time
         });
         fx.later(5);
         fx.orders.sync(&shopee).await.unwrap();
+        assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
+        assert_eq!(fx.units(fone()).await, 9);
+    });
+}
+
+#[test]
+fn a_magalu_order_waiting_for_its_invoice_raises_its_own_reminder_and_takes_its_units() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let magalu = on_channel(&fx, SalesChannelKind::Magalu, "FONE-TWS").await;
+        let at = fx.later(1);
+        let mut waiting = order("1502070665817670", at, vec![sold("FONE-TWS", None, 1)]);
+        waiting.shipment.as_mut().unwrap().status = ShipmentStatus::AwaitingInvoice;
+        magalu.sells(waiting);
+        fx.later(5);
+        fx.orders.sync(&magalu).await.unwrap();
+
+        assert_eq!(fx.units(fone()).await, 9);
+        assert_eq!(
+            fx.orders.raised_reminders().await.unwrap(),
+            [mascate_commerce::MAGALU_SALE_INVOICE.key]
+        );
+
+        // The NF-e went: Magalu lets it ship and the reminder goes.
+        let at = fx.later(1);
+        magalu.change_order("1502070665817670", at, |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::ReadyToShip;
+        });
+        fx.later(5);
+        fx.orders.sync(&magalu).await.unwrap();
         assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
         assert_eq!(fx.units(fone()).await, 9);
     });

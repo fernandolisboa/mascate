@@ -6,9 +6,13 @@
 //! refresh token is treated as single use. Magalu takes a price to apply it
 //! later (202), so the next Sync confirms it; it has no pause of its own,
 //! so taking a SKU off sale sends zero units. It gives no fee estimate: the
-//! sale fee is the highest of its published commissions.
+//! sale fee is the highest of its published commissions. Its Orders (#134)
+//! come with their deliveries, and what Magalu kept of each comes from its
+//! financial analysis once the Order is delivered.
 
 mod answers;
+mod billing;
+mod orders;
 mod sales_channel;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,6 +21,7 @@ use std::time::Duration;
 use chrono::TimeDelta;
 use mascate_kernel::{Clock, PlatformError};
 use mascate_platform::{Secret, SecretStore, http_agent};
+use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
 
 use crate::escaped::escaped;
@@ -39,12 +44,15 @@ const CLIENT_SECRET: &str = "MAGALU_CLIENT_SECRET";
 const REFRESH_TOKEN: &str = "MAGALU_REFRESH_TOKEN";
 
 /// What the owner lets the app do on the store: the portfolio's SKUs,
-/// prices and stocks, and the Orders and deliveries the next slice reads,
-/// so one login serves both. The client made with `idm` needs the same.
+/// prices and stocks, the Orders and their deliveries, and the financial
+/// analysis of each Order. The client made with `idm` needs the same.
 pub const SCOPES: &str = "open:portfolio-skus-seller:read open:portfolio-prices-seller:read \
      open:portfolio-prices-seller:write open:portfolio-stocks-seller:read \
      open:portfolio-stocks-seller:write open:order-order-seller:read \
-     open:order-delivery-seller:read";
+     open:order-delivery-seller:read open:order-financial-report-seller:read";
+
+/// Magalu pages through at most 5,000 records of a list.
+const MAX_OFFSET: usize = 5_000;
 
 /// Magalu's own error slugs come with the status, as `{slug, message}`.
 const TOO_MANY_REQUESTS: &str = "TOO_MANY_REQUESTS";
@@ -389,6 +397,12 @@ fn refusal(response: ureq::http::Response<ureq::Body>) -> String {
         .ok()
         .and_then(ErrorAnswer::why)
         .unwrap_or_else(|| "refused".into())
+}
+
+/// `value` in units of its currency, Magalu sending it times `normalizer`
+/// (100 for cents); `None` without a normalizer.
+fn in_units(value: i64, normalizer: i64) -> Option<Decimal> {
+    (normalizer > 0).then(|| Decimal::from(value) / Decimal::from(normalizer))
 }
 
 /// A SKU as a path segment: Magalu's SKUs are at most 32 characters, and

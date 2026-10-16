@@ -317,7 +317,8 @@ pub fn guide(connection: Connection) -> Guide {
                      https://services.magalu.com\" --scopes \"open:portfolio-skus-seller:read \
                      open:portfolio-prices-seller:read open:portfolio-prices-seller:write \
                      open:portfolio-stocks-seller:read open:portfolio-stocks-seller:write \
-                     open:order-order-seller:read open:order-delivery-seller:read\" \
+                     open:order-order-seller:read open:order-delivery-seller:read \
+                     open:order-financial-report-seller:read\" \
                      --access-token-exp 7200",
                     ),
                     step(
