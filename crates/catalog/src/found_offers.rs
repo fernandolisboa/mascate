@@ -46,13 +46,21 @@ impl SearchedOffer {
             .as_ref()
             .is_some_and(|kept| keeps(kept, &self.found))
     }
+
+    /// Whether keeping it would add a Supplier Offer: it has a price and is
+    /// not kept as it is.
+    pub fn keeping_adds(&self) -> bool {
+        self.found.price.is_some() && !self.up_to_date()
+    }
 }
 
 /// Whether `kept` already says what `found` says.
 fn keeps(kept: &SupplierOffer, found: &FoundOffer) -> bool {
     let title = required(&found.title, CatalogError::MissingTitle).unwrap_or_default();
     let link = OfferLink::parse(&found.link).map(|link| link.as_str().to_owned());
-    kept.title == title && link.is_ok_and(|link| kept.link == link) && kept.price == found.price
+    kept.title == title
+        && link.is_ok_and(|link| kept.link == link)
+        && found.price == Some(kept.price)
 }
 
 /// What keeping found offers did.
@@ -62,7 +70,8 @@ pub struct KeptOffers {
     pub added: usize,
     /// Items already kept as they are now.
     pub unchanged: usize,
-    /// Items without a title, a valid link or a price that is not negative.
+    /// Items without a title, a valid link or a price that is not negative:
+    /// an item the page shows without a price is one.
     pub skipped: usize,
 }
 
@@ -115,14 +124,15 @@ impl Catalog {
                 report.unchanged += 1;
                 continue;
             }
-            let (Ok(link), Ok(title)) = (
+            let (Ok(link), Ok(title), Some(price)) = (
                 OfferLink::parse(&offer.link),
                 required(&offer.title, CatalogError::MissingTitle),
+                offer.price,
             ) else {
                 report.skipped += 1;
                 continue;
             };
-            if offer.price.is_negative() || offer.id.trim().is_empty() {
+            if price.is_negative() || offer.id.trim().is_empty() {
                 report.skipped += 1;
                 continue;
             }
@@ -137,7 +147,7 @@ impl Catalog {
                 report.unchanged += 1;
                 continue;
             }
-            let shipping = Money::zero(offer.price.currency());
+            let shipping = Money::zero(price.currency());
             let key = previous
                 .map(|previous| previous.key)
                 .unwrap_or_else(|| link.key().to_owned());
@@ -160,9 +170,9 @@ impl Catalog {
                         link.as_str(),
                         key,
                         title,
-                        offer.price.amount().to_string(),
+                        price.amount().to_string(),
                         shipping.amount().to_string(),
-                        offer.price.currency().code(),
+                        price.currency().code(),
                         stored(record.created_at)
                     ],
                 )

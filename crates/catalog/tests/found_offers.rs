@@ -32,8 +32,8 @@ fn fone(price: &str) -> FoundOffer {
         link: "https://shopee.com.br/product/339216014/22334455667".into(),
         image: Some("https://down-br.img.susercontent.com/file/fone".into()),
         shop: shop("339216014", "Loja Fones"),
-        price: brl(price),
-        highest_price: brl(price),
+        price: Some(brl(price)),
+        highest_price: Some(brl(price)),
         sales: 12_400,
         commission: Some(Percentage::new(Decimal::from(10)).unwrap()),
         rating: Some(Decimal::from_str("4.9").unwrap()),
@@ -47,8 +47,8 @@ fn luminaria() -> FoundOffer {
         link: "https://shopee.com.br/product/770011223/11223344556".into(),
         image: None,
         shop: shop("770011223", "Casa Clara"),
-        price: brl("45.50"),
-        highest_price: brl("59.90"),
+        price: Some(brl("45.50")),
+        highest_price: Some(brl("59.90")),
         sales: 830,
         commission: None,
         rating: None,
@@ -354,10 +354,19 @@ fn offers_without_a_title_a_valid_link_or_a_price_are_skipped() {
             id: "3".into(),
             ..fone("-1")
         };
+        let priceless = FoundOffer {
+            id: "4".into(),
+            price: None,
+            highest_price: None,
+            ..fone("10")
+        };
 
         let kept = f
             .catalog
-            .keep_found_offers(SHOPEE, &[untitled, unlinked, negative, luminaria()])
+            .keep_found_offers(
+                SHOPEE,
+                &[untitled, unlinked, negative, priceless, luminaria()],
+            )
             .await
             .unwrap();
 
@@ -366,7 +375,7 @@ fn offers_without_a_title_a_valid_link_or_a_price_are_skipped() {
             KeptOffers {
                 added: 1,
                 unchanged: 0,
-                skipped: 3
+                skipped: 4
             }
         );
         assert_eq!(f.catalog.offers().await.unwrap().len(), 1);

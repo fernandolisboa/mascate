@@ -233,10 +233,7 @@ fn main() {
     // each screen; no crawler is built until its flag is on.
     let crawlers = AppCrawlers {
         engine: Arc::new(Crawler::new(&user_agent, Arc::new(SystemClock))),
-        sites: vec![CrawledSite::mercado_livre(
-            Build::CURRENT,
-            &process_environment(),
-        )],
+        sites: CrawledSite::all(Build::CURRENT, &process_environment()),
     };
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())

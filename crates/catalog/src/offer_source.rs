@@ -66,11 +66,12 @@ pub struct FoundOffer {
     /// The Platform's picture of the item, over HTTPS.
     pub image: Option<String>,
     pub shop: FoundShop,
-    /// The lowest price of the item, its cheapest variation.
-    pub price: Money,
+    /// The lowest price of the item, its cheapest variation; `None` when
+    /// the page shows the item without a price, which cannot be kept.
+    pub price: Option<Money>,
     /// The highest price, the dearest variation; the same as `price`
-    /// without variations.
-    pub highest_price: Money,
+    /// without variations, and `None` with it.
+    pub highest_price: Option<Money>,
     /// Units sold, as the Platform counts them.
     pub sales: u32,
     pub commission: Option<Percentage>,

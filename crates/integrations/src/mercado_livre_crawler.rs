@@ -4,20 +4,21 @@
 //! machines: the preloaded state of the search, or its JSON-LD. Built only
 //! while its flag is on.
 
-use std::str::FromStr;
 use std::sync::Arc;
 
 use mascate_catalog::{
     Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource, ProductSource,
 };
-use mascate_kernel::{Currency, Money, PlatformError, Timestamp, folded_words};
+use mascate_kernel::{PlatformError, Timestamp, folded_words};
 use mascate_platform::{Flag, FlagKind, Phase};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde_json::Value;
 
-use crate::answers::{decimal, page_on};
-use crate::crawler::{Crawler, assigned_json, json_ld, script_json};
+use crate::answers::page_on;
+use crate::crawler::{
+    Crawler, assigned_json, count_before, is_product, json_ld, money, no_shops, number_in,
+    script_json, search_words, stars, walk,
+};
 
 /// Mercado Livre's search pages, unless a test points elsewhere.
 pub const LISTING_URL: &str = "https://lista.mercadolivre.com.br";
@@ -34,6 +35,9 @@ pub const MERCADO_LIVRE_CRAWLER: Flag = Flag {
     risk: "O Mercado Livre pode bloquear o endereço de internet da sua casa, inclusive para a sua \
            conta de vendedor, ou sancionar a conta ligada a ele.",
 };
+
+/// The site, as the crawler's refusals name it.
+const SITE: &str = "do Mercado Livre";
 
 /// Items on a search page.
 const PAGE_SIZE: u32 = 48;
@@ -63,24 +67,7 @@ impl MercadoLivreCrawler {
     /// the first item of the page and the order, as Mercado Livre writes
     /// them.
     fn page_url(&self, search: &OfferSearch) -> Result<String, PlatformError> {
-        if search
-            .category
-            .as_deref()
-            .is_some_and(|c| !c.trim().is_empty())
-        {
-            return Err(PlatformError::Refused(
-                "o crawler do Mercado Livre não filtra por categoria".into(),
-            ));
-        }
-        if search.shop.is_some() {
-            return Err(PlatformError::Refused(
-                "o crawler do Mercado Livre não busca por loja".into(),
-            ));
-        }
-        let words = folded_words(&search.keyword).join("-").to_ascii_lowercase();
-        if words.is_empty() {
-            return Err(PlatformError::Refused("digite o que procurar".into()));
-        }
+        let words = search_words(search, SITE)?.join("-");
         let order = match search.order {
             OfferOrder::Relevance => "",
             OfferOrder::LowestPrice => "_OrderId_PRICE",
@@ -109,9 +96,7 @@ impl OfferSource for MercadoLivreCrawler {
     }
 
     fn search_shops(&self, _: &str, _: u32) -> Result<Found<FoundShop>, PlatformError> {
-        Err(PlatformError::Refused(
-            "o crawler do Mercado Livre não busca lojas".into(),
-        ))
+        Err(no_shops(SITE))
     }
 
     fn orders(&self) -> &[OfferOrder] {
@@ -159,16 +144,6 @@ fn search_page(html: &str) -> Found<FoundOffer> {
     Found { items, more }
 }
 
-/// Calls `visit` on `value` and on every object and array inside it.
-fn walk(value: &Value, visit: &mut impl FnMut(&Value)) {
-    visit(value);
-    match value {
-        Value::Object(fields) => fields.values().for_each(|inner| walk(inner, visit)),
-        Value::Array(values) => values.iter().for_each(|inner| walk(inner, visit)),
-        _ => {}
-    }
-}
-
 /// An item of the search as the page's state describes it: a card with
 /// its metadata, its pictures and components for the title, the price, the
 /// seller and the reviews.
@@ -204,11 +179,14 @@ fn polycard_offer(card: &Value) -> Option<FoundOffer> {
         link,
         image,
         shop: shop(seller),
-        price,
-        highest_price: price,
-        sales: reviews.as_deref().map(sold).unwrap_or(0),
+        price: Some(price),
+        highest_price: Some(price),
+        sales: reviews
+            .as_deref()
+            .map(|line| count_before(line, "vendid"))
+            .unwrap_or(0),
         commission: None,
-        rating: reviews.as_deref().and_then(rating),
+        rating: reviews.as_deref().and_then(stars),
     })
 }
 
@@ -265,56 +243,6 @@ fn shop(seller: Option<String>) -> FoundShop {
     }
 }
 
-/// The stars in a review line such as `"4.8 | +10mil vendidos"`.
-fn rating(text: &str) -> Option<Decimal> {
-    let first = text.split(['|', ' ', '(']).find(|word| !word.is_empty())?;
-    Decimal::from_str(&first.replace(',', "."))
-        .ok()
-        .filter(|stars| (Decimal::ZERO..=Decimal::from(5)).contains(stars))
-}
-
-/// The units sold in a line such as `"+10mil vendidos"`, `"+500 vendidos"`
-/// or `"1.234 vendidos"`; 0 when it does not say.
-fn sold(text: &str) -> u32 {
-    let lower = text.to_lowercase();
-    let Some(before) = lower.find("vendid").map(|at| &lower[..at]) else {
-        return 0;
-    };
-    let count = before.rsplit('|').next().unwrap_or_default().trim();
-    let count = count.trim_start_matches('+').trim();
-    let digits: String = count
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
-        .collect();
-    let unit = count[digits.len()..].trim();
-    let factor = if unit.starts_with("mil") && !unit.starts_with("milh") {
-        1_000
-    } else if unit.starts_with("mi") {
-        1_000_000
-    } else {
-        1
-    };
-    let number = if factor == 1 {
-        digits.replace(['.', ','], "")
-    } else {
-        digits.replace('.', "").replace(',', ".")
-    };
-    Decimal::from_str(&number)
-        .ok()
-        .map(|number| number * Decimal::from(factor))
-        .and_then(|units| units.trunc().to_u32())
-        .unwrap_or(0)
-}
-
-/// Whether a JSON-LD node is a schema.org Product.
-fn is_product(value: &Value) -> bool {
-    match value.get("@type") {
-        Some(Value::String(kind)) => kind == "Product",
-        Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "Product"),
-        _ => false,
-    }
-}
-
 /// An item as a JSON-LD Product with its Offer (or AggregateOffer).
 fn ld_offer(product: &Value) -> Option<FoundOffer> {
     let offer = match product.get("offers")? {
@@ -359,8 +287,8 @@ fn ld_offer(product: &Value) -> Option<FoundOffer> {
         link,
         image,
         shop: shop(seller),
-        price,
-        highest_price,
+        price: Some(price),
+        highest_price: Some(highest_price),
         sales: 0,
         commission: None,
         rating,
@@ -396,24 +324,4 @@ fn item_link(url: &str) -> Option<String> {
         format!("https://{}", url.trim_start_matches('/'))
     };
     page_on(&url, DOMAIN)
-}
-
-/// An amount written as a JSON number or text, in `currency` (reais when
-/// the page does not say); never negative.
-fn money(amount: &Value, currency: Option<&Value>) -> Option<Money> {
-    let currency = match currency.and_then(Value::as_str) {
-        Some(code) => Currency::from_code(code)?,
-        None => Currency::Brl,
-    };
-    number_in(amount)
-        .filter(|amount| !amount.is_sign_negative())
-        .map(|amount| Money::new(amount, currency))
-}
-
-fn number_in(value: &Value) -> Option<Decimal> {
-    match value {
-        Value::Number(number) => decimal(number),
-        Value::String(text) => Decimal::from_str(text.trim()).ok(),
-        _ => None,
-    }
 }
