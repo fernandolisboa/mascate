@@ -12,7 +12,8 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Window, div, px};
 use mascate_commerce::{
-    ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, SalesChannel, ShippingLabels,
+    ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, ChannelShipments, SalesChannel,
+    ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
@@ -32,6 +33,8 @@ pub struct ChannelPorts {
     pub billing: Option<Arc<dyn ChannelBilling>>,
     pub payments: Option<Arc<dyn ChannelPayments>>,
     pub labels: Option<Arc<dyn ShippingLabels>>,
+    /// Where the owner confirms a shipment they sent themselves.
+    pub shipments: Option<Arc<dyn ChannelShipments>>,
 }
 
 impl ChannelPorts {

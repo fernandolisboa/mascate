@@ -19,7 +19,9 @@ use mascate_commerce::{
 };
 use mascate_inventory::{HOME_LOCATION, Inventory};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, Currency, Money, Percentage, RecordId, Timestamp, channel_day_start};
+use mascate_kernel::{
+    Clock, Currency, Money, Percentage, RecordId, SalesChannelKind, Timestamp, channel_day_start,
+};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
@@ -765,5 +767,75 @@ fn each_line_takes_a_share_of_the_order_by_value_and_its_own_cost() {
         assert_eq!(total(|line| line.fees), sale.margin.fees_total());
         assert_eq!(total(|line| line.tax), sale.margin.tax);
         assert_eq!(fone.tax.rounded(), brl("5.39"));
+    });
+}
+
+#[test]
+fn each_channel_sums_its_own_sales_and_an_amazon_order_turns_realized_once_billed() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = Channel::on(SalesChannelKind::Amazon);
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        fx.sell("O1", 2).await;
+        let at = fx.later(1);
+        let mut on_amazon = order("701-0000001-0000001", at, vec![sold("FONE-1", None, 1)]);
+        on_amazon.shipment = None;
+        amazon.sells(on_amazon);
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+
+        let provisional = fx.margin("701-0000001-0000001", "0").await;
+        assert!(provisional.provisional);
+        // Amazon's finances can lag two days: nothing billed yet.
+        fx.orders.import_fees(&amazon).await.unwrap();
+        assert!(fx.margin("701-0000001-0000001", "0").await.provisional);
+
+        amazon.billed.lock().unwrap().push(BilledOrder {
+            order: "701-0000001-0000001".into(),
+            fees: vec![charge(
+                "T1:Expenses/Commission",
+                FeeKind::SaleFee,
+                "Commission",
+                "13.49",
+            )],
+        });
+        // Asked again once its six hours pass.
+        fx.later(6 * 60);
+        fx.orders.import_fees(&amazon).await.unwrap();
+        let realized = fx.margin("701-0000001-0000001", "0").await;
+        assert!(!realized.provisional);
+        assert_eq!(realized.fees_total(), brl("13.49"));
+
+        let sales = fx.orders.sales(percent("0"), ever(), &[]).await.unwrap();
+        let by_channel = SalesSummary::by_channel(&sales, Currency::Brl).unwrap();
+        let channels: Vec<SalesChannelKind> = by_channel.iter().map(|(kind, _)| *kind).collect();
+        assert_eq!(
+            channels,
+            [SalesChannelKind::MercadoLivre, SalesChannelKind::Amazon]
+        );
+        let (_, ml) = &by_channel[0];
+        let (_, on_amazon) = &by_channel[1];
+        assert_eq!(
+            (ml.orders, ml.revenue, ml.provisional),
+            (1, brl("179.80"), 1)
+        );
+        assert_eq!(
+            (
+                on_amazon.orders,
+                on_amazon.revenue,
+                on_amazon.fees,
+                on_amazon.provisional
+            ),
+            (1, brl("89.90"), brl("13.49"), 0)
+        );
+        // The Amazon listing is not linked: its sale has no cost.
+        assert_eq!(on_amazon.without_cost, 1);
+        let total = SalesSummary::of(&sales, Currency::Brl).unwrap();
+        assert_eq!(
+            total.revenue,
+            ml.revenue.checked_add(on_amazon.revenue).unwrap()
+        );
+        assert_eq!(total.orders, ml.orders + on_amazon.orders);
     });
 }

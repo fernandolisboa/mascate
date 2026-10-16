@@ -221,7 +221,7 @@ impl ShipmentStatus {
         ShipmentStatus::Cancelled,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             ShipmentStatus::Pending => "pending",
             ShipmentStatus::ReadyToShip => "ready_to_ship",
@@ -662,6 +662,10 @@ pub enum OrderError {
     NoReturnAwaiting,
     #[error("the Order is not waiting to be dispatched, so it has no label to print")]
     NoLabel,
+    #[error("the Order is not waiting to be dispatched: cancelled, shipped or not ready yet")]
+    NotAwaitingShipment,
+    #[error("a shipment is confirmed with its carrier and tracking code, each up to 64 characters")]
+    NoTracking,
     #[error("the Order is on {order:?}, not on {channel:?}")]
     OtherChannel {
         order: SalesChannelKind,
@@ -706,7 +710,7 @@ const RETURN_COLUMNS: &str = "order_id, channel_return_id, status, channel_item_
 
 /// When each channel's first Order Sync ran: its Orders sold before it
 /// never take units from the stock.
-type FirstSyncs = BTreeMap<SalesChannelKind, Timestamp>;
+pub(crate) type FirstSyncs = BTreeMap<SalesChannelKind, Timestamp>;
 
 /// A channel's first Order Sync and how far its last one read.
 struct SyncState {
@@ -1028,6 +1032,32 @@ impl Orders {
         }
         transaction.commit().await?;
         Ok(received)
+    }
+
+    /// The keys of this module's Reminders that apply now: the Amazon
+    /// invoice one while an Amazon Order is not cancelled.
+    pub async fn raised_reminders(&self) -> Result<Vec<&'static str>, OrderError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT EXISTS (SELECT 1 FROM commerce_orders
+                     WHERE deleted_at IS NULL AND sales_channel = ?1 AND status <> ?2)",
+                params![
+                    SalesChannelKind::Amazon.code(),
+                    OrderStatus::Cancelled.code()
+                ],
+            )
+            .await?;
+        let sold_on_amazon = match rows.next().await? {
+            Some(row) => row.get::<i64>(0)? != 0,
+            None => false,
+        };
+        Ok(if sold_on_amazon {
+            vec![crate::AMAZON_SALE_INVOICE.key]
+        } else {
+            Vec::new()
+        })
     }
 
     /// When the Orders of any channel were last synced; `None` before the
@@ -1701,7 +1731,7 @@ fn order_from(row: &Row) -> Result<Order, OrderError> {
 
 /// The Orders, newest first, with their lines and returns: every one, or
 /// only `order`.
-async fn load_orders(
+pub(crate) async fn load_orders(
     on: &Connection,
     order: Option<RecordId>,
     first_syncs: &FirstSyncs,

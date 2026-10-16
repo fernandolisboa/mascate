@@ -1,0 +1,58 @@
+{
+  "payload": {
+    "transactions": [
+      {
+        "sellingPartnerMetadata": {
+          "sellingPartnerId": "A1MASCATE0SELLER",
+          "accountType": "Standard Orders",
+          "marketplaceId": "A2Q3Y263D00KWC"
+        },
+        "relatedIdentifiers": [
+          {
+            "relatedIdentifierName": "ORDER_ID",
+            "relatedIdentifierValue": "701-1234567-1234567"
+          }
+        ],
+        "transactionType": "Shipment",
+        "transactionId": "amzn1.tid.701-adjustment",
+        "transactionStatus": "RELEASED",
+        "description": "Order Payment",
+        "postedDate": "2026-10-19T09:00:00Z",
+        "totalAmount": {
+          "currencyCode": "BRL",
+          "currencyAmount": 2.0
+        },
+        "breakdowns": {
+          "breakdowns": [
+            {
+              "breakdownType": "Expenses",
+              "breakdownAmount": {
+                "currencyCode": "BRL",
+                "currencyAmount": 2.0
+              },
+              "breakdowns": [
+                {
+                  "breakdownType": "AmazonFees",
+                  "breakdownAmount": {
+                    "currencyCode": "BRL",
+                    "currencyAmount": 2.0
+                  },
+                  "breakdowns": [
+                    {
+                      "breakdownType": "Commission",
+                      "breakdownAmount": {
+                        "currencyCode": "BRL",
+                        "currencyAmount": 2.0
+                      },
+                      "breakdowns": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
