@@ -164,6 +164,10 @@ _Avoid_: parceria, afiliação (sozinho)
 Link de afiliado de um Program para um produto, com marcação do Promotion Channel onde foi divulgado. A marcação é única por Platform e volta na Conversion, o que liga cada Commission ao seu canal.
 _Avoid_: link rastreado, URL, tracking link
 
+**Short Link**:
+Link curto que redireciona para um Affiliate Link, criado por um encurtador externo, que conta os cliques por dia. Nunca existe para Platform cujos termos proíbem encurtar (Amazon, Shopee, Mercado Livre) sem a Restricted Feature ligada.
+_Avoid_: link encurtado, URL curta, encurtador (para o link)
+
 **Conversion**:
 Venda atribuída a um Affiliate Link, informada pela Platform.
 _Avoid_: venda (sozinho), pedido
