@@ -17,7 +17,6 @@ mod labels;
 mod orders;
 mod publisher;
 mod sales_channel;
-mod tokens;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,9 +29,10 @@ use serde::de::DeserializeOwned;
 use sha2::Sha256;
 
 use crate::answers::MAX_DOCUMENT_BYTES;
+use crate::escaped::escaped;
 use crate::retry::{Attempt, Backoff, Pause, ThreadPause, retrying};
+use crate::single_use_tokens::{Fresh, Tokens};
 use answers::{Envelope, TokenAnswer};
-use tokens::{Fresh, Tokens};
 
 /// Shopee's production host for Open API calls from the Americas, Brazil
 /// included, unless a test or a development build points elsewhere.
@@ -158,7 +158,7 @@ impl ShopeeSeller {
             "{}{AUTHORIZE}?partner_id={}&timestamp={timestamp}&sign={sign}&redirect={}",
             self.api,
             partner.id,
-            query_value(redirect)
+            escaped(redirect)
         ))
     }
 
@@ -551,18 +551,4 @@ fn is_numeric_id(id: &str) -> bool {
 /// Shopee's Order numbers are letters and digits, as `201218V2Y6E59M`.
 fn is_order_sn(order: &str) -> bool {
     !order.is_empty() && order.len() <= 32 && order.chars().all(|c| c.is_ascii_alphanumeric())
-}
-
-/// `text` as a query value: anything but letters, digits and `-._~`
-/// escaped.
-fn query_value(text: &str) -> String {
-    let mut value = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            value.push(char::from(byte));
-        } else {
-            value.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    value
 }

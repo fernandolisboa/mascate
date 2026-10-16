@@ -29,6 +29,8 @@ pub enum Connection {
     /// The owner's Shopee shop, a Sales Channel; another API than Shopee
     /// Afiliados, with other keys.
     ShopeeSeller,
+    /// The owner's Magalu store, a Sales Channel.
+    Magalu,
 }
 
 /// How a credential reaches the store.
@@ -56,7 +58,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 10] = [
+    pub const ALL: [Connection; 11] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -67,6 +69,7 @@ impl Connection {
         Connection::Telegram,
         Connection::Amazon,
         Connection::ShopeeSeller,
+        Connection::Magalu,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -128,6 +131,16 @@ impl Connection {
                 entry: CredentialEntry::Login,
             },
         ];
+        // The client's keys come from the `idm` CLI; the store's first
+        // refresh token, from the owner's login on ID Magalu's page.
+        const MAGALU: &[Credential] = &[
+            pasted("MAGALU_CLIENT_ID"),
+            pasted("MAGALU_CLIENT_SECRET"),
+            Credential {
+                name: "MAGALU_REFRESH_TOKEN",
+                entry: CredentialEntry::Login,
+            },
+        ];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -139,6 +152,7 @@ impl Connection {
             Connection::Telegram => TELEGRAM,
             Connection::Amazon => AMAZON,
             Connection::ShopeeSeller => SHOPEE_SELLER,
+            Connection::Magalu => MAGALU,
         }
     }
 

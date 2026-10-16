@@ -32,7 +32,8 @@ pub use fees::{
 pub use freight::{freight_for_units, split_by_value};
 pub use listings::{
     CatalogProduct, ChannelListing, ChannelStock, LinkSuggestion, Listing, ListingError,
-    ListingStatus, ListingSync, ListingToLink, Listings, SalesChannel, SuggestedBy, Variation,
+    ListingStatus, ListingSync, ListingToLink, Listings, PRICE_APPLY_WINDOW, SalesChannel,
+    SentPrice, SentPriceState, SuggestedBy, Variation,
 };
 pub use merge::MERGE;
 pub use orders::{
@@ -126,5 +127,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         releases::CREATE_MONEY_RELEASES,
         channels::ADD_SALES_CHANNELS,
         drafts::ADD_DRAFT_VARIATIONS,
+        listings::ADD_SENT_PRICES,
     ],
 };

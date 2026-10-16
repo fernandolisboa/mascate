@@ -287,6 +287,53 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Magalu => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    // Fiscal, never a block: the app reminds it and goes on.
+                    step_at(
+                        "A Magalu vende só por loja de pessoa jurídica: o cadastro do Parceiro \
+                     Magalu pede CNPJ. Sem ele, os passos abaixo esperam, e o app lembra disso \
+                     em Lembretes.",
+                        "Abrir o portal de desenvolvedores",
+                        "https://developers.magalu.com/docs/first-steps/create-an-application/create-application",
+                    ),
+                    step_at(
+                        "Baixe o ID Magalu CLI para o seu sistema, renomeie o arquivo para idm e, \
+                     no Windows, mova para C:\\Windows\\System32. No terminal, rode idm login, \
+                     entre com a conta da loja e autorize Criar client e Atualizar client.",
+                        "Baixar o idm",
+                        "https://github.com/luizalabs/id-magalu-cli/releases",
+                    ),
+                    // The app has no address of its own yet (#10): the owner
+                    // copies the one the browser lands on. The scopes are
+                    // `MAGALU_SCOPES`, checked by a test.
+                    step(
+                        "Crie o cliente do app com: idm client create --name \"Mascate\" \
+                     --description \"Gestão da loja\" --terms-of-use \
+                     \"https://github.com/fernandolisboa/mascate\" --privacy-term \
+                     \"https://github.com/fernandolisboa/mascate\" --redirect-uris \
+                     \"https://github.com/fernandolisboa\" --audience \"https://api.magalu.com \
+                     https://services.magalu.com\" --scopes \"open:portfolio-skus-seller:read \
+                     open:portfolio-prices-seller:read open:portfolio-prices-seller:write \
+                     open:portfolio-stocks-seller:read open:portfolio-stocks-seller:write \
+                     open:order-order-seller:read open:order-delivery-seller:read\" \
+                     --access-token-exp 7200",
+                    ),
+                    step(
+                        "Copie o Client ID e o Client Secret que o idm mostra: o Client Secret \
+                     não aparece de novo; se perder, crie outro cliente.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, clique em Entrar na Magalu, entre com o ID Magalu, escolha \
+                 a loja, autorize o app e cole o endereço em que o navegador parou. O app \
+                 renova o login sozinho; se a Magalu deixar de aceitar, entre de novo do mesmo \
+                 jeito.",
+                ),
+            };
+            GUIDE
+        }
         Connection::Eduzz => {
             const GUIDE: Guide = Guide {
                 steps: &[
@@ -365,6 +412,7 @@ mod tests {
             Connection::Amazon => &["sellercentral.amazon.com.br", "developer-docs.amazon.com"],
             Connection::ShopeeAffiliates => &["affiliate.shopee.com.br"],
             Connection::ShopeeSeller => &["open.shopee.com"],
+            Connection::Magalu => &["developers.magalu.com", "github.com/luizalabs"],
             Connection::Anthropic => &["platform.claude.com"],
             Connection::Hotmart => &["app-vlc.hotmart.com"],
             Connection::Monetizze => &["app.monetizze.com.br"],
@@ -384,7 +432,7 @@ mod tests {
             | Connection::Kiwify
             | Connection::Eduzz
             | Connection::Telegram => 2,
-            Connection::Amazon | Connection::ShopeeSeller => 3,
+            Connection::Amazon | Connection::ShopeeSeller | Connection::Magalu => 3,
         }
     }
 
@@ -503,6 +551,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_magalu_client_asks_for_the_scopes_the_login_asks_for() {
+        let command = guide(Connection::Magalu)
+            .steps
+            .iter()
+            .find(|step| step.text.contains("idm client create"))
+            .expect("a step creates the client")
+            .text;
+        assert!(
+            command.contains(&format!(
+                "--scopes \"{}\"",
+                mascate_integrations::MAGALU_SCOPES
+            )),
+            "{command}"
+        );
     }
 
     #[test]

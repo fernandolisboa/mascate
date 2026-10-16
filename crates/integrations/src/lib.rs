@@ -6,15 +6,18 @@ mod answers;
 mod anthropic;
 mod connections;
 mod eduzz;
+mod escaped;
 mod hotmart;
 mod kiwify;
 mod link_tags;
+mod magalu;
 mod mercado_livre;
 mod monetizze;
 mod pictures;
 mod retry;
 mod shopee_affiliate;
 mod shopee_seller;
+mod single_use_tokens;
 mod spreadsheet;
 mod telegram;
 
@@ -33,6 +36,10 @@ pub use hotmart::{
 };
 pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify, LINKS as KIWIFY_LINKS};
 pub use link_tags::UrlTagger;
+pub use magalu::{
+    API_URL as MAGALU_API_URL, ID_URL as MAGALU_ID_URL, Magalu, SANDBOX_URL as MAGALU_SANDBOX_URL,
+    SCOPES as MAGALU_SCOPES, StoreAuthorization,
+};
 pub use mercado_livre::{
     API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
 };
@@ -73,5 +80,21 @@ pub const SHOPEE_SELLER_CNPJ: Reminder = Reminder {
     shows: ReminderShows::WhenRaised,
 };
 
+/// Raised while the Magalu Connection holds any of its keys.
+pub const MAGALU_COMPANY_STORE: Reminder = Reminder {
+    key: "integrations.magalu_company_store",
+    topic: ReminderTopic::Connection,
+    title: "Loja PJ na Magalu",
+    text: "A Magalu vende só por loja de pessoa jurídica: o Parceiro Magalu pede CNPJ e a NF-e \
+           de cada venda. O app funciona com as chaves que você tiver; quando abrir o CNPJ, \
+           confira o cadastro da loja na Magalu.",
+    reappears_after_days: 60,
+    shows: ReminderShows::WhenRaised,
+};
+
 /// The Reminders of the Platform accounts the adapters reach.
-pub const REMINDERS: &[Reminder] = &[AMAZON_CLIENT_SECRET, SHOPEE_SELLER_CNPJ];
+pub const REMINDERS: &[Reminder] = &[
+    AMAZON_CLIENT_SECRET,
+    SHOPEE_SELLER_CNPJ,
+    MAGALU_COMPANY_STORE,
+];

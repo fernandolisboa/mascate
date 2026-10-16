@@ -13,7 +13,8 @@ use mascate_kernel::{Currency, ListingType, Money, Percentage, PlatformError, Sa
 use rust_decimal::Decimal;
 
 use super::answers::{FeesAnswer, Item, ItemSearch, ProductTypeDefinition, Submission, Summary};
-use super::{Amazon, MARKETPLACE, path_segment};
+use super::{Amazon, MARKETPLACE};
+use crate::escaped::escaped;
 
 /// The most listings a search page or a search by SKU takes.
 const PAGE_SIZE: usize = 20;
@@ -135,10 +136,7 @@ impl SalesChannel for Amazon {
         );
         let answer: FeesAnswer = self.send(
             "POST",
-            &format!(
-                "/products/fees/v0/listings/{}/feesEstimate",
-                path_segment(sku)
-            ),
+            &format!("/products/fees/v0/listings/{}/feesEstimate", escaped(sku)),
             &[],
             &body,
         )?;
@@ -263,7 +261,7 @@ impl Amazon {
         );
         let submission: Submission = self.send(
             "PATCH",
-            &format!("{}/{}", self.items_path()?, path_segment(sku)),
+            &format!("{}/{}", self.items_path()?, escaped(sku)),
             &[("marketplaceIds", MARKETPLACE)],
             &body,
         )?;

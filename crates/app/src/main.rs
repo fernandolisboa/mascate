@@ -27,6 +27,7 @@ mod layout;
 mod listing_copy;
 mod listings;
 mod low_stock;
+mod magalu;
 mod mercado_livre;
 mod merge_import;
 mod monetizze;
@@ -80,8 +81,8 @@ use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS,
-    Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates,
-    ShopeeSeller, Telegram,
+    Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
+    ShopeeAffiliates, ShopeeSeller, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -98,6 +99,7 @@ use crate::connections::AppConnections;
 use crate::finance::AppSalesVolume;
 use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
+use crate::magalu::AppMagalu;
 use crate::mercado_livre::AppMercadoLivre;
 use crate::offer_posts::AppOfferPosts;
 use crate::orders::AppOrders;
@@ -196,6 +198,14 @@ fn main() {
         secrets.clone(),
         Arc::new(SystemClock),
     ));
+    let (magalu_api, magalu_id) = magalu::urls(Build::CURRENT, &process_environment());
+    let magalu = Arc::new(Magalu::new(
+        &magalu_api,
+        &magalu_id,
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -278,8 +288,21 @@ fn main() {
                     // A draft goes up with its pictures, then its models.
                     publisher: Some(shopee_seller.clone()),
                 },
+                // SKUs, stock and price for now: Magalu's Orders and Fees
+                // come in their own slice; publishing is out of the epic.
+                ChannelPorts {
+                    connection: Connection::Magalu,
+                    listings: magalu.clone(),
+                    orders: None,
+                    billing: None,
+                    payments: None,
+                    labels: None,
+                    shipments: None,
+                    publisher: None,
+                },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));
+            cx.set_global(AppMagalu(magalu));
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));

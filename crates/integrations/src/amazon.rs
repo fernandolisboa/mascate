@@ -248,17 +248,3 @@ fn order_segment(order: &str) -> Result<&str, PlatformError> {
         Err(PlatformError::NotFound)
     }
 }
-
-/// `text` as one segment of a path: anything but letters, digits and
-/// `-._~` escaped, as Amazon asks of a SKU.
-fn path_segment(text: &str) -> String {
-    let mut segment = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            segment.push(char::from(byte));
-        } else {
-            segment.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    segment
-}
