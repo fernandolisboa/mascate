@@ -359,7 +359,7 @@ fn channel_listing(item: &Item) -> Option<ChannelListing> {
 }
 
 /// The published table's fee at `price`.
-fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
+pub(super) fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
     let rate = Percentage::new(TABLE_RATE).map_err(|_| unexpected_fee())?;
     let minimum = Money::new(TABLE_MINIMUM, price.currency());
     if rate.of(price).amount() < minimum.amount() {

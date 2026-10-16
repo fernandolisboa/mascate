@@ -19,6 +19,13 @@ com a conta de vendedor do Fernando.
 | `product-type-HEADPHONES.json`, `product-type-SHIRT.json` | `GET /definitions/2020-09-01/productTypes/{productType}` com `requirements=LISTING_OFFER_ONLY` e `locale=pt_BR` (`displayName`) | getDefinitionsProductType |
 | `fees-estimate.json` | `POST /products/fees/v0/listings/{SellerSKU}/feesEstimate` (`getMyFeesEstimateForSKU`) com `Status: Success` e `FeeDetailList` | getMyFeesEstimateForSKU |
 | `fees-estimate-client-error.json` | o mesmo com `Status: ClientError` | getMyFeesEstimateForSKU |
+| `orders-page-1.json`, `orders-page-2.json` | `GET /orders/2026-01-01/orders` (`searchOrders`) com `fulfilledBy=MERCHANT`, `lastUpdatedAfter` e `includedData=RECIPIENT,PROCEEDS,FULFILLMENT,PACKAGES`, 100 por página: a primeira com `pagination.nextToken`; a segunda repete um pedido da primeira, como quando ele muda entre as páginas | searchOrders; Orders API v2026-01-01 migration guide |
+| `orders-without-recipient.json` | o mesmo sem `RECIPIENT`, quando falta o papel Direct-to-Consumer Shipping: só cidade e estado | searchOrders; Roles in the Selling Partner API |
+| `orders-empty.json` | o mesmo sem pedidos | searchOrders |
+| `order-701.json`, `order-704.json` | `GET /orders/2026-01-01/orders/{orderId}` (`getOrder`) com `includedData=FULFILLMENT,PACKAGES`: um a enviar e um já entregue | getOrder |
+| `error-400-page-token.json` | `searchOrders` com o `paginationToken` vencido (vale 24 horas) | searchOrders |
+| `transactions-701-page-1.json`, `transactions-701-page-2.json` | `GET /finances/2024-06-19/transactions` (`listTransactions`) com `relatedIdentifierName=ORDER_ID`: a primeira com `nextToken` e `breakdowns` em lista, a segunda com `breakdowns` dentro de um objeto, como em alguns exemplos | listTransactions; Finances API v2024-06-19 |
+| `transactions-empty.json` | o mesmo antes de a Amazon lançar as transações do pedido (até 48 horas) | listTransactions |
 | `error-400.json`, `error-403.json`, `error-404.json`, `error-429.json` | o formato de erro `{"errors":[{"code","message","details"}]}`: entrada inválida, token vencido, recurso inexistente e cota excedida | Error responses and schemas; Usage plans and rate limits |
 
 Inventados ou completados (conferir no regression pass):
@@ -31,3 +38,12 @@ Inventados ou completados (conferir no regression pass):
   o plano Profissional não cobra por item.
 - A mensagem em português do problema `INVALID` e o texto dos erros.
 - Se um item com quantidade 0 continua com `DISCOVERABLE` e sem `BUYABLE`, como aqui.
+- Os ids dos pedidos (`701-…` a `705-…`), os SKUs, os valores e o nome do comprador.
+- Se um item cancelado vem com `quantityOrdered` 0, como o pedido 703; o adapter ignora a linha e
+  mantém a quantidade guardada para devolver as unidades.
+- Se o `DISCOUNT` de um item vem negativo ou positivo; o adapter desconta o valor absoluto.
+- Os tipos dos `breakdowns` em `Expenses` (`Commission`, `ShippingChargeback`) e se um estorno de
+  tarifa vem positivo dentro de `Expenses`, como na segunda página.
+- O texto do erro do `paginationToken` vencido.
+- Se, sem o papel Direct-to-Consumer Shipping, a Amazon recusa a busca com `RECIPIENT` (403, como
+  aqui) ou só omite o endereço.

@@ -240,15 +240,18 @@ fn main() {
                     billing: Some(mercado_livre.clone()),
                     payments: Some(mercado_livre.clone()),
                     labels: Some(mercado_livre.clone()),
+                    shipments: None,
                 },
-                // Amazon's Orders arrive with #127.
+                // The owner sends Amazon's Orders by a carrier of their
+                // own and confirms each shipment here: no label to download.
                 ChannelPorts {
                     connection: Connection::Amazon,
-                    listings: amazon,
-                    orders: None,
-                    billing: None,
+                    listings: amazon.clone(),
+                    orders: Some(amazon.clone()),
+                    billing: Some(amazon.clone()),
                     payments: None,
                     labels: None,
+                    shipments: Some(amazon),
                 },
             ]));
             cx.set_global(AppMercadoLivre(mercado_livre));

@@ -1,12 +1,13 @@
-//! Pedidos (#20, #21): the owner's Mercado Livre Orders, read by an Order
-//! Sync when the app opens and every few minutes after, window open or in
-//! the tray (ADR 0018). Each new Order comes with a system notification, and
-//! its units leave the stock; the stock of the listings follows right after.
-//! Each Order waiting for dispatch prints its label and shows when it is
-//! late or close; units on their way back wait for the owner to say they
-//! arrived (ADR 0019). After each Sync the app asks Mercado Livre's billing
-//! for the Orders' Fees, and each Order shows its Realized Margin (ADR
-//! 0020). Settings › Pedidos sets how often, how long the buyer's data stays
+//! Pedidos (#20, #21, #127): the owner's Orders on every connected Sales
+//! Channel, read by an Order Sync when the app opens and every few minutes
+//! after, window open or in the tray (ADR 0018). Each new Order comes with a
+//! system notification, and its units leave the stock; the stock of the
+//! listings follows right after. Each Order waiting for dispatch prints its
+//! label, or on a channel that prints none, as Amazon, takes the carrier and
+//! tracking code the owner shipped it with, and shows when it is late or
+//! close; units on their way back wait for the owner to say they arrived
+//! (ADR 0019). After each Sync the app asks each channel's billing for the
+//! Orders' Fees, and each Order shows its Realized Margin (ADR 0020). Settings › Pedidos sets how often, how long the buyer's data stays
 //! and how early the warning comes. The rules live in Commerce.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,17 +25,16 @@ use gpui_kit::{
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     DispatchDue, LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync,
-    Orders, RealizedMargin, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel, SoldWithoutStock,
-    StockMirror, StockSend, StockShort,
+    Orders, RealizedMargin, Receiver, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel,
+    SoldWithoutStock, StockMirror, StockSend, StockShort,
 };
-use mascate_integrations::{Connection, ConnectionState};
+use mascate_integrations::ConnectionState;
 use mascate_kernel::{RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::default_owner_folder;
 
 use crate::ads;
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
-use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::layout;
@@ -99,7 +99,23 @@ pub fn failure(error: &OrderError) -> String {
         OrderError::NoReturnAwaiting => {
             "Este pedido não tem unidades voltando; nada mudou no estoque.".into()
         }
+        OrderError::NotAwaitingShipment => "Este pedido não está esperando envio: já foi \
+                                            enviado, foi cancelado ou ainda não foi pago. \
+                                            Sincronize os pedidos para ver o estado atual."
+            .into(),
+        OrderError::NoTracking => "Digite a transportadora e o código de rastreio, cada um com \
+                                   até 64 caracteres."
+            .into(),
         error => format!("Não consegui ler ou gravar os pedidos no banco: {error}"),
+    }
+}
+
+/// Why a call about an Order on the channel `kind` failed, naming the
+/// channel when the channel failed.
+fn failure_on(kind: SalesChannelKind, error: &OrderError) -> String {
+    match error {
+        OrderError::Platform(error) => sales_channels::failure(kind, error),
+        error => failure(error),
     }
 }
 
@@ -197,6 +213,9 @@ pub async fn round(
             syncing += 1;
             match orders.sync(channel_orders.as_ref()).await {
                 Ok(part) => add(&mut synced, part),
+                Err(OrderError::Platform(error)) => {
+                    failures.push(sales_channels::failure(channel.kind(), &error))
+                }
                 Err(error) => failures.push(on_channel(channel.kind(), &failure(&error), channels)),
             }
         }
@@ -253,7 +272,8 @@ fn add(total: &mut OrderSync, part: OrderSync) {
     total.restocked += part.restocked;
 }
 
-/// A failure named after its channel when more than one is connected.
+/// A failure of the app's own, named after its channel when more than one
+/// is connected.
 fn on_channel(kind: SalesChannelKind, text: &str, channels: &[ChannelPorts]) -> String {
     if channels.len() > 1 {
         format!("{}: {text}", kind.name())
@@ -434,7 +454,7 @@ pub fn print_label(
         let label: ShippingLabel = orders
             .shipping_label(labels.as_ref(), order)
             .await
-            .map_err(|e| failure(&e))?;
+            .map_err(|e| failure_on(channel, &e))?;
         std::fs::create_dir_all(&folder)
             .and_then(|()| std::fs::write(folder.join(&label.file_name), &label.pdf))
             .map_err(|error| {
@@ -476,8 +496,18 @@ struct Snapshot {
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     settings: OrderSettings,
-    connection: ConnectionState,
+    states: Vec<(SalesChannelKind, ConnectionState)>,
 }
+
+/// The shipment the owner is confirming, with what they type.
+struct ShipmentForm {
+    order: RecordId,
+    carrier: Entity<InputState>,
+    tracking: Entity<InputState>,
+}
+
+/// The carrier a shipment form starts with.
+const USUAL_CARRIER: &str = "Correios";
 
 pub struct OrdersScreen {
     orders: Vec<Order>,
@@ -486,10 +516,12 @@ pub struct OrdersScreen {
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     settings: OrderSettings,
-    connection: Option<ConnectionState>,
+    /// Each Sales Channel's Connection, empty until the first read.
+    states: Vec<(SalesChannelKind, ConnectionState)>,
     syncing: bool,
-    /// The Order whose label or return is on its way.
+    /// The Order whose label, shipment or return is on its way.
     working_on: Option<RecordId>,
+    shipping: Option<ShipmentForm>,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -511,9 +543,10 @@ impl OrdersScreen {
             products: Vec::new(),
             last_sync: None,
             settings: OrderSettings::default(),
-            connection: None,
+            states: Vec::new(),
             syncing: false,
             working_on: None,
+            shipping: None,
             reads: 0,
             outcome: None,
             channel_filter: ChannelFilter::default(),
@@ -530,7 +563,7 @@ impl OrdersScreen {
         else {
             return;
         };
-        let connections = cx.global::<AppConnections>().0.clone();
+        let reach = sales_channels::reach(cx);
         let product_ads = ads::product_ads(cx);
         self.reads += 1;
         let read = self.reads;
@@ -549,7 +582,7 @@ impl OrdersScreen {
                 products: catalog.products().await.map_err(|e| catalog::failure(&e))?,
                 last_sync: orders.last_sync().await.map_err(|e| failure(&e))?,
                 settings: orders.settings().await.map_err(|e| failure(&e))?,
-                connection: connections.state(Connection::MercadoLivre),
+                states: reach.states(),
             })
         });
         cx.spawn(async move |this, cx| {
@@ -569,7 +602,7 @@ impl OrdersScreen {
                         this.products = snapshot.products;
                         this.last_sync = snapshot.last_sync;
                         this.settings = snapshot.settings;
-                        this.connection = Some(snapshot.connection);
+                        this.states = snapshot.states;
                     }
                     Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
                 }
@@ -592,7 +625,9 @@ impl OrdersScreen {
                 this.outcome = Some(match &outcome {
                     Ok(Some(round)) => Outcome::Done(synced_text(&round.synced).into()),
                     Ok(None) => Outcome::Failed(
-                        mercado_livre::failure(&mascate_kernel::PlatformError::NotConnected).into(),
+                        "Conecte uma conta de vendedor em Configurações › Conexões para \
+                         sincronizar."
+                            .into(),
                     ),
                     Err(error) => Outcome::Failed(error.clone().into()),
                 });
@@ -605,8 +640,80 @@ impl OrdersScreen {
         cx.notify();
     }
 
-    fn connected(&self) -> bool {
-        self.connection == Some(ConnectionState::Connected)
+    fn connected_on(&self, kind: SalesChannelKind) -> bool {
+        self.states
+            .iter()
+            .any(|(channel, state)| *channel == kind && *state == ConnectionState::Connected)
+    }
+
+    /// Opens the shipment form of `order`, with the usual carrier filled in.
+    fn open_shipment(&mut self, order: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let carrier = input("Transportadora", window, cx);
+        carrier.update(cx, |input, cx| input.set_value(USUAL_CARRIER, window, cx));
+        let tracking = input("Código de rastreio", window, cx);
+        self.shipping = Some(ShipmentForm {
+            order,
+            carrier,
+            tracking,
+        });
+        self.outcome = None;
+        cx.notify();
+    }
+
+    /// Tells the Order's channel the carrier and tracking code typed in the
+    /// shipment form, off the UI thread.
+    fn confirm_shipment(&mut self, cx: &mut Context<Self>) {
+        let (Some(orders), Some(form)) = (orders(cx), self.shipping.as_ref()) else {
+            return;
+        };
+        let order = form.order;
+        let Some(channel) = self
+            .orders
+            .iter()
+            .find(|found| found.id == order)
+            .map(|found| found.channel)
+        else {
+            return;
+        };
+        let Some(shipments) = sales_channels::of(cx, channel).and_then(|ports| ports.shipments)
+        else {
+            return;
+        };
+        let carrier = form.carrier.read(cx).value().to_string();
+        let tracking = form.tracking.read(cx).value().to_string();
+        self.working_on = Some(order);
+        self.outcome = None;
+        let confirming = cx.background_executor().spawn(async move {
+            orders
+                .confirm_shipment(shipments.as_ref(), order, &carrier, &tracking)
+                .await
+                .map_err(|e| failure_on(channel, &e))
+        });
+        cx.spawn(async move |this, cx| {
+            let confirmed = confirming.await;
+            let _ = this.update(cx, |this, cx| {
+                this.working_on = None;
+                this.outcome = Some(match confirmed {
+                    Ok(sent) => {
+                        this.shipping = None;
+                        Outcome::Done(
+                            format!(
+                                "Envio confirmado {}: {}, rastreio {}. O comprador já pode \
+                                 acompanhar o pacote.",
+                                sales_channels::to(channel),
+                                sent.carrier,
+                                sent.tracking_code
+                            )
+                            .into(),
+                        )
+                    }
+                    Err(error) => Outcome::Failed(error.into()),
+                });
+                this.refresh(cx);
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn print_label(&mut self, order: RecordId, channel: SalesChannelKind, cx: &mut Context<Self>) {
@@ -691,7 +798,7 @@ impl OrdersScreen {
                     .primary()
                     .small()
                     .loading(self.syncing)
-                    .disabled(self.syncing || !self.connected())
+                    .disabled(self.syncing || !sales_channels::any_connected(&self.states))
                     .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
             )
             .into_any_element()
@@ -700,6 +807,7 @@ impl OrdersScreen {
     fn render_order(&self, index: usize, order: &Order, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let sold = &order.sold;
+        let ships_itself = ships_itself(order.channel, cx);
         let mut facts = vec![catalog::day_and_time(sold.ordered_at)];
         facts.extend(sold.pack.as_ref().map(|pack| format!("carrinho {pack}")));
         let buyer = match (&sold.buyer, order.buyer_data_erased_at) {
@@ -711,18 +819,16 @@ impl OrdersScreen {
             (Some(buyer), None) => {
                 let mut parts: Vec<String> = buyer.nickname.iter().cloned().collect();
                 if let Some(receiver) = &buyer.receiver {
-                    let mut to = receiver.name.clone();
-                    let place: Vec<&str> = [receiver.city.as_deref(), receiver.state.as_deref()]
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                    if !place.is_empty() {
-                        to.push_str(&format!(", {}", place.join(" / ")));
-                    }
-                    parts.push(format!("para {to}"));
+                    parts.push(format!("para {}", receiver_text(receiver, ships_itself)));
                 }
                 parts.join(" · ")
             }
+            // Amazon tells the address only to a seller with the role to
+            // ship to its buyers.
+            (None, None) if ships_itself => format!(
+                "Endereço de entrega só no painel {}",
+                sales_channels::of_channel(order.channel)
+            ),
             (None, None) => "Comprador sem dados".into(),
         };
         let shipment = sold.shipment.as_ref().map(|shipment| {
@@ -790,8 +896,8 @@ impl OrdersScreen {
             .into_any_element()
     }
 
-    /// The label to print while the Order waits for dispatch, and the
-    /// owner's word on units on their way back.
+    /// The label to print, or the shipment to confirm, while the Order
+    /// waits for dispatch, and the owner's word on units on their way back.
     fn render_actions(
         &self,
         index: usize,
@@ -812,13 +918,64 @@ impl OrdersScreen {
         if !waiting && awaiting == 0 {
             return None;
         }
+        let ports = sales_channels::of(cx, channel);
+        let prints_label = ports.as_ref().is_some_and(|ports| ports.labels.is_some());
+        let confirms = ports
+            .as_ref()
+            .is_some_and(|ports| ports.shipments.is_some());
+        let connected = self.connected_on(channel);
+        let form = self
+            .shipping
+            .as_ref()
+            .filter(|form| form.order == id && waiting && confirms);
         let key = |name: &'static str| (name, index);
         Some(
             h_flex()
                 .flex_wrap()
                 .gap_2()
                 .items_center()
-                .when(waiting, |row| {
+                .when(waiting && confirms && form.is_none(), |row| {
+                    row.child(
+                        Button::new(key("open-shipment"))
+                            .label("Confirmar envio")
+                            .icon(IconName::Check)
+                            .outline()
+                            .small()
+                            .disabled(busy || !connected)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_shipment(id, window, cx)
+                            })),
+                    )
+                })
+                .children(form.map(|form| {
+                    h_flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .items_center()
+                        .child(div().w(px(160.)).child(Input::new(&form.carrier).small()))
+                        .child(div().w(px(220.)).child(Input::new(&form.tracking).small()))
+                        .child(
+                            Button::new(key("confirm-shipment"))
+                                .label(format!("Confirmar {}", sales_channels::on(channel)))
+                                .primary()
+                                .small()
+                                .loading(self.working_on == Some(id))
+                                .disabled(busy || !connected)
+                                .on_click(cx.listener(|this, _, _, cx| this.confirm_shipment(cx))),
+                        )
+                        .child(
+                            Button::new(key("cancel-shipment"))
+                                .label("Cancelar")
+                                .ghost()
+                                .small()
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.shipping = None;
+                                    cx.notify();
+                                })),
+                        )
+                }))
+                .when(waiting && prints_label, |row| {
                     row.child(
                         Button::new(key("print-label"))
                             .label("Baixar etiqueta")
@@ -826,7 +983,7 @@ impl OrdersScreen {
                             .outline()
                             .small()
                             .loading(self.working_on == Some(id))
-                            .disabled(busy || !self.connected())
+                            .disabled(busy || !connected)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| {
                                     this.print_label(id, channel, cx)
@@ -955,6 +1112,32 @@ impl OrdersScreen {
     }
 }
 
+/// Whether the owner ships the channel's Orders through a carrier of their
+/// own, confirming each shipment in the app.
+fn ships_itself(kind: SalesChannelKind, cx: &App) -> bool {
+    sales_channels::of(cx, kind).is_some_and(|ports| ports.shipments.is_some())
+}
+
+/// "Ana Souza, São Paulo / SP", with the street and the CEP when the owner
+/// ships the package themselves.
+fn receiver_text(receiver: &Receiver, ships_itself: bool) -> String {
+    let mut parts = vec![receiver.name.clone()];
+    if ships_itself {
+        parts.extend(receiver.address.clone());
+    }
+    let place: Vec<&str> = [receiver.city.as_deref(), receiver.state.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    if !place.is_empty() {
+        parts.push(place.join(" / "));
+    }
+    if ships_itself && let Some(zip_code) = &receiver.zip_code {
+        parts.push(format!("CEP {zip_code}"));
+    }
+    parts.join(", ")
+}
+
 fn status_name(status: OrderStatus) -> &'static str {
     match status {
         OrderStatus::AwaitingPayment => "Aguardando pagamento",
@@ -1002,12 +1185,10 @@ impl Render for OrdersScreen {
             return layout::screen(parts, cx);
         }
         parts.actions.push(self.render_sync(cx));
-        if let Some(state) = &self.connection
-            && *state != ConnectionState::Connected
-        {
+        for notice_text in sales_channels::connection_notices(&self.states) {
             parts
                 .notices
-                .push(kit::info_notice(mercado_livre::not_connected(state), cx).into_any_element());
+                .push(kit::info_notice(notice_text, cx).into_any_element());
         }
         match &self.outcome {
             Some(outcome) => parts.notices.push(notice(outcome, cx)),
@@ -1065,9 +1246,9 @@ impl Render for OrdersScreen {
                 .children(chips)
                 .when(self.orders.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(format!(
-                        "Nenhum pedido ainda. Com a conta do Mercado Livre conectada, o app busca \
-                         os pedidos ao abrir e a cada {} minutos, também na bandeja; cada pedido \
-                         novo dá baixa no estoque e chega como notificação.",
+                        "Nenhum pedido ainda. Com um canal de venda conectado em Configurações › \
+                         Conexões, o app busca os pedidos ao abrir e a cada {} minutos, também na \
+                         bandeja; cada pedido novo dá baixa no estoque e chega como notificação.",
                         self.settings.sync_every_minutes
                     )))
                 })
@@ -1267,6 +1448,43 @@ mod tests {
             }),
             "1 pedido alterado. 1 pedido cancelado antes do envio devolveu as unidades ao \
              estoque."
+        );
+    }
+
+    #[test]
+    fn the_receiver_shows_the_whole_address_when_the_owner_ships_the_package() {
+        let receiver = Receiver {
+            name: "Ana Souza".into(),
+            address: Some("Rua das Flores, 123, apto 4".into()),
+            city: Some("São Paulo".into()),
+            state: Some("SP".into()),
+            zip_code: Some("01310-100".into()),
+        };
+
+        assert_eq!(receiver_text(&receiver, false), "Ana Souza, São Paulo / SP");
+        assert_eq!(
+            receiver_text(&receiver, true),
+            "Ana Souza, Rua das Flores, 123, apto 4, São Paulo / SP, CEP 01310-100"
+        );
+    }
+
+    #[test]
+    fn a_failure_on_a_channel_names_it_and_the_apps_own_does_not() {
+        assert_eq!(
+            failure_on(
+                SalesChannelKind::Amazon,
+                &OrderError::Platform(mascate_kernel::PlatformError::RateLimited)
+            ),
+            "A Amazon pediu para esperar antes de consultar de novo. Tente daqui a alguns \
+             minutos; o que já foi lido ficou salvo."
+        );
+        assert_eq!(
+            failure_on(SalesChannelKind::Amazon, &OrderError::NoTracking),
+            "Digite a transportadora e o código de rastreio, cada um com até 64 caracteres."
+        );
+        assert!(
+            failure_on(SalesChannelKind::Amazon, &OrderError::NotAwaitingShipment)
+                .starts_with("Este pedido não está esperando envio")
         );
     }
 

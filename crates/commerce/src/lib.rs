@@ -13,6 +13,7 @@ mod pricing;
 mod promotions;
 mod purchase_orders;
 mod releases;
+mod shipments;
 mod stock_mirror;
 
 pub use channels::{ChannelRanking, OnSalesChannel};
@@ -54,6 +55,7 @@ pub use purchase_orders::{
     PurchaseOrderStatus, PurchaseOrders, Receipt, ReceivedLine, Receiving,
 };
 pub use releases::{ChannelPayments, PaymentRelease, ReleaseImport};
+pub use shipments::{ChannelShipments, SentShipment};
 pub use stock_mirror::{MirroredStock, StockMirror, StockNotSent, StockSend, StockSent};
 
 use mascate_platform::{ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
@@ -69,8 +71,21 @@ pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     shows: ReminderShows::Always,
 };
 
+/// Raised while the owner has a sale on Amazon (#127): the invoice is a
+/// fiscal matter that never holds an Order back.
+pub const AMAZON_SALE_INVOICE: Reminder = Reminder {
+    key: "commerce.amazon_sale_invoice",
+    topic: ReminderTopic::Fiscal,
+    title: "NF-e das vendas na Amazon",
+    text: "Quem vende com CNPJ emite a NF-e de cada pedido da Amazon antes do envio e informa \
+           a nota no Seller Central. Sem CNPJ, o app segue com os pedidos, a baixa no estoque e \
+           a confirmação do envio normalmente; ao abrir o CNPJ, passe a emitir as notas.",
+    reappears_after_days: 30,
+    shows: ReminderShows::WhenRaised,
+};
+
 /// This module's Reminders.
-pub const REMINDERS: &[Reminder] = &[BUYER_PERSONAL_DATA];
+pub const REMINDERS: &[Reminder] = &[BUYER_PERSONAL_DATA, AMAZON_SALE_INVOICE];
 
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {

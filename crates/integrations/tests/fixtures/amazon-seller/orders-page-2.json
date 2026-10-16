@@ -1,0 +1,452 @@
+{
+  "orders": [
+    {
+      "orderId": "703-1234567-1234567",
+      "createdTime": "2026-10-15T09:00:00Z",
+      "lastUpdatedTime": "2026-10-16T09:30:00Z",
+      "programs": [],
+      "salesChannel": {
+        "channelName": "AMAZON",
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "marketplaceName": "Amazon.com.br"
+      },
+      "proceeds": {
+        "grandTotal": {
+          "amount": "0.00",
+          "currencyCode": "BRL"
+        },
+        "breakdowns": []
+      },
+      "fulfillment": {
+        "fulfillmentStatus": "CANCELLED",
+        "fulfilledBy": "MERCHANT"
+      },
+      "orderItems": [
+        {
+          "orderItemId": "10000000000004",
+          "quantityOrdered": 1,
+          "programs": [],
+          "product": {
+            "asin": "B0CCANECA1",
+            "title": "Caneca de Cerâmica 350 ml",
+            "sellerSku": "CANECA-01",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "39.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "39.90",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "39.90",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 0,
+            "quantityUnfulfilled": 0
+          }
+        },
+        {
+          "orderItemId": "10000000000005",
+          "quantityOrdered": 0,
+          "programs": [],
+          "product": {
+            "asin": "B0CFONE001",
+            "title": "Fone de Ouvido Bluetooth Mascate Preto",
+            "sellerSku": "FONE-BT-001",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "129.90",
+                "currencyCode": "BRL"
+              }
+            }
+          }
+        }
+      ],
+      "packages": []
+    },
+    {
+      "orderId": "704-1234567-1234567",
+      "createdTime": "2026-10-10T14:00:00Z",
+      "lastUpdatedTime": "2026-10-16T08:00:00Z",
+      "programs": [],
+      "salesChannel": {
+        "channelName": "AMAZON",
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "marketplaceName": "Amazon.com.br"
+      },
+      "recipient": {
+        "deliveryAddress": {
+          "name": "Ana Souza",
+          "companyName": "",
+          "addressLine1": "Rua da Aurora, 100",
+          "addressLine2": "ap 12",
+          "addressLine3": "",
+          "city": "Recife",
+          "districtOrCounty": "Boa Vista",
+          "stateOrRegion": "PE",
+          "municipality": "Recife",
+          "postalCode": "50050-000",
+          "countryCode": "BR",
+          "phone": "+55 81 99999-0000",
+          "addressType": "RESIDENTIAL",
+          "extendedFields": {
+            "streetName": "Rua da Aurora",
+            "streetNumber": "100",
+            "complement": "ap 12",
+            "neighborhood": "Boa Vista"
+          }
+        }
+      },
+      "proceeds": {
+        "grandTotal": {
+          "amount": "129.90",
+          "currencyCode": "BRL"
+        },
+        "breakdowns": [
+          {
+            "type": "ITEM",
+            "subtotal": {
+              "amount": "129.90",
+              "currencyCode": "BRL"
+            }
+          }
+        ]
+      },
+      "fulfillment": {
+        "fulfillmentStatus": "SHIPPED",
+        "fulfilledBy": "MERCHANT",
+        "shipByWindow": {
+          "latestDateTime": "2026-10-11T23:59:59Z"
+        }
+      },
+      "orderItems": [
+        {
+          "orderItemId": "10000000000006",
+          "quantityOrdered": 1,
+          "programs": [],
+          "product": {
+            "asin": "B0CFONE001",
+            "title": "Fone de Ouvido Bluetooth Mascate Preto",
+            "sellerSku": "FONE-BT-001",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "129.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "129.90",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "129.90",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 1,
+            "quantityUnfulfilled": 0
+          }
+        }
+      ],
+      "packages": [
+        {
+          "packageReferenceId": "1",
+          "createdTime": "2026-10-11T10:00:00Z",
+          "packageStatus": {
+            "status": "DELIVERED",
+            "detailedStatus": "DELIVERED"
+          },
+          "carrier": "Correios",
+          "shipTime": "2026-10-11T15:00:00Z",
+          "trackingNumber": "AA123456785BR",
+          "packageItems": [
+            {
+              "orderItemId": "10000000000006",
+              "quantity": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "orderId": "705-1234567-1234567",
+      "createdTime": "2026-10-12T14:00:00Z",
+      "lastUpdatedTime": "2026-10-16T07:00:00Z",
+      "programs": [],
+      "salesChannel": {
+        "channelName": "AMAZON",
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "marketplaceName": "Amazon.com.br"
+      },
+      "proceeds": {
+        "grandTotal": {
+          "amount": "39.90",
+          "currencyCode": "BRL"
+        },
+        "breakdowns": [
+          {
+            "type": "ITEM",
+            "subtotal": {
+              "amount": "39.90",
+              "currencyCode": "BRL"
+            }
+          }
+        ]
+      },
+      "fulfillment": {
+        "fulfillmentStatus": "CANCELLED",
+        "fulfilledBy": "MERCHANT"
+      },
+      "orderItems": [
+        {
+          "orderItemId": "10000000000007",
+          "quantityOrdered": 1,
+          "programs": [],
+          "product": {
+            "asin": "B0CCANECA1",
+            "title": "Caneca de Cerâmica 350 ml",
+            "sellerSku": "CANECA-01",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "39.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "39.90",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "39.90",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 1,
+            "quantityUnfulfilled": 0
+          }
+        }
+      ],
+      "packages": [
+        {
+          "packageReferenceId": "1",
+          "packageStatus": {
+            "status": "IN_TRANSIT",
+            "detailedStatus": "PICKED_UP"
+          },
+          "carrier": "Correios",
+          "shipTime": "2026-10-13T15:00:00Z",
+          "trackingNumber": "AA123456794BR"
+        }
+      ]
+    },
+    {
+      "orderId": "701-1234567-1234567",
+      "createdTime": "2026-10-16T10:15:00Z",
+      "lastUpdatedTime": "2026-10-16T10:20:00Z",
+      "programs": [],
+      "salesChannel": {
+        "channelName": "AMAZON",
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "marketplaceName": "Amazon.com.br"
+      },
+      "recipient": {
+        "deliveryAddress": {
+          "name": "Ana Souza",
+          "companyName": "",
+          "addressLine1": "Rua da Aurora, 100",
+          "addressLine2": "ap 12",
+          "addressLine3": "",
+          "city": "Recife",
+          "districtOrCounty": "Boa Vista",
+          "stateOrRegion": "PE",
+          "municipality": "Recife",
+          "postalCode": "50050-000",
+          "countryCode": "BR",
+          "phone": "+55 81 99999-0000",
+          "addressType": "RESIDENTIAL",
+          "extendedFields": {
+            "streetName": "Rua da Aurora",
+            "streetNumber": "100",
+            "complement": "ap 12",
+            "neighborhood": "Boa Vista"
+          }
+        }
+      },
+      "proceeds": {
+        "grandTotal": {
+          "amount": "294.70",
+          "currencyCode": "BRL"
+        },
+        "breakdowns": [
+          {
+            "type": "ITEM",
+            "subtotal": {
+              "amount": "299.70",
+              "currencyCode": "BRL"
+            }
+          },
+          {
+            "type": "DISCOUNT",
+            "subtotal": {
+              "amount": "-20.00",
+              "currencyCode": "BRL"
+            }
+          },
+          {
+            "type": "SHIPPING",
+            "subtotal": {
+              "amount": "15.00",
+              "currencyCode": "BRL"
+            }
+          }
+        ]
+      },
+      "fulfillment": {
+        "fulfillmentStatus": "UNSHIPPED",
+        "fulfilledBy": "MERCHANT",
+        "fulfillmentServiceLevel": "STANDARD",
+        "shipByWindow": {
+          "earliestDateTime": "2026-10-16T10:15:00Z",
+          "latestDateTime": "2026-10-17T23:59:59Z"
+        },
+        "deliverByWindow": {
+          "earliestDateTime": "2026-10-20T00:00:00Z",
+          "latestDateTime": "2026-10-24T23:59:59Z"
+        }
+      },
+      "orderItems": [
+        {
+          "orderItemId": "10000000000001",
+          "quantityOrdered": 2,
+          "programs": [],
+          "product": {
+            "asin": "B0CFONE001",
+            "title": "Fone de Ouvido Bluetooth Mascate Preto",
+            "sellerSku": "FONE-BT-001",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "129.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "259.80",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "259.80",
+                  "currencyCode": "BRL"
+                }
+              },
+              {
+                "type": "DISCOUNT",
+                "subtotal": {
+                  "amount": "-20.00",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 0,
+            "quantityUnfulfilled": 2
+          }
+        },
+        {
+          "orderItemId": "10000000000002",
+          "quantityOrdered": 1,
+          "programs": [],
+          "product": {
+            "asin": "B0CCANECA1",
+            "title": "Caneca de Cerâmica 350 ml",
+            "sellerSku": "CANECA-01",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "39.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "39.90",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "39.90",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 0,
+            "quantityUnfulfilled": 1
+          }
+        }
+      ],
+      "packages": []
+    }
+  ],
+  "lastUpdatedBefore": "2026-10-16T11:58:00Z"
+}

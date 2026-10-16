@@ -1,0 +1,99 @@
+{
+  "payload": {
+    "nextToken": "dHJhbnNhY3Rpb25zLTI",
+    "transactions": [
+      {
+        "sellingPartnerMetadata": {
+          "sellingPartnerId": "A1MASCATE0SELLER",
+          "accountType": "Standard Orders",
+          "marketplaceId": "A2Q3Y263D00KWC"
+        },
+        "relatedIdentifiers": [
+          {
+            "relatedIdentifierName": "ORDER_ID",
+            "relatedIdentifierValue": "701-1234567-1234567"
+          },
+          {
+            "relatedIdentifierName": "SHIPMENT_ID",
+            "relatedIdentifierValue": "DXxxYz9k1"
+          }
+        ],
+        "transactionType": "Shipment",
+        "transactionId": "amzn1.tid.701-payment",
+        "transactionStatus": "DEFERRED",
+        "description": "Order Payment",
+        "postedDate": "2026-10-18T09:00:00Z",
+        "totalAmount": {
+          "currencyCode": "BRL",
+          "currencyAmount": 242.75
+        },
+        "marketplaceDetails": {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "marketplaceName": "Amazon.com.br"
+        },
+        "items": [],
+        "breakdowns": [
+          {
+            "breakdownType": "Sales",
+            "breakdownAmount": {
+              "currencyCode": "BRL",
+              "currencyAmount": 294.7
+            },
+            "breakdowns": [
+              {
+                "breakdownType": "ProductCharges",
+                "breakdownAmount": {
+                  "currencyCode": "BRL",
+                  "currencyAmount": 279.7
+                },
+                "breakdowns": []
+              },
+              {
+                "breakdownType": "Shipping",
+                "breakdownAmount": {
+                  "currencyCode": "BRL",
+                  "currencyAmount": 15.0
+                },
+                "breakdowns": []
+              }
+            ]
+          },
+          {
+            "breakdownType": "Expenses",
+            "breakdownAmount": {
+              "currencyCode": "BRL",
+              "currencyAmount": -51.95
+            },
+            "breakdowns": [
+              {
+                "breakdownType": "AmazonFees",
+                "breakdownAmount": {
+                  "currencyCode": "BRL",
+                  "currencyAmount": -51.95
+                },
+                "breakdowns": [
+                  {
+                    "breakdownType": "Commission",
+                    "breakdownAmount": {
+                      "currencyCode": "BRL",
+                      "currencyAmount": -41.96
+                    },
+                    "breakdowns": []
+                  },
+                  {
+                    "breakdownType": "ShippingChargeback",
+                    "breakdownAmount": {
+                      "currencyCode": "BRL",
+                      "currencyAmount": -9.99
+                    },
+                    "breakdowns": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -297,6 +297,32 @@ impl SalesSummary {
             without_cost: sales.len() - costed.len(),
         })
     }
+
+    /// The period's sales summed up channel by channel, for each channel
+    /// that sold in it. The Product Ads no sale took stay out: they show in
+    /// the period's own summary only.
+    pub fn by_channel(
+        period: &SalesPeriod,
+        currency: Currency,
+    ) -> Result<Vec<(SalesChannelKind, Self)>, CurrencyMismatch> {
+        let mut by_channel: BTreeMap<SalesChannelKind, Vec<Sale>> = BTreeMap::new();
+        for sale in &period.sales {
+            by_channel
+                .entry(sale.order.channel)
+                .or_default()
+                .push(sale.clone());
+        }
+        by_channel
+            .into_iter()
+            .map(|(channel, sales)| {
+                let of_channel = SalesPeriod {
+                    sales,
+                    unplaced_ads: Vec::new(),
+                };
+                Ok((channel, Self::of(&of_channel, currency)?))
+            })
+            .collect()
+    }
 }
 
 /// An Order's state as the billing import reads it.

@@ -190,3 +190,217 @@ pub(super) struct FeesMoney {
     pub currency_code: String,
     pub amount: Amount,
 }
+
+/// One page of `searchOrders` (Orders 2026-01-01).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderSearch {
+    #[serde(default)]
+    pub orders: Vec<OrderAnswer>,
+    pub pagination: Option<Pagination>,
+}
+
+/// The answer to `getOrder` (Orders 2026-01-01).
+#[derive(Debug, Deserialize)]
+pub(super) struct OrderFound {
+    pub order: OrderAnswer,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderAnswer {
+    pub order_id: String,
+    pub created_time: String,
+    pub last_updated_time: String,
+    pub recipient: Option<Recipient>,
+    pub proceeds: Option<OrderProceeds>,
+    pub fulfillment: Option<OrderFulfillment>,
+    #[serde(default)]
+    pub order_items: Vec<OrderItem>,
+    #[serde(default)]
+    pub packages: Vec<OrderPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Recipient {
+    pub delivery_address: Option<DeliveryAddress>,
+}
+
+/// Only what shipping needs is read: no phone, no company, no tax id.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DeliveryAddress {
+    pub name: Option<String>,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub address_line3: Option<String>,
+    pub city: Option<String>,
+    pub state_or_region: Option<String>,
+    pub postal_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderProceeds {
+    pub grand_total: Option<Price>,
+    #[serde(default)]
+    pub breakdowns: Vec<ProceedsBreakdown>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProceedsBreakdown {
+    /// `ITEM`, `SHIPPING`, `DISCOUNT`, `TAX` and others.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub subtotal: Price,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderFulfillment {
+    pub fulfillment_status: String,
+    pub ship_by_window: Option<TimeWindow>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TimeWindow {
+    pub latest_date_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderItem {
+    pub order_item_id: String,
+    pub quantity_ordered: u32,
+    pub product: ItemProduct,
+    pub proceeds: Option<ItemProceeds>,
+    pub fulfillment: Option<ItemFulfillment>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ItemProduct {
+    pub asin: Option<String>,
+    pub title: Option<String>,
+    pub seller_sku: Option<String>,
+    pub price: Option<ItemPrice>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ItemPrice {
+    pub unit_price: Option<Price>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ItemProceeds {
+    #[serde(default)]
+    pub breakdowns: Vec<ProceedsBreakdown>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ItemFulfillment {
+    pub quantity_fulfilled: Option<u32>,
+    pub quantity_unfulfilled: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OrderPackage {
+    pub package_status: Option<PackageStatus>,
+    pub ship_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PackageStatus {
+    pub status: String,
+    pub detailed_status: Option<String>,
+}
+
+/// One page of `listTransactions` (Finances 2024-06-19).
+#[derive(Debug, Deserialize)]
+pub(super) struct TransactionsAnswer {
+    pub payload: Option<TransactionsPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TransactionsPayload {
+    pub next_token: Option<String>,
+    #[serde(default)]
+    pub transactions: Vec<Transaction>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Transaction {
+    pub transaction_id: Option<String>,
+    pub description: Option<String>,
+    pub posted_date: Option<String>,
+    #[serde(default)]
+    pub related_identifiers: Vec<RelatedIdentifier>,
+    #[serde(default)]
+    pub breakdowns: Breakdowns,
+    #[serde(default)]
+    pub items: Vec<TransactionItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RelatedIdentifier {
+    pub related_identifier_name: Option<String>,
+    pub related_identifier_value: Option<String>,
+}
+
+/// The reference lists a transaction's breakdowns; its full example wraps
+/// them in an object: either reads.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum Breakdowns {
+    List(Vec<Breakdown>),
+    Wrapped {
+        #[serde(default)]
+        breakdowns: Vec<Breakdown>,
+    },
+}
+
+impl Default for Breakdowns {
+    fn default() -> Self {
+        Breakdowns::List(Vec::new())
+    }
+}
+
+impl Breakdowns {
+    pub fn list(&self) -> &[Breakdown] {
+        match self {
+            Breakdowns::List(list) | Breakdowns::Wrapped { breakdowns: list } => list,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TransactionItem {
+    #[serde(default)]
+    pub breakdowns: Vec<Breakdown>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Breakdown {
+    pub breakdown_type: Option<String>,
+    pub breakdown_amount: Option<FinanceAmount>,
+    #[serde(default)]
+    pub breakdowns: Vec<Breakdown>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct FinanceAmount {
+    pub currency_code: String,
+    pub currency_amount: Amount,
+}

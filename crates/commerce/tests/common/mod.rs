@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex};
 use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
     ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
-    ChannelOrders, ChannelPayments, ChannelStock, FeeBasis, ListingPublisher, ListingStatus,
-    ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing, Receiver,
-    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
+    ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock, FeeBasis, ListingPublisher,
+    ListingStatus, ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing,
+    Receiver, Requirement, SaleFee, SalesChannel, SentShipment, Shipment, ShipmentStatus,
+    ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
@@ -118,6 +119,9 @@ pub struct Channel {
     pub payments: Mutex<Vec<PaymentRelease>>,
     /// The Orders each read of the wallet asked about, in order.
     pub payments_asked: Mutex<Vec<Vec<String>>>,
+    /// Each Order whose shipment was confirmed, with what was sent, in
+    /// order.
+    pub shipments_confirmed: Mutex<Vec<(String, SentShipment)>>,
 }
 
 impl Default for Channel {
@@ -158,6 +162,7 @@ impl Default for Channel {
             category_failure: Mutex::default(),
             payments: Mutex::default(),
             payments_asked: Mutex::default(),
+            shipments_confirmed: Mutex::default(),
         }
     }
 }
@@ -436,6 +441,17 @@ impl ChannelBilling for Channel {
             .filter(|billed| orders.contains(&billed.order))
             .cloned()
             .collect())
+    }
+}
+
+impl ChannelShipments for Channel {
+    fn confirm_shipment(&self, order: &str, sent: &SentShipment) -> Result<(), PlatformError> {
+        self.check()?;
+        self.shipments_confirmed
+            .lock()
+            .unwrap()
+            .push((order.to_owned(), sent.clone()));
+        Ok(())
     }
 }
 

@@ -1,0 +1,154 @@
+{
+  "orders": [
+    {
+      "orderId": "701-1234567-1234567",
+      "createdTime": "2026-10-16T10:15:00Z",
+      "lastUpdatedTime": "2026-10-16T10:20:00Z",
+      "programs": [],
+      "salesChannel": {
+        "channelName": "AMAZON",
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "marketplaceName": "Amazon.com.br"
+      },
+      "recipient": {
+        "deliveryAddress": {
+          "city": "Recife",
+          "stateOrRegion": "PE",
+          "postalCode": "50050-000",
+          "countryCode": "BR"
+        }
+      },
+      "proceeds": {
+        "grandTotal": {
+          "amount": "294.70",
+          "currencyCode": "BRL"
+        },
+        "breakdowns": [
+          {
+            "type": "ITEM",
+            "subtotal": {
+              "amount": "299.70",
+              "currencyCode": "BRL"
+            }
+          },
+          {
+            "type": "DISCOUNT",
+            "subtotal": {
+              "amount": "-20.00",
+              "currencyCode": "BRL"
+            }
+          },
+          {
+            "type": "SHIPPING",
+            "subtotal": {
+              "amount": "15.00",
+              "currencyCode": "BRL"
+            }
+          }
+        ]
+      },
+      "fulfillment": {
+        "fulfillmentStatus": "UNSHIPPED",
+        "fulfilledBy": "MERCHANT",
+        "fulfillmentServiceLevel": "STANDARD",
+        "shipByWindow": {
+          "earliestDateTime": "2026-10-16T10:15:00Z",
+          "latestDateTime": "2026-10-17T23:59:59Z"
+        },
+        "deliverByWindow": {
+          "earliestDateTime": "2026-10-20T00:00:00Z",
+          "latestDateTime": "2026-10-24T23:59:59Z"
+        }
+      },
+      "orderItems": [
+        {
+          "orderItemId": "10000000000001",
+          "quantityOrdered": 2,
+          "programs": [],
+          "product": {
+            "asin": "B0CFONE001",
+            "title": "Fone de Ouvido Bluetooth Mascate Preto",
+            "sellerSku": "FONE-BT-001",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "129.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "259.80",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "259.80",
+                  "currencyCode": "BRL"
+                }
+              },
+              {
+                "type": "DISCOUNT",
+                "subtotal": {
+                  "amount": "-20.00",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 0,
+            "quantityUnfulfilled": 2
+          }
+        },
+        {
+          "orderItemId": "10000000000002",
+          "quantityOrdered": 1,
+          "programs": [],
+          "product": {
+            "asin": "B0CCANECA1",
+            "title": "Caneca de Cerâmica 350 ml",
+            "sellerSku": "CANECA-01",
+            "condition": {
+              "conditionType": "NEW",
+              "conditionSubtype": "NEW"
+            },
+            "price": {
+              "unitPrice": {
+                "amount": "39.90",
+                "currencyCode": "BRL"
+              }
+            }
+          },
+          "proceeds": {
+            "proceedsTotal": {
+              "amount": "39.90",
+              "currencyCode": "BRL"
+            },
+            "breakdowns": [
+              {
+                "type": "ITEM",
+                "subtotal": {
+                  "amount": "39.90",
+                  "currencyCode": "BRL"
+                }
+              }
+            ]
+          },
+          "fulfillment": {
+            "quantityFulfilled": 0,
+            "quantityUnfulfilled": 1
+          }
+        }
+      ],
+      "packages": []
+    }
+  ],
+  "lastUpdatedBefore": "2026-10-16T11:58:00Z"
+}

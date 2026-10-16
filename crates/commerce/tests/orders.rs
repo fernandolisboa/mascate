@@ -1285,3 +1285,194 @@ fn an_order_sync_of_one_channel_never_touches_the_orders_of_another() {
         assert_eq!(fx.units(fone()).await, 9);
     });
 }
+
+/// An Amazon channel whose listing "FONE-1" sells the fones, synced and
+/// linked, with its first Order Sync done.
+async fn on_amazon(fx: &Fixture) -> Channel {
+    let amazon = Channel::on(SalesChannelKind::Amazon);
+    amazon.has(vec![listing("FONE-1", "Fone Bluetooth")]);
+    fx.listings.sync(&amazon).await.unwrap();
+    let found = fx
+        .listings
+        .listings()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|found| found.channel == SalesChannelKind::Amazon)
+        .unwrap();
+    fx.listings.link(found.id, fone()).await.unwrap();
+    fx.later(5);
+    fx.orders.sync(&amazon).await.unwrap();
+    amazon
+}
+
+#[test]
+fn an_amazon_order_read_twice_changes_nothing_and_takes_its_units_once() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = on_amazon(&fx).await;
+        let at = fx.later(1);
+        amazon.sells(order(
+            "701-0000001-0000001",
+            at,
+            vec![sold("FONE-1", None, 2)],
+        ));
+
+        fx.later(5);
+        let first = fx.orders.sync(&amazon).await.unwrap();
+        fx.later(5);
+        let again = fx.orders.sync(&amazon).await.unwrap();
+
+        assert_eq!((first.new, first.taken), (1, 1));
+        assert_eq!(
+            (again.read, again.new, again.changed, again.taken),
+            (1, 0, 0, 0)
+        );
+        assert_eq!(fx.units(fone()).await, 8);
+        assert_eq!(fx.sales_in_ledger(fone()).await, 1);
+    });
+}
+
+#[test]
+fn a_confirmed_shipment_sends_the_carrier_and_tracking_code_once() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = on_amazon(&fx).await;
+        let at = fx.later(1);
+        amazon.sells(order(
+            "701-0000002-0000002",
+            at,
+            vec![sold("FONE-1", None, 1)],
+        ));
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        let sold_order = fx.order("701-0000002-0000002").await;
+
+        let now = fx.later(30);
+        let sent = fx
+            .orders
+            .confirm_shipment(&amazon, sold_order.id, " Correios ", " AA123456789BR ")
+            .await
+            .unwrap();
+
+        assert_eq!(sent.carrier, "Correios");
+        assert_eq!(sent.tracking_code, "AA123456789BR");
+        assert_eq!(sent.shipped_at, now);
+        assert_eq!(
+            *amazon.shipments_confirmed.lock().unwrap(),
+            [("701-0000002-0000002".to_owned(), sent)]
+        );
+        let shipped = fx.order("701-0000002-0000002").await;
+        assert_eq!(
+            shipped.sold.shipment.map(|shipment| shipment.status),
+            Some(ShipmentStatus::Shipped)
+        );
+        // Already shipped: refused before Amazon is asked again.
+        assert!(matches!(
+            fx.orders
+                .confirm_shipment(&amazon, sold_order.id, "Correios", "AA123456789BR")
+                .await,
+            Err(OrderError::NotAwaitingShipment)
+        ));
+        assert_eq!(amazon.shipments_confirmed.lock().unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn a_shipment_is_not_confirmed_without_tracking_on_a_cancelled_order_or_on_another_channel() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = on_amazon(&fx).await;
+        let at = fx.later(1);
+        amazon.sells(order(
+            "701-0000003-0000003",
+            at,
+            vec![sold("FONE-1", None, 1)],
+        ));
+        amazon.sells(order(
+            "701-0000004-0000004",
+            at,
+            vec![sold("FONE-1", None, 1)],
+        ));
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        let ml_order = fx.sold_fones("2000001", 1).await;
+        let waiting = fx.order("701-0000003-0000003").await;
+
+        for (carrier, tracking) in [("Correios", "  "), ("", "AA1"), ("Correios", "AA\n1")] {
+            assert!(matches!(
+                fx.orders
+                    .confirm_shipment(&amazon, waiting.id, carrier, tracking)
+                    .await,
+                Err(OrderError::NoTracking)
+            ));
+        }
+        assert!(matches!(
+            fx.orders
+                .confirm_shipment(&amazon, ml_order.id, "Correios", "AA1")
+                .await,
+            Err(OrderError::OtherChannel { .. })
+        ));
+        let at = fx.later(1);
+        amazon.change_order("701-0000004-0000004", at, |found| {
+            found.status = OrderStatus::Cancelled;
+        });
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        let cancelled = fx.order("701-0000004-0000004").await;
+        assert!(matches!(
+            fx.orders
+                .confirm_shipment(&amazon, cancelled.id, "Correios", "AA1")
+                .await,
+            Err(OrderError::NotAwaitingShipment)
+        ));
+        // A channel that fails leaves the Order waiting for the dispatch.
+        *amazon.failure.lock().unwrap() = Some(PlatformError::RateLimited);
+        assert!(matches!(
+            fx.orders
+                .confirm_shipment(&amazon, waiting.id, "Correios", "AA1")
+                .await,
+            Err(OrderError::Platform(PlatformError::RateLimited))
+        ));
+        assert_eq!(
+            fx.order("701-0000003-0000003")
+                .await
+                .sold
+                .shipment
+                .map(|shipment| shipment.status),
+            Some(ShipmentStatus::ReadyToShip)
+        );
+        assert!(amazon.shipments_confirmed.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn the_amazon_invoice_reminder_is_raised_while_an_amazon_order_stands() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = on_amazon(&fx).await;
+        fx.sold_fones("2000002", 1).await;
+        assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
+
+        let at = fx.later(1);
+        amazon.sells(order(
+            "701-0000005-0000005",
+            at,
+            vec![sold("FONE-1", None, 1)],
+        ));
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        assert_eq!(
+            fx.orders.raised_reminders().await.unwrap(),
+            [mascate_commerce::AMAZON_SALE_INVOICE.key]
+        );
+
+        let at = fx.later(1);
+        amazon.change_order("701-0000005-0000005", at, |found| {
+            found.status = OrderStatus::Cancelled;
+        });
+        fx.later(5);
+        fx.orders.sync(&amazon).await.unwrap();
+        assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
+    });
+}

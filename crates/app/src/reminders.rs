@@ -3,8 +3,9 @@
 //! only while raised, like the sales volume one (#28), checked again on
 //! each Order Sync, the income one of affiliate Commissions (#77),
 //! checked again whenever they change, the disclosure one of Offer Posts
-//! (#102), checked again whenever a post is copied, and the client secret
-//! one of Amazon (#126), while its Connection holds the keys.
+//! (#102), checked again whenever a post is copied, the client secret
+//! one of Amazon (#126), while its Connection holds the keys, and the
+//! invoice one of Amazon sales (#127), checked again on each Order Sync.
 
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use crate::connections::AppConnections;
 use crate::finance::{self, VolumeSources};
 use crate::kit;
 use crate::offer_posts::{PostChanges, offer_posts};
-use crate::orders::OrderSyncs;
+use crate::orders::{self, OrderSyncs};
 
 /// The app's Reminders; absent when the database did not open.
 pub struct AppReminders(pub Arc<Reminders>);
@@ -96,6 +97,7 @@ impl RemindersArea {
         let sources = VolumeSources::of(cx);
         let commissions = affiliate::affiliate(cx);
         let posts = offer_posts(cx);
+        let sales = orders::orders(cx);
         let connections = cx.try_global::<AppConnections>().map(|app| app.0.clone());
         self.reads += 1;
         let read = self.reads;
@@ -108,6 +110,12 @@ impl RemindersArea {
                 match posts.raised_reminders().await {
                     Ok(keys) => raised.extend(keys),
                     Err(error) => eprintln!("could not check the posts for the Reminder: {error}"),
+                }
+            }
+            if let Some(sales) = sales {
+                match sales.raised_reminders().await {
+                    Ok(keys) => raised.extend(keys),
+                    Err(error) => eprintln!("could not check the Orders for the Reminder: {error}"),
                 }
             }
             if let Some(connections) = connections {

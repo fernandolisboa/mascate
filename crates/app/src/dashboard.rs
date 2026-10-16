@@ -7,6 +7,8 @@
 //! at the Average Cost. Next to the margin, the period's approved and paid
 //! affiliate Commissions, read from Affiliate and summed by Finance (#81),
 //! and each linked Product's sale margin against its Commissions (#86).
+//! Under the figures, the period's sales and margin by Sales Channel
+//! (#127).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -47,6 +49,7 @@ use crate::stock;
 /// What a read of the dashboard brings.
 struct Snapshot {
     summary: SalesSummary,
+    by_channel: Vec<(SalesChannelKind, SalesSummary)>,
     lines: Vec<SoldLine>,
     capital: Money,
     units: i64,
@@ -134,6 +137,8 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
     let sold = sources.sales.read(during.clone()).await?;
     let summary = SalesSummary::of(&sold.period, Currency::Brl)
         .map_err(|e| format!("Vendas em moedas diferentes: {e}"))?;
+    let by_channel = SalesSummary::by_channel(&sold.period, Currency::Brl)
+        .map_err(|e| format!("Vendas em moedas diferentes: {e}"))?;
     let stock = sources
         .inventory
         .stock()
@@ -171,6 +176,7 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         resell_or_promote::compare_linked(&sources.affiliate, &sold, &commissions).await?;
     Ok(Snapshot {
         summary,
+        by_channel,
         lines: sold.lines,
         capital,
         units: stock.units(),
@@ -445,8 +451,8 @@ impl DashboardScreen {
                 .gap_3()
                 .child(kit::section_heading("Margem por produto e categoria"))
                 .child(div().text_sm().text_color(t.text2).child(
-                    "Nenhuma venda neste período. As vendas chegam pelo Sync de pedidos do \
-                     Mercado Livre.",
+                    "Nenhuma venda neste período. As vendas chegam pelo Sync de pedidos de \
+                     cada canal de venda conectado.",
                 ))
                 .into_any_element();
         }
@@ -478,16 +484,77 @@ impl DashboardScreen {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(margin_header("Categoria do Mercado Livre", &t))
+                    .child(margin_header("Categoria do anúncio", &t))
                     .children(categories),
             )
             .child(div().text_xs().text_color(t.text2).child(
                 "A margem de cada linha é a realizada: receita menos tarifas, Product Ads, \
                  imposto e custo. Num pedido com mais de um item, receita, tarifas e imposto se \
                  dividem pelo valor de cada item. Vendas sem custo ficam fora da margem; a \
-                 categoria é a do anúncio no Mercado Livre, lida no Sync de anúncios.",
+                 categoria é a do anúncio no seu canal de venda, lida no Sync de anúncios.",
             ))
             .into_any_element()
+    }
+
+    /// Each Sales Channel that sold in the period, with its revenue and
+    /// margin; nothing while none sold.
+    fn render_channels(&self, snapshot: &Snapshot, cx: &App) -> Option<AnyElement> {
+        if snapshot.by_channel.is_empty() {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let header = h_flex()
+            .gap_3()
+            .px_3()
+            .text_xs()
+            .text_color(t.text2)
+            .child(div().flex_1().child("Canal de venda"))
+            .child(money_cell("Pedidos"))
+            .child(money_cell("Receita"))
+            .child(margin_cell().child("Margem"))
+            .child(tag_cell());
+        let rows = snapshot.by_channel.iter().map(|(channel, summary)| {
+            let margin = summary
+                .margin
+                .as_ref()
+                .map_or_else(|| "–".into(), amount_text);
+            let loses = summary
+                .margin
+                .as_ref()
+                .is_some_and(|margin| margin.amount.is_negative());
+            let tag = (summary.provisional > 0).then(|| {
+                kit::tag(
+                    format!("provisória em {}", orders_text(summary.provisional)),
+                    t.accent_text,
+                    cx,
+                )
+            });
+            table_row(&t)
+                .when(loses, |line| line.border_color(t.danger))
+                .child(div().flex_1().min_w_0().font_medium().child(channel.name()))
+                .child(money_cell(summary.orders.to_string()))
+                .child(money_cell(summary.revenue.to_pt_br()))
+                .child(
+                    margin_cell()
+                        .font_semibold()
+                        .text_color(if loses { t.danger } else { t.text })
+                        .child(margin),
+                )
+                .child(tag_cell().children(tag))
+        });
+        Some(
+            v_flex()
+                .gap_3()
+                .child(kit::section_heading("Por canal de venda"))
+                .child(v_flex().gap_2().child(header).children(rows))
+                .child(div().text_xs().text_color(t.text2).child(
+                    "A margem de cada canal é a realizada dos seus pedidos, com as tarifas que o \
+                     canal faturou; enquanto ele não fatura, a tarifa é a estimada e a margem \
+                     fica provisória. O Product Ads que nenhuma venda levou entra só na margem \
+                     do período.",
+                ))
+                .into_any_element(),
+        )
     }
 
     fn render_releases(&self, snapshot: &Snapshot, cx: &App) -> AnyElement {
@@ -662,6 +729,11 @@ fn margin_row<K>(name: String, row: &MarginRow<K>, t: &Tokens, cx: &App) -> AnyE
         .into_any_element()
 }
 
+/// Wide enough for "provisória em 12 pedidos".
+fn tag_cell() -> Div {
+    div().w(px(200.)).flex_none().flex().justify_end()
+}
+
 fn units_text(units: i64) -> String {
     match units {
         1 => "1 unidade em estoque".into(),
@@ -687,6 +759,7 @@ impl Render for DashboardScreen {
         };
         parts.content.push(self.render_figures(&snapshot, cx));
         parts.content.push(self.render_volume(&snapshot.volume, cx));
+        parts.content.extend(self.render_channels(&snapshot, cx));
         parts.content.push(self.render_margins(cx));
         parts
             .content

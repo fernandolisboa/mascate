@@ -1,16 +1,22 @@
-//! Amazon's adapter (#126): the owner's seller account through the Selling
-//! Partner API, as commerce's Sales Channel (ADR 0033). It reads the
+//! Amazon's adapter (#126, #127): the owner's seller account through the
+//! Selling Partner API, as commerce's Sales Channel (ADR 0033). It reads the
 //! listings, sends a price once the owner approves it and the stock that
 //! follows the app's Stock Share, and asks Amazon for the fee of each
 //! listing. Amazon has no pause: taking a listing off sale sends zero
-//! units. Only official endpoints, with the Login with Amazon token alone
-//! (no AWS signing since 2023).
+//! units. It reads the Orders the owner ships, their Fees from Amazon's
+//! finances, and confirms each shipment with its tracking code. Only
+//! official endpoints, with the Login with Amazon token alone (no AWS
+//! signing since 2023).
 
 mod answers;
+mod billing;
+mod orders;
 mod sales_channel;
+mod shipments;
 mod tokens;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use mascate_kernel::{Clock, PlatformError};
@@ -48,6 +54,9 @@ pub struct Amazon {
     store: Arc<dyn SecretStore>,
     pause: Arc<dyn Pause>,
     tokens: Tokens,
+    /// Amazon turned the buyer's address down: the app lacks the
+    /// Direct-to-Consumer Shipping role, so later searches go without it.
+    recipient_refused: AtomicBool,
 }
 
 impl Amazon {
@@ -67,6 +76,7 @@ impl Amazon {
             tokens: Tokens::new(store.clone(), clock),
             store,
             pause: Arc::new(ThreadPause),
+            recipient_refused: AtomicBool::new(false),
         }
     }
 
@@ -122,7 +132,23 @@ impl Amazon {
         query: &[(&str, &str)],
         body: &str,
     ) -> Result<T, PlatformError> {
-        let response = self.signed(path, |token| {
+        read_json(self.request(method, path, query, body)?)
+    }
+
+    /// `POST path` with the JSON `body`, for an operation that answers
+    /// nothing but its success.
+    fn post_without_answer(&self, path: &str, body: &str) -> Result<(), PlatformError> {
+        self.request("POST", path, &[], body).map(drop)
+    }
+
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        query: &[(&str, &str)],
+        body: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, PlatformError> {
+        self.signed(path, |token| {
             let url = format!("{}{path}", self.api);
             let mut request = match method {
                 "PATCH" => self.agent.patch(url),
@@ -135,8 +161,7 @@ impl Amazon {
                 request = request.query(*key, *value);
             }
             request.send(body)
-        })?;
-        read_json(response)
+        })
     }
 
     /// A successful answer to the request `send` makes with the
@@ -209,6 +234,16 @@ fn refusal(response: ureq::http::Response<ureq::Body>) -> String {
         })
         .filter(|why| !why.is_empty())
         .unwrap_or_else(|| "refused".into())
+}
+
+/// An Amazon Order id as a path segment: digits and dashes only, as its
+/// 3-7-7 form, so no other path is ever reached.
+fn order_segment(order: &str) -> Result<&str, PlatformError> {
+    if !order.is_empty() && order.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        Ok(order)
+    } else {
+        Err(PlatformError::NotFound)
+    }
 }
 
 /// `text` as one segment of a path: anything but letters, digits and
