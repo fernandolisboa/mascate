@@ -64,12 +64,13 @@ mod tests {
     use futures::executor::block_on;
     use mascate_catalog::Catalog;
     use mascate_commerce::{
-        Listings, NewPurchaseLine, NewPurchaseOrder, Orders, PurchaseOrders, Receiving, StockMirror,
+        Listings, NewPurchaseLine, NewPurchaseOrder, Orders, PriceAssumptions, Pricing,
+        PurchaseOrders, Receiving, SaleFee, StockMirror,
     };
     use mascate_integrations::Connection;
     use mascate_inventory::{HOME_LOCATION, Inventory};
     use mascate_kernel::testing::{ManualClock, SequentialIds};
-    use mascate_kernel::{Clock, Currency, IdGenerator, Money, RecordId};
+    use mascate_kernel::{Clock, Currency, IdGenerator, Money, Percentage, RecordId};
     use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
     use mascate_platform::{Database, Secret, SecretStore, migrate};
 
@@ -137,73 +138,109 @@ mod tests {
         (server, adapter)
     }
 
+    /// The store's SKUs read by a Sync and linked to Products that came in
+    /// through a purchase: 2 camisetas, 3 fones and 4 canecas at R$ 20.
+    struct LinkedStore {
+        _dir: tempfile::TempDir,
+        database: Arc<Database>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        inventory: Arc<Inventory>,
+        listings: Listings,
+        server: FakeHttpServer,
+        adapter: Arc<Magalu>,
+    }
+
+    async fn linked_store() -> LinkedStore {
+        let dir = tempfile::tempdir().unwrap();
+        let manual = Arc::new(ManualClock::at(
+            Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap(),
+        ));
+        let database = Arc::new(
+            Database::open(&dir.path().join("mascate.db"))
+                .await
+                .unwrap(),
+        );
+        migrate(&database, manual.as_ref(), MODULE_MIGRATIONS)
+            .await
+            .unwrap();
+        let clock: Arc<dyn Clock> = manual;
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequentialIds::default());
+        let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
+        let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
+        let (server, adapter) = magalu();
+        listings.sync(adapter.as_ref()).await.unwrap();
+
+        let camiseta = RecordId::from_u128(0xca);
+        let fone = RecordId::from_u128(0xf0);
+        let caneca = RecordId::from_u128(0xcc);
+        let purchases = PurchaseOrders::new(
+            database.clone(),
+            inventory.clone(),
+            clock.clone(),
+            ids.clone(),
+        );
+        for (product, units) in [(camiseta, 2), (fone, 3), (caneca, 4)] {
+            let order = purchases
+                .create(NewPurchaseOrder {
+                    supplier: RecordId::from_u128(0x5),
+                    ordered_on: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                    freight: Money::zero(Currency::Brl),
+                    lines: vec![NewPurchaseLine {
+                        product,
+                        quantity: units,
+                        unit_price: Money::new(20.into(), Currency::Brl),
+                    }],
+                })
+                .await
+                .unwrap();
+            purchases
+                .receive(
+                    order.id,
+                    HOME_LOCATION,
+                    &[Receiving {
+                        line: order.lines[0].id,
+                        quantity: units,
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+        for listing in listings.listings().await.unwrap() {
+            let product = match listing.listed.id.as_str() {
+                "CAM-PRETA-M" => camiseta,
+                "FONE-TWS" => fone,
+                _ => caneca,
+            };
+            listings.link(listing.id, product).await.unwrap();
+        }
+        LinkedStore {
+            _dir: dir,
+            database,
+            clock,
+            ids,
+            inventory,
+            listings,
+            server,
+            adapter,
+        }
+    }
+
     #[test]
     fn a_round_sends_each_linked_sku_its_share_lowering_first() {
         block_on(async {
-            let dir = tempfile::tempdir().unwrap();
-            let manual = Arc::new(ManualClock::at(
-                Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap(),
-            ));
-            let database = Arc::new(
-                Database::open(&dir.path().join("mascate.db"))
-                    .await
-                    .unwrap(),
-            );
-            migrate(&database, manual.as_ref(), MODULE_MIGRATIONS)
-                .await
-                .unwrap();
-            let clock: Arc<dyn Clock> = manual;
-            let ids: Arc<dyn IdGenerator> = Arc::new(SequentialIds::default());
-            let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
-            let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
-            let (server, adapter) = magalu();
-            listings.sync(adapter.as_ref()).await.unwrap();
-
             // The camiseta shows 7 on Magalu and the fone none; the owner
             // turned the cup off in Magalu's panel.
-            let camiseta = RecordId::from_u128(0xca);
-            let fone = RecordId::from_u128(0xf0);
-            let caneca = RecordId::from_u128(0xcc);
-            let purchases = PurchaseOrders::new(
-                database.clone(),
-                inventory.clone(),
-                clock.clone(),
-                ids.clone(),
-            );
-            for (product, units) in [(camiseta, 2), (fone, 3), (caneca, 4)] {
-                let order = purchases
-                    .create(NewPurchaseOrder {
-                        supplier: RecordId::from_u128(0x5),
-                        ordered_on: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
-                        freight: Money::zero(Currency::Brl),
-                        lines: vec![NewPurchaseLine {
-                            product,
-                            quantity: units,
-                            unit_price: Money::new(20.into(), Currency::Brl),
-                        }],
-                    })
-                    .await
-                    .unwrap();
-                purchases
-                    .receive(
-                        order.id,
-                        HOME_LOCATION,
-                        &[Receiving {
-                            line: order.lines[0].id,
-                            quantity: units,
-                        }],
-                    )
-                    .await
-                    .unwrap();
-            }
-            for listing in listings.listings().await.unwrap() {
-                let product = match listing.listed.id.as_str() {
-                    "CAM-PRETA-M" => camiseta,
-                    "FONE-TWS" => fone,
-                    _ => caneca,
-                };
-                listings.link(listing.id, product).await.unwrap();
-            }
+            let LinkedStore {
+                _dir: dir,
+                database,
+                clock,
+                ids,
+                inventory,
+                server,
+                adapter,
+                ..
+            } = linked_store().await;
             let mirror = StockMirror::new(
                 database.clone(),
                 inventory.clone(),
@@ -251,6 +288,47 @@ mod tests {
                     ),
                     ("/seller/v1/portfolios/stocks/FONE-TWS".to_owned(), body(3)),
                 ]
+            );
+        });
+    }
+
+    #[test]
+    fn a_linked_sku_is_priced_with_the_fee_table() {
+        block_on(async {
+            let store = linked_store().await;
+            let pricing = Pricing::new(store.database, store.inventory, store.clock, store.ids);
+            let camiseta = store
+                .listings
+                .listings()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|listing| listing.listed.id == "CAM-PRETA-M")
+                .unwrap();
+            let assumptions = PriceAssumptions {
+                tax: Percentage::new(6.into()).unwrap(),
+                estimated_shipping: Money::new(20.into(), Currency::Brl),
+            };
+
+            let today = pricing
+                .today(camiseta.id, store.adapter.as_ref(), assumptions)
+                .await
+                .unwrap();
+
+            // R$ 49,90 is above R$ 10, so the table adds R$ 5 to its 20%.
+            assert_eq!(
+                today.sale_fee,
+                SaleFee {
+                    rate: Percentage::new(20.into()).unwrap(),
+                    fixed: Money::new(5.into(), Currency::Brl),
+                }
+            );
+            assert_eq!(today.cost, Money::new(20.into(), Currency::Brl));
+            assert!(
+                pricing
+                    .suggest(camiseta.id, store.adapter.as_ref(), assumptions)
+                    .await
+                    .is_ok()
             );
         });
     }

@@ -464,7 +464,8 @@ fn each_sku_is_a_listing_with_its_price_and_stock_in_the_stores_channel() {
         status: ListingStatus::Active,
         link: Some("https://www.magazineluiza.com.br/p/cam-preta-m/".into()),
         listing_type: Some(ListingType::default()),
-        category: None,
+        // One fee table for every category, so pricing has a basis.
+        category: Some("fee-table".into()),
         seller_sku: Some("CAM-PRETA-M".into()),
     };
     assert_eq!(listings[0], camiseta);

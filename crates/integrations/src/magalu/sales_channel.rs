@@ -33,6 +33,9 @@ const MAGAZINE_LUIZA: &str = "magazineluiza";
 const TABLE_RATE: Decimal = Decimal::from_parts(20, 0, 0, false, 0);
 const TABLE_FIXED: Decimal = Decimal::from_parts(5, 0, 0, false, 0);
 const FIXED_ABOVE: Decimal = Decimal::from_parts(10, 0, 0, false, 0);
+/// The SKU answer names no category and the fee above is the same for
+/// every one, so each listing's fee basis names that table.
+const TABLE_CATEGORY: &str = "fee-table";
 
 impl OnSalesChannel for Magalu {
     fn sales_channel(&self) -> SalesChannelKind {
@@ -256,7 +259,7 @@ fn channel_listing(sku: Sku, price: Money, available: u32) -> ChannelListing {
         link,
         // Magalu has a single way to list a SKU: the default type.
         listing_type: Some(ListingType::default()),
-        category: None,
+        category: Some(TABLE_CATEGORY.into()),
         seller_sku: Some(sku.sku),
     }
 }
