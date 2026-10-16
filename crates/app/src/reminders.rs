@@ -4,8 +4,9 @@
 //! each Order Sync, the income one of affiliate Commissions (#77),
 //! checked again whenever they change, the disclosure one of Offer Posts
 //! (#102), checked again whenever a post is copied, the client secret
-//! one of Amazon (#126), while its Connection holds the keys, and the
-//! invoice one of Amazon sales (#127), checked again on each Order Sync.
+//! one of Amazon (#126), while its Connection holds the keys, the invoice
+//! one of Amazon sales (#127), checked again on each Order Sync, and the
+//! CNPJ one of the Shopee seller (#129), once any of its keys is saved.
 
 use std::sync::Arc;
 
@@ -13,7 +14,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Global, SharedString, Subscription, Window, div};
-use mascate_integrations::{AMAZON_CLIENT_SECRET, Connection, ConnectionState, Connections};
+use mascate_integrations::{
+    AMAZON_CLIENT_SECRET, Connection, ConnectionState, Connections, SHOPEE_SELLER_CNPJ,
+};
 use mascate_platform::{Reminder, ReminderError, ReminderTopic, Reminders};
 
 use crate::affiliate::{self, CommissionChanges};
@@ -38,12 +41,24 @@ fn topic_name(topic: ReminderTopic) -> &'static str {
 }
 
 /// The keys of the Connections' Reminders raised now: Amazon's client
-/// secret while its keys are stored, expired ones included.
+/// secret while its keys are stored, expired ones included, and Shopee's
+/// CNPJ once the owner starts setting up the seller Connection.
 fn connection_reminders(connections: &Connections) -> Vec<&'static str> {
-    match connections.state(Connection::Amazon) {
-        ConnectionState::Connected | ConnectionState::Expired => vec![AMAZON_CLIENT_SECRET.key],
-        _ => Vec::new(),
+    let mut raised = Vec::new();
+    if matches!(
+        connections.state(Connection::Amazon),
+        ConnectionState::Connected | ConnectionState::Expired
+    ) {
+        raised.push(AMAZON_CLIENT_SECRET.key);
     }
+    let shopee_started = Connection::ShopeeSeller
+        .credentials()
+        .iter()
+        .any(|credential| connections.has_credential(credential.name).unwrap_or(false));
+    if shopee_started {
+        raised.push(SHOPEE_SELLER_CNPJ.key);
+    }
+    raised
 }
 
 pub struct RemindersArea {
@@ -202,5 +217,29 @@ impl Render for RemindersArea {
             })
             .children(items)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use mascate_platform::testing::MemorySecretStore;
+
+    use super::*;
+
+    #[test]
+    fn shopees_cnpj_is_raised_once_any_seller_key_is_saved() {
+        let connections = Connections::new(Arc::new(MemorySecretStore::default()));
+        assert!(connection_reminders(&connections).is_empty());
+
+        connections
+            .save(
+                Connection::ShopeeSeller,
+                &[("SHOPEE_PARTNER_ID", "2001887")],
+            )
+            .unwrap();
+
+        assert_eq!(connection_reminders(&connections), [SHOPEE_SELLER_CNPJ.key]);
     }
 }

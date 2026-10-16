@@ -2,7 +2,9 @@
 //! pastes its keys or removes them. The keys go to the system secret store
 //! through the integrations module; this screen never keeps them. Each
 //! Connection also opens its own guide (#65): how to get the keys on the
-//! Platform, step by step, ending in the same fields.
+//! Platform, step by step, ending in the same fields. The Shopee seller
+//! Connection (#129) adds the login on Shopee's authorization page, whose
+//! code the owner brings back by pasting the address the browser landed on.
 
 use std::sync::Arc;
 
@@ -12,12 +14,15 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
-use mascate_integrations::{Connection, ConnectionState, Connections, Credential};
+use mascate_integrations::{
+    Connection, ConnectionState, Connections, Credential, ShopAuthorization,
+};
 use mascate_platform::Build;
 
 use crate::appearance::look;
 use crate::credential_guides::guide;
 use crate::kit;
+use crate::shopee_seller;
 
 /// The app's Connections, shared by every screen that needs them.
 pub struct AppConnections(pub Arc<Connections>);
@@ -28,6 +33,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
     match connection {
         Connection::MercadoLivre => "Mercado Livre",
         Connection::Amazon => "Amazon",
+        Connection::ShopeeSeller => "Shopee (vendedor)",
         Connection::ShopeeAffiliates => "Shopee Afiliados",
         Connection::Anthropic => "Anthropic",
         Connection::Hotmart => "Hotmart",
@@ -44,6 +50,10 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
         Connection::Amazon => {
             "Conta de vendedor na Amazon.com.br: anúncios, estoque e preço, pela Selling \
              Partner API."
+        }
+        Connection::ShopeeSeller => {
+            "Loja de vendedor na Shopee: anúncios, estoque e preço, pela Open Platform. São \
+             outra API e outras chaves que as da Shopee Afiliados."
         }
         Connection::ShopeeAffiliates => {
             "Open API de afiliados: busca de ofertas. Sem credenciais, fica aguardando \
@@ -89,6 +99,8 @@ fn credential_label(credential: Credential) -> &'static str {
         "AMAZON_LWA_CLIENT_SECRET" => "Client Secret (LWA)",
         "AMAZON_REFRESH_TOKEN" => "Refresh token",
         "AMAZON_SELLER_ID" => "ID de vendedor",
+        "SHOPEE_PARTNER_ID" => "Partner ID",
+        "SHOPEE_PARTNER_KEY" => "Partner Key",
         other => other,
     }
 }
@@ -105,6 +117,7 @@ fn is_identifier(credential: Credential) -> bool {
             | "KIWIFY_ACCOUNT_ID"
             | "AMAZON_LWA_CLIENT_ID"
             | "AMAZON_SELLER_ID"
+            | "SHOPEE_PARTNER_ID"
     )
 }
 
@@ -130,6 +143,9 @@ fn snapshot(connections: &Connections, connection: Connection) -> Snapshot {
 struct Card {
     connection: Connection,
     inputs: Vec<(Credential, Entity<InputState>)>,
+    /// Where the owner pastes the address Shopee's login landed on; only
+    /// on a Connection that logs in that way.
+    landing: Option<Entity<InputState>>,
     /// `None` until the first read finishes.
     snapshot: Option<Snapshot>,
     /// Numbers each read, so a slow one never lands over a newer one.
@@ -162,6 +178,12 @@ impl ConnectionsSection {
                         (credential, input)
                     })
                     .collect(),
+                landing: (connection == Connection::ShopeeSeller).then(|| {
+                    cx.new(|cx| {
+                        InputState::new(window, cx)
+                            .placeholder("https://github.com/fernandolisboa?code=…&shop_id=…")
+                    })
+                }),
                 snapshot: None,
                 reads: 0,
                 busy: false,
@@ -219,6 +241,9 @@ impl ConnectionsSection {
                 }
             });
         }
+        if clear && let Some(landing) = &card.landing {
+            landing.update(cx, |input, cx| input.set_value("", window, cx));
+        }
         card.snapshot = Some(snapshot);
         cx.notify();
     }
@@ -243,6 +268,61 @@ impl ConnectionsSection {
             connections
                 .save(connection, &values)
                 .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}"))
+        });
+    }
+
+    /// Opens Shopee's authorization page in the browser, its link signed
+    /// off the UI thread with the stored partner key.
+    fn open_shopee_login(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(adapter) = shopee_seller::adapter(cx) else {
+            return;
+        };
+        let card = &mut self.cards[index];
+        card.busy = true;
+        card.error = None;
+        let link = cx
+            .background_executor()
+            .spawn(async move { adapter.authorization_url(shopee_seller::REDIRECT) });
+        cx.spawn_in(window, async move |this, cx| {
+            let link = link.await;
+            let _ = this.update_in(cx, |this, _, cx| {
+                let card = &mut this.cards[index];
+                card.busy = false;
+                match link {
+                    Ok(link) => cx.open_url(&link),
+                    Err(error) => {
+                        card.error = Some(shopee_seller::login_failure(&error).into());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Trades the code in the pasted address for the shop's login.
+    fn connect_shopee(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(landing) = &self.cards[index].landing else {
+            return;
+        };
+        let address = landing.read(cx).value().to_string();
+        let Some(authorization) = ShopAuthorization::from_landing(&address) else {
+            self.cards[index].error = Some(
+                "Esse endereço não tem o code e o shop_id que a Shopee manda. Depois de \
+                 autorizar, copie o endereço inteiro da barra do navegador e cole aqui."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let Some(adapter) = shopee_seller::adapter(cx) else {
+            return;
+        };
+        self.run(index, window, cx, move |_, _| {
+            adapter
+                .authorize(&authorization)
+                .map_err(|error| shopee_seller::login_failure(&error))
         });
     }
 
@@ -425,6 +505,75 @@ impl ConnectionsSection {
             .into_any_element()
     }
 
+    /// Whether every pasted key of the card is stored.
+    fn keys_saved(&self, index: usize) -> bool {
+        self.cards[index]
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.stored.iter().all(|&stored| stored))
+    }
+
+    /// The login on Shopee's authorization page, once the keys are saved.
+    fn shopee_login(&self, index: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let card = &self.cards[index];
+        let landing = card.landing.as_ref()?;
+        if !self.keys_saved(index) {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let connected = card
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.state == ConnectionState::Connected);
+        let text = if connected {
+            "Loja conectada. Para trocar de loja ou autorizar de novo, repita: Entrar na Shopee e \
+             colar o endereço."
+        } else {
+            "Chaves salvas. Falta entrar na loja: clique em Entrar na Shopee, entre com a conta da \
+             loja e autorize o app. A Shopee abre github.com/fernandolisboa com um código no \
+             endereço; copie o endereço inteiro da barra do navegador e cole abaixo. O código \
+             vale 10 minutos."
+        };
+        Some(
+            v_flex()
+                .gap_2()
+                .child(div().text_xs().text_color(t.text2).child(text))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new(("shopee-login", index))
+                                .label("Entrar na Shopee")
+                                .icon(IconName::ExternalLink)
+                                .outline()
+                                .small()
+                                .disabled(card.busy)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_shopee_login(index, window, cx)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(220.))
+                                .child(Input::new(landing).small().disabled(card.busy)),
+                        )
+                        .child(
+                            Button::new(("shopee-connect", index))
+                                .label("Conectar")
+                                .primary()
+                                .small()
+                                .loading(card.busy)
+                                .disabled(card.busy)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.connect_shopee(index, window, cx)
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_card(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let card = &self.cards[index];
@@ -462,6 +611,7 @@ impl ConnectionsSection {
                      próxima versão com o botão Conectar.",
                 ))
             })
+            .children(self.shopee_login(index, cx))
             .children(self.problems(index, cx))
             .child(self.actions(index, cx))
             .into_any_element()
@@ -532,6 +682,7 @@ impl ConnectionsSection {
                          do sistema.",
                     ))
                     .child(self.fields(index, cx))
+                    .children(self.shopee_login(index, cx))
                     .children(self.problems(index, cx))
                     .child(self.actions(index, cx)),
             );

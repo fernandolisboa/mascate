@@ -249,6 +249,44 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::ShopeeSeller => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    // Fiscal, never a block: the app reminds it and goes on.
+                    step_at(
+                        "A Shopee pede CNPJ para registrar um app de vendedor na Open Platform: o \
+                     cadastro de vendedor individual não abre no Brasil. Sem CNPJ, os passos \
+                     abaixo esperam, e o app lembra disso em Lembretes.",
+                        "Abrir a Open Platform",
+                        "https://open.shopee.com/",
+                    ),
+                    step_at(
+                        "Entre no console da Open Platform, cadastre-se como desenvolvedor do \
+                     tipo Seller In House System e crie um app para a sua loja.",
+                        "Abrir o console",
+                        "https://open.shopee.com/console",
+                    ),
+                    // The app has no address of its own yet (#10): the owner
+                    // copies the one the browser lands on.
+                    step(
+                        "No app, em Redirect URL Domain, cadastre https://github.com/fernandolisboa: \
+                     depois do login, a Shopee manda o navegador para lá com o código que você \
+                     cola no Mascate.",
+                    ),
+                    step(
+                        "Peça a publicação do app (Go Live). Aprovado, copie o Live Partner ID, um \
+                     número, e a Live Partner Key. As chaves de teste só valem no sandbox da \
+                     Shopee.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, clique em Entrar na Shopee, autorize o app com a conta da \
+                 loja e cole o endereço em que o navegador parou. A autorização da loja vale \
+                 até um ano; quando vencer, entre de novo do mesmo jeito.",
+                ),
+            };
+            GUIDE
+        }
         Connection::Eduzz => {
             const GUIDE: Guide = Guide {
                 steps: &[
@@ -326,6 +364,7 @@ mod tests {
             Connection::MercadoLivre => &["developers.mercadolivre.com.br"],
             Connection::Amazon => &["sellercentral.amazon.com.br", "developer-docs.amazon.com"],
             Connection::ShopeeAffiliates => &["affiliate.shopee.com.br"],
+            Connection::ShopeeSeller => &["open.shopee.com"],
             Connection::Anthropic => &["platform.claude.com"],
             Connection::Hotmart => &["app-vlc.hotmart.com"],
             Connection::Monetizze => &["app.monetizze.com.br"],
@@ -345,7 +384,7 @@ mod tests {
             | Connection::Kiwify
             | Connection::Eduzz
             | Connection::Telegram => 2,
-            Connection::Amazon => 3,
+            Connection::Amazon | Connection::ShopeeSeller => 3,
         }
     }
 

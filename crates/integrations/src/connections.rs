@@ -26,6 +26,9 @@ pub enum Connection {
     Telegram,
     /// The owner's Amazon seller account, a Sales Channel.
     Amazon,
+    /// The owner's Shopee shop, a Sales Channel; another API than Shopee
+    /// Afiliados, with other keys.
+    ShopeeSeller,
 }
 
 /// How a credential reaches the store.
@@ -53,7 +56,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 9] = [
+    pub const ALL: [Connection; 10] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -63,6 +66,7 @@ impl Connection {
         Connection::Eduzz,
         Connection::Telegram,
         Connection::Amazon,
+        Connection::ShopeeSeller,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -109,6 +113,21 @@ impl Connection {
             pasted("AMAZON_REFRESH_TOKEN"),
             pasted("AMAZON_SELLER_ID"),
         ];
+        // The partner's keys come from the Open Platform console; the shop's
+        // id and its first single-use refresh token, from the owner's login
+        // on Shopee's authorization page.
+        const SHOPEE_SELLER: &[Credential] = &[
+            pasted("SHOPEE_PARTNER_ID"),
+            pasted("SHOPEE_PARTNER_KEY"),
+            Credential {
+                name: "SHOPEE_SHOP_ID",
+                entry: CredentialEntry::Login,
+            },
+            Credential {
+                name: "SHOPEE_REFRESH_TOKEN",
+                entry: CredentialEntry::Login,
+            },
+        ];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -119,6 +138,7 @@ impl Connection {
             Connection::Eduzz => EDUZZ,
             Connection::Telegram => TELEGRAM,
             Connection::Amazon => AMAZON,
+            Connection::ShopeeSeller => SHOPEE_SELLER,
         }
     }
 

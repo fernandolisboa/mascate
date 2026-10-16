@@ -1,0 +1,15 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "0718293a4b5c6d7e8f90a1b2c3d4e5f6",
+  "response": {
+    "item": [
+      {"item_id": 800001, "item_status": "NORMAL", "update_time": 1792100000},
+      {"item_id": 800002, "item_status": "NORMAL", "update_time": 1792100100}
+    ],
+    "total_count": 3,
+    "has_next_page": true,
+    "next_offset": 100
+  }
+}

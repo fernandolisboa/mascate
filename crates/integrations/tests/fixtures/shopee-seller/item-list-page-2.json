@@ -1,0 +1,14 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "18293a4b5c6d7e8f90a1b2c3d4e5f607",
+  "response": {
+    "item": [
+      {"item_id": 800003, "item_status": "UNLIST", "update_time": 1792100200}
+    ],
+    "total_count": 3,
+    "has_next_page": false,
+    "next_offset": 0
+  }
+}

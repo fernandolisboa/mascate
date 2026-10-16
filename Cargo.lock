@@ -4387,6 +4387,7 @@ dependencies = [
  "chrono",
  "csv",
  "futures",
+ "hmac 0.12.1",
  "mascate-affiliate",
  "mascate-catalog",
  "mascate-commerce",

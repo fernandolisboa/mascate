@@ -28,6 +28,8 @@ csv = "1"
 directories = "6"
 embed-resource = "3"
 futures = "0.3"
+# Signs Shopee seller API calls with HMAC-SHA256 (ADR 0033, approved 2026-10-15).
+hmac = "0.12"
 # GPUI is pre-1.0 and moves weekly: pin the exact version and upgrade on purpose (ADR 0001).
 gpui-kit = "=0.7.0"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }

@@ -13,6 +13,7 @@ mod mercado_livre;
 mod monetizze;
 mod retry;
 mod shopee_affiliate;
+mod shopee_seller;
 mod spreadsheet;
 mod telegram;
 
@@ -37,6 +38,10 @@ pub use mercado_livre::{
 pub use monetizze::{API_URL as MONETIZZE_API_URL, LINKS as MONETIZZE_LINKS, Monetizze};
 pub use retry::{Pause, ThreadPause};
 pub use shopee_affiliate::{API_URL as SHOPEE_AFFILIATE_API_URL, ShopeeAffiliates};
+pub use shopee_seller::{
+    API_URL as SHOPEE_SELLER_API_URL, SANDBOX_URL as SHOPEE_SELLER_SANDBOX_URL, ShopAuthorization,
+    ShopeeSeller,
+};
 pub use telegram::{
     API_URL as TELEGRAM_API_URL, MAX_PHOTO_BYTES as TELEGRAM_MAX_PHOTO_BYTES, Telegram,
 };
@@ -55,5 +60,17 @@ pub const AMAZON_CLIENT_SECRET: Reminder = Reminder {
     shows: ReminderShows::WhenRaised,
 };
 
+/// Raised while the Shopee seller Connection holds any of its keys.
+pub const SHOPEE_SELLER_CNPJ: Reminder = Reminder {
+    key: "integrations.shopee_seller_cnpj",
+    topic: ReminderTopic::Connection,
+    title: "CNPJ na Shopee",
+    text: "A Shopee pede CNPJ para registrar o app de vendedor na Open Platform e para a loja \
+           usar a API. O app funciona com as chaves que você tiver; quando abrir o CNPJ, \
+           confira o cadastro da loja e do app na Shopee.",
+    reappears_after_days: 60,
+    shows: ReminderShows::WhenRaised,
+};
+
 /// The Reminders of the Platform accounts the adapters reach.
-pub const REMINDERS: &[Reminder] = &[AMAZON_CLIENT_SECRET];
+pub const REMINDERS: &[Reminder] = &[AMAZON_CLIENT_SECRET, SHOPEE_SELLER_CNPJ];

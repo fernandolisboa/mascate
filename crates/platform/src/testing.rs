@@ -137,6 +137,17 @@ impl FakeHttpServer {
         self.route(path, Canned::answer(status, Vec::new(), body.into()), false);
     }
 
+    /// Answers `path` with `status` and `body` whatever query follows it,
+    /// every time, unless a route names the query too: for requests that
+    /// carry a signature or a timestamp.
+    pub fn serve_any_query(&self, path: &str, status: u16, body: impl Into<Vec<u8>>) {
+        self.route(
+            &any_query(path),
+            Canned::answer(status, Vec::new(), body.into()),
+            false,
+        );
+    }
+
     /// Answers `path` with `status` and `body` only after `delay`, every
     /// time: a client that stops waiting sooner gives up on it.
     pub fn serve_late(&self, path: &str, delay: Duration, status: u16, body: impl Into<Vec<u8>>) {
@@ -208,6 +219,11 @@ impl FakeHttpServer {
     }
 }
 
+/// The route of `path` with any query.
+fn any_query(path: &str) -> String {
+    format!("{path}?*")
+}
+
 fn answer(
     stream: std::net::TcpStream,
     routes: &Mutex<BTreeMap<String, VecDeque<Canned>>>,
@@ -257,10 +273,13 @@ fn answer(
     let canned = {
         let mut routes = routes.lock().expect("routes lock poisoned");
         let by_method = format!("{method} {path}");
+        let without_query = any_query(path.split('?').next().unwrap_or_default());
         let key = if routes.contains_key(&by_method) {
             by_method
-        } else {
+        } else if routes.contains_key(&path) {
             path
+        } else {
+            without_query
         };
         match routes.get_mut(&key) {
             Some(answers) if answers.len() > 1 => answers.pop_front(),

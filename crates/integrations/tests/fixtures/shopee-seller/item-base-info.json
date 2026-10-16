@@ -1,0 +1,59 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "293a4b5c6d7e8f90a1b2c3d4e5f60718",
+  "response": {
+    "item_list": [
+      {
+        "item_id": 800001,
+        "category_id": 100636,
+        "item_name": "Fone de Ouvido Bluetooth Mascate Preto",
+        "item_sku": "FONE-BT-001",
+        "create_time": 1791000000,
+        "update_time": 1792100000,
+        "item_status": "NORMAL",
+        "has_model": false,
+        "condition": "NEW",
+        "price_info": [
+          {"currency": "BRL", "original_price": 129.9, "current_price": 119.9, "inflated_price_of_original_price": 129.9, "inflated_price_of_current_price": 119.9}
+        ],
+        "stock_info_v2": {
+          "summary_info": {"total_reserved_stock": 0, "total_available_stock": 7},
+          "seller_stock": [{"location_id": "", "stock": 7}]
+        },
+        "image": {"image_url_list": ["https://down-br.img.susercontent.com/file/fone"], "image_id_list": ["fone"]}
+      },
+      {
+        "item_id": 800002,
+        "category_id": 100017,
+        "item_name": "Camiseta Básica Algodão",
+        "item_sku": "CAMISETA",
+        "create_time": 1791000100,
+        "update_time": 1792100100,
+        "item_status": "NORMAL",
+        "has_model": true,
+        "condition": "NEW",
+        "image": {"image_url_list": ["https://down-br.img.susercontent.com/file/camiseta"], "image_id_list": ["camiseta"]}
+      },
+      {
+        "item_id": 800003,
+        "category_id": 100636,
+        "item_name": "Caneca de Cerâmica 350 ml",
+        "item_sku": "",
+        "create_time": 1791000200,
+        "update_time": 1792100200,
+        "item_status": "UNLIST",
+        "has_model": false,
+        "condition": "NEW",
+        "price_info": [
+          {"currency": "BRL", "original_price": 39.9, "current_price": 39.9}
+        ],
+        "stock_info_v2": {
+          "summary_info": {"total_reserved_stock": 0, "total_available_stock": 2},
+          "seller_stock": [{"location_id": "", "stock": 2}]
+        }
+      }
+    ]
+  }
+}
