@@ -1,7 +1,9 @@
 //! Buscar no site por crawler (#152), on the Ofertas screen: searches a
 //! site's public pages for items and keeps the chosen ones as Supplier
-//! Offers. Shown only while the site's Restricted Feature is on; while the
-//! site keeps the crawler blocked, says until when and searches nothing.
+//! Offers. A site whose robots.txt keeps robots out of its search (the
+//! Hotmart marketplace, #154) is browsed by category instead. Shown only
+//! while the site's Restricted Feature is on; while the site keeps the
+//! crawler blocked, says until when and searches nothing.
 
 use std::sync::Arc;
 
@@ -28,6 +30,9 @@ use crate::shopee_search::OffersKept;
 pub struct CrawlerSearch {
     site: CrawledSite,
     keyword: Entity<InputState>,
+    /// The category browsed, as its slug or `category/subcategory`; `None`
+    /// for the site's best sellers. Only on a site browsed by category.
+    category: Option<String>,
     order: OfferOrder,
     /// The crawler, while its flag is on.
     source: Option<Arc<dyn OfferSource>>,
@@ -60,6 +65,7 @@ impl CrawlerSearch {
         let mut search = Self {
             site,
             keyword,
+            category: None,
             order: OfferOrder::Relevance,
             source: None,
             items: Vec::new(),
@@ -127,14 +133,19 @@ impl CrawlerSearch {
             cx.notify();
             return;
         }
-        let keyword = self.keyword.read(cx).value().trim().to_owned();
-        if keyword.is_empty() {
+        let keyword = if self.site.browses() {
+            String::new()
+        } else {
+            self.keyword.read(cx).value().trim().to_owned()
+        };
+        if keyword.is_empty() && !self.site.browses() {
             self.outcome = Some(Outcome::Failed("Digite o que procurar.".into()));
             cx.notify();
             return;
         }
         let search = OfferSearch {
             keyword,
+            category: self.category.clone(),
             order: self.order,
             page,
             ..OfferSearch::default()
@@ -212,12 +223,109 @@ impl CrawlerSearch {
         cx.notify();
     }
 
+    /// Browses `category` (`None` for the best sellers) from its first page.
+    fn browse(&mut self, category: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.category = category;
+        self.search(1, window, cx);
+    }
+
+    /// The categories as buttons, the chosen category's subcategories under
+    /// them: a click reads that page.
+    fn render_categories(&self, blocked: bool, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.category.as_deref();
+        let top = chosen.and_then(|path| path.split('/').next());
+        let off = blocked || self.busy;
+        let chip = |id: (&'static str, usize),
+                    label: &'static str,
+                    path: Option<String>,
+                    on: bool,
+                    cx: &mut Context<Self>| {
+            Button::new(id)
+                .label(label)
+                .small()
+                .map(|button| if on { button.primary() } else { button.ghost() })
+                .disabled(off)
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.browse(path.clone(), window, cx)),
+                )
+                .into_any_element()
+        };
+        let mut categories = vec![chip(
+            ("crawler-best-sellers", 0),
+            "Mais vendidos",
+            None,
+            self.page > 0 && chosen.is_none(),
+            cx,
+        )];
+        for (index, category) in self.site.categories.iter().enumerate() {
+            categories.push(chip(
+                ("crawler-category", index),
+                category.name,
+                Some(category.slug.to_owned()),
+                top == Some(category.slug),
+                cx,
+            ));
+        }
+        let subcategories: Vec<AnyElement> = self
+            .site
+            .categories
+            .iter()
+            .find(|category| top == Some(category.slug))
+            .map(|category| {
+                let mut row = vec![chip(
+                    ("crawler-whole-category", 0),
+                    "Toda a categoria",
+                    Some(category.slug.to_owned()),
+                    chosen == Some(category.slug),
+                    cx,
+                )];
+                for (index, (slug, name)) in category.subcategories.iter().enumerate() {
+                    let path = format!("{}/{slug}", category.slug);
+                    let on = chosen == Some(path.as_str());
+                    row.push(chip(
+                        ("crawler-subcategory", index),
+                        name,
+                        Some(path),
+                        on,
+                        cx,
+                    ));
+                }
+                row
+            })
+            .unwrap_or_default();
+        let t = look(cx).tokens;
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .items_center()
+                    .child(div().text_sm().text_color(t.text2).child("Categoria:"))
+                    .children(categories),
+            )
+            .when(!subcategories.is_empty(), |list| {
+                list.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .items_center()
+                        .child(div().text_sm().text_color(t.text2).child("Dentro dela:"))
+                        .children(subcategories),
+                )
+            })
+            .into_any_element()
+    }
+
     fn render_controls(
         &self,
         source: &Arc<dyn OfferSource>,
         blocked: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.site.browses() {
+            return self.render_categories(blocked, cx);
+        }
         let orders: Vec<AnyElement> = source
             .orders()
             .iter()
@@ -254,19 +362,21 @@ impl CrawlerSearch {
                             ),
                     ),
             )
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(look(cx).tokens.text2)
-                            .child("Ordem:"),
-                    )
-                    .children(orders),
-            )
+            .when(orders.len() > 1, |controls| {
+                controls.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(look(cx).tokens.text2)
+                                .child("Ordem:"),
+                        )
+                        .children(orders),
+                )
+            })
             .into_any_element()
     }
 
@@ -315,12 +425,14 @@ impl CrawlerSearch {
                         .flex_wrap()
                         .gap_2()
                         .items_center()
-                        .child(div().flex_1().text_xs().text_color(t.text2).child(format!(
-                            "A busca {} não diz quanto custa a entrega até você: a oferta \
-                             guardada entra com frete zero. Registre o mesmo link à mão com o \
-                             frete para corrigir.",
-                            self.site.of()
-                        )))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(t.text2)
+                                .child(results_note(&self.site, &self.items)),
+                        )
                         .when(!pending.is_empty(), |row| {
                             let count = pending.len();
                             row.child(
@@ -362,16 +474,7 @@ impl Render for CrawlerSearch {
         };
         let t = look(cx).tokens;
         let blocked = source.blocked_until().filter(|until| *until > Utc::now());
-        let about = format!(
-            "Lê as páginas públicas de busca {}: uma página a cada 3 segundos ou mais, como o \
-             robots.txt do site pedir, e a mesma busca dentro de 1 hora vem da memória.{}",
-            self.site.of(),
-            if source.finds_shops() {
-                ""
-            } else {
-                " A busca de lojas não existe no crawler."
-            }
-        );
+        let about = about(&self.site, source.as_ref());
         v_flex()
             .gap_3()
             .p_4()
@@ -399,10 +502,130 @@ impl Render for CrawlerSearch {
     }
 }
 
+/// What the list leaves out: the delivery, for the items with a price,
+/// and the price itself, for the items the page shows without one.
+fn results_note(site: &CrawledSite, items: &[SearchedOffer]) -> String {
+    let mut notes = Vec::new();
+    if items.iter().any(|item| item.found.price.is_some()) {
+        notes.push(format!(
+            "A busca {} não diz quanto custa a entrega até você: a oferta guardada entra com \
+             frete zero. Registre o mesmo link à mão com o frete para corrigir.",
+            site.of()
+        ));
+    }
+    if items.iter().any(|item| item.found.price.is_none()) {
+        notes.push(format!(
+            "Item sem preço na página {} não vira oferta guardada: abra o link para ver o preço \
+             no site.",
+            site.of()
+        ));
+    }
+    notes.join(" ")
+}
+
+/// What the crawler reads and how, as the panel says it.
+fn about(site: &CrawledSite, source: &dyn OfferSource) -> String {
+    let what = if site.browses() {
+        format!(
+            "Lê a vitrine pública {}: os mais vendidos e os primeiros produtos de cada \
+             categoria, uma página a cada 3 segundos ou mais, e a mesma página dentro de 1 hora \
+             vem da memória. O robots.txt {} proíbe robôs na busca por palavras, então aqui você \
+             escolhe uma categoria em vez de digitar.",
+            site.of(),
+            site.of()
+        )
+    } else {
+        format!(
+            "Lê as páginas públicas de busca {}: uma página a cada 3 segundos ou mais, como o \
+             robots.txt do site pedir, e a mesma busca dentro de 1 hora vem da memória.",
+            site.of()
+        )
+    };
+    if source.finds_shops() {
+        what
+    } else {
+        format!("{what} A busca de lojas não existe no crawler.")
+    }
+}
+
 /// Why a search or a keep failed, as the owner reads it.
 fn reading(site: &CrawledSite, error: &CatalogError) -> String {
     match error {
         CatalogError::Platform(error) => crawlers::failure(site, error),
         error => catalog::failure(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mascate_catalog::FoundShop;
+    use mascate_integrations::{Crawler, HotmartCrawler, MagaluCrawler};
+    use mascate_kernel::{Currency, Money, SystemClock};
+    use mascate_platform::{Build, Environment};
+
+    use super::*;
+
+    fn sites() -> (CrawledSite, CrawledSite) {
+        let environment = Box::new(|_: &str| None) as Environment;
+        (
+            CrawledSite::hotmart(Build::Release, &environment),
+            CrawledSite::magalu(Build::Release, &environment),
+        )
+    }
+
+    fn searched(price: Option<u32>) -> SearchedOffer {
+        let price = price.map(|reais| Money::new(reais.into(), Currency::Brl));
+        SearchedOffer {
+            found: FoundOffer {
+                id: "1".into(),
+                title: "Curso".into(),
+                link: "https://hotmart.com/pt-br/marketplace/produtos/curso/A1".into(),
+                image: None,
+                shop: FoundShop {
+                    id: "P1".into(),
+                    name: "Produtora".into(),
+                    link: "https://hotmart.com/pt-br/marketplace".into(),
+                    commission: None,
+                    rating: None,
+                },
+                price,
+                highest_price: price,
+                sales: 0,
+                commission: None,
+                rating: None,
+            },
+            kept: None,
+        }
+    }
+
+    #[test]
+    fn the_hotmart_panel_says_why_it_browses_categories_instead_of_words() {
+        let (hotmart, magalu) = sites();
+        let engine = Arc::new(Crawler::new("Mascate/test", Arc::new(SystemClock)));
+        let browsing = about(
+            &hotmart,
+            &HotmartCrawler::new(&hotmart.listing, engine.clone()),
+        );
+        let searching = about(&magalu, &MagaluCrawler::new(&magalu.listing, engine));
+
+        assert!(browsing.contains("robots.txt da Hotmart proíbe robôs na busca por palavras"));
+        assert!(browsing.contains("escolhe uma categoria"));
+        assert!(browsing.ends_with("A busca de lojas não existe no crawler."));
+        assert!(!searching.contains("categoria"));
+    }
+
+    #[test]
+    fn the_list_explains_the_missing_price_and_the_missing_delivery_as_each_applies() {
+        let (hotmart, _) = sites();
+
+        let priceless = results_note(&hotmart, &[searched(None)]);
+        let priced = results_note(&hotmart, &[searched(Some(97))]);
+        let both = results_note(&hotmart, &[searched(Some(97)), searched(None)]);
+
+        assert!(priceless.starts_with("Item sem preço na página da Hotmart"));
+        assert!(!priceless.contains("frete"));
+        assert!(priced.contains("frete zero"));
+        assert!(!priced.contains("sem preço"));
+        assert!(both.contains("frete zero") && both.contains("Item sem preço"));
     }
 }

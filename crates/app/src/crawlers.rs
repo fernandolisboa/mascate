@@ -8,8 +8,10 @@ use chrono::Local;
 use gpui_kit::{App, Global};
 use mascate_catalog::OfferSource;
 use mascate_integrations::{
-    AMAZON_CRAWLER, AMAZON_SEARCH_URL, AmazonCrawler, Crawler, MAGALU_CRAWLER, MAGALU_SEARCH_URL,
-    MERCADO_LIVRE_CRAWLER, MERCADO_LIVRE_LISTING_URL, MagaluCrawler, MercadoLivreCrawler,
+    AMAZON_CRAWLER, AMAZON_SEARCH_URL, AmazonCrawler, Crawler, HOTMART_CATEGORIES, HOTMART_CRAWLER,
+    HOTMART_MARKETPLACE_URL, HotmartCrawler, MAGALU_CRAWLER, MAGALU_SEARCH_URL,
+    MERCADO_LIVRE_CRAWLER, MERCADO_LIVRE_LISTING_URL, MagaluCrawler, MarketplaceCategory,
+    MercadoLivreCrawler,
 };
 use mascate_kernel::{PlatformError, Timestamp};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
@@ -36,6 +38,10 @@ pub struct CrawledSite {
     pub flag: Flag,
     /// Where its pages start.
     pub listing: String,
+    /// The categories the owner browses instead of typing words, for a site
+    /// whose robots.txt keeps robots out of its search; empty for a search
+    /// by words.
+    pub categories: &'static [MarketplaceCategory],
     build: fn(&str, Arc<Crawler>) -> Arc<dyn OfferSource>,
 }
 
@@ -48,6 +54,7 @@ impl CrawledSite {
             Self::mercado_livre(build, environment),
             Self::amazon(build, environment),
             Self::magalu(build, environment),
+            Self::hotmart(build, environment),
         ]
     }
 
@@ -63,6 +70,7 @@ impl CrawledSite {
                 "MASCATE_MERCADO_LIVRE_LISTING_URL",
                 MERCADO_LIVRE_LISTING_URL,
             ),
+            categories: &[],
             build: |listing, engine| Arc::new(MercadoLivreCrawler::new(listing, engine)),
         }
     }
@@ -79,6 +87,7 @@ impl CrawledSite {
                 "MASCATE_AMAZON_SEARCH_URL",
                 AMAZON_SEARCH_URL,
             ),
+            categories: &[],
             build: |site, engine| Arc::new(AmazonCrawler::new(site, engine)),
         }
     }
@@ -95,8 +104,33 @@ impl CrawledSite {
                 "MASCATE_MAGALU_SEARCH_URL",
                 MAGALU_SEARCH_URL,
             ),
+            categories: &[],
             build: |site, engine| Arc::new(MagaluCrawler::new(site, engine)),
         }
+    }
+
+    /// The Hotmart marketplace, browsed by category, or
+    /// `MASCATE_HOTMART_MARKETPLACE_URL`.
+    pub fn hotmart(build: Build, environment: &Environment) -> Self {
+        Self {
+            name: "Hotmart",
+            article: "a",
+            flag: HOTMART_CRAWLER,
+            listing: local_or(
+                build,
+                environment,
+                "MASCATE_HOTMART_MARKETPLACE_URL",
+                HOTMART_MARKETPLACE_URL,
+            ),
+            categories: HOTMART_CATEGORIES,
+            build: |marketplace, engine| Arc::new(HotmartCrawler::new(marketplace, engine)),
+        }
+    }
+
+    /// Whether the owner browses the site's categories instead of typing
+    /// words.
+    pub fn browses(&self) -> bool {
+        !self.categories.is_empty()
     }
 
     /// "o Mercado Livre", "a Amazon".
@@ -216,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn ofertas_offers_mercado_livre_amazon_and_magalu_each_behind_its_own_flag() {
+    fn ofertas_offers_mercado_livre_amazon_magalu_and_hotmart_each_behind_its_own_flag() {
         let release = CrawledSite::all(Build::Release, &(Box::new(|_: &str| None) as Environment));
         let development = CrawledSite::all(
             Build::Development,
@@ -247,8 +281,16 @@ mod tests {
                     "integrations.magalu_crawler",
                     "https://www.magazineluiza.com.br"
                 ),
+                (
+                    "Hotmart",
+                    "integrations.hotmart_crawler",
+                    "https://hotmart.com/pt-br/marketplace"
+                ),
             ]
         );
+        let browsed: Vec<bool> = release.iter().map(CrawledSite::browses).collect();
+        assert_eq!(browsed, [false, false, false, true]);
+        assert_eq!(release[3].of(), "da Hotmart");
         assert_eq!(development[1].listing, "http://127.0.0.1:8091");
         assert_eq!(development[2].listing, "https://www.magazineluiza.com.br");
         assert_eq!(
@@ -277,9 +319,10 @@ mod tests {
                 Arc::new(SequentialIds::default()),
             );
             let environment = Box::new(|_: &str| None) as Environment;
-            let (amazon, magalu) = (
+            let (amazon, magalu, hotmart) = (
                 CrawledSite::amazon(Build::Release, &environment),
                 CrawledSite::magalu(Build::Release, &environment),
+                CrawledSite::hotmart(Build::Release, &environment),
             );
             let engine = Arc::new(Crawler::new("Mascate/test", Arc::new(SystemClock)));
 
@@ -287,13 +330,25 @@ mod tests {
             assert_eq!(request.flag().risk, AMAZON_CRAWLER.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let amazon_on = source_if_on(&flags, &amazon, engine.clone()).await.unwrap();
-            let magalu_off = source_if_on(&flags, &magalu, engine).await.unwrap();
+            let magalu_off = source_if_on(&flags, &magalu, engine.clone()).await.unwrap();
+            let hotmart_off = source_if_on(&flags, &hotmart, engine.clone())
+                .await
+                .unwrap();
+            let request = flags.request_turn_on(hotmart.flag.key).unwrap();
+            assert_eq!(request.flag().risk, HOTMART_CRAWLER.risk);
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let hotmart_on = source_if_on(&flags, &hotmart, engine).await.unwrap();
 
             assert_eq!(
                 amazon_on.map(|source| source.source()),
                 Some(ProductSource::AmazonCrawler)
             );
             assert!(magalu_off.is_none());
+            assert!(hotmart_off.is_none());
+            assert_eq!(
+                hotmart_on.map(|source| source.source()),
+                Some(ProductSource::HotmartCrawler)
+            );
         });
     }
 }
