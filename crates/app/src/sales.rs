@@ -14,7 +14,7 @@ use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Div, Hsla, SharedString, Subscription, Window, div, px};
 use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesPeriod, SalesSummary};
-use mascate_kernel::{Currency, Margin, Money, Timestamp};
+use mascate_kernel::{Currency, Margin, Money, SalesChannelKind, Timestamp};
 use mascate_marketing::{AdMetrics, AdsReport, AdsSyncState, ProductRoas, SellerTool};
 
 use crate::ads::{self, AdsSyncs, ReportSources};
@@ -30,6 +30,7 @@ use crate::orders::{self, OrderSyncs, sold_text};
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::reputation::reputation;
+use crate::sales_channels;
 
 /// Every sale, whenever it was.
 pub fn ever() -> Range<Timestamp> {
@@ -297,7 +298,7 @@ impl SalesScreen {
         let mut caveats = Vec::new();
         if summary.provisional > 0 {
             caveats.push(format!(
-                "{} com margem provisória: o Mercado Livre ainda não faturou as tarifas.",
+                "{} com margem provisória: o canal de venda ainda não faturou as tarifas.",
                 orders_text(summary.provisional)
             ));
         }
@@ -638,7 +639,7 @@ impl Render for SalesScreen {
 }
 
 /// The margin of one Order Fee by Fee, as each Order in Pedidos shows it.
-pub fn margin_detail(margin: &RealizedMargin, cx: &App) -> AnyElement {
+pub fn margin_detail(margin: &RealizedMargin, channel: SalesChannelKind, cx: &App) -> AnyElement {
     let t = look(cx).tokens;
     let title = if margin.provisional {
         "Margem provisória"
@@ -675,11 +676,11 @@ pub fn margin_detail(margin: &RealizedMargin, cx: &App) -> AnyElement {
         notes.push(format!("Outras tarifas: {}.", others.join("; ")));
     }
     if margin.provisional {
-        notes.push(
-            "O Mercado Livre ainda não faturou este pedido: as tarifas são as que o pedido \
-             informa e podem mudar."
-                .to_owned(),
-        );
+        notes.push(format!(
+            "{} ainda não faturou este pedido: as tarifas são as que o pedido informa e \
+             podem mudar.",
+            sales_channels::opening(channel)
+        ));
     }
     if margin.cost.is_none() {
         notes.push(

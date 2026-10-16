@@ -725,7 +725,7 @@ impl OrdersScreen {
             .children(
                 self.margins
                     .get(&order.id)
-                    .map(|margin| sales::margin_detail(margin, cx)),
+                    .map(|margin| sales::margin_detail(margin, order.channel, cx)),
             )
             .children(actions)
             .into_any_element()
@@ -1143,9 +1143,9 @@ impl Render for OrderSettingsSection {
             .border_color(t.frame)
             .bg(t.surface)
             .child(div().text_sm().text_color(t.text2).child(
-                "Com o app aberto ou na bandeja, os pedidos do Mercado Livre chegam por Sync: ao \
-                 abrir o app (cobrindo o tempo em que ficou fechado) e depois a cada intervalo. \
-                 Do comprador o app guarda só apelido, nome de quem recebe e endereço de entrega, \
+                "Com o app aberto ou na bandeja, os pedidos de cada canal de venda conectado chegam \
+                 por Sync: ao abrir o app (cobrindo o tempo em que ficou fechado) e depois a cada \
+                 intervalo. Do comprador o app guarda só apelido, nome de quem recebe e endereço de entrega, \
                  e apaga esses dados dos pedidos mais antigos que o prazo. Pedidos a despachar \
                  aparecem em Hoje quando o prazo chega perto, e atrasados quando passa.",
             ))

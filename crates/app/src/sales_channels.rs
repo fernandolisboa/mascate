@@ -116,6 +116,11 @@ pub fn of(cx: &App, kind: SalesChannelKind) -> Option<ChannelPorts> {
         .cloned()
 }
 
+/// "O Mercado Livre", "A Amazon": the channel opening a sentence.
+pub fn opening(kind: SalesChannelKind) -> String {
+    format!("{} {}", article(kind).to_uppercase(), kind.name())
+}
+
 /// "no Mercado Livre", "na Amazon": where something happens on the channel.
 pub fn on(kind: SalesChannelKind) -> String {
     format!("n{} {}", article(kind), kind.name())
@@ -330,6 +335,7 @@ mod tests {
 
     #[test]
     fn each_channel_reads_with_its_article() {
+        assert_eq!(opening(SalesChannelKind::Amazon), "A Amazon");
         assert_eq!(on(SalesChannelKind::MercadoLivre), "no Mercado Livre");
         assert_eq!(on(SalesChannelKind::Amazon), "na Amazon");
         assert_eq!(of_channel(SalesChannelKind::Shopee), "da Shopee");

@@ -363,7 +363,7 @@ impl DashboardScreen {
         let mut caveats = Vec::new();
         if summary.provisional > 0 {
             caveats.push(format!(
-                "{} com margem provisória: o Mercado Livre ainda não faturou as tarifas.",
+                "{} com margem provisória: o canal de venda ainda não faturou as tarifas.",
                 orders_text(summary.provisional)
             ));
         }

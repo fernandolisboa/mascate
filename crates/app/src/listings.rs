@@ -1235,7 +1235,7 @@ impl ListingsScreen {
         let mut facts = vec![
             listed.id.clone(),
             listed.price.to_pt_br(),
-            stock_text(listed.available_quantity),
+            stock_text(listed.available_quantity, listing.channel),
         ];
         facts.extend(listed.listing_type.map(|kind| kind.name().to_owned()));
         facts.extend(
@@ -1686,11 +1686,11 @@ fn status_ink(status: ListingStatus, t: &Tokens) -> Hsla {
     }
 }
 
-fn stock_text(units: u32) -> String {
+fn stock_text(units: u32, channel: SalesChannelKind) -> String {
+    let on = sales_channels::on(channel);
     match units {
-        0 => "sem estoque no ML".into(),
-        1 => "1 em estoque no ML".into(),
-        units => format!("{units} em estoque no ML"),
+        0 => format!("sem estoque {on}"),
+        units => format!("{units} em estoque {on}"),
     }
 }
 
