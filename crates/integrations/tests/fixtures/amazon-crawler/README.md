@@ -21,7 +21,8 @@ Como o crawler lê a busca:
 - O endereço é `{site}/s?k={palavras+com+mais}`, as palavras sem acento e em minúsculas; a ordem
   por menor preço acrescenta `&s=price-asc-rank`, a por mais vendidos `&s=exact-aware-popularity-rank`
   e a página N, `&page=N`. Sem categoria, sem loja e sem a ordem por comissão.
-- Cada bloco é lido do seu começo até o começo do próximo, no máximo 64 KiB. O id é o ASIN do bloco
+- Cada bloco é lido da sua tag de abertura até a que a fecha (contando as tags de mesmo nome
+  abertas dentro dele), no máximo 64 KiB. O id é o ASIN do bloco
   (10 letras maiúsculas ou dígitos), o link é `https://www.amazon.com.br/dp/{ASIN}`, o título é o
   `h2` de texto mais longo, o preço é o `a-offscreen` do primeiro `a-price` que não é
   `a-text-price` (só em `R$`), a foto é o `src` de `img.s-image` (só em `media-amazon.com`), a nota

@@ -86,6 +86,9 @@ fn a_search_page_yields_found_offers_keyed_by_asin() {
     assert_eq!(studio.price, Some(brl("1299.00")));
     assert_eq!(studio.sales, 500);
     assert_eq!(studio.link, "https://www.amazon.com.br/dp/B0D5NKQ8ZT");
+
+    assert_eq!(found.items[2].title, "Fone com Fio Intra-auricular");
+    assert_eq!(found.items[3].title, "Fone Importado");
 }
 
 #[test]

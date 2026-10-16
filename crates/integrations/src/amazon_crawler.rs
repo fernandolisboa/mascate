@@ -46,7 +46,7 @@ const PICTURES: &str = "media-amazon.com";
 const RESULT_MARK: &str = "data-component-type=\"s-search-result\"";
 
 /// How much of one result block is read: a result is a few kilobytes, and
-/// whatever follows past this is not one.
+/// what lies past this is not one of its parts.
 const MAX_BLOCK_BYTES: usize = 64 * 1024;
 
 /// Amazon's public search, read by the crawler.
@@ -120,16 +120,13 @@ impl OfferSource for AmazonCrawler {
 /// The items on a search page, each once: one per result block whose
 /// ASIN reads as one.
 fn search_page(html: &str) -> Found<FoundOffer> {
-    let starts: Vec<usize> = html
-        .match_indices(RESULT_MARK)
-        .filter_map(|(at, _)| html[..at].rfind('<'))
-        .collect();
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for (index, &start) in starts.iter().enumerate() {
-        let end = starts.get(index + 1).copied().unwrap_or(html.len());
-        let block = bounded(&html[start..end]);
-        if let Some(item) = result_offer(block)
+    for (at, _) in html.match_indices(RESULT_MARK) {
+        let Some(start) = html[..at].rfind('<') else {
+            continue;
+        };
+        if let Some(item) = result_offer(element(bounded(&html[start..])))
             && seen.insert(item.id.clone())
         {
             items.push(item);
@@ -139,6 +136,42 @@ fn search_page(html: &str) -> Found<FoundOffer> {
         items,
         more: has_next_page(html),
     }
+}
+
+/// The element `html` starts with, up to the tag that closes it, counting
+/// the tags of the same name opened and closed inside it; all of `html`
+/// when it never closes.
+fn element(html: &str) -> &str {
+    let lower = html.to_ascii_lowercase();
+    let name: String = lower
+        .chars()
+        .skip(1)
+        .take_while(char::is_ascii_alphanumeric)
+        .collect();
+    let (open, close) = (format!("<{name}"), format!("</{name}"));
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(next) = lower[at..].find('<').map(|found| at + found) {
+        let rest = &lower[next..];
+        let follows = |prefix: &str| {
+            rest.starts_with(prefix)
+                && rest[prefix.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/')
+        };
+        if follows(&close) {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                let end = rest.find('>').map_or(lower.len(), |end| next + end + 1);
+                return &html[..end];
+            }
+        } else if follows(&open) {
+            depth += 1;
+        }
+        at = next + 1;
+    }
+    html
 }
 
 /// The first [`MAX_BLOCK_BYTES`] of `block`, cut where a character starts.
