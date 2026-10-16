@@ -83,11 +83,11 @@ pub fn failure(error: &CopyError) -> String {
         }
         CopyError::Writer(PlatformError::Refused(why)) => format!(
             "A Anthropic recusou o pedido: {why}. Se for o modelo, confira o nome em \
-             Configurações › Títulos e descrições com IA."
+             Configurações › Vendas › Títulos e descrições com IA."
         ),
         CopyError::Writer(PlatformError::NotFound) => {
             "A Anthropic não encontrou o que foi pedido; confira o modelo em Configurações › \
-             Títulos e descrições com IA."
+             Vendas › Títulos e descrições com IA."
                 .into()
         }
         CopyError::Writer(PlatformError::Failed(why)) => {

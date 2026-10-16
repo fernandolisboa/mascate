@@ -1,9 +1,10 @@
-//! Studio (#41): denser, after pro tools. Top tabs, a compact header and a
-//! status bar.
+//! Studio (#41): denser, after pro tools. Top tabs grouped by area, a
+//! compact header and a status bar.
 
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, div, px};
@@ -53,17 +54,56 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
             .child(place.name())
             .on_click(move |_, window, cx| pick(place, window, cx))
     };
+    let separator = || {
+        div()
+            .flex_none()
+            .w(t.border_width.max(px(1.)))
+            .h(px(16.))
+            .mx_1()
+            .bg(t.border)
+    };
+    // An area's tabs stay together and a separator opens every area but the
+    // first, so a narrow window wraps an area at a time and never leaves a
+    // separator at a line's end. The group's name is each tab's tooltip.
+    let groups = Place::GROUPS.iter().enumerate().map(|(ix, group)| {
+        h_flex()
+            .flex_none()
+            .gap_1()
+            .items_center()
+            .when(ix > 0, |row| row.child(separator()))
+            .children(group.places.iter().map(|place| {
+                tab(*place).when_some(group.name, |tab, name| {
+                    tab.tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
+                })
+            }))
+    });
     h_flex()
         .flex_none()
-        .h(px(42.))
+        .w_full()
+        .min_h(px(42.))
         .px_3()
+        .py(px(6.))
         .gap_1()
+        .items_start()
         .bg(t.surface)
         .border_b(t.border_width)
         .border_color(t.border)
-        .children(Place::MAIN.map(tab))
-        .child(div().flex_1())
-        .children(Place::PINNED.map(tab))
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .flex_wrap()
+                .gap_y_1()
+                .gap_x_1()
+                .items_center()
+                .children(groups),
+        )
+        .child(
+            h_flex()
+                .flex_none()
+                .gap_1()
+                .children(Place::PINNED.map(tab)),
+        )
         .into_any_element()
 }
 

@@ -1,7 +1,7 @@
 //! The Sales Channels the owner sells on (ADR 0033), each behind its
 //! Connection with the ports its adapter offers. Each channel's slice adds
 //! its adapter here, as each Platform's does to `CommissionSources`.
-//! Configurações › Vendas sets the order of the channels.
+//! Configurações › Vendas › Canais de venda sets the order of the channels.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -329,7 +329,7 @@ impl ChannelFilter {
     }
 }
 
-/// Configurações › Vendas: the order of the Sales Channels, first to last.
+/// Configurações › Vendas › Canais de venda: the order of the Sales Channels, first to last.
 pub struct ChannelRankingSection {
     /// `None` until the first read finishes.
     ranking: Option<Vec<SalesChannelKind>>,

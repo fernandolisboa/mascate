@@ -1097,8 +1097,8 @@ impl PromotionsScreen {
         let minimum = self.minimum.map(|minimum| {
             format!(
                 "Margem mínima: {}. Nenhuma promoção passa se uma unidade vendida no menor preço, \
-                 depois do cupom, ficar com margem abaixo dela. Mude em Configurações › Preços e \
-                 margens.",
+                 depois do cupom, ficar com margem abaixo dela. Mude em Configurações › Vendas › \
+                 Preços e margens.",
                 minimum.to_pt_br()
             )
         });

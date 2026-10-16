@@ -77,7 +77,7 @@ pub const BUYER_PERSONAL_DATA: Reminder = Reminder {
     title: "Dados de compradores (LGPD)",
     text: "Nome, endereço e telefone de quem compra são dados pessoais. Use-os só para envio \
            e suporte; o app guarda apenas o necessário para isso e apaga depois do prazo \
-           escolhido em Configurações › Pedidos.",
+           escolhido em Configurações › Vendas › Pedidos.",
     reappears_after_days: 90,
     shows: ReminderShows::Always,
 };
