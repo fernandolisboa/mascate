@@ -122,6 +122,7 @@ Critério: só entra o que o dono, sem saber marketing, usa toda semana e que me
 | Envio para grupos via WhatsApp não oficial (WhatsApp Web) | Termos proíbem bulk/auto-messaging e clientes não autorizados [C] | 3 | **Desativado**, aviso de risco de ban do número |
 | Encurtador/redirect próprio em links Amazon | Encurtador que oculte o redirecionamento é proibido [C] | 3 | **Desativado** para Amazon; demais liberados |
 | Encurtador/redirect próprio em links Shopee | Proibido alterar o link de afiliado (2.2) [C]; se redirect simples conta como alteração [I] | 3 | **Desativado** até confirmar |
+| Encurtador em links do Mercado Livre | O programa de afiliados proíbe encurtar ou mascarar o link (cláusula 1.8 citada nas respostas públicas do ML) [I] | 3 | **Desativado** (ADR 0035) |
 | Marcação "tráfego de busca pago" em programa Shopee | 4.3(i) [C] | 2 | **Desativado**; o app avisa ao registrar campanha |
 | Palavra-chave com marca (amazon, Shopee, Hotmart) em campanha registrada | Amazon, Shopee, Hotmart proíbem [C] | 2 | **Bloqueio por flag** com aviso |
 | Preço digitado à mão em Offer Post da Amazon | A política do Associados BR (14/04/2026) só deixa exibir preço vindo de link fornecido pela Amazon ou da API de produtos [C] | 2 | **Desativado**; o post da Amazon sai sem preço (ADR 0031) |
