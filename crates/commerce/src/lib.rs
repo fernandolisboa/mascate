@@ -84,8 +84,27 @@ pub const AMAZON_SALE_INVOICE: Reminder = Reminder {
     shows: ReminderShows::WhenRaised,
 };
 
+/// Raised while a Shopee Order waits for its NF-e (#130): Shopee asks for
+/// it before an Order outside the Correios ships, and the app never holds
+/// the Order or the stock back for it.
+pub const SHOPEE_SALE_INVOICE: Reminder = Reminder {
+    key: "commerce.shopee_sale_invoice",
+    topic: ReminderTopic::Fiscal,
+    title: "NF-e dos pedidos da Shopee",
+    text: "A Shopee pede a NF-e antes de liberar o envio de um pedido fora dos Correios, e o \
+           pedido aparece em Pedidos como \"Aguardando NF-e\". Quem vende com CNPJ emite a \
+           nota e a envia na Central do Vendedor; o app segue com a baixa no estoque e o \
+           prazo de envio normalmente.",
+    reappears_after_days: 7,
+    shows: ReminderShows::WhenRaised,
+};
+
 /// This module's Reminders.
-pub const REMINDERS: &[Reminder] = &[BUYER_PERSONAL_DATA, AMAZON_SALE_INVOICE];
+pub const REMINDERS: &[Reminder] = &[
+    BUYER_PERSONAL_DATA,
+    AMAZON_SALE_INVOICE,
+    SHOPEE_SALE_INVOICE,
+];
 
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {

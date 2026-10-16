@@ -1,0 +1,59 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "b937c04e554847789cbf3fe33a0ad5f1",
+  "response": {
+    "more": false,
+    "return": [
+      {
+        "image": [],
+        "reason": "NOT_RECEIPT",
+        "text_reason": "",
+        "return_sn": "2610130000002",
+        "refund_amount": 39.9,
+        "currency": "BRL",
+        "create_time": 1791885600,
+        "update_time": 1791892800,
+        "status": "REQUESTED",
+        "due_date": 1792152000,
+        "tracking_number": "",
+        "dispute_reason": [],
+        "dispute_text_reason": [],
+        "needs_logistics": false,
+        "amount_before_discount": 39.9,
+        "user": {
+          "username": "loja.da.ana",
+          "email": "",
+          "portrait": ""
+        },
+        "item": [
+          {
+            "model_id": 0,
+            "name": "Caneca de Cerâmica 350 ml",
+            "images": [],
+            "amount": 1,
+            "item_price": 39.9,
+            "is_add_on_deal": false,
+            "is_main_item": false,
+            "add_on_deal_id": 0,
+            "item_id": 800003,
+            "item_sku": "",
+            "variation_sku": ""
+          }
+        ],
+        "order_sn": "260925RET0004D",
+        "return_ship_due_date": 1792324800,
+        "return_seller_due_date": 1792584000,
+        "negotiation_status": "PENDING_RESPOND",
+        "seller_proof_status": "PENDING",
+        "seller_compensation_status": "PENDING_REQUEST",
+        "return_refund_type": "RRBOC",
+        "return_solution": 1,
+        "is_seller_arrange": false,
+        "is_shipping_proof_mandatory": false,
+        "return_refund_request_type": 0,
+        "validation_type": "seller_validation"
+      }
+    ]
+  }
+}

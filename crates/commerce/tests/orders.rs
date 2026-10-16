@@ -1476,3 +1476,147 @@ fn the_amazon_invoice_reminder_is_raised_while_an_amazon_order_stands() {
         assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
     });
 }
+
+/// A Shopee channel whose item "800001" sells the fones, synced and linked,
+/// with its first Order Sync done.
+async fn on_shopee(fx: &Fixture) -> Channel {
+    let shopee = Channel::on(SalesChannelKind::Shopee);
+    shopee.has(vec![listing("800001", "Fone Bluetooth")]);
+    fx.listings.sync(&shopee).await.unwrap();
+    let found = fx
+        .listings
+        .listings()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|found| found.channel == SalesChannelKind::Shopee)
+        .unwrap();
+    fx.listings.link(found.id, fone()).await.unwrap();
+    fx.later(5);
+    fx.orders.sync(&shopee).await.unwrap();
+    shopee
+}
+
+#[test]
+fn a_shopee_order_read_in_two_overlapping_windows_changes_nothing_and_takes_its_units_once() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = on_shopee(&fx).await;
+        let at = fx.later(1);
+        let sold_on_shopee = order("261014RDY0001A", at, vec![sold("800001", None, 2)]);
+        shopee.sells(sold_on_shopee.clone());
+        // Shopee's windows meet: the Order on the line between them comes
+        // in both.
+        shopee.orders.lock().unwrap().push(sold_on_shopee);
+
+        fx.later(5);
+        let first = fx.orders.sync(&shopee).await.unwrap();
+        // The next Sync reads again from a little before this one.
+        fx.later(5);
+        let again = fx.orders.sync(&shopee).await.unwrap();
+
+        assert_eq!((first.read, first.new, first.taken), (1, 1, 1));
+        assert_eq!(
+            (again.read, again.new, again.changed, again.taken),
+            (1, 0, 0, 0)
+        );
+        assert_eq!(fx.units(fone()).await, 8);
+        assert_eq!(fx.sales_in_ledger(fone()).await, 1);
+    });
+}
+
+#[test]
+fn a_shopee_return_with_units_waits_for_the_owner_and_puts_them_back_once() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = on_shopee(&fx).await;
+        let at = fx.later(1);
+        shopee.sells(order("260925RET0004D", at, vec![sold("800001", None, 2)]));
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        let at = fx.later(1);
+        shopee.change_order("260925RET0004D", at, |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::Delivered;
+            found.returns = vec![returning(
+                "2610130000001",
+                ReturnStatus::OnTheWay,
+                "800001",
+                1,
+            )];
+        });
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+
+        let waiting = fx.order("260925RET0004D").await;
+        assert_eq!(waiting.units_awaiting_return(), 1);
+        assert_eq!(fx.units(fone()).await, 8);
+
+        let received = fx
+            .orders
+            .receive_return(waiting.id, ReturnReceipt::BackInStock)
+            .await
+            .unwrap();
+        assert_eq!((received.units, received.restocked), (1, 1));
+        assert_eq!(fx.units(fone()).await, 9);
+
+        // Shopee accepts it later: read again, nothing comes back twice.
+        let at = fx.later(1);
+        shopee.change_order("260925RET0004D", at, |found| {
+            found.returns[0].status = ReturnStatus::Delivered;
+        });
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        let settled = fx.order("260925RET0004D").await;
+        assert_eq!(settled.lines[0].back, back(0, 1, 0));
+        assert!(matches!(
+            fx.orders
+                .receive_return(settled.id, ReturnReceipt::BackInStock)
+                .await,
+            Err(OrderError::NoReturnAwaiting)
+        ));
+        assert_eq!(fx.units(fone()).await, 9);
+    });
+}
+
+#[test]
+fn a_shopee_order_waiting_for_its_invoice_raises_the_reminder_and_keeps_its_time_to_ship() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = on_shopee(&fx).await;
+        let at = fx.later(1);
+        let mut waiting = order("261015NFE0002B", at, vec![sold("800001", None, 1)]);
+        let shipment = waiting.shipment.as_mut().unwrap();
+        shipment.status = ShipmentStatus::AwaitingInvoice;
+        shipment.dispatch_by = Some(at + TimeDelta::hours(2));
+        shopee.sells(waiting);
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+
+        // The units leave the stock: the NF-e never holds the sale back.
+        assert_eq!(fx.units(fone()).await, 9);
+        assert_eq!(
+            fx.orders.raised_reminders().await.unwrap(),
+            [mascate_commerce::SHOPEE_SALE_INVOICE.key]
+        );
+        let alerts = fx.orders.dispatch_alerts().await.unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].order.sold.id, "261015NFE0002B");
+        assert_eq!(alerts[0].due, DispatchDue::Soon);
+        // Shopee prints no label before the NF-e.
+        let kept = fx.order("261015NFE0002B").await;
+        assert!(matches!(
+            fx.orders.shipping_label(&shopee, kept.id).await,
+            Err(OrderError::NoLabel)
+        ));
+
+        // The owner sent the NF-e: Shopee lets it ship.
+        let at = fx.later(1);
+        shopee.change_order("261015NFE0002B", at, |found| {
+            found.shipment.as_mut().unwrap().status = ShipmentStatus::ReadyToShip;
+        });
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        assert!(fx.orders.raised_reminders().await.unwrap().is_empty());
+        assert_eq!(fx.units(fone()).await, 9);
+    });
+}

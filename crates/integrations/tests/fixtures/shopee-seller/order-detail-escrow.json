@@ -1,0 +1,165 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "b937c04e554847789cbf3fe33a0ad5f1",
+  "response": {
+    "order_list": [
+      {
+        "order_sn": "260920DNE0005E",
+        "region": "BR",
+        "currency": "BRL",
+        "cod": false,
+        "total_amount": 129.9,
+        "order_status": "COMPLETED",
+        "shipping_carrier": "Shopee Xpress",
+        "payment_method": "Pix",
+        "message_to_seller": "",
+        "create_time": 1789905600,
+        "update_time": 1790769600,
+        "days_to_ship": 2,
+        "ship_by_date": 1790078400,
+        "buyer_user_id": 1170319091,
+        "buyer_username": "comprador_fone",
+        "pickup_done_time": 1789992000,
+        "item_list": [
+          {
+            "item_id": 800001,
+            "item_name": "Fone de Ouvido Bluetooth Mascate Preto",
+            "item_sku": "",
+            "model_id": 0,
+            "model_name": "",
+            "model_sku": "",
+            "model_quantity_purchased": 1,
+            "model_original_price": 129.9,
+            "model_discounted_price": 129.9,
+            "wholesale": false,
+            "weight": 0.3,
+            "add_on_deal": false,
+            "main_item": false,
+            "add_on_deal_id": 0,
+            "promotion_type": "",
+            "promotion_id": 0,
+            "order_item_id": 800001,
+            "promotion_group_id": 0,
+            "image_info": {
+              "image_url": "https://cf.shopee.com.br/file/br-11134207-mascate"
+            },
+            "product_location_id": [
+              "BRZ"
+            ],
+            "is_prescription_item": false,
+            "is_b2c_owned_item": false
+          }
+        ],
+        "split_up": false,
+        "cancel_by": "",
+        "cancel_reason": "",
+        "buyer_cancel_reason": ""
+      },
+      {
+        "order_sn": "261014RDY0001A",
+        "region": "BR",
+        "currency": "BRL",
+        "cod": false,
+        "total_amount": 254.7,
+        "order_status": "READY_TO_SHIP",
+        "shipping_carrier": "Shopee Xpress",
+        "payment_method": "Pix",
+        "message_to_seller": "",
+        "create_time": 1791979200,
+        "update_time": 1792148400,
+        "days_to_ship": 2,
+        "ship_by_date": 1792238400,
+        "buyer_user_id": 1170319091,
+        "buyer_username": "comprador_fone",
+        "pickup_done_time": 0,
+        "item_list": [
+          {
+            "item_id": 800001,
+            "item_name": "Fone de Ouvido Bluetooth Mascate Preto",
+            "item_sku": "",
+            "model_id": 0,
+            "model_name": "",
+            "model_sku": "",
+            "model_quantity_purchased": 2,
+            "model_original_price": 129.9,
+            "model_discounted_price": 119.9,
+            "wholesale": false,
+            "weight": 0.3,
+            "add_on_deal": false,
+            "main_item": false,
+            "add_on_deal_id": 0,
+            "promotion_type": "",
+            "promotion_id": 0,
+            "order_item_id": 800001,
+            "promotion_group_id": 0,
+            "image_info": {
+              "image_url": "https://cf.shopee.com.br/file/br-11134207-mascate"
+            },
+            "product_location_id": [
+              "BRZ"
+            ],
+            "is_prescription_item": false,
+            "is_b2c_owned_item": false
+          }
+        ],
+        "split_up": false,
+        "cancel_by": "",
+        "cancel_reason": "",
+        "buyer_cancel_reason": ""
+      },
+      {
+        "order_sn": "261010CNC0003C",
+        "region": "BR",
+        "currency": "BRL",
+        "cod": false,
+        "total_amount": 39.9,
+        "order_status": "CANCELLED",
+        "shipping_carrier": "Shopee Xpress",
+        "payment_method": "Pix",
+        "message_to_seller": "",
+        "create_time": 1790683200,
+        "update_time": 1790856000,
+        "days_to_ship": 2,
+        "ship_by_date": 1790856000,
+        "buyer_user_id": 1170319091,
+        "buyer_username": "cliente.caneca",
+        "pickup_done_time": 0,
+        "item_list": [
+          {
+            "item_id": 800003,
+            "item_name": "Caneca de Cerâmica 350 ml",
+            "item_sku": "",
+            "model_id": 0,
+            "model_name": "",
+            "model_sku": "",
+            "model_quantity_purchased": 1,
+            "model_original_price": 39.9,
+            "model_discounted_price": 39.9,
+            "wholesale": false,
+            "weight": 0.3,
+            "add_on_deal": false,
+            "main_item": false,
+            "add_on_deal_id": 0,
+            "promotion_type": "",
+            "promotion_id": 0,
+            "order_item_id": 800003,
+            "promotion_group_id": 0,
+            "image_info": {
+              "image_url": "https://cf.shopee.com.br/file/br-11134207-mascate"
+            },
+            "product_location_id": [
+              "BRZ"
+            ],
+            "is_prescription_item": false,
+            "is_b2c_owned_item": false
+          }
+        ],
+        "split_up": false,
+        "cancel_by": "buyer",
+        "cancel_reason": "Mudei de ideia",
+        "buyer_cancel_reason": ""
+      }
+    ]
+  }
+}

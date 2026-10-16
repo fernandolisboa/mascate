@@ -23,7 +23,7 @@ const PAGE_SIZE: &str = "100";
 const BASE_INFO_LIMIT: usize = 50;
 
 /// The item id Shopee's updates take for an item without variations.
-const NO_MODEL: &str = "0";
+pub(super) const NO_MODEL: &str = "0";
 
 /// Shopee's commission for a CNPJ seller, by the item's price, in force
 /// since 2026-03-01 ("Comissão para vendedores CNPJ e CPF em 2026",
@@ -376,7 +376,7 @@ fn status(item: &str, model: Option<&str>, available: u32) -> ListingStatus {
 }
 
 /// The published table's fee at `price`.
-fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
+pub(super) fn table_fee(price: Money) -> Result<SaleFee, PlatformError> {
     let amount = price.amount();
     let (_, rate, fixed) = TABLE
         .into_iter()

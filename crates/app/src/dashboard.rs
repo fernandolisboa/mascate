@@ -53,7 +53,9 @@ struct Snapshot {
     lines: Vec<SoldLine>,
     capital: Money,
     units: i64,
-    releases: ReleaseSummary,
+    /// Each channel's wallet: the Mercado Pago always, the others once they
+    /// hold a sale's money.
+    releases: Vec<(SalesChannelKind, ReleaseSummary)>,
     volume: VolumeCheck,
     commissions: Vec<CommissionIncome>,
     /// The linked Products, reselling against promoting (#86).
@@ -149,21 +151,28 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         .into_iter()
         .find(|value| value.currency() == Currency::Brl)
         .unwrap_or(Money::zero(Currency::Brl));
-    let releases: Vec<MoneyRelease> = sources
-        .sales
-        .orders
-        .money_releases()
-        .await
-        .map_err(|e| orders::failure(&e))?
-        .into_iter()
-        .map(|payment| MoneyRelease {
-            amount: payment.amount,
-            released: payment.released,
-            on: payment.release_at,
-        })
-        .collect();
-    let releases = ReleaseSummary::of(&releases, during.clone(), Currency::Brl)
-        .map_err(|e| format!("Valores do Mercado Pago em moedas diferentes: {e}"))?;
+    let mut releases = Vec::new();
+    for channel in SalesChannelKind::ALL {
+        let payments: Vec<MoneyRelease> = sources
+            .sales
+            .orders
+            .money_releases(channel)
+            .await
+            .map_err(|e| orders::failure(&e))?
+            .into_iter()
+            .map(|payment| MoneyRelease {
+                amount: payment.amount,
+                released: payment.released,
+                on: payment.release_at,
+            })
+            .collect();
+        if payments.is_empty() && channel != SalesChannelKind::MercadoLivre {
+            continue;
+        }
+        let summary = ReleaseSummary::of(&payments, during.clone(), Currency::Brl)
+            .map_err(|e| format!("Valores {} em moedas diferentes: {e}", wallet(channel).of))?;
+        releases.push((channel, summary));
+    }
     let commissions = resell_or_promote::earned(&sources.affiliate, during).await?;
     let earned: Vec<EarnedCommission> = commissions
         .iter()
@@ -557,48 +566,51 @@ impl DashboardScreen {
         )
     }
 
-    fn render_releases(&self, snapshot: &Snapshot, cx: &App) -> AnyElement {
+    fn render_releases(&self, snapshot: &Snapshot, cx: &App) -> Vec<AnyElement> {
         let t = look(cx).tokens;
-        let releases = &snapshot.releases;
-        let mut column = v_flex()
-            .gap_3()
-            .child(kit::section_heading("Mercado Pago"))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_3()
-                    .child(figure("A liberar", releases.pending.to_pt_br(), &t))
-                    .child(figure(
-                        "Liberado no período",
-                        releases.released.to_pt_br(),
-                        &t,
-                    )),
-            );
-        let mut next: Vec<String> = releases
-            .schedule
+        snapshot
+            .releases
             .iter()
-            .map(|(day, amount)| format!("{}: {}", day_text(*day), amount.to_pt_br()))
-            .collect();
-        if !releases.undated.amount().is_zero() {
-            next.push(format!(
-                "sem data ainda (o Mercado Pago marca depois da entrega): {}",
-                releases.undated.to_pt_br()
-            ));
-        }
-        if !next.is_empty() {
-            column = column.child(
-                div()
-                    .text_sm()
-                    .child(format!("Quando cai: {}.", next.join(" · "))),
-            );
-        }
-        column
-            .child(div().text_xs().text_color(t.text2).child(
-                "O valor de cada venda do Mercado Livre é o líquido que o Mercado Pago informa \
-                 para o pagamento, lido depois de cada Sync de pedidos. Outras entradas da conta \
-                 do Mercado Pago não entram aqui.",
-            ))
-            .into_any_element()
+            .map(|(channel, releases)| {
+                let wallet = wallet(*channel);
+                let mut column = v_flex()
+                    .gap_3()
+                    .child(kit::section_heading(wallet.name))
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_3()
+                            .child(figure("A liberar", releases.pending.to_pt_br(), &t))
+                            .child(figure(
+                                "Liberado no período",
+                                releases.released.to_pt_br(),
+                                &t,
+                            )),
+                    );
+                let mut next: Vec<String> = releases
+                    .schedule
+                    .iter()
+                    .map(|(day, amount)| format!("{}: {}", day_text(*day), amount.to_pt_br()))
+                    .collect();
+                if !releases.undated.amount().is_zero() {
+                    next.push(format!(
+                        "sem data ainda ({}): {}",
+                        wallet.undated,
+                        releases.undated.to_pt_br()
+                    ));
+                }
+                if !next.is_empty() {
+                    column = column.child(
+                        div()
+                            .text_sm()
+                            .child(format!("Quando cai: {}.", next.join(" · "))),
+                    );
+                }
+                column
+                    .child(div().text_xs().text_color(t.text2).child(wallet.note))
+                    .into_any_element()
+            })
+            .collect()
     }
 
     fn render_volume(&self, volume: &VolumeCheck, cx: &App) -> AnyElement {
@@ -764,8 +776,41 @@ impl Render for DashboardScreen {
         parts
             .content
             .extend(resell_or_promote::painel_section(&snapshot.compared, cx));
-        parts.content.push(self.render_releases(&snapshot, cx));
+        parts.content.extend(self.render_releases(&snapshot, cx));
         self.snapshot = Some(snapshot);
         layout::screen(parts, cx)
+    }
+}
+
+/// How the Painel names a channel's wallet and explains its money.
+struct Wallet {
+    name: &'static str,
+    /// "do Mercado Pago", for a sentence.
+    of: &'static str,
+    /// Why some money has no date yet.
+    undated: &'static str,
+    note: &'static str,
+}
+
+fn wallet(channel: SalesChannelKind) -> Wallet {
+    match channel {
+        SalesChannelKind::Shopee => Wallet {
+            name: "Saldo da Shopee",
+            of: "do saldo da Shopee",
+            undated: "a Shopee libera quando o pedido é concluído",
+            note: "O valor de cada venda da Shopee é o repasse que a Shopee informa para o \
+                   pedido, já sem as tarifas, lido depois de cada Sync de pedidos. O repasse \
+                   muda até o pedido ser concluído.",
+        },
+        // Mercado Livre, and any channel whose wallet the app does not read
+        // yet.
+        _ => Wallet {
+            name: "Mercado Pago",
+            of: "do Mercado Pago",
+            undated: "o Mercado Pago marca depois da entrega",
+            note: "O valor de cada venda do Mercado Livre é o líquido que o Mercado Pago \
+                   informa para o pagamento, lido depois de cada Sync de pedidos. Outras \
+                   entradas da conta do Mercado Pago não entram aqui.",
+        },
     }
 }

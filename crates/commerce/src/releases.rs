@@ -170,9 +170,12 @@ impl Orders {
         Ok(report)
     }
 
-    /// Every payment kept, of every Order, the soonest to be released
-    /// first and those without a date last.
-    pub async fn money_releases(&self) -> Result<Vec<PaymentRelease>, OrderError> {
+    /// Every payment kept of `channel`'s Orders, the soonest to be
+    /// released first and those without a date last.
+    pub async fn money_releases(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<Vec<PaymentRelease>, OrderError> {
         let mut rows = self
             .database
             .connection()
@@ -182,8 +185,9 @@ impl Orders {
                  FROM commerce_money_releases rel
                  JOIN commerce_orders ord ON ord.id = rel.order_id
                  WHERE rel.deleted_at IS NULL AND ord.deleted_at IS NULL
+                     AND ord.sales_channel = ?1
                  ORDER BY rel.release_at IS NULL, rel.release_at, rel.channel_payment_id",
-                (),
+                params![channel.code()],
             )
             .await?;
         let mut releases = Vec::new();

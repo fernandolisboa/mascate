@@ -65,7 +65,8 @@ mod tests {
     use futures::executor::block_on;
     use mascate_catalog::Catalog;
     use mascate_commerce::{
-        Listings, NewPurchaseLine, NewPurchaseOrder, Orders, PurchaseOrders, Receiving, StockMirror,
+        ChannelBilling, ChannelOrders, ChannelPayments, Listings, NewPurchaseLine,
+        NewPurchaseOrder, Orders, PurchaseOrders, Receiving, StockMirror,
     };
     use mascate_integrations::Connection;
     use mascate_inventory::{HOME_LOCATION, Inventory};
@@ -141,43 +142,34 @@ mod tests {
         (server, adapter)
     }
 
-    #[test]
-    fn a_round_sends_each_linked_model_its_share_lowering_first() {
-        block_on(async {
+    /// The shop's three items synced and linked to their Products, with 3
+    /// fones, 2 black M camisetas and 4 cups on hand.
+    struct Selling {
+        _dir: tempfile::TempDir,
+        clock: Arc<ManualClock>,
+        orders: Orders,
+        mirror: StockMirror,
+        catalog: Catalog,
+        server: FakeHttpServer,
+        adapter: Arc<ShopeeSeller>,
+    }
+
+    impl Selling {
+        async fn at(now: chrono::DateTime<Utc>) -> Self {
             let dir = tempfile::tempdir().unwrap();
-            let clock = Arc::new(ManualClock::at(
-                Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap(),
-            ));
+            let manual = Arc::new(ManualClock::at(now));
             let database = Arc::new(
                 Database::open(&dir.path().join("mascate.db"))
                     .await
                     .unwrap(),
             );
-            migrate(&database, clock.as_ref(), MODULE_MIGRATIONS)
+            migrate(&database, manual.as_ref(), MODULE_MIGRATIONS)
                 .await
                 .unwrap();
-            let clock: Arc<dyn Clock> = clock;
+            let clock: Arc<dyn Clock> = manual.clone();
             let ids: Arc<dyn IdGenerator> = Arc::new(SequentialIds::default());
             let inventory = Arc::new(Inventory::new(database.clone(), clock.clone(), ids.clone()));
             let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
-            let mirror = StockMirror::new(
-                database.clone(),
-                inventory.clone(),
-                clock.clone(),
-                ids.clone(),
-            );
-            let orders = Orders::new(
-                database.clone(),
-                inventory.clone(),
-                clock.clone(),
-                ids.clone(),
-            );
-            let catalog = Catalog::new(
-                database.clone(),
-                dir.path().join("files"),
-                clock.clone(),
-                ids.clone(),
-            );
             let (server, adapter) = shopee();
             listings.sync(adapter.as_ref()).await.unwrap();
 
@@ -230,36 +222,153 @@ mod tests {
                 };
                 listings.link(listing.id, product).await.unwrap();
             }
-            let channels = [ChannelPorts {
+            Self {
+                mirror: StockMirror::new(
+                    database.clone(),
+                    inventory.clone(),
+                    clock.clone(),
+                    ids.clone(),
+                ),
+                orders: Orders::new(
+                    database.clone(),
+                    inventory.clone(),
+                    clock.clone(),
+                    ids.clone(),
+                ),
+                catalog: Catalog::new(database, dir.path().join("files"), clock, ids),
+                _dir: dir,
+                clock: manual,
+                server,
+                adapter,
+            }
+        }
+
+        fn ports(&self, with_orders: bool) -> ChannelPorts {
+            ChannelPorts {
                 connection: Connection::ShopeeSeller,
-                listings: adapter,
-                orders: None,
-                billing: None,
-                payments: None,
+                listings: self.adapter.clone(),
+                orders: with_orders.then(|| self.adapter.clone() as Arc<dyn ChannelOrders>),
+                billing: with_orders.then(|| self.adapter.clone() as Arc<dyn ChannelBilling>),
+                payments: with_orders.then(|| self.adapter.clone() as Arc<dyn ChannelPayments>),
                 labels: None,
                 shipments: None,
                 publisher: None,
-            }];
+            }
+        }
 
-            let round = orders::round(&orders, &mirror, &catalog, &channels)
-                .await
-                .unwrap()
-                .unwrap();
+        async fn round(&self, with_orders: bool) -> orders::Round {
+            orders::round(
+                &self.orders,
+                &self.mirror,
+                &self.catalog,
+                &[self.ports(with_orders)],
+            )
+            .await
+            .unwrap()
+            .unwrap()
+        }
 
-            assert_eq!((round.sent.sent, round.sent.failed), (2, 0));
-            let sent: Vec<String> = server
+        /// The stock bodies Shopee was sent, in order.
+        fn stock_sent(&self) -> Vec<String> {
+            self.server
                 .received()
                 .into_iter()
                 .filter(|request| request.path.starts_with("/api/v2/product/update_stock?"))
                 .map(|request| request.body)
-                .collect();
+                .collect()
+        }
+
+        /// Shopee answers every Order search with `orders` and every return
+        /// search with none; the details are those of the Orders that were
+        /// done, ready to ship and cancelled.
+        fn sold(&self, orders: &[&str]) {
+            let list = format!(
+                r#"{{"error":"","message":"","response":{{"more":false,"next_cursor":"","order_list":[{}]}}}}"#,
+                orders
+                    .iter()
+                    .map(|order| format!(r#"{{"order_sn":"{order}"}}"#))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            for (path, body) in [
+                ("/api/v2/order/get_order_list", list),
+                (
+                    "/api/v2/order/get_order_detail",
+                    fixture("order-detail-escrow.json"),
+                ),
+                (
+                    "/api/v2/returns/get_return_list",
+                    fixture("return-list-empty.json"),
+                ),
+                (
+                    "/api/v2/payment/get_escrow_detail",
+                    fixture("escrow-ready.json"),
+                ),
+            ] {
+                self.server.serve_any_query(path, 200, body);
+            }
+        }
+    }
+
+    const FONE: &str =
+        r#"{"item_id":800001,"stock_list":[{"model_id":0,"seller_stock":[{"stock":3}]}]}"#;
+    const CAMISETA: &str =
+        r#"{"item_id":800002,"stock_list":[{"model_id":900022,"seller_stock":[{"stock":2}]}]}"#;
+
+    #[test]
+    fn a_round_sends_each_linked_model_its_share_lowering_first() {
+        block_on(async {
+            let shop = Selling::at(Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap()).await;
+
+            let round = shop.round(false).await;
+
+            assert_eq!((round.sent.sent, round.sent.failed), (2, 0));
             // The fone goes down from 7 before the camiseta goes up from 0;
             // the owner's unlisted cup keeps what it had.
+            assert_eq!(shop.stock_sent(), [FONE, CAMISETA]);
+        });
+    }
+
+    #[test]
+    fn a_unit_sold_on_shopee_leaves_the_share_before_the_next_stock_send() {
+        block_on(async {
+            // Three days before Shopee's clock: the first Order Sync lists
+            // what came before and takes nothing.
+            let shop = Selling::at(Utc.with_ymd_and_hms(2026, 10, 13, 12, 0, 0).unwrap()).await;
+            shop.sold(&[]);
+            let first = shop.round(true).await;
+            assert_eq!(first.synced.taken, 0);
+            assert_eq!(shop.stock_sent(), [FONE, CAMISETA]);
+
+            // Two fones sold on Shopee since: the round reads them before
+            // it sends, so the one fone left is all Shopee is offered. The
+            // done and the cancelled Orders came before the first Sync.
+            shop.clock.advance(chrono::TimeDelta::days(3));
+            shop.sold(&["260920DNE0005E", "261014RDY0001A", "261010CNC0003C"]);
+            let second = shop.round(true).await;
+
+            assert_eq!((second.synced.new, second.synced.taken), (3, 1));
             assert_eq!(
-                sent,
+                shop.stock_sent().last().map(String::as_str),
+                Some(
+                    r#"{"item_id":800001,"stock_list":[{"model_id":0,"seller_stock":[{"stock":1}]}]}"#
+                )
+            );
+            // The done Order's escrow is released; the one to ship is held,
+            // undated; the cancelled one pays nothing.
+            let releases: Vec<(String, bool)> = shop
+                .orders
+                .money_releases(mascate_kernel::SalesChannelKind::Shopee)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|payment| (payment.order, payment.released))
+                .collect();
+            assert_eq!(
+                releases,
                 [
-                    r#"{"item_id":800001,"stock_list":[{"model_id":0,"seller_stock":[{"stock":3}]}]}"#,
-                    r#"{"item_id":800002,"stock_list":[{"model_id":900022,"seller_stock":[{"stock":2}]}]}"#,
+                    ("260920DNE0005E".to_owned(), true),
+                    ("261014RDY0001A".to_owned(), false),
                 ]
             );
         });
