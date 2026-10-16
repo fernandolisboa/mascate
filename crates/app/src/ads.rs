@@ -149,12 +149,7 @@ pub(crate) async fn report(
     }
     let sold = listings::listing_products(&sources.listings, &sources.catalog).await?;
     let mut records: BTreeMap<String, RecordId> = BTreeMap::new();
-    for listing in sources
-        .listings
-        .listings()
-        .await
-        .map_err(|e| listings::failure(&e))?
-    {
+    for listing in listings::mercado_livre_listings(&sources.listings).await? {
         records.entry(listing.listed.id).or_insert(listing.id);
     }
     let assumptions = pricing::assumptions(&sources.catalog, &sources.taxes).await?;

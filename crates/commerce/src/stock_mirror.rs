@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use libsql::{Row, TransactionBehavior, params};
 use mascate_inventory::Inventory;
-use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, Timestamp};
+use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, stored};
 
 use crate::{ChannelStock, ListingError, ListingStatus, Listings, SalesChannel};
@@ -83,6 +83,7 @@ pub struct StockMirror {
 /// A Listing as the mirror reads it.
 struct Mirrored {
     stock: MirroredStock,
+    channel: SalesChannelKind,
     item: String,
     variation: Option<String>,
 }
@@ -100,7 +101,7 @@ impl StockMirror {
         }
     }
 
-    /// The stock of every Listing in the channel, by title like the
+    /// The stock of every Listing in every channel, by title like the
     /// Listings.
     pub async fn mirrored(&self) -> Result<Vec<MirroredStock>, ListingError> {
         Ok(self
@@ -111,19 +112,23 @@ impl StockMirror {
             .collect())
     }
 
-    /// Sends every stock still to send, one request per channel listing,
-    /// and reads the listings sent back: the channel pauses one left with
-    /// none and puts it back on sale when units return. A failure stays on
-    /// the Listing until a later send gets through; the app calls this
-    /// after each stock movement and each Sync.
+    /// Sends every stock of `channel`'s Listings still to send, one request
+    /// per channel listing, and reads the listings sent back: the channel
+    /// pauses one left with none and puts it back on sale when units
+    /// return. A failure stays on the Listing until a later send gets
+    /// through; the app calls this after each stock movement and each Sync.
     pub async fn send(&self, channel: &dyn SalesChannel) -> Result<StockSend, ListingError> {
+        let on = channel.sales_channel();
         let mut sent = BTreeSet::new();
         let mut failed = BTreeSet::new();
         let mut items_sent = BTreeSet::new();
         'rounds: for _ in 0..ROUNDS {
             let mut due: BTreeMap<String, Vec<Mirrored>> = BTreeMap::new();
             for mirrored in self.read().await? {
-                if mirrored.stock.to_send.is_some() && !failed.contains(&mirrored.stock.listing) {
+                if mirrored.channel == on
+                    && mirrored.stock.to_send.is_some()
+                    && !failed.contains(&mirrored.stock.listing)
+                {
                     due.entry(mirrored.item.clone()).or_default().push(mirrored);
                 }
             }
@@ -159,7 +164,7 @@ impl StockMirror {
                                 | PlatformError::Expired
                                 | PlatformError::RateLimited
                         ) {
-                            failed.extend(self.still_due(&failed, &error).await?);
+                            failed.extend(self.still_due(on, &failed, &error).await?);
                             break 'rounds;
                         }
                     }
@@ -170,7 +175,7 @@ impl StockMirror {
             let ids: Vec<String> = items_sent.into_iter().collect();
             // The stock is sent either way; the next Sync reads the status.
             if let Ok(reported) = channel.listings(&ids) {
-                self.listings.take_reported(reported).await?;
+                self.listings.take_reported(on, reported).await?;
             }
         }
         Ok(StockSend {
@@ -179,17 +184,21 @@ impl StockMirror {
         })
     }
 
-    /// Records `error` on every Listing still due outside `failed`, and
-    /// returns them.
+    /// Records `error` on every Listing of `channel` still due outside
+    /// `failed`, and returns them.
     async fn still_due(
         &self,
+        channel: SalesChannelKind,
         failed: &BTreeSet<RecordId>,
         error: &PlatformError,
     ) -> Result<Vec<RecordId>, ListingError> {
         let mut also = Vec::new();
         for mirrored in self.read().await? {
             let listing = mirrored.stock.listing;
-            if mirrored.stock.to_send.is_some() && !failed.contains(&listing) {
+            if mirrored.channel == channel
+                && mirrored.stock.to_send.is_some()
+                && !failed.contains(&listing)
+            {
                 self.record_failure(listing, error).await?;
                 also.push(listing);
             }
@@ -279,16 +288,16 @@ impl StockMirror {
             .database
             .connection()
             .query(
-                "SELECT listing.id, listing.ml_item_id, listing.ml_variation_id,
+                "SELECT listing.id, listing.channel_item_id, listing.channel_variation_id,
                      listing.product_id, listing.status, listing.available_quantity,
                      stock.stock_sent, stock.stock_sent_at, stock.stock_failure,
-                     stock.stock_failure_detail, stock.stock_failed_at
+                     stock.stock_failure_detail, stock.stock_failed_at, listing.sales_channel
                  FROM commerce_listings listing
                  LEFT JOIN commerce_listing_stock stock
                      ON stock.listing_id = listing.id AND stock.deleted_at IS NULL
-                 WHERE listing.deleted_at IS NULL AND listing.ml_item_id IS NOT NULL
+                 WHERE listing.deleted_at IS NULL AND listing.channel_item_id IS NOT NULL
                  ORDER BY listing.title COLLATE NOCASE, listing.variation_name COLLATE NOCASE,
-                     listing.ml_item_id",
+                     listing.sales_channel, listing.channel_item_id",
                 (),
             )
             .await?;
@@ -335,6 +344,7 @@ fn mirrored_from(row: &Row, on_hand: &HashMap<RecordId, u32>) -> Result<Mirrored
             // A failure for stock no longer due is history.
             last_failure: last_failure.filter(|_| to_send.is_some()),
         },
+        channel: row.sales_channel_at(11)?,
         item: row.get(1)?,
         variation: row.get(2)?,
     })

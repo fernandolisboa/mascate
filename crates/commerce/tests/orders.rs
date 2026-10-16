@@ -20,7 +20,7 @@ use mascate_commerce::{
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, LowStock, MovementReason};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, PlatformError, RecordId, Timestamp};
+use mascate_kernel::{Clock, PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 
@@ -1197,11 +1197,91 @@ fn units_sold_count_each_listing_with_its_variations_since_a_time_without_cancel
         fx.channel.sells(cancelled);
         fx.sync().await;
 
-        let sold = fx.orders.units_sold_since(since).await.unwrap();
+        let sold = fx
+            .orders
+            .units_sold_since(SalesChannelKind::MercadoLivre, since)
+            .await
+            .unwrap();
 
         assert_eq!(
             sold.into_iter().collect::<Vec<_>>(),
             [("MLB1".to_owned(), 1), ("MLB2".to_owned(), 3)]
         );
+    });
+}
+
+#[test]
+fn an_order_sync_of_one_channel_never_touches_the_orders_of_another() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let amazon = Channel::on(SalesChannelKind::Amazon);
+        amazon.has(vec![listing("MLB1", "Fone Bluetooth")]);
+        fx.listings.sync(&amazon).await.unwrap();
+        let on_amazon = fx
+            .listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|found| found.channel == SalesChannelKind::Amazon)
+            .unwrap();
+        fx.listings.link(on_amazon.id, fone()).await.unwrap();
+        // Sold on Amazon after Mercado Livre's first Sync but before
+        // Amazon's: the stock counted when Amazon connected had lost it.
+        let before = fx.later(1);
+        amazon.sells(order("2999999", before, vec![sold("MLB1", None, 1)]));
+        fx.later(5);
+        let first = fx.orders.sync(&amazon).await.unwrap();
+        assert_eq!((first.new, first.taken), (1, 0));
+        assert!(first.arrived.is_empty());
+
+        // The same Order id on both channels is two Orders.
+        let at = fx.later(1);
+        fx.channel
+            .sells(order("3000001", at, vec![sold("MLB1", None, 2)]));
+        amazon.sells(order("3000001", at, vec![sold("MLB1", None, 1)]));
+        let on_ml = fx.sync().await;
+        assert_eq!((on_ml.read, on_ml.new, on_ml.taken), (1, 1, 1));
+        fx.later(5);
+        let synced = fx.orders.sync(&amazon).await.unwrap();
+        assert_eq!((synced.read, synced.new, synced.taken), (2, 1, 1));
+        assert_eq!(synced.arrived[0].channel, SalesChannelKind::Amazon);
+        assert_eq!(fx.units(fone()).await, 7);
+
+        let orders = fx.orders.orders().await.unwrap();
+        let of = |channel: SalesChannelKind, id: &str| {
+            orders
+                .iter()
+                .find(|kept| kept.channel == channel && kept.sold.id == id)
+                .unwrap_or_else(|| panic!("no Order {id} on {channel:?}"))
+                .clone()
+        };
+        assert_eq!(orders.len(), 3);
+        assert_eq!(of(SalesChannelKind::MercadoLivre, "3000001").units(), 2);
+        assert_eq!(of(SalesChannelKind::Amazon, "3000001").units(), 1);
+        assert_eq!(
+            stock_of(&of(SalesChannelKind::Amazon, "2999999")),
+            [LineStock::BeforeFirstSync]
+        );
+
+        // Mercado Livre cancels its Order: Amazon's keeps its status and
+        // its units out of the stock.
+        fx.channel_changes("3000001", |found| found.status = OrderStatus::Cancelled);
+        let cancelled = fx.sync().await;
+        assert_eq!((cancelled.changed, cancelled.restocked), (1, 1));
+        let amazon_order = fx
+            .orders
+            .orders()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|kept| kept.channel == SalesChannelKind::Amazon && kept.sold.id == "3000001")
+            .unwrap();
+        assert_eq!(amazon_order.sold.status, OrderStatus::Paid);
+        assert!(matches!(
+            amazon_order.lines[0].stock,
+            LineStock::Taken { .. }
+        ));
+        assert_eq!(fx.units(fone()).await, 9);
     });
 }

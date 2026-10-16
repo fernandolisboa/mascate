@@ -27,6 +27,7 @@ use crate::parts::ScreenParts;
 use crate::preferences;
 use crate::pricing::PricingSection;
 use crate::restricted::RestrictedFeaturesSection;
+use crate::sales_channels::ChannelRankingSection;
 use crate::updates::UpdatesSection;
 
 fn theme_name(theme: UiTheme) -> &'static str {
@@ -103,6 +104,7 @@ pub struct SettingsScreen {
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
     copy: Entity<CopySettingsSection>,
+    channels: Entity<ChannelRankingSection>,
     orders: Entity<OrderSettingsSection>,
     finance: Entity<FinanceSection>,
     restricted: Entity<RestrictedFeaturesSection>,
@@ -153,6 +155,7 @@ impl SettingsScreen {
             connections,
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
             copy: cx.new(|cx| CopySettingsSection::new(window, cx)),
+            channels: cx.new(ChannelRankingSection::new),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
             finance: cx.new(|cx| FinanceSection::new(window, cx)),
             restricted: cx.new(RestrictedFeaturesSection::new),
@@ -606,6 +609,13 @@ impl Render for SettingsScreen {
                         .child("Títulos e descrições com IA"),
                 )
                 .child(self.copy.clone())
+                .into_any_element(),
+        );
+        parts.content.push(
+            v_flex()
+                .gap_3()
+                .child(div().text_xl().font_semibold().child("Vendas"))
+                .child(self.channels.clone())
                 .into_any_element(),
         );
         parts.content.push(

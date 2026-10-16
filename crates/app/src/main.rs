@@ -56,6 +56,7 @@ mod reputation_alerts;
 mod resell_or_promote;
 mod restricted;
 mod sales;
+mod sales_channels;
 mod sales_events;
 mod settings;
 mod shell;
@@ -107,6 +108,7 @@ use crate::questions::AppQuestions;
 use crate::reminders::AppReminders;
 use crate::reputation::AppReputation;
 use crate::restricted::AppFlags;
+use crate::sales_channels::{AppChannelRanking, ChannelPorts, SalesChannels};
 use crate::sales_events::AppSalesEvents;
 use crate::shell::Shell;
 use crate::shopee::AppShopee;
@@ -220,6 +222,14 @@ fn main() {
                 saved,
             ));
             cx.set_global(AppConnections(connections));
+            cx.set_global(SalesChannels(vec![ChannelPorts {
+                connection: Connection::MercadoLivre,
+                listings: mercado_livre.clone(),
+                orders: mercado_livre.clone(),
+                billing: Some(mercado_livre.clone()),
+                payments: Some(mercado_livre.clone()),
+                labels: Some(mercado_livre.clone()),
+            }]));
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));
@@ -276,6 +286,7 @@ fn main() {
                 cx.set_global(AppPurchaseOrders(started.purchase_orders.clone()));
                 cx.set_global(AppListings(started.listings.clone()));
                 cx.set_global(AppStockMirror(started.stock_mirror.clone()));
+                cx.set_global(AppChannelRanking(started.channel_ranking.clone()));
                 cx.set_global(AppOrders(started.orders.clone()));
                 cx.set_global(AppQuality(started.quality.clone()));
                 cx.set_global(AppListingCopy {

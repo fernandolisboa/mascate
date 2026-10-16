@@ -352,14 +352,14 @@ mod tests {
     use mascate_catalog::Catalog;
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOrder, ChannelOrderLine, ChannelOrders,
-        ChannelStock, ListingStatus, Listings, NewPurchaseLine, NewPurchaseOrder, OrderStatus,
-        Orders, PurchaseOrders, Receiving, SaleFee, SalesChannel,
+        ChannelStock, ListingStatus, Listings, NewPurchaseLine, NewPurchaseOrder, OnSalesChannel,
+        OrderStatus, Orders, PurchaseOrders, Receiving, SaleFee, SalesChannel,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, Inventory};
     use mascate_kernel::testing::ManualClock;
     use mascate_kernel::{
-        Clock, Currency, IdGenerator, ListingType, Money, PlatformError, RecordId,
+        Clock, Currency, IdGenerator, ListingType, Money, PlatformError, RecordId, SalesChannelKind,
     };
     use mascate_marketing::SalesEvents;
     use mascate_platform::testing::MemorySecretStore;
@@ -401,10 +401,32 @@ mod tests {
         }
     }
 
-    /// The Mercado Livre both machines read: one listing and its Orders.
-    #[derive(Default)]
+    /// The Sales Channel both machines read, Mercado Livre unless a test
+    /// says: one listing and its Orders.
     struct Channel {
+        kind: SalesChannelKind,
         orders: Mutex<Vec<ChannelOrder>>,
+    }
+
+    impl Default for Channel {
+        fn default() -> Self {
+            Self::on(SalesChannelKind::MercadoLivre)
+        }
+    }
+
+    impl Channel {
+        fn on(kind: SalesChannelKind) -> Self {
+            Self {
+                kind,
+                orders: Mutex::default(),
+            }
+        }
+    }
+
+    impl OnSalesChannel for Channel {
+        fn sales_channel(&self) -> SalesChannelKind {
+            self.kind
+        }
     }
 
     impl SalesChannel for Channel {
@@ -842,6 +864,96 @@ mod tests {
                     .await
                     .unwrap(),
                 None
+            );
+        });
+    }
+
+    #[test]
+    fn orders_with_the_same_id_on_two_channels_merge_as_two_orders() {
+        block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let clock = Arc::new(ManualClock::at(at(0)));
+            let mercado_livre = Channel::default();
+            let amazon = Channel::on(SalesChannelKind::Amazon);
+            let first = Machine::open(&dir.path().join("first.db"), clock.clone(), 1_000).await;
+            first.listings.sync(&mercado_livre).await.unwrap();
+            first.orders.sync(&mercado_livre).await.unwrap();
+            let second_path = dir.path().join("second.db");
+            export(&first.database, &second_path).await;
+            let second = Machine::open(&second_path, clock.clone(), 2_000_000).await;
+
+            // Both machines read Mercado Livre's Order; only the second
+            // sells on Amazon, where an Order has the same id.
+            clock.advance(TimeDelta::minutes(10));
+            mercado_livre
+                .orders
+                .lock()
+                .unwrap()
+                .push(sold_order(clock.now()));
+            amazon.orders.lock().unwrap().push(sold_order(clock.now()));
+            first.orders.sync(&mercado_livre).await.unwrap();
+            clock.advance(TimeDelta::minutes(5));
+            second.orders.sync(&mercado_livre).await.unwrap();
+            second.listings.sync(&amazon).await.unwrap();
+            second.orders.sync(&amazon).await.unwrap();
+            let file = dir.path().join("second-export.db");
+            export(&second.database, &file).await;
+            let merge_import = MergeImport::new(
+                first.database.clone(),
+                MODULE_MIGRATIONS,
+                MODULE_MERGES,
+                clock.clone(),
+                Arc::new(IdsFrom(AtomicU64::new(9_000_000))),
+            );
+            let backups = Backups::new(
+                first.database.clone(),
+                MODULE_MIGRATIONS,
+                dir.path().join("backups"),
+                clock.clone(),
+                Arc::new(IdsFrom(AtomicU64::new(9_500_000))),
+            );
+            let connections = Connections::new(Arc::new(MemorySecretStore::default()));
+            clock.advance(TimeDelta::minutes(5));
+
+            let report = merge_import.compare(&file).await.unwrap();
+            assert_eq!(records(&report, "Pedido").unwrap().new, 1, "{report:#?}");
+            assert_eq!(records(&report, "Anúncio").unwrap().new, 1, "{report:#?}");
+            merge(&file, &merge_import, &backups, &first.catalog, &connections)
+                .await
+                .unwrap()
+                .expect("the second machine brings Amazon");
+
+            let mut orders: Vec<(SalesChannelKind, String, u32)> = first
+                .orders
+                .orders()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|order| (order.channel, order.sold.id.clone(), order.units()))
+                .collect();
+            orders.sort();
+            assert_eq!(
+                orders,
+                [
+                    (SalesChannelKind::MercadoLivre, "2000001".to_owned(), 2),
+                    (SalesChannelKind::Amazon, "2000001".to_owned(), 2),
+                ]
+            );
+            let mut listings: Vec<(SalesChannelKind, String)> = first
+                .listings
+                .listings()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|listing| (listing.channel, listing.listed.id))
+                .collect();
+            listings.sort();
+            assert_eq!(
+                listings,
+                [
+                    (SalesChannelKind::MercadoLivre, "MLB1".to_owned()),
+                    (SalesChannelKind::Amazon, "MLB1".to_owned()),
+                ]
             );
         });
     }

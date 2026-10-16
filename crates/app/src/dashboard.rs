@@ -24,7 +24,7 @@ use mascate_finance::{
     ReleaseSummary, SoldLine, SoldProduct, Taxes, VolumeCheck,
 };
 use mascate_inventory::Inventory;
-use mascate_kernel::{Currency, Money, RecordId, Timestamp};
+use mascate_kernel::{Currency, Money, RecordId, SalesChannelKind, Timestamp};
 use mascate_marketing::ProductAds;
 
 use crate::ads::{self, AdsSyncs};
@@ -181,8 +181,9 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
     })
 }
 
-/// A listing by the channel's id of the listing and of the variation.
-type ListingKey = (String, Option<String>);
+/// A listing by its channel and the channel's id of the listing and of the
+/// variation.
+type ListingKey = (SalesChannelKind, String, Option<String>);
 
 /// What a listing sold as: its Product and the name of its category.
 type ListedAs = (Option<RecordId>, Option<String>);
@@ -195,10 +196,14 @@ struct SoldAs {
 
 impl SoldAs {
     async fn read(listings: &Listings, catalog: &Catalog) -> Result<Self, String> {
-        let names = listings
-            .category_names()
-            .await
-            .map_err(|e| listings::failure(&e))?;
+        let mut names = BTreeMap::new();
+        for channel in SalesChannelKind::ALL {
+            let named = listings
+                .category_names(channel)
+                .await
+                .map_err(|e| listings::failure(&e))?;
+            names.insert(channel, named);
+        }
         let products = catalog
             .products()
             .await
@@ -216,9 +221,12 @@ impl SoldAs {
                     .listed
                     .category
                     .as_ref()
-                    .and_then(|id| names.get(id).cloned());
+                    .and_then(|id| names.get(&listing.channel)?.get(id).cloned());
                 let variation = listing.listed.variation.map(|variation| variation.id);
-                ((listing.listed.id, variation), (listing.product, category))
+                (
+                    (listing.channel, listing.listed.id, variation),
+                    (listing.product, category),
+                )
             })
             .collect();
         Ok(Self { listings, products })
@@ -233,7 +241,11 @@ fn sold_lines(sale: &Sale, sold_as: &SoldAs) -> Vec<SoldLine> {
         .iter()
         .zip(&sale.lines)
         .map(|(line, share)| {
-            let key = (share.item.clone(), share.variation.clone());
+            let key = (
+                sale.order.channel,
+                share.item.clone(),
+                share.variation.clone(),
+            );
             let (product, category) = sold_as.listings.get(&key).cloned().unwrap_or_default();
             let name = product
                 .and_then(|id| sold_as.products.get(&id).cloned())
@@ -351,7 +363,7 @@ impl DashboardScreen {
         let mut caveats = Vec::new();
         if summary.provisional > 0 {
             caveats.push(format!(
-                "{} com margem provisória: o Mercado Livre ainda não faturou as tarifas.",
+                "{} com margem provisória: o canal de venda ainda não faturou as tarifas.",
                 orders_text(summary.provisional)
             ));
         }

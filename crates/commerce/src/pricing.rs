@@ -425,7 +425,10 @@ impl Pricing {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<PriceSuggestion, PricingError> {
-        let asked = self.listings.listing(listing).await?;
+        let asked = self
+            .listings
+            .listing_on(listing, channel.sales_channel())
+            .await?;
         let (category, listing_type) = fee_basis(&asked)?;
         let mut products = Vec::new();
         for sibling in self.open_variations(&asked).await? {
@@ -508,7 +511,10 @@ impl Pricing {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<PriceScenario, PricingError> {
-        let asked = self.listings.listing(listing).await?;
+        let asked = self
+            .listings
+            .listing_on(listing, channel.sales_channel())
+            .await?;
         let (category, listing_type) = fee_basis(&asked)?;
         let product = asked.product.ok_or(PricingError::NotLinked(asked.id))?;
         let cost = self.cost(product).await?;
@@ -529,7 +535,10 @@ impl Pricing {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<MarginCheck, PricingError> {
-        let asked = self.listings.listing(listing).await?;
+        let asked = self
+            .listings
+            .listing_on(listing, channel.sales_channel())
+            .await?;
         let (category, listing_type) = fee_basis(&asked)?;
         // The channel prices nothing below a cent.
         let price = Money::new(price.amount().max(CENT), price.currency());
@@ -578,7 +587,10 @@ impl Pricing {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<BreakEven, PricingError> {
-        let asked = self.listings.listing(listing).await?;
+        let asked = self
+            .listings
+            .listing_on(listing, channel.sales_channel())
+            .await?;
         let (category, listing_type) = fee_basis(&asked)?;
         let price = asked.listed.price;
         let fee = channel.sale_fee(&category, price, listing_type)?;
@@ -627,7 +639,7 @@ impl Pricing {
     async fn open_variations(&self, listing: &Listing) -> Result<Vec<Listing>, PricingError> {
         Ok(self
             .listings
-            .sharing_price(&listing.listed.id)
+            .sharing_price(listing.channel, &listing.listed.id)
             .await?
             .into_iter()
             .filter(|sibling| {

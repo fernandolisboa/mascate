@@ -1,10 +1,10 @@
-//! Reading back what every module stores as text: ids, decimals, currencies
-//! and times.
+//! Reading back what every module stores as text: ids, decimals, currencies,
+//! times and Sales Channels.
 
 use std::str::FromStr;
 
 use libsql::Row;
-use mascate_kernel::{Currency, RecordId, Timestamp};
+use mascate_kernel::{Currency, RecordId, SalesChannelKind, Timestamp};
 use rust_decimal::Decimal;
 
 use crate::read_stored;
@@ -25,6 +25,7 @@ pub trait StoredRow {
     fn currency_at(&self, at: i32) -> Result<Currency, StoredValueError>;
     fn time_at(&self, at: i32) -> Result<Timestamp, StoredValueError>;
     fn optional_time_at(&self, at: i32) -> Result<Option<Timestamp>, StoredValueError>;
+    fn sales_channel_at(&self, at: i32) -> Result<SalesChannelKind, StoredValueError>;
 }
 
 impl StoredRow for Row {
@@ -53,6 +54,10 @@ impl StoredRow for Row {
     fn optional_time_at(&self, at: i32) -> Result<Option<Timestamp>, StoredValueError> {
         let text: Option<String> = self.get(at)?;
         text.map(|text| parsed(text, read_stored)).transpose()
+    }
+
+    fn sales_channel_at(&self, at: i32) -> Result<SalesChannelKind, StoredValueError> {
+        parsed(self.get(at)?, SalesChannelKind::from_code)
     }
 }
 

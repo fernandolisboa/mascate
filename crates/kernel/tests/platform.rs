@@ -27,3 +27,19 @@ fn only_https_pages_on_mercado_livres_domains_are_its_links() {
         assert!(!mercado_livre_link(link), "{link}");
     }
 }
+
+#[test]
+fn each_sales_channel_reads_back_from_how_it_is_stored() {
+    use mascate_kernel::SalesChannelKind;
+
+    let codes: Vec<&str> = SalesChannelKind::ALL
+        .iter()
+        .map(|kind| kind.code())
+        .collect();
+    assert_eq!(codes, ["mercado_livre", "amazon", "shopee", "magalu"]);
+    for kind in SalesChannelKind::ALL {
+        assert_eq!(SalesChannelKind::from_code(kind.code()), Some(kind));
+    }
+    assert_eq!(SalesChannelKind::from_code("ebay"), None);
+    assert_eq!(SalesChannelKind::MercadoLivre.name(), "Mercado Livre");
+}

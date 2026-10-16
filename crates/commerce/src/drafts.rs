@@ -8,11 +8,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use libsql::{Connection, TransactionBehavior, params};
-use mascate_kernel::{Currency, ListingType, Money, PlatformError, RecordId, Timestamp};
+use mascate_kernel::{
+    Currency, ListingType, Money, PlatformError, RecordId, SalesChannelKind, Timestamp,
+};
 use mascate_platform::{Migration, StoredRow, stored};
 use rust_decimal::Decimal;
 
-use crate::{CatalogProduct, Listing, ListingError, ListingStatus, Listings};
+use crate::{CatalogProduct, Listing, ListingError, ListingStatus, Listings, OnSalesChannel};
 
 /// Fewer pictures than this and the listing starts below the channel's
 /// basic quality.
@@ -200,6 +202,8 @@ pub struct DraftPicture {
 pub struct ListingDraft {
     /// The Listing's id, which stays once it is published.
     pub id: RecordId,
+    /// The Sales Channel it is drafted for, whose categories it uses.
+    pub channel: SalesChannelKind,
     pub product: RecordId,
     /// The Product's SKU, sent as the seller SKU.
     pub seller_sku: String,
@@ -364,7 +368,7 @@ pub struct PublishedListing {
 /// The Sales Channel as the place listings are published. Calls block on
 /// the network, so they run off the UI thread. Nothing calls `publish`
 /// without the owner's click.
-pub trait ListingPublisher: Send + Sync {
+pub trait ListingPublisher: OnSalesChannel + Send + Sync {
     /// The currency the channel sells in.
     fn currency(&self) -> Currency;
 
@@ -393,7 +397,8 @@ pub trait ListingPublisher: Send + Sync {
 
 const DRAFT_COLUMNS: &str = "l.id, l.product_id, l.seller_sku, l.title, d.description,
      l.category_id, d.category_name, l.listing_type, d.item_condition, l.price, l.currency,
-     l.available_quantity, d.warranty, l.ml_item_id, l.updated_at, d.description_pending
+     l.available_quantity, d.warranty, l.channel_item_id, l.updated_at, d.description_pending,
+     l.sales_channel
      FROM commerce_listings l
      JOIN commerce_listing_drafts d ON d.listing_id = l.id AND d.deleted_at IS NULL
      WHERE l.deleted_at IS NULL";
@@ -441,8 +446,9 @@ impl Listings {
             .execute(
                 "INSERT INTO commerce_listings
                      (id, product_id, title, price, currency, available_quantity, status,
-                      listing_type, category_id, seller_sku, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                      listing_type, category_id, seller_sku, created_at, updated_at,
+                      sales_channel)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
                 params![
                     id.to_string(),
                     product.id.to_string(),
@@ -454,7 +460,8 @@ impl Listings {
                     ListingType::default().code(),
                     category.as_ref().map(|category| category.id.clone()),
                     product.sku.clone(),
-                    now.clone()
+                    now.clone(),
+                    publisher.sales_channel().code()
                 ],
             )
             .await?;
@@ -485,7 +492,7 @@ impl Listings {
     /// description is still to send, by title.
     pub async fn drafts(&self) -> Result<Vec<ListingDraft>, ListingError> {
         self.read_drafts(
-            "AND (l.ml_item_id IS NULL OR d.description_pending = 1)",
+            "AND (l.channel_item_id IS NULL OR d.description_pending = 1)",
             (),
         )
         .await
@@ -687,7 +694,10 @@ impl Listings {
         publisher: &dyn ListingPublisher,
     ) -> Result<Vec<ChecklistItem>, ListingError> {
         let draft = self
-            .upload_pictures(self.editable(id).await?, publisher)
+            .upload_pictures(
+                on_publisher(self.editable(id).await?, publisher)?,
+                publisher,
+            )
             .await?;
         let mut checklist = draft.checklist();
         if let Some(listing) = to_publish(&draft) {
@@ -716,7 +726,7 @@ impl Listings {
         id: RecordId,
         publisher: &dyn ListingPublisher,
     ) -> Result<Listing, ListingError> {
-        let mut draft = self.draft(id).await?;
+        let mut draft = on_publisher(self.draft(id).await?, publisher)?;
         if draft.published.is_none() {
             draft = self.create_in_channel(draft, publisher).await?;
         }
@@ -801,8 +811,9 @@ impl Listings {
                     "SELECT l.id, l.product_id, d.id, l.created_at FROM commerce_listings l
                      LEFT JOIN commerce_listing_drafts d
                          ON d.listing_id = l.id AND d.deleted_at IS NULL
-                     WHERE l.ml_item_id = ?1 AND l.deleted_at IS NULL",
-                    params![found.id.clone()],
+                     WHERE l.sales_channel = ?1 AND l.channel_item_id = ?2
+                         AND l.deleted_at IS NULL",
+                    params![draft.channel.code(), found.id.clone()],
                 )
                 .await?;
             let mut holders = Vec::new();
@@ -852,7 +863,7 @@ impl Listings {
         transaction
             .execute(
                 "UPDATE commerce_listings
-                 SET ml_item_id = ?1, status = ?2, link = ?3, price = ?4, synced_at = ?5,
+                 SET channel_item_id = ?1, status = ?2, link = ?3, price = ?4, synced_at = ?5,
                      updated_at = ?5
                  WHERE id = ?6",
                 params![
@@ -1035,6 +1046,7 @@ impl Listings {
             };
             drafts.push(ListingDraft {
                 id: row.id_at(0)?,
+                channel: row.sales_channel_at(16)?,
                 product: row
                     .optional_id_at(1)?
                     .ok_or_else(|| ListingError::Unreadable("a draft without a Product".into()))?,
@@ -1184,4 +1196,18 @@ fn read_picture(path: &Path) -> Result<(String, Vec<u8>), ListingError> {
 /// its paths are valid text on every system it runs on.
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// `draft`, when `publisher` speaks for the channel it is drafted for.
+fn on_publisher(
+    draft: ListingDraft,
+    publisher: &dyn ListingPublisher,
+) -> Result<ListingDraft, ListingError> {
+    if draft.channel != publisher.sales_channel() {
+        return Err(ListingError::OtherChannel {
+            listing: draft.channel,
+            channel: publisher.sales_channel(),
+        });
+    }
+    Ok(draft)
 }

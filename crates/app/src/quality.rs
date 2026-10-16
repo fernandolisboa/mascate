@@ -14,7 +14,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Hsla, SharedString, Window, div};
 use mascate_commerce::{ListingStatus, Listings, Orders};
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::Timestamp;
+use mascate_kernel::{SalesChannelKind, Timestamp};
 use mascate_marketing::{
     ActionKind, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction, QualityError, QualityLevel,
     QualityRow, QualitySource, QualitySync, Rating,
@@ -42,10 +42,8 @@ pub(crate) fn quality(cx: &App) -> Option<Arc<ListingQuality>> {
 
 /// The channel ids of the listings still open, which the panel rates.
 async fn open_listings(listings: &Listings) -> Result<Vec<ListedItem>, String> {
-    Ok(listings
-        .listings()
-        .await
-        .map_err(|e| listings::failure(&e))?
+    Ok(listings::mercado_livre_listings(listings)
+        .await?
         .into_iter()
         .filter(|listing| listing.listed.status != ListingStatus::Closed)
         .map(|listing| ListedItem {
@@ -80,7 +78,7 @@ async fn panel(
     quality: &ListingQuality,
 ) -> Result<Vec<QualityRow>, String> {
     let sold = orders
-        .units_sold_since(quality.impact_since())
+        .units_sold_since(SalesChannelKind::MercadoLivre, quality.impact_since())
         .await
         .map_err(|e| orders::failure(&e))?;
     let listed: Vec<ListedItem> = open_listings(listings)

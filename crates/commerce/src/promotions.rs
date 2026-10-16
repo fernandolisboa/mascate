@@ -12,18 +12,19 @@ use chrono::{NaiveDate, TimeDelta};
 use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_inventory::Inventory;
 use mascate_kernel::{
-    Clock, Currency, CurrencyMismatch, IdGenerator, Money, Percentage, PlatformError, RecordId,
-    Timestamp, channel_day,
+    Clock, Currency, CurrencyMismatch, IdGenerator, Money, Percentage, PlatformError, Record,
+    RecordId, SalesChannelKind, Timestamp, channel_day,
 };
 use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
 };
 use rust_decimal::Decimal;
 
+use crate::channels::{load_cursors, save_cursor};
 use crate::pricing::check_target;
 use crate::{
-    ListingError, ListingStatus, Listings, MarginCheck, PriceAssumptions, Pricing, PricingError,
-    SalesChannel,
+    ListingError, ListingStatus, Listings, MarginCheck, OnSalesChannel, PriceAssumptions, Pricing,
+    PricingError, SalesChannel,
 };
 
 /// The minimum margin until the owner sets another.
@@ -312,10 +313,10 @@ pub struct DiscountPlan {
     pub ends: NaiveDate,
 }
 
-/// The owner's Promotions on the Sales Channel, as a Platform's adapter
+/// The owner's Promotions on one Sales Channel, as a Platform's adapter
 /// reports and changes them. Calls block on the network, so they run off
 /// the UI thread.
-pub trait ChannelPromotions: Send + Sync {
+pub trait ChannelPromotions: OnSalesChannel + Send + Sync {
     /// The owner's campaigns and coupons that have not finished.
     fn promotions(&self) -> Result<Vec<ChannelPromotion>, PlatformError>;
 
@@ -347,6 +348,7 @@ pub trait ChannelPromotions: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Promotion {
     pub id: RecordId,
+    pub channel: SalesChannelKind,
     pub listed: ChannelPromotion,
     pub synced_at: Timestamp,
 }
@@ -355,6 +357,7 @@ pub struct Promotion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
     pub id: RecordId,
+    pub channel: SalesChannelKind,
     pub listed: ChannelOffer,
     pub synced_at: Timestamp,
 }
@@ -555,33 +558,47 @@ impl Promotions {
         Ok(())
     }
 
-    /// When the Promotions were last read; `None` before the first Sync.
-    pub async fn last_sync(&self) -> Result<Option<Timestamp>, PromotionError> {
-        let row = load_single_row(self.database.connection(), SYNCS_TABLE, SYNCS_COLUMNS).await?;
-        Ok(row.map(|row| row.time_at(0)).transpose()?)
+    /// When `channel`'s Promotions were last read; `None` before its first
+    /// Sync.
+    pub async fn last_sync(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<Option<Timestamp>, PromotionError> {
+        let cursors = load_cursors(
+            self.database.connection(),
+            SYNCS_TABLE,
+            SYNCS_COLUMNS,
+            |row| row.time_at(1),
+        )
+        .await?;
+        Ok(cursors
+            .into_iter()
+            .find(|(synced, _)| *synced == channel)
+            .map(|(_, at)| at))
     }
 
-    /// Whether the last Sync is [`PROMOTIONS_REFRESH_MINUTES`] old, or none
-    /// ran yet.
-    pub async fn is_due(&self) -> Result<bool, PromotionError> {
-        Ok(match self.last_sync().await? {
+    /// Whether `channel`'s last Sync is [`PROMOTIONS_REFRESH_MINUTES`] old,
+    /// or none ran yet.
+    pub async fn is_due(&self, channel: SalesChannelKind) -> Result<bool, PromotionError> {
+        Ok(match self.last_sync(channel).await? {
             Some(at) => self.clock.now() - at >= TimeDelta::minutes(PROMOTIONS_REFRESH_MINUTES),
             None => true,
         })
     }
 
-    /// Reads the owner's campaigns and coupons and the Promotions of each
-    /// open listing. Each is kept by the channel's id, so a second Sync with
-    /// the same answers changes nothing; one the channel no longer reports
-    /// has finished or was ended, and goes. Nothing is written if a read
-    /// fails.
+    /// Reads the owner's campaigns and coupons on the channel and the
+    /// Promotions of each of its open listings. Each is kept by the channel
+    /// and its id, so a second Sync with the same answers changes nothing;
+    /// one the channel no longer reports has finished or was ended, and
+    /// goes. Another channel's stay. Nothing is written if a read fails.
     pub async fn sync(
         &self,
         channel: &dyn ChannelPromotions,
     ) -> Result<PromotionSync, PromotionError> {
+        let on = channel.sales_channel();
         let promotions = channel.promotions()?;
         let mut offers = BTreeMap::new();
-        for listing in self.open_channel_ids().await? {
+        for listing in self.open_channel_ids(on).await? {
             let found = channel.offers(&listing)?;
             offers.insert(listing, found);
         }
@@ -597,40 +614,42 @@ impl Promotions {
             ended: 0,
         };
         for promotion in &promotions {
-            write_promotion(&transaction, self.ids.as_ref(), promotion, now).await?;
+            write_promotion(&transaction, self.ids.as_ref(), on, promotion, now).await?;
         }
         let reported: Vec<String> = promotions.iter().map(|p| p.id.clone()).collect();
         report.ended += end_unreported(
             &transaction,
             "commerce_promotions",
-            "ml_promotion_id",
+            "channel_promotion_id",
+            on,
             &reported,
             now,
         )
         .await?;
         for (listing, found) in &offers {
             report.ended +=
-                write_offers(&transaction, self.ids.as_ref(), listing, found, now).await?;
+                write_offers(&transaction, self.ids.as_ref(), on, listing, found, now).await?;
         }
         let read: Vec<String> = offers.into_keys().collect();
         report.ended += end_unreported(
             &transaction,
             "commerce_promotion_offers",
-            "ml_item_id",
+            "channel_item_id",
+            on,
             &read,
             now,
         )
         .await?;
-        transaction.commit().await?;
-        save_single_row(
-            self.database.connection(),
-            self.clock.as_ref(),
-            self.ids.as_ref(),
+        save_cursor(
+            &transaction,
+            Record::new(self.ids.as_ref(), self.clock.as_ref()),
             SYNCS_TABLE,
             SYNCS_COLUMNS,
+            on,
             vec![stored(now).into()],
         )
         .await?;
+        transaction.commit().await?;
         Ok(report)
     }
 
@@ -665,7 +684,9 @@ impl Promotions {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<PromotionCheck, PromotionError> {
-        let asked = self.open_variation(listing).await?;
+        let asked = self
+            .open_variation(channel.sales_channel(), listing)
+            .await?;
         self.worst_case(asked, None, None, channel, assumptions)
             .await
     }
@@ -682,7 +703,10 @@ impl Promotions {
         if !reputation_unlocks {
             return Err(PromotionError::Locked);
         }
-        let listing = self.listings.listing(plan.listing).await?;
+        let listing = self
+            .listings
+            .listing_on(plan.listing, channel.sales_channel())
+            .await?;
         if listing.listed.status == ListingStatus::Closed {
             return Err(PromotionError::Closed);
         }
@@ -695,7 +719,7 @@ impl Promotions {
         let price = discounted(plan.price, listing.listed.price)?;
         let item = listing.listed.id.clone();
         if self
-            .offers_of(&item)
+            .offers_of(listing.channel, &item)
             .await?
             .iter()
             .any(|offer| offer.kind == PromotionKind::PriceDiscount)
@@ -748,14 +772,15 @@ impl Promotions {
         if !reputation_unlocks {
             return Err(PromotionError::Locked);
         }
-        let promotion = self.promotion(promotion).await?.listed;
-        let listing = self.listings.listing(listing).await?;
+        let promotion = self.promotion(promotion).await?;
+        let listing = self.listings.listing_on(listing, promotion.channel).await?;
+        let promotion = promotion.listed;
         if listing.listed.status == ListingStatus::Closed {
             return Err(PromotionError::Closed);
         }
         let item = listing.listed.id.clone();
         if self
-            .offers_of(&item)
+            .offers_of(listing.channel, &item)
             .await?
             .iter()
             .any(|offer| offer.promotion.as_deref() == Some(promotion.id.as_str()))
@@ -887,6 +912,7 @@ impl Promotions {
                 write_promotion(
                     self.database.connection(),
                     self.ids.as_ref(),
+                    channel.sales_channel(),
                     &created,
                     self.clock.now(),
                 )
@@ -935,8 +961,9 @@ impl Promotions {
         )
         .await?
         .pop()
-        .ok_or(PromotionError::UnknownOffer(offer))?
-        .listed;
+        .ok_or(PromotionError::UnknownOffer(offer))?;
+        on_channel(kept.channel, channel)?;
+        let kept = kept.listed;
         if !kept.kind.is_own() {
             return Err(PromotionError::NotOwn);
         }
@@ -956,7 +983,9 @@ impl Promotions {
         channel: &dyn ChannelPromotions,
         promotion: RecordId,
     ) -> Result<(), PromotionError> {
-        let kept = self.promotion(promotion).await?.listed;
+        let kept = self.promotion(promotion).await?;
+        on_channel(kept.channel, channel)?;
+        let kept = kept.listed;
         let _sending = Sending::start(&self.sending, format!("end:{promotion}"))?;
         match channel.end(&kept.id, kept.kind) {
             Ok(()) | Err(PlatformError::NotFound) => {}
@@ -972,9 +1001,10 @@ impl Promotions {
                 .execute(
                     &format!(
                         "UPDATE {table} SET deleted_at = ?1, updated_at = ?1
-                         WHERE ml_promotion_id = ?2 AND deleted_at IS NULL"
+                         WHERE sales_channel = ?2 AND channel_promotion_id = ?3
+                             AND deleted_at IS NULL"
                     ),
-                    params![now.clone(), kept.id.clone()],
+                    params![now.clone(), channel.sales_channel().code(), kept.id.clone()],
                 )
                 .await?;
         }
@@ -1007,6 +1037,7 @@ impl Promotions {
         write_offers(
             self.database.connection(),
             self.ids.as_ref(),
+            channel.sales_channel(),
             listing,
             &found,
             self.clock.now(),
@@ -1027,7 +1058,7 @@ impl Promotions {
         assumptions: PriceAssumptions,
     ) -> Result<PromotionCheck, PromotionError> {
         let asked = self.listings.listing(listing).await?;
-        let offers = self.offers_of(&asked.listed.id).await?;
+        let offers = self.offers_of(asked.channel, &asked.listed.id).await?;
         let promotions = self.promotions().await?;
         let mut coupons: Vec<CouponTerms> = offers
             .iter()
@@ -1069,10 +1100,14 @@ impl Promotions {
         })
     }
 
-    /// An open Listing of the channel listing `listing`.
-    async fn open_variation(&self, listing: &str) -> Result<RecordId, PromotionError> {
+    /// An open Listing of `channel`'s listing `listing`.
+    async fn open_variation(
+        &self,
+        channel: SalesChannelKind,
+        listing: &str,
+    ) -> Result<RecordId, PromotionError> {
         self.listings
-            .sharing_price(listing)
+            .sharing_price(channel, listing)
             .await?
             .into_iter()
             .find(|kept| kept.listed.status != ListingStatus::Closed)
@@ -1080,11 +1115,15 @@ impl Promotions {
             .ok_or(PromotionError::Closed)
     }
 
-    async fn offers_of(&self, listing: &str) -> Result<Vec<ChannelOffer>, PromotionError> {
+    async fn offers_of(
+        &self,
+        channel: SalesChannelKind,
+        listing: &str,
+    ) -> Result<Vec<ChannelOffer>, PromotionError> {
         Ok(read_offers(
             self.database.connection(),
-            "AND ml_item_id = ?1",
-            params![listing.to_owned()],
+            "AND sales_channel = ?1 AND channel_item_id = ?2",
+            params![channel.code(), listing.to_owned()],
         )
         .await?
         .into_iter()
@@ -1092,11 +1131,17 @@ impl Promotions {
         .collect())
     }
 
-    /// The channel's ids of the listings still open, each once.
-    async fn open_channel_ids(&self) -> Result<Vec<String>, PromotionError> {
+    /// The ids of `channel`'s listings still open, each once.
+    async fn open_channel_ids(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<Vec<String>, PromotionError> {
         let mut ids: Vec<String> = Vec::new();
         for listing in self.listings.listings().await? {
-            if listing.listed.status != ListingStatus::Closed && !ids.contains(&listing.listed.id) {
+            if listing.channel == channel
+                && listing.listed.status != ListingStatus::Closed
+                && !ids.contains(&listing.listed.id)
+            {
                 ids.push(listing.listed.id);
             }
         }
@@ -1110,6 +1155,21 @@ impl Promotions {
 
 /// The check of a Promotion that keeps the minimum margin; below it, the
 /// Promotion is refused with the check.
+/// Refuses to act through `channel` on what is on another channel.
+fn on_channel(
+    kept: SalesChannelKind,
+    channel: &dyn ChannelPromotions,
+) -> Result<(), PromotionError> {
+    if kept != channel.sales_channel() {
+        return Err(ListingError::OtherChannel {
+            listing: kept,
+            channel: channel.sales_channel(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 fn holding(check: PromotionCheck) -> Result<PromotionCheck, PromotionError> {
     if check.margin.passes() {
         Ok(check)
@@ -1222,6 +1282,7 @@ fn amount(money: Option<Money>) -> Option<String> {
 async fn write_promotion(
     on: &Connection,
     ids: &dyn IdGenerator,
+    channel: SalesChannelKind,
     promotion: &ChannelPromotion,
     now: Timestamp,
 ) -> Result<(), PromotionError> {
@@ -1233,11 +1294,11 @@ async fn write_promotion(
     };
     on.execute(
         "INSERT INTO commerce_promotions
-             (id, ml_promotion_id, kind, name, starts_on, ends_on, status, coupon_kind,
+             (id, channel_promotion_id, kind, name, starts_on, ends_on, status, coupon_kind,
               coupon_value, coupon_minimum, coupon_maximum, coupon_budget, currency, synced_at,
-              created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14)
-         ON CONFLICT (ml_promotion_id) DO UPDATE SET
+              created_at, updated_at, sales_channel)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14, ?15)
+         ON CONFLICT (sales_channel, channel_promotion_id) DO UPDATE SET
              kind = excluded.kind, name = excluded.name, starts_on = excluded.starts_on,
              ends_on = excluded.ends_on, status = excluded.status,
              coupon_kind = COALESCE(excluded.coupon_kind, coupon_kind),
@@ -1263,19 +1324,21 @@ async fn write_promotion(
             amount(coupon.and_then(|terms| terms.maximum_discount)),
             amount(coupon.map(|terms| terms.budget)),
             coupon.map(|terms| terms.minimum_purchase.currency().code()),
-            stored(now)
+            stored(now),
+            channel.code()
         ],
     )
     .await?;
     Ok(())
 }
 
-/// Keeps the Promotions the channel reports for `listing`, each by the
+/// Keeps the Promotions `channel` reports for `listing`, each by the
 /// listing, kind and Promotion, and ends the listing's others. Returns how
 /// many ended.
 async fn write_offers(
     on: &Connection,
     ids: &dyn IdGenerator,
+    channel: SalesChannelKind,
     listing: &str,
     offers: &[ChannelOffer],
     now: Timestamp,
@@ -1285,10 +1348,12 @@ async fn write_offers(
         let promotion = offer.promotion.clone().unwrap_or_default();
         on.execute(
             "INSERT INTO commerce_promotion_offers
-                 (id, ml_item_id, kind, ml_promotion_id, name, status, price, currency,
-                  starts_on, ends_on, synced_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11)
-             ON CONFLICT (ml_item_id, kind, ml_promotion_id) DO UPDATE SET
+                 (id, channel_item_id, kind, channel_promotion_id, name, status, price,
+                  currency, starts_on, ends_on, synced_at, created_at, updated_at,
+                  sales_channel)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11, ?12)
+             ON CONFLICT (sales_channel, channel_item_id, kind, channel_promotion_id)
+             DO UPDATE SET
                  name = excluded.name, status = excluded.status, price = excluded.price,
                  currency = excluded.currency, starts_on = excluded.starts_on,
                  ends_on = excluded.ends_on, synced_at = excluded.synced_at,
@@ -1304,7 +1369,8 @@ async fn write_offers(
                 offer.price.map(|price| price.currency().code()),
                 offer.starts.map(day),
                 offer.ends.map(day),
-                stored(now)
+                stored(now),
+                channel.code()
             ],
         )
         .await?;
@@ -1312,9 +1378,9 @@ async fn write_offers(
     }
     let mut rows = on
         .query(
-            "SELECT id, kind || ':' || ml_promotion_id FROM commerce_promotion_offers
-             WHERE ml_item_id = ?1 AND deleted_at IS NULL",
-            params![listing.to_owned()],
+            "SELECT id, kind || ':' || channel_promotion_id FROM commerce_promotion_offers
+             WHERE sales_channel = ?1 AND channel_item_id = ?2 AND deleted_at IS NULL",
+            params![channel.code(), listing.to_owned()],
         )
         .await?;
     let mut ended = Vec::new();
@@ -1334,19 +1400,22 @@ async fn write_offers(
     Ok(ended.len())
 }
 
-/// Ends the rows of `table` whose `key` is not among `reported`. Returns
-/// how many ended.
+/// Ends the rows of `channel` in `table` whose `key` is not among
+/// `reported`. Returns how many ended.
 async fn end_unreported(
     on: &Connection,
     table: &str,
     key: &str,
+    channel: SalesChannelKind,
     reported: &[String],
     now: Timestamp,
 ) -> Result<usize, PromotionError> {
     let mut rows = on
         .query(
-            &format!("SELECT id, {key} FROM {table} WHERE deleted_at IS NULL"),
-            (),
+            &format!(
+                "SELECT id, {key} FROM {table} WHERE deleted_at IS NULL AND sales_channel = ?1"
+            ),
+            params![channel.code()],
         )
         .await?;
     let mut ended = Vec::new();
@@ -1374,11 +1443,11 @@ async fn read_promotions(
     let mut rows = on
         .query(
             &format!(
-                "SELECT id, ml_promotion_id, kind, name, starts_on, ends_on, status, coupon_kind,
-                        coupon_value, coupon_minimum, coupon_maximum, coupon_budget, currency,
-                        synced_at
+                "SELECT id, channel_promotion_id, kind, name, starts_on, ends_on, status,
+                        coupon_kind, coupon_value, coupon_minimum, coupon_maximum, coupon_budget,
+                        currency, synced_at, sales_channel
                  FROM commerce_promotions WHERE deleted_at IS NULL {only}
-                 ORDER BY starts_on, name"
+                 ORDER BY starts_on, name, sales_channel"
             ),
             params,
         )
@@ -1425,6 +1494,7 @@ fn promotion_from(row: &Row) -> Result<Promotion, PromotionError> {
     let ends: String = row.get(5)?;
     Ok(Promotion {
         id: row.id_at(0)?,
+        channel: row.sales_channel_at(14)?,
         listed: ChannelPromotion {
             id: row.get(1)?,
             kind: PromotionKind::from_code(&kind).ok_or(PromotionError::Unreadable(kind))?,
@@ -1447,10 +1517,10 @@ async fn read_offers(
     let mut rows = on
         .query(
             &format!(
-                "SELECT id, ml_item_id, kind, ml_promotion_id, name, status, price, currency,
-                        starts_on, ends_on, synced_at
+                "SELECT id, channel_item_id, kind, channel_promotion_id, name, status, price,
+                        currency, starts_on, ends_on, synced_at, sales_channel
                  FROM commerce_promotion_offers WHERE deleted_at IS NULL {only}
-                 ORDER BY ml_item_id, ends_on IS NULL, ends_on, kind"
+                 ORDER BY sales_channel, channel_item_id, ends_on IS NULL, ends_on, kind"
             ),
             params,
         )
@@ -1472,6 +1542,7 @@ async fn read_offers(
         let ends: Option<String> = row.get(9)?;
         offers.push(Offer {
             id: row.id_at(0)?,
+            channel: row.sales_channel_at(11)?,
             listed: ChannelOffer {
                 listing: row.get(1)?,
                 kind: PromotionKind::from_code(&kind).ok_or(PromotionError::Unreadable(kind))?,

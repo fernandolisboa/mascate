@@ -12,11 +12,11 @@ use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
     ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
     ChannelOrders, ChannelPayments, ChannelStock, ListingPublisher, ListingStatus,
-    ListingToPublish, OrderStatus, PaymentRelease, PublishedListing, Receiver, Requirement,
-    SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
+    ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing, Receiver,
+    Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
-    Currency, ListingType, Money, Percentage, PlatformError, RecordId, Timestamp,
+    Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
 };
 use rust_decimal::Decimal;
 
@@ -65,6 +65,8 @@ pub fn product(id: u128, sku: &str, name: &str) -> CatalogProduct {
 /// them it lists as active or paused, its sale fee by price band, and what
 /// it was asked.
 pub struct Channel {
+    /// The Sales Channel it stands for: Mercado Livre unless a test says.
+    pub kind: SalesChannelKind,
     pub listings: Mutex<Vec<ChannelListing>>,
     pub asked: Mutex<Vec<Vec<String>>>,
     /// Fails every call while set.
@@ -113,6 +115,7 @@ impl Default for Channel {
     /// 14% of each sale, nothing fixed.
     fn default() -> Self {
         Self {
+            kind: SalesChannelKind::MercadoLivre,
             listings: Mutex::default(),
             asked: Mutex::default(),
             failure: Mutex::default(),
@@ -216,6 +219,22 @@ impl Channel {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+}
+
+impl Channel {
+    /// An empty channel standing for `kind`.
+    pub fn on(kind: SalesChannelKind) -> Self {
+        Self {
+            kind,
+            ..Self::default()
+        }
+    }
+}
+
+impl OnSalesChannel for Channel {
+    fn sales_channel(&self) -> SalesChannelKind {
+        self.kind
     }
 }
 
@@ -558,6 +577,12 @@ impl Publisher {
 
     pub fn publish_calls(&self) -> usize {
         self.published.lock().unwrap().len()
+    }
+}
+
+impl OnSalesChannel for Publisher {
+    fn sales_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
     }
 }
 

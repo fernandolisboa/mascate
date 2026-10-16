@@ -13,12 +13,14 @@ use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
     ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions, CouponDiscount, CouponTerms,
-    DiscountPlan, Listing, ListingStatus, Listings, OfferToJoin, PriceAssumptions, PromotionError,
-    PromotionKind, PromotionPlan, PromotionStatus, Promotions,
+    DiscountPlan, Listing, ListingStatus, Listings, OfferToJoin, OnSalesChannel, PriceAssumptions,
+    PromotionError, PromotionKind, PromotionPlan, PromotionStatus, Promotions,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, MovementReason, NewEntry};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, Percentage, PlatformError, RecordId, channel_day};
+use mascate_kernel::{
+    Currency, Money, Percentage, PlatformError, RecordId, SalesChannelKind, channel_day,
+};
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
@@ -67,6 +69,12 @@ impl PromotionChannel {
             .entry(offer.listing.clone())
             .or_default()
             .push(offer);
+    }
+}
+
+impl OnSalesChannel for PromotionChannel {
+    fn sales_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
     }
 }
 
@@ -1022,7 +1030,12 @@ fn a_sync_keeps_what_the_channel_reports_and_drops_what_ended() {
             starts: Some(on(5)),
             ends: Some(on(11)),
         });
-        assert!(fx.promotions.is_due().await.unwrap());
+        assert!(
+            fx.promotions
+                .is_due(SalesChannelKind::MercadoLivre)
+                .await
+                .unwrap()
+        );
 
         let first = fx.promotions.sync(&fx.channel).await.unwrap();
         let kept = fx.promotions.offers().await.unwrap();
@@ -1049,7 +1062,12 @@ fn a_sync_keeps_what_the_channel_reports_and_drops_what_ended() {
                 .iter()
                 .all(|read| read == "MLB1")
         );
-        assert!(!fx.promotions.is_due().await.unwrap());
+        assert!(
+            !fx.promotions
+                .is_due(SalesChannelKind::MercadoLivre)
+                .await
+                .unwrap()
+        );
         assert_eq!(open.len(), 2);
 
         // The campaign finished on the channel.

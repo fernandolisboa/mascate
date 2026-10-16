@@ -1,6 +1,8 @@
 //! Commerce: Listings and their drafts, prices and Promotions, Orders with their Fees and
-//! Money Releases, Purchase Orders and shipping on each Sales Channel.
+//! Money Releases, Purchase Orders and shipping on each Sales Channel, and
+//! the order the owner ranks the channels in.
 
+mod channels;
 mod drafts;
 mod fees;
 mod freight;
@@ -13,6 +15,7 @@ mod purchase_orders;
 mod releases;
 mod stock_mirror;
 
+pub use channels::{ChannelRanking, OnSalesChannel};
 pub use drafts::{
     AttributeValue, CategoryAttribute, CategoryPrediction, ChannelCategory, ChannelIssue, Check,
     ChecklistItem, Condition, DraftAttribute, DraftEdit, DraftPicture, DraftStart, ListingDraft,
@@ -83,5 +86,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         promotions::CREATE_PROMOTIONS,
         listings::ADD_CATEGORY_NAMES,
         releases::CREATE_MONEY_RELEASES,
+        channels::ADD_SALES_CHANNELS,
     ],
 };

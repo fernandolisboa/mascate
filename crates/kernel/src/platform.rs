@@ -1,7 +1,7 @@
 //! What every Platform has in common, whichever role it plays: how a call
-//! to it fails, how a Sales Channel exposes a listing, when the seller pays
-//! for shipping, which day it is there and which links open Mercado Livre
-//! itself.
+//! to it fails, which Sales Channels there are, how one exposes a listing,
+//! when the seller pays for shipping, which day it is there and which links
+//! open Mercado Livre itself.
 
 use chrono::{FixedOffset, NaiveDate, NaiveTime, TimeDelta};
 use rust_decimal::Decimal;
@@ -22,6 +22,49 @@ pub enum PlatformError {
     NotFound,
     #[error("could not talk to the Platform: {0}")]
     Failed(String),
+}
+
+/// A Platform the owner sells on as a seller (ADR 0033). One account each,
+/// like the Connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SalesChannelKind {
+    MercadoLivre,
+    Amazon,
+    Shopee,
+    Magalu,
+}
+
+impl SalesChannelKind {
+    pub const ALL: [SalesChannelKind; 4] = [
+        SalesChannelKind::MercadoLivre,
+        SalesChannelKind::Amazon,
+        SalesChannelKind::Shopee,
+        SalesChannelKind::Magalu,
+    ];
+
+    /// How it is stored.
+    pub fn code(self) -> &'static str {
+        match self {
+            SalesChannelKind::MercadoLivre => "mercado_livre",
+            SalesChannelKind::Amazon => "amazon",
+            SalesChannelKind::Shopee => "shopee",
+            SalesChannelKind::Magalu => "magalu",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.code() == code)
+    }
+
+    /// As the owner reads it.
+    pub fn name(self) -> &'static str {
+        match self {
+            SalesChannelKind::MercadoLivre => "Mercado Livre",
+            SalesChannelKind::Amazon => "Amazon",
+            SalesChannelKind::Shopee => "Shopee",
+            SalesChannelKind::Magalu => "Magalu",
+        }
+    }
 }
 
 /// How a listing is exposed in the Sales Channel; its sale fee depends on it.

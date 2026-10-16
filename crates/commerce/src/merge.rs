@@ -14,19 +14,23 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             "commerce_listings",
             "Anúncio",
             Keys(&[UniqueKey::live(&[
-                Column("ml_item_id"),
-                NullAsEmpty("ml_variation_id"),
+                Column("sales_channel"),
+                Column("channel_item_id"),
+                NullAsEmpty("channel_variation_id"),
             ])]),
         )
         .references(&[TO_PRODUCT])
-        .platform_ids(&["ml_item_id", "ml_variation_id", "category_id"])
+        .platform_ids(&["channel_item_id", "channel_variation_id", "category_id"])
         .label(&["title", "variation_name"]),
         TableMerge::new(
             "commerce_channel_categories",
             "Categoria do canal",
-            Keys(&[UniqueKey::live(&[Column("ml_category_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_category_id"),
+            ])]),
         )
-        .platform_ids(&["ml_category_id"])
+        .platform_ids(&["channel_category_id"])
         .label(&["name"]),
         TableMerge::new(
             "commerce_listing_drafts",
@@ -61,17 +65,20 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         TableMerge::new(
             "commerce_orders",
             "Pedido",
-            Keys(&[UniqueKey::live(&[Column("ml_order_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_order_id"),
+            ])]),
         )
-        .platform_ids(&["ml_order_id", "ml_pack_id", "ml_shipment_id"])
-        .label(&["ml_order_id"]),
+        .platform_ids(&["channel_order_id", "channel_pack_id", "channel_shipment_id"])
+        .label(&["sales_channel", "channel_order_id"]),
         TableMerge::new(
             "commerce_order_lines",
             "Linha de pedido",
             Keys(&[UniqueKey::live(&[
                 Column("order_id"),
-                Column("ml_item_id"),
-                NullAsEmpty("ml_variation_id"),
+                Column("channel_item_id"),
+                NullAsEmpty("channel_variation_id"),
             ])]),
         )
         .references(&[
@@ -79,69 +86,93 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             TO_PRODUCT,
             Reference::to("stock_movement_id", "inventory_stock_movements"),
         ])
-        .platform_ids(&["ml_item_id", "ml_variation_id"])
+        .platform_ids(&["channel_item_id", "channel_variation_id"])
         .label(&["order_id", "title"]),
         TableMerge::new(
             "commerce_order_returns",
             "Devolução",
             Keys(&[UniqueKey::live(&[
                 Column("order_id"),
-                Column("ml_return_id"),
-                Column("ml_item_id"),
-                NullAsEmpty("ml_variation_id"),
+                Column("channel_return_id"),
+                Column("channel_item_id"),
+                NullAsEmpty("channel_variation_id"),
             ])]),
         )
         .references(&[TO_ORDER])
-        .platform_ids(&["ml_return_id", "ml_item_id", "ml_variation_id"])
-        .label(&["order_id", "ml_return_id"]),
+        .platform_ids(&[
+            "channel_return_id",
+            "channel_item_id",
+            "channel_variation_id",
+        ])
+        .label(&["order_id", "channel_return_id"]),
         TableMerge::new(
             "commerce_order_fees",
             "Tarifa de pedido",
             Keys(&[UniqueKey::live(&[
                 Column("order_id"),
-                Column("ml_charge_id"),
+                Column("channel_charge_id"),
             ])]),
         )
         .references(&[TO_ORDER])
-        .platform_ids(&["ml_charge_id"])
+        .platform_ids(&["channel_charge_id"])
         .label(&["order_id", "description"]),
         TableMerge::new(
             "commerce_money_releases",
             "Liberação de dinheiro",
             Keys(&[UniqueKey::live(&[
                 Column("order_id"),
-                Column("ml_payment_id"),
+                Column("channel_payment_id"),
             ])]),
         )
         .references(&[TO_ORDER])
-        .platform_ids(&["ml_payment_id"])
-        .label(&["order_id", "ml_payment_id"]),
+        .platform_ids(&["channel_payment_id"])
+        .label(&["order_id", "channel_payment_id"]),
         TableMerge::new("commerce_order_settings", "Opções de pedidos", SingleRow),
-        TableMerge::new("commerce_order_syncs", "Sync de pedidos", SingleRow),
+        TableMerge::new(
+            "commerce_order_syncs",
+            "Sync de pedidos",
+            Keys(&[UniqueKey::live(&[Column("sales_channel")])]),
+        )
+        .label(&["sales_channel"]),
         TableMerge::new(
             "commerce_promotions",
             "Promoção",
-            Keys(&[UniqueKey::every_row(&[Column("ml_promotion_id")])]),
+            Keys(&[UniqueKey::every_row(&[
+                Column("sales_channel"),
+                Column("channel_promotion_id"),
+            ])]),
         )
-        .platform_ids(&["ml_promotion_id"])
+        .platform_ids(&["channel_promotion_id"])
         .label(&["name"]),
         TableMerge::new(
             "commerce_promotion_offers",
             "Oferta de promoção",
             Keys(&[UniqueKey::every_row(&[
-                Column("ml_item_id"),
+                Column("sales_channel"),
+                Column("channel_item_id"),
                 Column("kind"),
-                Column("ml_promotion_id"),
+                Column("channel_promotion_id"),
             ])]),
         )
-        .platform_ids(&["ml_item_id", "ml_promotion_id"])
-        .label(&["name", "ml_item_id"]),
+        .platform_ids(&["channel_item_id", "channel_promotion_id"])
+        .label(&["name", "channel_item_id"]),
         TableMerge::new(
             "commerce_promotion_settings",
             "Opções de promoções",
             SingleRow,
         ),
-        TableMerge::new("commerce_promotion_syncs", "Sync de promoções", SingleRow),
+        TableMerge::new(
+            "commerce_promotion_syncs",
+            "Sync de promoções",
+            Keys(&[UniqueKey::live(&[Column("sales_channel")])]),
+        )
+        .label(&["sales_channel"]),
+        TableMerge::new(
+            "commerce_channel_ranking",
+            "Ordem dos canais de venda",
+            Keys(&[UniqueKey::live(&[Column("sales_channel")])]),
+        )
+        .label(&["sales_channel"]),
         TableMerge::new("commerce_purchase_orders", "Ordem de compra", Id)
             .references(&[Reference::to("supplier_id", "catalog_suppliers")])
             .label(&["supplier_id", "ordered_on"]),

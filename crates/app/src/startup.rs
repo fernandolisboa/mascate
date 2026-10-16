@@ -4,7 +4,9 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use mascate_affiliate::Affiliate;
 use mascate_catalog::Catalog;
-use mascate_commerce::{Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror};
+use mascate_commerce::{
+    ChannelRanking, Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror,
+};
 use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
@@ -72,6 +74,7 @@ pub struct Started {
     pub listings: Arc<Listings>,
     pub pricing: Arc<Pricing>,
     pub stock_mirror: Arc<StockMirror>,
+    pub channel_ranking: Arc<ChannelRanking>,
     pub orders: Arc<Orders>,
     pub promotions: Arc<Promotions>,
     pub quality: Arc<ListingQuality>,
@@ -268,6 +271,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let channel_ranking = ChannelRanking::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let orders = Orders::new(
                 database.clone(),
                 inventory.clone(),
@@ -362,6 +370,7 @@ pub fn prepare() -> Outcome {
                 listings: Arc::new(listings),
                 pricing: Arc::new(pricing),
                 stock_mirror: Arc::new(stock_mirror),
+                channel_ranking: Arc::new(channel_ranking),
                 orders: Arc::new(orders),
                 promotions: Arc::new(promotions),
                 quality: Arc::new(quality),
@@ -450,13 +459,14 @@ mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
-        ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin, PromotionKind,
-        PromotionPlan, PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
+        ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
+        OnSalesChannel, PromotionKind, PromotionPlan, PromotionStatus, PurchaseOrderStatus,
+        Receiving, SaleFee, SalesChannel,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
-        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
+        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind,
     };
     use mascate_marketing::{
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
@@ -505,6 +515,12 @@ mod tests {
 
     /// A Sales Channel with the sample listing only.
     struct SampleChannel;
+
+    impl OnSalesChannel for SampleChannel {
+        fn sales_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+    }
 
     impl SalesChannel for SampleChannel {
         fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
@@ -660,6 +676,12 @@ mod tests {
 
     /// The sample listing with a price discount, and nothing else.
     struct SamplePromotions;
+
+    impl OnSalesChannel for SamplePromotions {
+        fn sales_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+    }
 
     impl ChannelPromotions for SamplePromotions {
         fn promotions(&self) -> Result<Vec<ChannelPromotion>, PlatformError> {
@@ -1240,6 +1262,7 @@ mod tests {
                 if Version::parse(released) >= Version::parse("0.2.0") {
                     let listing = listings.listings().await.unwrap().remove(0);
                     assert_eq!(listing.listed, sample_listing(), "{name}");
+                    assert_eq!(listing.channel, SalesChannelKind::MercadoLivre, "{name}");
                     let product = products
                         .iter()
                         .find(|product| product.sku.as_str() == SAMPLE_SKU)
@@ -1404,9 +1427,17 @@ mod tests {
                     Percentage::new(10.into()).unwrap(),
                     "{name}"
                 );
+                // Their Sync cursor became Mercado Livre's (ADR 0033).
+                if Version::parse(released) >= Version::parse("0.2.0") {
+                    let ml = SalesChannelKind::MercadoLivre;
+                    assert!(promotions.last_sync(ml).await.unwrap().is_some(), "{name}");
+                    let offers = promotions.offers().await.unwrap();
+                    assert!(offers.iter().all(|offer| offer.channel == ml), "{name}");
+                }
                 promotions.sync(&SamplePromotions).await.unwrap();
                 let offers = promotions.offers().await.unwrap();
                 assert_eq!(offers.len(), 1, "{name}");
+                assert_eq!(offers[0].channel, SalesChannelKind::MercadoLivre, "{name}");
                 assert_eq!(offers[0].listed.listing, sample_listing().id, "{name}");
                 // Product Ads arrived after 0.2.0 too, read in the next Sync.
                 let ads = ProductAds::new(
@@ -1430,7 +1461,10 @@ mod tests {
                 );
                 listings.sync(&SampleChannel).await.unwrap();
                 assert_eq!(
-                    listings.category_names().await.unwrap()["MLB1000"],
+                    listings
+                        .category_names(SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap()["MLB1000"],
                     "Categoria de exemplo",
                     "{name}"
                 );

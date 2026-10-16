@@ -13,7 +13,9 @@ use mascate_commerce::{
     Variation,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, Currency, ListingType, Money, PlatformError, RecordId};
+use mascate_kernel::{
+    Clock, Currency, ListingType, Money, PlatformError, RecordId, SalesChannelKind,
+};
 
 use common::{Channel, brl, listing, product, variation};
 use mascate_platform::{Database, migrate};
@@ -652,7 +654,11 @@ fn each_category_is_named_once_from_the_channel() {
         fx.sync().await;
         fx.sync().await;
 
-        let names = fx.listings.category_names().await.unwrap();
+        let names = fx
+            .listings
+            .category_names(SalesChannelKind::MercadoLivre)
+            .await
+            .unwrap();
         assert_eq!(
             names.get("MLB3697").map(String::as_str),
             Some("Fones de Ouvido")
@@ -688,5 +694,120 @@ fn a_category_the_channel_fails_to_name_fails_the_sync_and_keeps_nothing() {
             Err(ListingError::Platform(PlatformError::RateLimited))
         ));
         assert_eq!(fx.all().await.len(), 1);
+    });
+}
+
+#[test]
+fn a_sync_of_one_channel_never_touches_the_listings_of_another() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![
+            listing("ITEM1", "Fone Bluetooth"),
+            listing("MLB2", "Capa de silicone"),
+        ]);
+        fx.sync().await;
+        let amazon = Channel::on(SalesChannelKind::Amazon);
+        amazon.has(vec![listing("ITEM1", "Fone Bluetooth na Amazon")]);
+
+        fx.clock.advance(TimeDelta::hours(1));
+        let synced = fx.listings.sync(&amazon).await.unwrap();
+
+        assert_eq!((synced.read, synced.new, synced.gone), (1, 1, 0));
+        let all = fx.all().await;
+        assert_eq!(all.len(), 3);
+        // The same item id on two channels is two Listings.
+        let mut same_id: Vec<(SalesChannelKind, String)> = all
+            .iter()
+            .filter(|found| found.listed.id == "ITEM1")
+            .map(|found| (found.channel, found.listed.title.clone()))
+            .collect();
+        same_id.sort();
+        assert_eq!(
+            same_id,
+            [
+                (SalesChannelKind::MercadoLivre, "Fone Bluetooth".to_owned()),
+                (
+                    SalesChannelKind::Amazon,
+                    "Fone Bluetooth na Amazon".to_owned()
+                ),
+            ]
+        );
+
+        // Amazon no longer has it: only Amazon's Listing closes.
+        amazon.has(Vec::new());
+        fx.clock.advance(TimeDelta::hours(1));
+        assert_eq!(fx.listings.sync(&amazon).await.unwrap().gone, 1);
+        // And Mercado Livre's Sync leaves Amazon's rows as they are.
+        let again = fx.sync().await;
+        assert_eq!(
+            (again.read, again.new, again.changed, again.gone),
+            (2, 0, 0, 0)
+        );
+        let statuses: Vec<(SalesChannelKind, String, ListingStatus)> = {
+            let mut all: Vec<_> = fx
+                .all()
+                .await
+                .into_iter()
+                .map(|found| (found.channel, found.listed.id, found.listed.status))
+                .collect();
+            all.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+            all
+        };
+        assert_eq!(
+            statuses,
+            [
+                (
+                    SalesChannelKind::MercadoLivre,
+                    "ITEM1".to_owned(),
+                    ListingStatus::Active
+                ),
+                (
+                    SalesChannelKind::MercadoLivre,
+                    "MLB2".to_owned(),
+                    ListingStatus::Active
+                ),
+                (
+                    SalesChannelKind::Amazon,
+                    "ITEM1".to_owned(),
+                    ListingStatus::Closed
+                ),
+            ]
+        );
+    });
+}
+
+#[test]
+fn a_listing_changes_only_through_the_adapter_of_its_own_channel() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let amazon = Channel::on(SalesChannelKind::Amazon);
+        amazon.has(vec![listing("ITEM1", "Fone Bluetooth")]);
+        fx.listings.sync(&amazon).await.unwrap();
+        let on_amazon = fx.find("ITEM1", None).await;
+        assert_eq!(on_amazon.channel, SalesChannelKind::Amazon);
+
+        let refused = fx.listings.pause(on_amazon.id, &fx.channel).await;
+
+        assert!(matches!(
+            refused,
+            Err(ListingError::OtherChannel {
+                listing: SalesChannelKind::Amazon,
+                channel: SalesChannelKind::MercadoLivre,
+            })
+        ));
+        assert!(fx.channel.statuses_set.lock().unwrap().is_empty());
+        let refused = fx
+            .listings
+            .change_price(on_amazon.id, brl("99.90"), &fx.channel)
+            .await;
+        assert!(matches!(refused, Err(ListingError::OtherChannel { .. })));
+        assert!(fx.channel.prices_set.lock().unwrap().is_empty());
+
+        // Its own channel's adapter goes through.
+        fx.listings.pause(on_amazon.id, &amazon).await.unwrap();
+        assert_eq!(
+            *amazon.statuses_set.lock().unwrap(),
+            [("ITEM1".to_owned(), true)]
+        );
     });
 }
