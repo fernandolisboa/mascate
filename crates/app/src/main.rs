@@ -12,6 +12,8 @@ mod brand;
 mod catalog;
 mod commission_dashboard;
 mod connections;
+mod crawler_search;
+mod crawlers;
 mod credential_guides;
 mod dashboard;
 mod drafts;
@@ -19,6 +21,7 @@ mod eduzz;
 mod event_alerts;
 mod finance;
 mod forms;
+mod found_offers;
 mod home;
 mod hotmart;
 mod kit;
@@ -81,8 +84,8 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
-    AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS,
-    Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
+    AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
+    HOTMART_LINKS, Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
     ShopeeAffiliates, ShopeeSeller, Telegram,
 };
 use mascate_kernel::SystemClock;
@@ -97,6 +100,7 @@ use crate::affiliate_links::LinkTaggers;
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
+use crate::crawlers::{AppCrawlers, CrawledSite};
 use crate::finance::AppSalesVolume;
 use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
@@ -225,6 +229,15 @@ fn main() {
             &process_environment(),
         )),
     );
+    // The engine exists from the start so its memory and breakers outlive
+    // each screen; no crawler is built until its flag is on.
+    let crawlers = AppCrawlers {
+        engine: Arc::new(Crawler::new(&user_agent, Arc::new(SystemClock))),
+        sites: vec![CrawledSite::mercado_livre(
+            Build::CURRENT,
+            &process_environment(),
+        )],
+    };
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())
         .into();
@@ -377,6 +390,7 @@ fn main() {
                 cx.set_global(AppOfferPosts(started.offer_posts.clone()));
                 cx.set_global(AppSalesEvents(started.sales_events.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
+                cx.set_global(crawlers);
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));
                 cx.set_global(AppPricing(started.pricing.clone()));

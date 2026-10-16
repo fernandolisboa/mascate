@@ -1,7 +1,8 @@
 //! Ofertas (#9): Supplier Offers typed by hand or kept from a search on
-//! Shopee (#12), each link with its price history, and the step from an
-//! offer to a Product. Manual registration is a Product Source of its own,
-//! not a stand-in for the Shopee API.
+//! Shopee (#12) or, while a crawler's flag is on, on a site's public pages
+//! (#152), each link with its price history, and the step from an offer to
+//! a Product. Manual registration is a Product Source of its own, not a
+//! stand-in for the Shopee API.
 
 use std::sync::Arc;
 
@@ -17,6 +18,8 @@ use mascate_kernel::{Currency, Money, RecordId, parse_amount};
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day, failure, price_and_shipping, product_choice};
+use crate::crawler_search::CrawlerSearch;
+use crate::crawlers::crawlers;
 use crate::forms::{Choice, Outcome, Picker, input, notice, picker, refill};
 use crate::kit;
 use crate::layout;
@@ -35,6 +38,8 @@ enum Step {
 
 pub struct OffersScreen {
     pub(crate) shopee: Entity<ShopeeSearch>,
+    /// One search per crawled site, shown while its flag is on.
+    crawlers: Vec<Entity<CrawlerSearch>>,
     link: Entity<InputState>,
     title: Entity<InputState>,
     price: Entity<InputState>,
@@ -73,7 +78,14 @@ impl OffersScreen {
         let supplier = picker(window, cx);
         let product_pick = picker(window, cx);
         let shopee = cx.new(|cx| ShopeeSearch::new(window, cx));
-        let subscriptions = vec![
+        let sites = crawlers(cx)
+            .map(|crawlers| crawlers.sites.clone())
+            .unwrap_or_default();
+        let crawlers: Vec<Entity<CrawlerSearch>> = sites
+            .into_iter()
+            .map(|site| cx.new(|cx| CrawlerSearch::new(site, window, cx)))
+            .collect();
+        let mut subscriptions = vec![
             cx.subscribe_in(
                 &new_supplier,
                 window,
@@ -87,8 +99,14 @@ impl OffersScreen {
                 this.refresh_offers(window, cx);
             }),
         ];
+        subscriptions.extend(crawlers.iter().map(|crawler| {
+            cx.subscribe_in(crawler, window, |this, _, _: &OffersKept, window, cx| {
+                this.refresh_offers(window, cx);
+            })
+        }));
         let mut screen = Self {
             shopee,
+            crawlers,
             link,
             title,
             price,
@@ -112,10 +130,13 @@ impl OffersScreen {
         screen
     }
 
-    /// Reads the catalog and the Shopee Connection again, as when the
-    /// screen comes into view.
+    /// Reads the catalog, the Shopee Connection and the crawlers' flags
+    /// again, as when the screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shopee.update(cx, |shopee, cx| shopee.refresh(cx));
+        for crawler in &self.crawlers {
+            crawler.update(cx, |crawler, cx| crawler.refresh(cx));
+        }
         self.refresh_offers(window, cx);
     }
 
@@ -709,6 +730,12 @@ impl Render for OffersScreen {
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         }
         parts.content.push(self.shopee.clone().into_any_element());
+        parts.content.extend(
+            self.crawlers
+                .iter()
+                .filter(|crawler| crawler.read(cx).is_on())
+                .map(|crawler| crawler.clone().into_any_element()),
+        );
         parts.content.push(self.render_form(cx));
         parts.content.push(
             v_flex()

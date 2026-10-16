@@ -52,3 +52,25 @@ pub(crate) fn decimal(number: &serde_json::Number) -> Option<Decimal> {
         .or_else(|_| Decimal::from_scientific(&text))
         .ok()
 }
+
+/// A picture's address, when it is plain HTTPS: it may be opened or
+/// posted as it is.
+pub(crate) fn https_link(link: &str) -> Option<String> {
+    let link = link.trim();
+    let rest = link.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    (!host.is_empty() && !host.contains('@') && !link.contains(char::is_whitespace))
+        .then(|| link.to_owned())
+}
+
+/// `link`, when it opens a page over HTTPS on `domain` or one of its
+/// subdomains: the app opens these links, so one read from a Platform must
+/// never point anywhere else.
+pub(crate) fn page_on(link: &str, domain: &str) -> Option<String> {
+    let link = https_link(link)?;
+    let host = link["https://".len()..]
+        .split(['/', '?', '#'])
+        .next()?
+        .to_ascii_lowercase();
+    (host == domain || host.ends_with(&format!(".{domain}"))).then_some(link)
+}

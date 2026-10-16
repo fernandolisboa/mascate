@@ -18,6 +18,8 @@ pub enum ProductSource {
     Manual,
     /// The Shopee Affiliate Open API (#12).
     ShopeeAffiliate,
+    /// Mercado Livre's public search pages, read by a crawler (ADR 0035).
+    MercadoLivreCrawler,
 }
 
 impl ProductSource {
@@ -25,6 +27,7 @@ impl ProductSource {
         match self {
             ProductSource::Manual => "manual",
             ProductSource::ShopeeAffiliate => "shopee_affiliate",
+            ProductSource::MercadoLivreCrawler => "mercado_livre_crawler",
         }
     }
 
@@ -32,6 +35,7 @@ impl ProductSource {
         match code {
             "manual" => Some(ProductSource::Manual),
             "shopee_affiliate" => Some(ProductSource::ShopeeAffiliate),
+            "mercado_livre_crawler" => Some(ProductSource::MercadoLivreCrawler),
             _ => None,
         }
     }
