@@ -464,12 +464,12 @@ fn units_back_from_a_cancellation_go_back_to_the_listing() {
     block_on(async {
         let fx = Fixture::selling().await;
         fx.sold_fones("2000030", 3).await;
-        fx.mirror.send(&fx.channel).await.unwrap();
+        fx.mirror.send(&[&fx.channel]).await.unwrap();
         fx.channel.stocks_set.lock().unwrap().clear();
         fx.channel_changes("2000030", |found| found.status = OrderStatus::Cancelled);
 
         fx.sync().await;
-        fx.mirror.send(&fx.channel).await.unwrap();
+        fx.mirror.send(&[&fx.channel]).await.unwrap();
 
         assert_eq!(
             *fx.channel.stocks_set.lock().unwrap(),
@@ -850,7 +850,7 @@ fn an_order_the_channel_repeats_in_one_answer_counts_once() {
 fn a_sale_sends_the_right_stock_to_the_listing() {
     block_on(async {
         let fx = Fixture::selling().await;
-        fx.mirror.send(&fx.channel).await.unwrap();
+        fx.mirror.send(&[&fx.channel]).await.unwrap();
         fx.channel.stocks_set.lock().unwrap().clear();
         let at = fx.later(1);
         // Mercado Livre takes the 3 units off the listing at once: 7 left.
@@ -859,7 +859,7 @@ fn a_sale_sends_the_right_stock_to_the_listing() {
 
         // Orders first, then the stock (ADR 0017).
         fx.sync().await;
-        let sent = fx.mirror.send(&fx.channel).await.unwrap();
+        let sent = fx.mirror.send(&[&fx.channel]).await.unwrap();
 
         assert_eq!(sent.sent, 1);
         assert_eq!(
@@ -873,7 +873,7 @@ fn a_sale_sends_the_right_stock_to_the_listing() {
             )]
         );
         // Sending again writes nothing: the app and the channel agree.
-        assert_eq!(fx.mirror.send(&fx.channel).await.unwrap().sent, 0);
+        assert_eq!(fx.mirror.send(&[&fx.channel]).await.unwrap().sent, 0);
     });
 }
 

@@ -275,6 +275,7 @@ pub(super) struct SellerItem {
     #[serde(default)]
     pub available_quantity: u32,
     pub status: String,
+    pub sub_status: Option<Vec<String>>,
     pub permalink: Option<String>,
     pub listing_type_id: Option<String>,
     pub category_id: Option<String>,

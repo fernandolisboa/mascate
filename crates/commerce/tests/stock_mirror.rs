@@ -144,7 +144,7 @@ impl Fixture {
 
     async fn send(&self) -> StockSend {
         self.later();
-        self.mirror.send(&self.channel).await.unwrap()
+        self.mirror.send(&[&self.channel]).await.unwrap()
     }
 
     async fn find(&self, listed: &ChannelListing) -> Listing {
@@ -206,7 +206,14 @@ fn a_receipt_sends_the_units_on_hand_to_the_linked_listing() {
         assert_eq!(due.last_sent, None);
 
         let report = fx.send().await;
-        assert_eq!(report, StockSend { sent: 1, failed: 0 });
+        assert_eq!(
+            report,
+            StockSend {
+                sent: 1,
+                failed: 0,
+                held: 0
+            }
+        );
         assert_eq!(fx.sent(), [("MLB1".to_owned(), whole(8))]);
         let after = fx.stock_of(&fone_listing).await;
         assert_eq!(after.to_send, None);
@@ -253,7 +260,7 @@ fn a_loss_and_a_count_send_the_stock_left() {
 }
 
 #[test]
-fn no_stock_left_pauses_the_listing_and_units_back_reactivate_it() {
+fn no_stock_left_pauses_the_listing_for_lack_of_stock_and_units_back_reactivate_it() {
     block_on(async {
         let fone_listing = listing("MLB1", "Fone Bluetooth");
         let fx = Fixture::selling(vec![(fone_listing.clone(), Some(fone()))]).await;
@@ -264,7 +271,8 @@ fn no_stock_left_pauses_the_listing_and_units_back_reactivate_it() {
         fx.send().await;
         let emptied = fx.find(&fone_listing).await.listed;
         assert_eq!(emptied.available_quantity, 0);
-        assert_eq!(emptied.status, ListingStatus::Paused);
+        assert_eq!(emptied.status, ListingStatus::OutOfStock);
+        assert_eq!(fx.stock_of(&fone_listing).await.share, Some(0));
 
         fx.receive(fone(), 4).await;
         fx.send().await;
@@ -275,7 +283,7 @@ fn no_stock_left_pauses_the_listing_and_units_back_reactivate_it() {
 }
 
 #[test]
-fn a_listing_the_owner_paused_stays_paused_when_units_come_in() {
+fn a_listing_the_owner_paused_gets_no_share_and_stays_paused_when_units_come_in() {
     block_on(async {
         let fone_listing = listing("MLB1", "Fone Bluetooth");
         let fx = Fixture::selling(vec![(fone_listing.clone(), Some(fone()))]).await;
@@ -283,11 +291,15 @@ fn a_listing_the_owner_paused_stays_paused_when_units_come_in() {
         fx.listings.pause(id, &fx.channel).await.unwrap();
 
         fx.receive(fone(), 6).await;
-        fx.send().await;
+        assert_eq!(fx.send().await, StockSend::default());
 
-        let listed = fx.find(&fone_listing).await.listed;
-        assert_eq!(listed.available_quantity, 6);
-        assert_eq!(listed.status, ListingStatus::Paused);
+        let stock = fx.stock_of(&fone_listing).await;
+        assert_eq!((stock.share, stock.to_send), (None, None));
+        assert!(fx.sent().is_empty());
+        assert_eq!(
+            fx.find(&fone_listing).await.listed.status,
+            ListingStatus::Paused
+        );
     });
 }
 
@@ -413,7 +425,14 @@ fn a_failed_send_stays_in_the_queue_until_one_gets_through() {
         let refused = PlatformError::Failed("timeout".into());
         *fx.channel.stock_failure.lock().unwrap() = Some(refused.clone());
 
-        assert_eq!(fx.send().await, StockSend { sent: 0, failed: 1 });
+        assert_eq!(
+            fx.send().await,
+            StockSend {
+                sent: 0,
+                failed: 1,
+                held: 0
+            }
+        );
         let queued = fx.stock_of(&fone_listing).await;
         assert_eq!(queued.to_send, Some(8));
         let failure = queued.last_failure.unwrap();
@@ -425,7 +444,14 @@ fn a_failed_send_stays_in_the_queue_until_one_gets_through() {
         assert_eq!(fx.stock_of(&fone_listing).await.to_send, Some(7));
 
         *fx.channel.stock_failure.lock().unwrap() = None;
-        assert_eq!(fx.send().await, StockSend { sent: 1, failed: 0 });
+        assert_eq!(
+            fx.send().await,
+            StockSend {
+                sent: 1,
+                failed: 0,
+                held: 0
+            }
+        );
         let sent = fx.stock_of(&fone_listing).await;
         assert_eq!(sent.to_send, None);
         assert_eq!(sent.last_failure, None);
@@ -447,7 +473,14 @@ fn a_lost_login_queues_every_listing_due_without_asking_again() {
         fx.receive(capa(), 9).await;
         *fx.channel.stock_failure.lock().unwrap() = Some(PlatformError::Expired);
 
-        assert_eq!(fx.send().await, StockSend { sent: 0, failed: 2 });
+        assert_eq!(
+            fx.send().await,
+            StockSend {
+                sent: 0,
+                failed: 2,
+                held: 0
+            }
+        );
         for listed in [&fone_listing, &capa_listing] {
             let stock = fx.stock_of(listed).await;
             assert!(stock.to_send.is_some());

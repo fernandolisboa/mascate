@@ -23,7 +23,7 @@ use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
     MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
-    SalesChannel, StockMirror, StockSend, SuggestedBy,
+    SalesChannel, StockSend, SuggestedBy,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
@@ -39,6 +39,7 @@ use crate::kit;
 use crate::layout;
 use crate::mercado_livre;
 use crate::offers::OpenProduct;
+use crate::orders;
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::quality;
@@ -424,7 +425,11 @@ impl ListingsScreen {
     /// still to send, then reads the quality of each Mercado Livre listing
     /// (#23).
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(mirror), Some(rated)) = (stock_mirror::mirror(cx), quality::quality(cx)) else {
+        let (Some(mirror), Some(rated), Some(kept)) = (
+            stock_mirror::mirror(cx),
+            quality::quality(cx),
+            orders::orders(cx),
+        ) else {
             return;
         };
         let reach = sales_channels::reach(cx);
@@ -436,7 +441,7 @@ impl ListingsScreen {
         self.run(
             window,
             cx,
-            move |listings, _| async move {
+            move |listings, catalog| async move {
                 let channels = reach.connected().await;
                 let mut report = ListingSync::default();
                 for channel in &channels {
@@ -449,7 +454,7 @@ impl ListingsScreen {
                     report.changed += synced.changed;
                     report.gone += synced.gone;
                 }
-                let sent = send_every_channel(&mirror, &channels).await?;
+                let round = orders::round(&kept, &mirror, &catalog, &channels).await;
                 let rated = match rating.filter(|_| {
                     channels
                         .iter()
@@ -458,18 +463,19 @@ impl ListingsScreen {
                     Some(rating) => Some(quality::sync(&listings, &rated, rating.as_ref()).await),
                     None => None,
                 };
-                Ok(Some((report, sent, rated)))
+                Ok(Some((report, round, rated)))
             },
             |this,
-             (report, sent, rated): (
+             (report, round, rated): (
                 ListingSync,
-                StockSend,
+                orders::RoundOutcome,
                 Option<Result<QualitySync, String>>,
             ),
              _,
-             _| {
+             cx| {
                 let mut text = synced(&report);
-                text.push_str(&stock_sent(&sent));
+                text.push_str(&stock_sent(&sent_in(&round)));
+                orders::finished(&round, cx);
                 this.outcome = Some(match rated {
                     None => Outcome::Done(text.into()),
                     Some(Ok(rated)) => {
@@ -489,9 +495,10 @@ impl ListingsScreen {
         );
     }
 
-    /// Sends the stock in the queue now.
+    /// Sends the stock in the queue now, right after the Orders of every
+    /// channel.
     fn send_stock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(mirror) = stock_mirror::mirror(cx) else {
+        let (Some(mirror), Some(kept)) = (stock_mirror::mirror(cx), orders::orders(cx)) else {
             return;
         };
         let reach = sales_channels::reach(cx);
@@ -499,16 +506,21 @@ impl ListingsScreen {
         self.run(
             window,
             cx,
-            move |_, _| async move {
-                send_every_channel(&mirror, &reach.connected().await)
-                    .await
-                    .map(Some)
+            move |_, catalog| async move {
+                let channels = reach.connected().await;
+                Ok(Some(
+                    orders::round(&kept, &mirror, &catalog, &channels).await,
+                ))
             },
-            |this, sent: StockSend, _, _| {
-                this.outcome = Some(match sent.failed {
-                    0 => Outcome::Done(stock_sent(&sent).trim().to_owned().into()),
-                    _ => Outcome::Failed(stock_sent(&sent).trim().to_owned().into()),
+            |this, round: orders::RoundOutcome, _, cx| {
+                let sent = sent_in(&round);
+                let text = stock_sent(&sent).trim().to_owned();
+                this.outcome = Some(match (&round, sent.failed) {
+                    (Ok(_), 0) => Outcome::Done(text.into()),
+                    (Ok(_), _) => Outcome::Failed(text.into()),
+                    (Err(error), _) => Outcome::Failed(error.clone().into()),
                 });
+                orders::finished(&round, cx);
             },
         );
     }
@@ -553,7 +565,10 @@ impl ListingsScreen {
                 };
                 changed.map(Some).map_err(|e| failure(&e))
             },
-            move |this, changed: Vec<Listing>, _, _| {
+            move |this, changed: Vec<Listing>, _, cx| {
+                // Its share goes to the product's other listings, or comes
+                // back from them.
+                stock_mirror::send_after_movement(cx);
                 let what = if pause { "pausado" } else { "reativado" };
                 let on = sales_channels::on(kind);
                 this.outcome = Some(Outcome::Done(
@@ -1129,16 +1144,17 @@ impl ListingsScreen {
                     .text_xs()
                     .text_color(t.text2)
                     .child(match (queue.is_empty(), last_sent) {
-                        (false, _) => "o saldo destes produtos mudou no app; vai ao Mercado Livre \
-                                       agora ou no próximo Sync, e o que falhar fica aqui"
+                        (false, _) => "a parte destes anúncios mudou no app; vai ao canal agora \
+                                       ou no próximo Sync, as que diminuem antes das que \
+                                       aumentam, e o que falhar fica aqui"
                             .to_owned(),
                         (true, Some(at)) => format!(
-                            "o estoque de cada anúncio vinculado segue o saldo do app · último \
-                             envio: {}",
+                            "o saldo de cada produto é dividido entre os anúncios dele · \
+                             último envio: {}",
                             catalog::day_and_time(at)
                         ),
                         (true, None) => {
-                            "o estoque de cada anúncio vinculado segue o saldo do app".to_owned()
+                            "o saldo de cada produto é dividido entre os anúncios dele".to_owned()
                         }
                     }),
             );
@@ -1169,7 +1185,8 @@ impl ListingsScreen {
                 None => listed.title.clone(),
             };
             let change = format!(
-                "no ML: {} → no app: {}",
+                "{}: {} → parte: {}",
+                sales_channels::on(listing.channel),
                 listed.available_quantity,
                 stock.to_send.unwrap_or_default()
             );
@@ -1518,6 +1535,10 @@ impl ListingsScreen {
             ListingStatus::Paused => Some(("Reativar", false)),
             _ => None,
         };
+        let follows = matches!(
+            listing.listed.status,
+            ListingStatus::Active | ListingStatus::Paused | ListingStatus::OutOfStock
+        );
         let status_button =
             status.map(|(label, pause)| {
                 Button::new(("status", index))
@@ -1531,8 +1552,8 @@ impl ListingsScreen {
             });
         let stock_line = listing
             .product
-            .filter(|_| status.is_some())
-            .map(|_| stock_line(self.stock_of(id)))
+            .filter(|_| follows)
+            .map(|_| stock_line(listing, self.stock_of(id)))
             .map(|text| div().text_xs().text_color(t.text2).child(text));
         let panel = self
             .price
@@ -1672,6 +1693,7 @@ fn status_name(status: ListingStatus) -> &'static str {
     match status {
         ListingStatus::Active => "Ativo",
         ListingStatus::Paused => "Pausado",
+        ListingStatus::OutOfStock => "Sem estoque",
         ListingStatus::Closed => "Encerrado",
         ListingStatus::UnderReview => "Em revisão",
         ListingStatus::Inactive => "Inativo",
@@ -1682,7 +1704,7 @@ fn status_ink(status: ListingStatus, t: &Tokens) -> Hsla {
     match status {
         ListingStatus::Active => t.success,
         ListingStatus::UnderReview | ListingStatus::Inactive => t.danger,
-        ListingStatus::Paused | ListingStatus::Closed => t.text2,
+        ListingStatus::Paused | ListingStatus::OutOfStock | ListingStatus::Closed => t.text2,
     }
 }
 
@@ -1694,24 +1716,31 @@ fn stock_text(units: u32, channel: SalesChannelKind) -> String {
     }
 }
 
-/// How a listing's stock follows the app's, in one line.
-fn stock_line(stock: Option<&MirroredStock>) -> String {
-    let Some((stock, on_hand)) = stock.and_then(|stock| Some((stock, stock.on_hand?))) else {
+/// How a listing's stock follows its Stock Share of the app's, in one
+/// line.
+fn stock_line(listing: &Listing, stock: Option<&MirroredStock>) -> String {
+    if listing.listed.status == ListingStatus::Paused {
+        return "Pausado por você: não recebe parte do estoque do produto, que fica para os \
+                outros anúncios dele."
+            .into();
+    }
+    let Some((stock, on_hand, share)) =
+        stock.and_then(|stock| Some((stock, stock.on_hand?, stock.share?)))
+    else {
         return "O estoque deste anúncio ainda não segue o app: o produto nunca entrou no \
                 estoque. Ele passa a seguir no primeiro recebimento em Compras."
             .into();
     };
+    let channel = listing.channel;
+    let part = format!("Parte deste anúncio: {} de {}", share, units(on_hand));
     match (stock.to_send, stock.last_sent) {
-        (Some(_), _) => format!(
-            "Segue o app: {} no app, na fila para enviar.",
-            units(on_hand)
-        ),
+        (Some(_), _) => format!("{part}, na fila para enviar."),
         (None, Some(sent)) => format!(
-            "Segue o app: estoque de {} enviado ao Mercado Livre em {}.",
-            units(on_hand),
+            "{part}, enviada {} em {}.",
+            sales_channels::to(channel),
             catalog::day_and_time(sent.at)
         ),
-        (None, None) => format!("Segue o app: {}, igual ao Mercado Livre.", units(on_hand)),
+        (None, None) => format!("{part}, igual {}.", sales_channels::to(channel)),
     }
 }
 
@@ -1737,27 +1766,28 @@ fn stock_sent(sent: &StockSend) -> String {
             " {count} anúncios não receberam o estoque e ficaram na fila."
         )),
     }
+    match sent.held {
+        0 => {}
+        1 => text.push_str(
+            " 1 anúncio espera a parte de outro anúncio do produto diminuir antes de subir.",
+        ),
+        count => text.push_str(&format!(
+            " {count} anúncios esperam a parte de outros anúncios do produto diminuir antes de \
+             subir."
+        )),
+    }
     if text.is_empty() {
         text.push_str(" Nenhum estoque a enviar.");
     }
     text
 }
 
-/// Sends the stock still to send to each channel, one after the other.
-async fn send_every_channel(
-    mirror: &StockMirror,
-    channels: &[sales_channels::ChannelPorts],
-) -> Result<StockSend, String> {
-    let mut sent = StockSend::default();
-    for channel in channels {
-        let part = mirror
-            .send(channel.listings.as_ref())
-            .await
-            .map_err(|e| failure(&e))?;
-        sent.sent += part.sent;
-        sent.failed += part.failed;
+/// The stock a round of Orders and stock sent; none when it did not run.
+fn sent_in(round: &orders::RoundOutcome) -> StockSend {
+    match round {
+        Ok(Some(round)) => round.sent,
+        _ => StockSend::default(),
     }
-    Ok(sent)
 }
 
 /// What the Sync did, in one line.

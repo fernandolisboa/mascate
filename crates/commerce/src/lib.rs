@@ -36,7 +36,8 @@ pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
     DispatchDue, FulfillmentMode, LineStock, Order, OrderError, OrderLine, OrderSettings,
     OrderStatus, OrderSync, Orders, Receiver, ReturnReceipt, ReturnReceived, ReturnStatus,
-    ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels, StockShort, UnitsBack,
+    ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels, SoldWithoutStock,
+    StockShort, UnitsBack,
 };
 pub use pricing::{
     CostSource, DraftPrice, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,

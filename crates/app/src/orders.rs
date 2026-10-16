@@ -21,10 +21,11 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Entity, Global, Hsla, Subscription, SystemNotification, Task, Window, div, px,
 };
-use mascate_catalog::Product;
+use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     DispatchDue, LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync,
-    Orders, RealizedMargin, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel, StockShort,
+    Orders, RealizedMargin, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel, SoldWithoutStock,
+    StockMirror, StockSend, StockShort,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{RecordId, SalesChannelKind, Timestamp};
@@ -73,10 +74,16 @@ impl Global for OrderSyncs {}
 /// What one Order Sync did, with the Products its notifications name.
 pub struct Round {
     pub synced: OrderSync,
+    /// The stock sent after the Orders.
+    pub sent: StockSend,
     products: Vec<Product>,
     /// Why a channel's Sync failed while the others went through.
     failures: Vec<String>,
 }
+
+/// What a round of Orders and stock came to: `None` when no channel is
+/// connected.
+pub type RoundOutcome = Result<Option<Round>, String>;
 
 /// Why reading or saving the Orders failed, as the owner reads it.
 pub fn failure(error: &OrderError) -> String {
@@ -151,60 +158,75 @@ pub fn start_polling(cx: &mut App) {
 }
 
 /// Runs an Order Sync of every connected Sales Channel off the UI thread,
-/// in the owner's channel order, and only then sends the stock still to
-/// send, so every channel's Orders leave the stock first (ADR 0017, ADR
-/// 0033). `Ok(None)` when no channel is connected; a channel that fails
-/// leaves the others' Sync standing.
-pub fn sync_now(cx: &mut App) -> Option<Task<Result<Option<Round>, String>>> {
+/// then sends the stock still to send; see `round`. `None` when the
+/// database did not open.
+pub fn sync_now(cx: &mut App) -> Option<Task<RoundOutcome>> {
     let (Some(orders), Some(mirror), Some(catalog)) =
         (orders(cx), stock_mirror::mirror(cx), catalog::catalog(cx))
     else {
         return None;
     };
     let reach = sales_channels::reach(cx);
-    Some(cx.background_executor().spawn(async move {
-        let channels = reach.connected().await;
-        if channels.is_empty() {
-            return Ok(None);
+    Some(
+        cx.background_executor().spawn(async move {
+            round(&orders, &mirror, &catalog, &reach.connected().await).await
+        }),
+    )
+}
+
+/// An Order Sync of each of `channels`, in the owner's channel order, and
+/// only then the stock still to send: a send right after every channel's
+/// Orders never puts back on sale a unit a buyer took since the last Sync
+/// (ADR 0017, ADR 0033), so every stock send goes through here. `Ok(None)`
+/// when no channel is connected; a channel that fails leaves the others'
+/// Sync standing.
+pub async fn round(
+    orders: &Orders,
+    mirror: &StockMirror,
+    catalog: &Catalog,
+    channels: &[ChannelPorts],
+) -> RoundOutcome {
+    if channels.is_empty() {
+        return Ok(None);
+    }
+    let mut synced = OrderSync::default();
+    let mut failures = Vec::new();
+    for channel in channels {
+        match orders.sync(channel.orders.as_ref()).await {
+            Ok(part) => add(&mut synced, part),
+            Err(error) => failures.push(on_channel(channel.kind(), &failure(&error), channels)),
         }
-        let mut synced = OrderSync::default();
-        let mut failures = Vec::new();
-        for channel in &channels {
-            match orders.sync(channel.orders.as_ref()).await {
-                Ok(part) => add(&mut synced, part),
-                Err(error) => {
-                    failures.push(on_channel(channel.kind(), &failure(&error), &channels))
-                }
-            }
-            if let Some(billing) = &channel.billing
-                && let Err(error) = orders.import_fees(billing.as_ref()).await
-            {
-                eprintln!("could not read the Orders' Fees: {error}");
-            }
-            if let Some(payments) = &channel.payments
-                && let Err(error) = orders.import_releases(payments.as_ref()).await
-            {
-                eprintln!("could not read the Orders' Money Releases: {error}");
-            }
+        if let Some(billing) = &channel.billing
+            && let Err(error) = orders.import_fees(billing.as_ref()).await
+        {
+            eprintln!("could not read the Orders' Fees: {error}");
         }
-        for channel in &channels {
-            if let Err(error) = mirror.send(channel.listings.as_ref()).await {
-                eprintln!("could not send the listings' stock: {error}");
-            }
+        if let Some(payments) = &channel.payments
+            && let Err(error) = orders.import_releases(payments.as_ref()).await
+        {
+            eprintln!("could not read the Orders' Money Releases: {error}");
         }
-        if failures.len() == channels.len() {
-            return Err(failures.join(" "));
+    }
+    let sent = match stock_mirror::send(mirror, channels).await {
+        Ok(sent) => sent,
+        Err(error) => {
+            eprintln!("could not send the listings' stock: {error}");
+            StockSend::default()
         }
-        let products = if synced.reached_reorder_point.is_empty() {
-            Vec::new()
-        } else {
-            catalog.products().await.unwrap_or_default()
-        };
-        Ok(Some(Round {
-            synced,
-            products,
-            failures,
-        }))
+    };
+    if failures.len() == channels.len() {
+        return Err(failures.join(" "));
+    }
+    let products = if synced.reached_reorder_point.is_empty() {
+        Vec::new()
+    } else {
+        catalog.products().await.unwrap_or_default()
+    };
+    Ok(Some(Round {
+        synced,
+        sent,
+        products,
+        failures,
     }))
 }
 
@@ -220,6 +242,7 @@ fn add(total: &mut OrderSync, part: OrderSync) {
         .sort_by_key(|order| std::cmp::Reverse(order.sold.ordered_at));
     total.taken += part.taken;
     total.short += part.short;
+    total.sold_without_stock.extend(part.sold_without_stock);
     total
         .reached_reorder_point
         .extend(part.reached_reorder_point);
@@ -236,9 +259,12 @@ fn on_channel(kind: SalesChannelKind, text: &str, channels: &[ChannelPorts]) -> 
 }
 
 /// Tells the owner what an Order Sync brought, and the screens that it ran.
-pub fn finished(outcome: &Result<Option<Round>, String>, cx: &mut App) {
+pub fn finished(outcome: &RoundOutcome, cx: &mut App) {
     if let Ok(Some(round)) = outcome {
         notify_arrived(&round.synced.arrived, cx);
+        for sold in &round.synced.sold_without_stock {
+            notify_sold_without_stock(sold, cx);
+        }
         for low in &round.synced.reached_reorder_point {
             low_stock::notify(*low, &round.products, cx);
         }
@@ -287,6 +313,35 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
             actions: Vec::new(),
         });
     }
+}
+
+/// "Vendido sem estoque", once for each line the units on hand could not
+/// cover (ADR 0033): the owner buys the units or cancels the sale.
+fn notify_sold_without_stock(sold: &SoldWithoutStock, cx: &App) {
+    let line = &sold.line.sold;
+    let title = match &line.variation_name {
+        Some(variation) => format!("{} · {variation}", line.title),
+        None => line.title.clone(),
+    };
+    cx.show_system_notification(SystemNotification {
+        tag: format!(
+            "sold-without-stock-{}-{}-{}",
+            sold.order.sold.id,
+            line.item,
+            line.variation.as_deref().unwrap_or_default()
+        )
+        .into(),
+        title: "Vendido sem estoque".into(),
+        body: format!(
+            "{}× {title} {}, pedido {}. O app não tem essas unidades: compre-as ou cancele a \
+             venda.",
+            line.quantity,
+            sales_channels::on(sold.order.channel),
+            sold.order.sold.id
+        )
+        .into(),
+        actions: Vec::new(),
+    });
 }
 
 /// "5 pedidos novos no Mercado Livre", or with no channel when they came

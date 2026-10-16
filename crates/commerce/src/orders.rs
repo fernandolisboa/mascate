@@ -590,11 +590,24 @@ pub struct OrderSync {
     pub taken: usize,
     /// Lines whose units are still to leave the stock.
     pub short: usize,
+    /// Lines found in this Sync to have sold more units than the app has
+    /// on hand, to tell the owner about once: each comes here the first
+    /// time only, and waits like any line still to leave the stock.
+    pub sold_without_stock: Vec<SoldWithoutStock>,
     /// Products the units leaving took to their Reorder Point.
     pub reached_reorder_point: Vec<LowStock>,
     /// Orders cancelled before shipping whose units went back on the shelf
     /// in this Sync.
     pub restocked: usize,
+}
+
+/// A line sold without the units on hand to cover it (ADR 0033): two
+/// buyers took the same unit between two Syncs, or a channel was late to
+/// take a lowering. The owner buys the units or cancels the sale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoldWithoutStock {
+    pub order: Order,
+    pub line: OrderLine,
 }
 
 /// How the app reads Orders: how often, and how long the buyer's data stays.
@@ -810,6 +823,7 @@ impl Orders {
             .take_stock(&transaction, on, first_synced_at, started)
             .await?;
         report.taken = taken.lines;
+        let sold_without_stock = taken.sold_without_stock;
         report.reached_reorder_point = taken.reached_reorder_point;
         report.restocked = self.restock_cancelled(&transaction, started).await?;
         erase_buyer_data(&transaction, keep_since, started).await?;
@@ -832,6 +846,22 @@ impl Orders {
             .flat_map(|order| &order.lines)
             .filter(|line| matches!(line.stock, LineStock::Short(_)))
             .count();
+        for (order, item, variation) in sold_without_stock {
+            let found = orders
+                .iter()
+                .find(|known| known.id == order)
+                .and_then(|known| {
+                    let line = known
+                        .lines
+                        .iter()
+                        .find(|line| line.sold.item == item && line.sold.variation == variation)?;
+                    Some(SoldWithoutStock {
+                        order: known.clone(),
+                        line: line.clone(),
+                    })
+                });
+            report.sold_without_stock.extend(found);
+        }
         report.arrived = orders
             .into_iter()
             .filter(|order| arrived.contains(&order.id))
@@ -1284,6 +1314,8 @@ impl Orders {
             due.push(DueLine {
                 line: row.id_at(0)?,
                 order: row.id_at(1)?,
+                item: row.get(2)?,
+                variation: row.get(3)?,
                 quantity: row.get(4)?,
                 listed: row.optional_id_at(5)?.is_some(),
                 product: row.optional_id_at(6)?,
@@ -1333,12 +1365,18 @@ impl Orders {
                         .extend(exited.reached_reorder_point);
                 }
                 Err(short) => {
-                    on.execute(
-                        "UPDATE commerce_order_lines SET stock_short = ?1, updated_at = ?2
-                         WHERE id = ?3 AND COALESCE(stock_short, '') <> ?1",
-                        params![short.code(), stored(now), due.line.to_string()],
-                    )
-                    .await?;
+                    let changed = on
+                        .execute(
+                            "UPDATE commerce_order_lines SET stock_short = ?1, updated_at = ?2
+                             WHERE id = ?3 AND COALESCE(stock_short, '') <> ?1",
+                            params![short.code(), stored(now), due.line.to_string()],
+                        )
+                        .await?;
+                    if changed > 0 && short == StockShort::NotEnoughStock {
+                        taken
+                            .sold_without_stock
+                            .push((due.order, due.item, due.variation));
+                    }
                 }
             }
         }
@@ -1350,6 +1388,8 @@ impl Orders {
 struct DueLine {
     line: RecordId,
     order: RecordId,
+    item: String,
+    variation: Option<String>,
     quantity: u32,
     /// Whether the listing sold is among the Listings.
     listed: bool,
@@ -1360,6 +1400,9 @@ struct DueLine {
 struct Taken {
     lines: usize,
     reached_reorder_point: Vec<LowStock>,
+    /// The Order, item and variation of each line just found short of
+    /// units on hand.
+    sold_without_stock: Vec<(RecordId, String, Option<String>)>,
 }
 
 /// How units on their way back were settled.
