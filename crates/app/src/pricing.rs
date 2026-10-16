@@ -1,4 +1,4 @@
-//! Settings › Preços e margens (#19): the tax rate every margin uses (story
+//! Settings › Vendas › Preços e margens (#19): the tax rate every margin uses (story
 //! 73), the target margin of every Product without one of its own, which
 //! Price Suggestions start from, and the minimum margin no Promotion may go
 //! below (#26). The rules live in Finance and Commerce.

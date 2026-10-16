@@ -490,8 +490,8 @@ impl ProductsScreen {
                     target.margin.to_pt_br()
                 ),
                 Ok(target) => format!(
-                    "Sem margem alvo própria: vale a padrão, {}, de Configurações › Preços e \
-                     margens. Digite uma para este produto.",
+                    "Sem margem alvo própria: vale a padrão, {}, de Configurações › Vendas › \
+                     Preços e margens. Digite uma para este produto.",
                     target.margin.to_pt_br()
                 ),
                 Err(error) => error.clone(),

@@ -42,9 +42,9 @@ pub const SALES_VOLUME: Reminder = Reminder {
     key: "finance.sales_volume",
     topic: ReminderTopic::Fiscal,
     title: "Vendas acima do limite que você definiu",
-    text: "As vendas dos últimos 12 meses passaram do limite de Configurações › Finanças. \
-           Vale conversar com um contador sobre abrir um CNPJ: o app continua funcionando do \
-           mesmo jeito, e o Painel mostra o volume.",
+    text: "As vendas dos últimos 12 meses passaram do limite de Configurações › Vendas › \
+           Finanças. Vale conversar com um contador sobre abrir um CNPJ: o app continua \
+           funcionando do mesmo jeito, e o Painel mostra o volume.",
     reappears_after_days: 30,
     shows: ReminderShows::WhenRaised,
 };
