@@ -165,7 +165,7 @@ impl PricingSection {
             promotions
                 .save_minimum_margin(minimum)
                 .await
-                .map_err(|error| promotions::failure(&error, None, &[]))
+                .map_err(|error| promotions::minimum_failure(&error))
         });
         cx.spawn(async move |this, cx| {
             let saved = saving.await;

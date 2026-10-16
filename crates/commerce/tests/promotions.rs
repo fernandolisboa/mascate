@@ -14,7 +14,7 @@ use futures::executor::block_on;
 use mascate_commerce::{
     ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions, CouponDiscount, CouponTerms,
     DiscountPlan, Listing, ListingStatus, Listings, OfferToJoin, OnSalesChannel, PriceAssumptions,
-    PromotionError, PromotionKind, PromotionPlan, PromotionStatus, Promotions,
+    PromotionError, PromotionKind, PromotionPlan, PromotionStatus, Promotions, promotion_kinds,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, MovementReason, NewEntry};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -31,6 +31,8 @@ use common::{Channel, brl, listing, percent, variation};
 /// was asked to do.
 #[derive(Default)]
 struct PromotionChannel {
+    /// The Sales Channel it stands for: Mercado Livre unless a test says.
+    on: Option<SalesChannelKind>,
     promotions: Mutex<Vec<ChannelPromotion>>,
     offers: Mutex<HashMap<String, Vec<ChannelOffer>>>,
     created: Mutex<Vec<PromotionPlan>>,
@@ -74,7 +76,7 @@ impl PromotionChannel {
 
 impl OnSalesChannel for PromotionChannel {
     fn sales_channel(&self) -> SalesChannelKind {
-        SalesChannelKind::MercadoLivre
+        self.on.unwrap_or(SalesChannelKind::MercadoLivre)
     }
 }
 
@@ -216,6 +218,11 @@ struct Fixture {
 impl Fixture {
     /// 4 October 2026, 9 o'clock in Brasília.
     async fn new() -> Self {
+        Self::on(SalesChannelKind::MercadoLivre).await
+    }
+
+    /// The same, with the listings and Promotions on `kind`.
+    async fn on(kind: SalesChannelKind) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(ManualClock::at(
             Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap(),
@@ -241,8 +248,14 @@ impl Fixture {
             clock,
             database,
             inventory,
-            sales: Channel::default(),
-            channel: PromotionChannel::default(),
+            sales: Channel {
+                kind,
+                ..Channel::default()
+            },
+            channel: PromotionChannel {
+                on: Some(kind),
+                ..PromotionChannel::default()
+            },
         }
     }
 
@@ -326,7 +339,7 @@ impl Fixture {
     async fn created(&self, plan: PromotionPlan) -> mascate_commerce::Promotion {
         let request = self
             .promotions
-            .prepare_promotion(plan.clone(), true)
+            .prepare_promotion(self.channel.sales_channel(), plan.clone(), true)
             .unwrap();
         self.promotions
             .send(&self.channel, request.confirm())
@@ -419,6 +432,184 @@ fn cents(amount: i64) -> Money {
     Money::new(Decimal::new(amount, 2), Currency::Brl)
 }
 
+#[test]
+fn each_channel_offers_its_own_kinds_of_promotion() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let campaign = campaign("Semana do fone", (5, 10));
+
+        for channel in [SalesChannelKind::Amazon, SalesChannelKind::Magalu] {
+            assert!(promotion_kinds(channel).is_empty());
+            assert!(matches!(
+                fx.promotions.prepare_promotion(channel, campaign.clone(), true),
+                Err(PromotionError::NotOffered { kind: PromotionKind::SellerCampaign, channel: on })
+                    if on == channel
+            ));
+        }
+        // Shopee's discount is a campaign of the owner's; it has no coupon.
+        assert_eq!(
+            promotion_kinds(SalesChannelKind::Shopee),
+            [PromotionKind::SellerCampaign]
+        );
+        assert!(
+            fx.promotions
+                .prepare_promotion(SalesChannelKind::Shopee, campaign, true)
+                .is_ok()
+        );
+        assert!(matches!(
+            fx.promotions.prepare_promotion(
+                SalesChannelKind::Shopee,
+                coupon("Vinte off", twenty_off()),
+                true
+            ),
+            Err(PromotionError::NotOffered { .. })
+        ));
+    });
+}
+
+#[test]
+fn a_shopee_listing_has_no_price_discount_of_its_own() {
+    block_on(async {
+        let fx = Fixture::on(SalesChannelKind::Shopee).await;
+        let listing = fx.one_listing().await;
+
+        assert!(matches!(
+            fx.discount(&listing, "90", (5, 10)).await,
+            Err(PromotionError::NotOffered {
+                kind: PromotionKind::PriceDiscount,
+                channel: SalesChannelKind::Shopee
+            })
+        ));
+    });
+}
+
+#[test]
+fn a_shopee_discount_below_the_minimum_is_refused_before_the_network_and_one_above_it_goes_only_once_confirmed()
+ {
+    block_on(async {
+        let fx = Fixture::on(SalesChannelKind::Shopee).await;
+        let listing = fx.one_listing().await;
+        // Shopee's discounts run longer than Mercado Livre's 14 days.
+        let outubro = fx.created(campaign("Outubro", (5, 31))).await;
+        assert_eq!(outubro.channel, SalesChannelKind::Shopee);
+
+        let below = fx
+            .promotions
+            .prepare_join(
+                outubro.id,
+                listing.id,
+                Some(brl("45")),
+                true,
+                &fx.sales,
+                assumptions(),
+            )
+            .await;
+        assert!(
+            matches!(below, Err(PromotionError::BelowMinimum(_))),
+            "{below:?}"
+        );
+        assert!(fx.channel.read.lock().unwrap().is_empty());
+
+        let above = fx
+            .promotions
+            .prepare_join(
+                outubro.id,
+                listing.id,
+                Some(brl("90")),
+                true,
+                &fx.sales,
+                assumptions(),
+            )
+            .await
+            .unwrap();
+        assert!(above.check().unwrap().margin.passes());
+        assert!(fx.channel.read.lock().unwrap().is_empty());
+        assert!(fx.channel.joined.lock().unwrap().is_empty());
+
+        fx.promotions
+            .send(&fx.channel, above.confirm())
+            .await
+            .unwrap();
+        let joined = fx.channel.joined.lock().unwrap().clone();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].1.price, Some(brl("90")));
+        assert_eq!(
+            joined[0].1.promotion.as_deref(),
+            Some(outubro.listed.id.as_str())
+        );
+    });
+}
+
+#[test]
+fn a_shopee_discount_runs_less_than_180_days() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let plan = |ends: NaiveDate| PromotionPlan {
+            ends,
+            ..campaign("Até o Natal", (5, 5))
+        };
+
+        assert!(
+            fx.promotions
+                .prepare_promotion(
+                    SalesChannelKind::Shopee,
+                    plan(on(5) + TimeDelta::days(178)),
+                    true
+                )
+                .is_ok()
+        );
+        assert!(matches!(
+            fx.promotions.prepare_promotion(
+                SalesChannelKind::Shopee,
+                plan(on(5) + TimeDelta::days(179)),
+                true
+            ),
+            Err(PromotionError::TooLong(179))
+        ));
+    });
+}
+
+#[test]
+fn a_shopee_discount_changes_only_to_fewer_days() {
+    block_on(async {
+        let fx = Fixture::on(SalesChannelKind::Shopee).await;
+        let outubro = fx.created(campaign("Outubro", (5, 20))).await;
+
+        for (starts, ends) in [(4, 20), (5, 21)] {
+            assert!(matches!(
+                fx.promotions
+                    .prepare_change(outubro.id, "Outubro", on(starts), on(ends))
+                    .await,
+                Err(PromotionError::OnlyShortens(SalesChannelKind::Shopee))
+            ));
+        }
+        assert!(
+            fx.promotions
+                .prepare_change(outubro.id, "Outubro", on(6), on(15))
+                .await
+                .is_ok()
+        );
+    });
+}
+
+#[test]
+fn a_promotion_goes_only_to_the_channel_it_was_checked_for() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        let request = fx
+            .promotions
+            .prepare_promotion(SalesChannelKind::Shopee, campaign("Outubro", (5, 10)), true)
+            .unwrap();
+        assert_eq!(request.channel(), SalesChannelKind::Shopee);
+
+        assert!(matches!(
+            fx.promotions.send(&fx.channel, request.confirm()).await,
+            Err(PromotionError::Listing(_))
+        ));
+        assert!(fx.channel.created.lock().unwrap().is_empty());
+    });
+}
+
 proptest! {
     /// A coupon never raises a price, never takes more than its amount or
     /// its share off one unit, and takes at least its share (or its amount
@@ -494,9 +685,11 @@ fn nothing_is_prepared_before_the_reputation_unlocks_promotions() {
                 assumptions(),
             )
             .await;
-        let created = fx
-            .promotions
-            .prepare_promotion(campaign("Semana do fone", (5, 10)), false);
+        let created = fx.promotions.prepare_promotion(
+            SalesChannelKind::MercadoLivre,
+            campaign("Semana do fone", (5, 10)),
+            false,
+        );
 
         assert!(matches!(discount, Err(PromotionError::Locked)));
         assert!(matches!(created, Err(PromotionError::Locked)));
@@ -526,26 +719,38 @@ fn the_days_follow_the_channel_rules_for_each_kind() {
         ));
         assert!(
             fx.promotions
-                .prepare_promotion(campaign("Duas semanas", (5, 18)), true)
+                .prepare_promotion(
+                    SalesChannelKind::MercadoLivre,
+                    campaign("Duas semanas", (5, 18)),
+                    true
+                )
                 .is_ok()
         );
         assert!(matches!(
-            fx.promotions
-                .prepare_promotion(campaign("Mais de duas", (5, 19)), true),
+            fx.promotions.prepare_promotion(
+                SalesChannelKind::MercadoLivre,
+                campaign("Mais de duas", (5, 19)),
+                true
+            ),
             Err(PromotionError::TooLong(14))
         ));
         let month = |ends| PromotionPlan {
             ends: on(ends),
             ..coupon("Cupom do mês", twenty_off())
         };
-        assert!(fx.promotions.prepare_promotion(month(31), true).is_ok());
+        assert!(
+            fx.promotions
+                .prepare_promotion(SalesChannelKind::MercadoLivre, month(31), true)
+                .is_ok()
+        );
         let november = PromotionPlan {
             starts: on(5),
             ends: NaiveDate::from_ymd_opt(2026, 11, 5).unwrap(),
             ..month(31)
         };
         assert!(matches!(
-            fx.promotions.prepare_promotion(november, true),
+            fx.promotions
+                .prepare_promotion(SalesChannelKind::MercadoLivre, november, true),
             Err(PromotionError::TooLong(31))
         ));
     });
@@ -556,10 +761,13 @@ fn a_campaign_needs_a_name_and_a_coupon_sound_terms() {
     block_on(async {
         let fx = Fixture::new().await;
 
-        let unnamed = fx
-            .promotions
-            .prepare_promotion(campaign("   ", (5, 10)), true);
+        let unnamed = fx.promotions.prepare_promotion(
+            SalesChannelKind::MercadoLivre,
+            campaign("   ", (5, 10)),
+            true,
+        );
         let free = fx.promotions.prepare_promotion(
+            SalesChannelKind::MercadoLivre,
             coupon(
                 "Grátis",
                 CouponTerms {
@@ -570,6 +778,7 @@ fn a_campaign_needs_a_name_and_a_coupon_sound_terms() {
             true,
         );
         let no_budget = fx.promotions.prepare_promotion(
+            SalesChannelKind::MercadoLivre,
             coupon(
                 "Sem verba",
                 CouponTerms {
@@ -580,6 +789,7 @@ fn a_campaign_needs_a_name_and_a_coupon_sound_terms() {
             true,
         );
         let no_terms = fx.promotions.prepare_promotion(
+            SalesChannelKind::MercadoLivre,
             PromotionPlan {
                 coupon: None,
                 ..coupon("Sem termos", twenty_off())
@@ -725,7 +935,10 @@ fn a_campaign_is_created_once_and_its_listings_join_guarded() {
         let fx = Fixture::new().await;
         let listed = fx.one_listing().await;
         let plan = campaign("  Semana do fone  ", (5, 11));
-        let request = fx.promotions.prepare_promotion(plan, true).unwrap();
+        let request = fx
+            .promotions
+            .prepare_promotion(SalesChannelKind::MercadoLivre, plan, true)
+            .unwrap();
         assert!(request.check().is_none());
         *fx.channel.loses_answer.lock().unwrap() = true;
         assert!(

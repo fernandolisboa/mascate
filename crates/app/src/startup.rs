@@ -487,7 +487,7 @@ mod tests {
         CopySettings, DateRule, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
         NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PostStatus, PostTime,
         QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor, ReputationSource,
-        default_posting_times,
+        Score, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -574,22 +574,28 @@ mod tests {
 
     fn sample_quality() -> ChannelQuality {
         ChannelQuality {
-            score: 48,
-            level: QualityLevel::Basic,
+            score: Some(Score {
+                points: 48,
+                level: QualityLevel::Basic,
+            }),
             pending: Vec::new(),
         }
     }
 
-    /// Rates every listing like the sample.
+    /// Rates every listing like the sample, on Mercado Livre.
     struct SampleQuality;
 
     impl QualitySource for SampleQuality {
+        fn rated_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+
         fn quality(&self, _: &str) -> Result<Option<ChannelQuality>, PlatformError> {
             Ok(Some(sample_quality()))
         }
 
-        fn visits(&self, _: &str, _: u32) -> Result<u32, PlatformError> {
-            Ok(7)
+        fn visits(&self, _: &str, _: u32) -> Result<Option<u32>, PlatformError> {
+            Ok(Some(7))
         }
     }
 
@@ -1380,19 +1386,31 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
+                let listed = |channel| ListedItem {
+                    channel,
+                    listing: sample_listing().id,
+                    title: sample_listing().title,
+                    link: None,
+                    units_sold: 0,
+                };
+                let ml = listed(SalesChannelKind::MercadoLivre);
+                // The rows from before Sales Channels in Marketing (#136)
+                // stay as they were, on Mercado Livre.
+                if Version::parse(released) >= Version::parse("0.2.0") {
+                    let kept = quality.panel(std::slice::from_ref(&ml)).await.unwrap();
+                    assert_eq!(kept[0].rating, Rating::Rated(sample_quality()), "{name}");
+                    assert_eq!(kept[0].visits, Some(7), "{name}");
+                    let elsewhere = quality
+                        .panel(&[listed(SalesChannelKind::Shopee)])
+                        .await
+                        .unwrap();
+                    assert_eq!(elsewhere[0].rating, Rating::NotChecked, "{name}");
+                }
                 quality
                     .sync(&SampleQuality, &[sample_listing().id])
                     .await
                     .unwrap();
-                let panel = quality
-                    .panel(&[ListedItem {
-                        listing: sample_listing().id,
-                        title: sample_listing().title,
-                        link: None,
-                        units_sold: 0,
-                    }])
-                    .await
-                    .unwrap();
+                let panel = quality.panel(&[ml]).await.unwrap();
                 assert_eq!(panel[0].rating, Rating::Rated(sample_quality()), "{name}");
                 // Questions and reply templates arrived after 0.2.0 as well.
                 let questions = Questions::new(

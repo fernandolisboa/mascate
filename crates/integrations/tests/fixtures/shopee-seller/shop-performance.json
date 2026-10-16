@@ -1,0 +1,75 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "d1b2c3d4e5f60718293a4b5c6d7e8f93",
+  "response": {
+    "overall_performance": {
+      "rating": 2,
+      "fulfillment_failed": 1,
+      "listing_failed": 0,
+      "custom_service_failed": 0
+    },
+    "metric_list": [
+      {
+        "metric_type": 3,
+        "metric_id": -1,
+        "parent_metric_id": 0,
+        "metric_name": "Non-Responded Chats",
+        "current_period": null,
+        "last_period": null,
+        "unit": 1,
+        "target": { "value": 0, "comparator": "" }
+      },
+      {
+        "metric_type": 1,
+        "metric_id": 1,
+        "parent_metric_id": 0,
+        "metric_name": "Late Shipment Rate (All Channels)",
+        "current_period": 12.5,
+        "last_period": 8.0,
+        "unit": 2,
+        "target": { "value": 10, "comparator": "<" }
+      },
+      {
+        "metric_type": 1,
+        "metric_id": 3,
+        "parent_metric_id": 0,
+        "metric_name": "Non-Fulfilment Rate (All Channels)",
+        "current_period": 1.2,
+        "last_period": 0,
+        "unit": 2,
+        "target": { "value": 10, "comparator": "<" }
+      },
+      {
+        "metric_type": 1,
+        "metric_id": 4,
+        "parent_metric_id": 0,
+        "metric_name": "Preparation Time",
+        "current_period": null,
+        "last_period": null,
+        "unit": 4,
+        "target": { "value": 2, "comparator": "<=" }
+      },
+      {
+        "metric_type": 3,
+        "metric_id": 11,
+        "parent_metric_id": -1,
+        "metric_name": "Chat Response Rate",
+        "current_period": 92.31,
+        "last_period": 95,
+        "unit": 2,
+        "target": { "value": 90, "comparator": ">=" }
+      },
+      {
+        "metric_type": 9,
+        "metric_id": 99,
+        "parent_metric_id": 0,
+        "metric_name": "A metric of a new kind",
+        "current_period": 1,
+        "last_period": 1,
+        "unit": 1,
+        "target": { "value": 1, "comparator": "=" }
+      }
+    ]
+  }
+}

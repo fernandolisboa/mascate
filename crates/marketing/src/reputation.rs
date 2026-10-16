@@ -757,10 +757,10 @@ impl Reputation {
         let [one, two, three, four, five] = reviews.stars;
         on.execute(
             "INSERT INTO marketing_listing_reviews
-                 (id, ml_item_id, one_star, two_stars, three_stars, four_stars, five_stars,
+                 (id, channel_item_id, one_star, two_stars, three_stars, four_stars, five_stars,
                   checked_at, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
-             ON CONFLICT (ml_item_id) WHERE deleted_at IS NULL
+             ON CONFLICT (sales_channel, channel_item_id) WHERE deleted_at IS NULL
              DO UPDATE SET one_star = excluded.one_star, two_stars = excluded.two_stars,
                  three_stars = excluded.three_stars, four_stars = excluded.four_stars,
                  five_stars = excluded.five_stars, checked_at = excluded.checked_at,
@@ -790,7 +790,7 @@ impl Reputation {
             let mut rows = on
                 .query(
                     "SELECT 1 FROM marketing_low_reviews
-                     WHERE ml_review_id = ?1 AND deleted_at IS NULL",
+                     WHERE channel_review_id = ?1 AND deleted_at IS NULL",
                     params![review.id.clone()],
                 )
                 .await?;
@@ -803,11 +803,11 @@ impl Reputation {
             drop(rows);
             on.execute(
                 "INSERT INTO marketing_low_reviews
-                     (id, ml_review_id, ml_item_id, rating, title, text, reviewed_at,
+                     (id, channel_review_id, channel_item_id, rating, title, text, reviewed_at,
                       created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-                 ON CONFLICT (ml_review_id) WHERE deleted_at IS NULL
-                 DO UPDATE SET ml_item_id = excluded.ml_item_id, rating = excluded.rating,
+                 ON CONFLICT (sales_channel, channel_review_id) WHERE deleted_at IS NULL
+                 DO UPDATE SET channel_item_id = excluded.channel_item_id, rating = excluded.rating,
                      title = excluded.title, text = excluded.text,
                      reviewed_at = excluded.reviewed_at, updated_at = excluded.updated_at",
                 params![
@@ -826,8 +826,8 @@ impl Reputation {
 
         let mut rows = on
             .query(
-                "SELECT id, ml_review_id FROM marketing_low_reviews
-                 WHERE ml_item_id = ?1 AND deleted_at IS NULL",
+                "SELECT id, channel_review_id FROM marketing_low_reviews
+                 WHERE channel_item_id = ?1 AND deleted_at IS NULL",
                 params![listing],
             )
             .await?;
@@ -935,7 +935,7 @@ fn reputation_values(reputation: &ChannelReputation, now: Timestamp) -> Vec<Valu
 async fn read_stars(on: &Connection) -> Result<BTreeMap<String, [u32; 5]>, ReputationError> {
     let mut rows = on
         .query(
-            "SELECT ml_item_id, one_star, two_stars, three_stars, four_stars, five_stars
+            "SELECT channel_item_id, one_star, two_stars, three_stars, four_stars, five_stars
              FROM marketing_listing_reviews WHERE deleted_at IS NULL",
             (),
         )
@@ -960,7 +960,7 @@ async fn read_stars(on: &Connection) -> Result<BTreeMap<String, [u32; 5]>, Reput
 async fn read_low_reviews(on: &Connection) -> Result<Vec<LowReview>, ReputationError> {
     let mut rows = on
         .query(
-            "SELECT id, ml_review_id, ml_item_id, rating, title, text, reviewed_at, seen_at
+            "SELECT id, channel_review_id, channel_item_id, rating, title, text, reviewed_at, seen_at
              FROM marketing_low_reviews WHERE deleted_at IS NULL",
             (),
         )

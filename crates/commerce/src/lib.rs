@@ -53,7 +53,7 @@ pub use promotions::{
     ChannelOffer, ChannelPromotion, ChannelPromotions, ConfirmedPromotion, CouponDiscount,
     CouponTerms, DiscountPlan, Offer, OfferToJoin, PROMOTIONS_REFRESH_MINUTES, Promotion,
     PromotionCheck, PromotionError, PromotionKind, PromotionPlan, PromotionRequest,
-    PromotionStatus, PromotionSync, Promotions,
+    PromotionStatus, PromotionSync, Promotions, promotion_kinds,
 };
 pub use purchase_orders::{
     NewPurchaseLine, NewPurchaseOrder, PurchaseLine, PurchaseOrder, PurchaseOrderError,

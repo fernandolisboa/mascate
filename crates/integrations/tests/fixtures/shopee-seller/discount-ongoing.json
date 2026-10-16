@@ -1,0 +1,43 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "b4db3f9ee101ceb355448dae39dac0be",
+  "response": {
+    "status": "ongoing",
+    "discount_name": "Outubro",
+    "item_list": [
+      {
+        "item_id": 800002,
+        "item_name": "Camiseta básica",
+        "normal_stock": 3,
+        "item_promotion_stock": 0,
+        "item_original_price": 0,
+        "item_promotion_price": 0,
+        "model_list": [
+          {
+            "model_id": 900021,
+            "model_name": "Preta,P",
+            "model_normal_stock": 3,
+            "model_promotion_stock": 0,
+            "model_original_price": 49.9,
+            "model_promotion_price": 44.9
+          },
+          {
+            "model_id": 900022,
+            "model_name": "Preta,M",
+            "model_normal_stock": 0,
+            "model_promotion_stock": 0,
+            "model_original_price": 49.9,
+            "model_promotion_price": 42.9
+          }
+        ],
+        "purchase_limit": 0
+      }
+    ],
+    "start_time": 1791601200,
+    "discount_id": 665123666665500,
+    "end_time": 1793501999,
+    "more": false
+  }
+}

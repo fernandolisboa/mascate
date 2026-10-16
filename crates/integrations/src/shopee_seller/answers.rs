@@ -545,3 +545,154 @@ pub(super) struct FoundItems {
     #[serde(default)]
     pub next_offset: String,
 }
+
+/// One page of `account_health/get_listings_with_issues`.
+#[derive(Debug, Deserialize)]
+pub(super) struct ListingsWithIssues {
+    #[serde(default)]
+    pub listing_list: Vec<ListingWithIssue>,
+    #[serde(default)]
+    pub total_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ListingWithIssue {
+    #[serde(deserialize_with = "numeric_id")]
+    pub item_id: String,
+    /// 1 prohibited, 2 counterfeit, 3 spam, 4 inappropriate image,
+    /// 5 insufficient info, 6 Mall listing improvement, 7 other
+    /// improvement.
+    pub reason: i64,
+}
+
+/// `account_health/get_shop_performance`.
+#[derive(Debug, Deserialize)]
+pub(super) struct ShopPerformance {
+    pub overall_performance: Option<OverallPerformance>,
+    #[serde(default)]
+    pub metric_list: Vec<Metric>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OverallPerformance {
+    /// 1 poor, 2 improvement needed, 3 good, 4 excellent.
+    pub rating: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Metric {
+    /// 1 fulfillment, 2 listings, 3 customer service.
+    pub metric_type: i64,
+    /// Below zero, a group of metrics rather than one.
+    pub metric_id: i64,
+    pub metric_name: Option<String>,
+    pub current_period: Option<serde_json::Number>,
+    pub last_period: Option<serde_json::Number>,
+    /// 1 number, 2 percentage, 3 seconds, 4 days, 5 hours.
+    pub unit: Option<i64>,
+    pub target: Option<MetricTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MetricTarget {
+    pub value: Option<serde_json::Number>,
+    pub comparator: Option<String>,
+}
+
+/// `discount/get_discount_list`: a page of the shop's discounts.
+#[derive(Debug, Deserialize)]
+pub(super) struct DiscountList {
+    #[serde(default)]
+    pub discount_list: Vec<Discount>,
+    #[serde(default)]
+    pub more: bool,
+}
+
+/// One discount; `get_discount` adds a page of its items.
+#[derive(Debug, Deserialize)]
+pub(super) struct Discount {
+    #[serde(deserialize_with = "numeric_id")]
+    pub discount_id: String,
+    pub discount_name: Option<String>,
+    /// `upcoming`, `ongoing` or `expired`.
+    pub status: Option<String>,
+    pub start_time: i64,
+    pub end_time: i64,
+    /// `get_discount`'s page of the items in it.
+    #[serde(default)]
+    pub item_list: Vec<DiscountItem>,
+    /// Whether `get_discount` has another page of items.
+    #[serde(default)]
+    pub more: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DiscountItem {
+    #[serde(deserialize_with = "numeric_id")]
+    pub item_id: String,
+    #[serde(default)]
+    pub model_list: Vec<DiscountModel>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DiscountModel {
+    #[serde(deserialize_with = "numeric_id")]
+    pub model_id: String,
+}
+
+/// `discount/add_discount`.
+#[derive(Debug, Deserialize)]
+pub(super) struct AddedDiscount {
+    #[serde(deserialize_with = "numeric_id")]
+    pub discount_id: String,
+}
+
+/// `discount/add_discount_item` and `discount/delete_discount_item`: Shopee
+/// answers success even when it refused some models, naming each in
+/// `error_list`.
+#[derive(Debug, Deserialize)]
+pub(super) struct DiscountItems {
+    #[serde(default)]
+    pub error_list: Vec<DiscountItemError>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DiscountItemError {
+    pub fail_message: Option<String>,
+    pub fail_error: Option<String>,
+}
+
+/// `product/get_item_promotion`.
+#[derive(Debug, Deserialize)]
+pub(super) struct ItemPromotions {
+    #[serde(default)]
+    pub success_list: Vec<ItemPromotion>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ItemPromotion {
+    #[serde(deserialize_with = "numeric_id")]
+    pub item_id: String,
+    #[serde(default)]
+    pub promotion: Vec<PromotionOnItem>,
+}
+
+/// One Promotion on one model of the item, or on the item without models.
+#[derive(Debug, Deserialize)]
+pub(super) struct PromotionOnItem {
+    /// Shopee's name for the kind, as `Campaign` or `Flash Sale`.
+    pub promotion_type: Option<String>,
+    #[serde(deserialize_with = "numeric_id")]
+    pub promotion_id: String,
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
+    #[serde(default)]
+    pub promotion_price_info: Vec<PromotionPrice>,
+    /// `ongoing` or `upcoming`.
+    pub promotion_staging: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PromotionPrice {
+    pub promotion_price: Option<serde_json::Number>,
+}

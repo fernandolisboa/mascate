@@ -251,6 +251,8 @@ mod tests {
                 shipments: None,
                 publisher: None,
                 repricing: None,
+                quality: None,
+                promotions: None,
             }
         }
 
