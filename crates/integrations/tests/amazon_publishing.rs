@@ -140,6 +140,7 @@ fn fone_item() -> CatalogItem {
 fn offer() -> ListingToPublish {
     ListingToPublish {
         title: "Fone de Ouvido Bluetooth Mascate Preto".into(),
+        description: String::new(),
         category: "HEADPHONES".into(),
         listing_type: ListingType::Classic,
         condition: Condition::New,
@@ -149,6 +150,7 @@ fn offer() -> ListingToPublish {
         warranty: None,
         attributes: fone_item().attributes,
         pictures: Vec::new(),
+        variations: None,
     }
 }
 
@@ -530,6 +532,8 @@ impl Drafted {
                     warranty: String::new(),
                     attributes: Vec::new(),
                     pictures: Vec::new(),
+                    variation_tier: String::new(),
+                    variations: Vec::new(),
                 },
             )
             .await

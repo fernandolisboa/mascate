@@ -102,6 +102,8 @@ impl Fixture {
 
 fn edit(draft: &ListingDraft) -> DraftEdit {
     DraftEdit {
+        variation_tier: draft.variation_tier.clone(),
+        variations: draft.variations.clone(),
         title: draft.title.clone(),
         description: draft.description.clone(),
         listing_type: draft.listing_type,
@@ -782,16 +784,28 @@ fn a_refused_attempt_created_nothing_so_the_next_one_publishes_without_looking()
         let fx = Fixture::new().await;
         let draft = fx.ready().await;
         fx.publisher
-            .publishes(Publishing::Fails(PlatformError::Refused("price".into())));
+            .publishes(Publishing::Fails(PlatformError::Refused(
+                "Invalid Weight.".into(),
+            )));
 
+        // The refusal is the checklist's to show.
+        match fx.publish(&draft).await {
+            Err(ListingError::Blocked(checklist)) => assert_eq!(
+                checks(&checklist),
+                [(Check::Channel("Invalid Weight.".into()), true)]
+            ),
+            other => panic!("expected the checklist, got {other:?}"),
+        }
+        fx.publisher
+            .publishes(Publishing::Fails(PlatformError::RateLimited));
         assert!(matches!(
             fx.publish(&draft).await,
-            Err(ListingError::Platform(PlatformError::Refused(_)))
+            Err(ListingError::Platform(PlatformError::RateLimited))
         ));
         fx.publisher.publishes(Publishing::Creates);
         fx.publish(&draft).await.unwrap();
 
-        assert_eq!(fx.publisher.publish_calls(), 2);
+        assert_eq!(fx.publisher.publish_calls(), 3);
         assert!(fx.publisher.searched.lock().unwrap().is_empty());
     });
 }

@@ -1,0 +1,16 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "7e8f90a1b2c3d4e5f60718293a4b5c6d",
+  "response": {
+    "brand_list": [
+      {"brand_id": 1100, "original_brand_name": "Hering", "display_brand_name": "Hering"},
+      {"brand_id": 1101, "original_brand_name": "Reserva", "display_brand_name": "Reserva"}
+    ],
+    "has_next_page": true,
+    "next_offset": 100,
+    "is_mandatory": false,
+    "input_type": "DROP_DOWN"
+  }
+}

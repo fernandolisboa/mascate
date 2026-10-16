@@ -1,0 +1,45 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "6d7e8f90a1b2c3d4e5f60718293a4b5c",
+  "response": {
+    "list": [
+      {
+        "category_id": 100017,
+        "attribute_tree": [
+          {
+            "attribute_id": 100134,
+            "mandatory": true,
+            "name": "Material",
+            "multi_lang": [{"language": "pt-BR", "value": "Material"}],
+            "attribute_info": {"input_type": 1, "input_validation_type": 0, "format_type": 1, "attribute_unit_list": [], "max_value_count": 1},
+            "attribute_value_list": [
+              {"value_id": 3001, "name": "Cotton", "value_unit": "", "multi_lang": [{"language": "pt-BR", "value": "Algodão"}]},
+              {"value_id": 3002, "name": "Polyester", "value_unit": "", "multi_lang": [{"language": "pt-BR", "value": "Poliéster"}]}
+            ]
+          },
+          {
+            "attribute_id": 100200,
+            "mandatory": false,
+            "name": "Style",
+            "multi_lang": [{"language": "pt-BR", "value": "Estilo"}],
+            "attribute_info": {"input_type": 2, "input_validation_type": 2, "format_type": 1, "attribute_unit_list": [], "max_value_count": 1},
+            "attribute_value_list": [
+              {"value_id": 4001, "name": "Casual", "value_unit": "", "multi_lang": [{"language": "pt-BR", "value": "Casual"}]}
+            ]
+          },
+          {
+            "attribute_id": 100300,
+            "mandatory": false,
+            "name": "Fabric Weight",
+            "multi_lang": [{"language": "pt-BR", "value": "Gramatura"}],
+            "attribute_info": {"input_type": 3, "input_validation_type": 1, "format_type": 2, "attribute_unit_list": ["g", "kg"], "max_value_count": 1},
+            "attribute_value_list": []
+          }
+        ],
+        "warning": ""
+      }
+    ]
+  }
+}

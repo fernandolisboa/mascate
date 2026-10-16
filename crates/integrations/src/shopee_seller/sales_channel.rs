@@ -194,30 +194,41 @@ impl SalesChannel for ShopeeSeller {
         if !is_numeric_id(id) {
             return Err(PlatformError::NotFound);
         }
-        let found: Categories =
-            self.get("/api/v2/product/get_category", &[("language", "pt-br")])?;
-        let category = found
-            .category_list
+        self.categories()?
             .into_iter()
-            .find(|category| category.category_id.to_string() == id)
-            .ok_or(PlatformError::NotFound)?;
-        Ok(ChannelCategory {
-            id: id.to_owned(),
-            name: category
-                .display_category_name
-                .or(category.original_category_name)
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| id.to_owned()),
-        })
+            .find(|category| category.id == id)
+            .ok_or(PlatformError::NotFound)
     }
 }
 
 impl ShopeeSeller {
-    fn models(&self, item: &str) -> Result<ModelList, PlatformError> {
+    /// Every category of Shopee's tree, named as it shows them in
+    /// Portuguese.
+    pub(super) fn categories(&self) -> Result<Vec<ChannelCategory>, PlatformError> {
+        let found: Categories =
+            self.get("/api/v2/product/get_category", &[("language", "pt-br")])?;
+        Ok(found
+            .category_list
+            .into_iter()
+            .map(|category| {
+                let id = category.category_id.to_string();
+                ChannelCategory {
+                    name: category
+                        .display_category_name
+                        .or(category.original_category_name)
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or_else(|| id.clone()),
+                    id,
+                }
+            })
+            .collect())
+    }
+
+    pub(super) fn models(&self, item: &str) -> Result<ModelList, PlatformError> {
         self.get("/api/v2/product/get_model_list", &[("item_id", item)])
     }
 
-    fn unlist(&self, id: &str, unlist: bool) -> Result<(), PlatformError> {
+    pub(super) fn unlist(&self, id: &str, unlist: bool) -> Result<(), PlatformError> {
         let item = item_id(id)?;
         self.update(
             "/api/v2/product/unlist_item",
@@ -246,7 +257,7 @@ impl ShopeeSeller {
     }
 }
 
-fn item_id(id: &str) -> Result<&str, PlatformError> {
+pub(super) fn item_id(id: &str) -> Result<&str, PlatformError> {
     if is_numeric_id(id) {
         Ok(id)
     } else {
@@ -333,12 +344,12 @@ fn sku(sku: &Option<String>) -> Option<String> {
 }
 
 /// Where buyers see the item.
-fn link(shop: &str, item: &str) -> String {
+pub(super) fn link(shop: &str, item: &str) -> String {
     format!("https://shopee.com.br/product/{shop}/{item}")
 }
 
 /// "Cor: Preto · Tamanho: M", from the model's option in each tier.
-fn variation_name(model: &Model, models: &ModelList) -> String {
+pub(super) fn variation_name(model: &Model, models: &ModelList) -> String {
     let name = model
         .tier_index
         .iter()
@@ -362,7 +373,7 @@ fn variation_name(model: &Model, models: &ModelList) -> String {
 
 /// A listing's status. Shopee keeps an item with no units listed and sold
 /// out, and sells it again when units arrive: the share's out of stock.
-fn status(item: &str, model: Option<&str>, available: u32) -> ListingStatus {
+pub(super) fn status(item: &str, model: Option<&str>, available: u32) -> ListingStatus {
     match item {
         "UNLIST" => ListingStatus::Paused,
         "NORMAL" if model == Some("MODEL_UNAVAILABLE") => ListingStatus::Inactive,

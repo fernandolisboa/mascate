@@ -1,0 +1,30 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "293a4b5c6d7e8f90a1b2c3d4e5f60718",
+  "response": {
+    "item_list": [
+      {
+        "item_id": 3000142341,
+        "category_id": 100017,
+        "item_name": "Camiseta Básica 100% Algodão",
+        "item_sku": "CAM-PRE-M",
+        "item_status": "NORMAL",
+        "has_model": false,
+        "price_info": [{"currency": "BRL", "original_price": 49.9, "current_price": 49.9}],
+        "stock_info_v2": {"summary_info": {"total_reserved_stock": 0, "total_available_stock": 6}, "seller_stock": [{"location_id": "", "stock": 6}]}
+      },
+      {
+        "item_id": 3000142399,
+        "category_id": 100017,
+        "item_name": "Camiseta Básica Preta M Kit 2",
+        "item_sku": "CAM-PRE-M-KIT2",
+        "item_status": "NORMAL",
+        "has_model": false,
+        "price_info": [{"currency": "BRL", "original_price": 89.9, "current_price": 89.9}],
+        "stock_info_v2": {"summary_info": {"total_reserved_stock": 0, "total_available_stock": 1}, "seller_stock": [{"location_id": "", "stock": 1}]}
+      }
+    ]
+  }
+}

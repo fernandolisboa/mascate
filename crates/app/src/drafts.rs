@@ -21,9 +21,10 @@ use gpui_kit::{AnyElement, App, Entity, EventEmitter, Window, div, px};
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     AttributeValue, CatalogItem, CatalogMatch, CatalogProduct, CategoryPrediction, Check,
-    ChecklistItem, Condition, CostSource, DraftEdit, DraftKind, DraftPrice, DraftStart, Listing,
-    ListingDraft, ListingError, ListingPublisher, Listings, MIN_PICTURES, PricingError,
-    Requirement, SalesChannel, is_blocked, is_picture,
+    ChecklistItem, Condition, CostSource, DraftEdit, DraftKind, DraftPrice, DraftStart,
+    DraftVariation, Listing, ListingDraft, ListingError, ListingPublisher, Listings,
+    MAX_VARIATIONS, MIN_PICTURES, PricingError, Requirement, SalesChannel, is_blocked, is_picture,
+    takes_variations,
 };
 use mascate_kernel::{ListingType, Money, RecordId, SalesChannelKind, parse_amount};
 use mascate_marketing::{BriefAttribute, CopyBrief, GeneratedCopy};
@@ -83,6 +84,22 @@ struct Editor {
     written: Option<GeneratedCopy>,
     /// How the last writing with AI went, shown by its button.
     writing: Option<Outcome>,
+    /// What sets the variations apart, as "Cor".
+    variation_tier: Entity<InputState>,
+    /// One per variation, the draft's own Product first; none for a
+    /// listing without variations.
+    variations: Vec<VariationRow>,
+    /// The Product the next variation is of.
+    variation_pick: Picker,
+}
+
+/// A variation as typed: a Product with its option and its units.
+struct VariationRow {
+    product: RecordId,
+    seller_sku: String,
+    name: String,
+    option: Entity<InputState>,
+    units: Entity<InputState>,
 }
 
 pub struct DraftsSection {
@@ -252,7 +269,7 @@ impl DraftsSection {
                         publisher.as_ref(),
                     )
                     .await
-                    .map_err(|e| failure(&e))?;
+                    .map_err(|e| failure(kind, &e))?;
                 // The suggested price, when there is one, is where the
                 // draft starts; the owner changes it at will.
                 let assumptions = pricing::assumptions(&catalog, &taxes).await?;
@@ -271,7 +288,7 @@ impl DraftsSection {
                     listings
                         .save_draft(draft.id, edit)
                         .await
-                        .map_err(|e| failure(&e))?;
+                        .map_err(|e| failure(kind, &e))?;
                 }
                 Ok(Some(draft.id))
             },
@@ -338,6 +355,29 @@ impl DraftsSection {
         warranty.update(cx, |field, cx| {
             field.set_value(draft.warranty.clone(), window, cx)
         });
+        let variation_tier = input("Ex.: Cor", window, cx);
+        variation_tier.update(cx, |field, cx| {
+            field.set_value(draft.variation_tier.clone(), window, cx)
+        });
+        let variations = draft
+            .variations
+            .iter()
+            .map(|variation| {
+                let name = self
+                    .products
+                    .iter()
+                    .find(|product| product.id == variation.product)
+                    .map_or_else(|| variation.seller_sku.clone(), |p| p.name.clone());
+                variation_row(variation, name, window, cx)
+            })
+            .collect();
+        let variation_pick = picker(window, cx);
+        refill(
+            &variation_pick,
+            self.products.iter().map(product_choice).collect(),
+            window,
+            cx,
+        );
         let attributes = draft
             .attributes
             .iter()
@@ -369,6 +409,9 @@ impl DraftsSection {
             validated: None,
             written: None,
             writing: None,
+            variation_tier,
+            variations,
+            variation_pick,
         });
         self.read_folder_and_price(id, window, cx);
         cx.notify();
@@ -453,6 +496,18 @@ impl DraftsSection {
             .trim()
             .parse::<u32>()
             .ok()?;
+        let variations = editor
+            .variations
+            .iter()
+            .map(|row| {
+                Some(DraftVariation {
+                    product: row.product,
+                    seller_sku: row.seller_sku.clone(),
+                    option: row.option.read(cx).value().trim().to_owned(),
+                    available_quantity: row.units.read(cx).value().trim().parse().ok()?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
         Some((
             editor.draft,
             DraftEdit {
@@ -472,6 +527,8 @@ impl DraftsSection {
                     })
                     .collect(),
                 pictures: editor.pictures.clone(),
+                variation_tier: editor.variation_tier.read(cx).value().trim().to_owned(),
+                variations,
             },
         ))
     }
@@ -495,6 +552,9 @@ impl DraftsSection {
             cx.notify();
             return;
         };
+        let Some(kind) = self.editor.as_ref().map(|editor| editor.channel) else {
+            return;
+        };
         self.outcome = None;
         if let Some(editor) = self.editor.as_mut() {
             editor.validated = None;
@@ -506,7 +566,7 @@ impl DraftsSection {
                 let saved = listings
                     .save_draft(id, edit)
                     .await
-                    .map_err(|e| failure(&e))?;
+                    .map_err(|e| failure(kind, &e))?;
                 next(listings, saved).await.map(Some)
             },
             then,
@@ -539,7 +599,7 @@ impl DraftsSection {
                 listings
                     .validate_draft(saved.id, publisher.as_ref())
                     .await
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             move |this, checklist: Vec<ChecklistItem>, _, _| {
                 this.outcome = Some(if is_blocked(&checklist) {
@@ -574,7 +634,7 @@ impl DraftsSection {
                     .publish(saved.id, publisher.as_ref())
                     .await
                     .map(Ok)
-                    .map_err(PublishFailure::from)
+                    .map_err(|e| PublishFailure::of(kind, e))
                     .or_else(|failure| match failure {
                         PublishFailure::Blocked(checklist) => Ok(Err(checklist)),
                         PublishFailure::Other(text) => Err(text),
@@ -598,8 +658,8 @@ impl DraftsSection {
         );
     }
 
-    /// Sends what is left of a draft already in Mercado Livre: its
-    /// description.
+    /// Sends what is left of a draft already in its channel: its variations,
+    /// then its description.
     fn finish(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = self.draft(id).map(|draft| draft.channel) else {
             return;
@@ -616,7 +676,7 @@ impl DraftsSection {
                     .publish(id, publisher.as_ref())
                     .await
                     .map(Some)
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             move |this, listing: Listing, _, cx| {
                 this.outcome = Some(Outcome::Done(published_text(&listing, kind).into()));
@@ -626,6 +686,9 @@ impl DraftsSection {
     }
 
     fn discard(&mut self, id: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.draft(id).map(|draft| draft.channel) else {
+            return;
+        };
         self.outcome = None;
         self.run(
             window,
@@ -635,7 +698,7 @@ impl DraftsSection {
                     .discard_draft(id)
                     .await
                     .map(Some)
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             |this, (), _, _| {
                 this.editor = None;
@@ -644,9 +707,9 @@ impl DraftsSection {
         );
     }
 
-    /// Asks Mercado Livre which categories fit the title as typed.
+    /// Asks the draft's channel which categories fit the title as typed.
     fn predict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some((_, _, (publisher, _))), Some(editor)) =
+        let (Some((_, kind, (publisher, _))), Some(editor)) =
             (self.editor_ports(cx), self.editor.as_ref())
         else {
             return;
@@ -660,14 +723,17 @@ impl DraftsSection {
                 listings
                     .predict_categories(&title, publisher.as_ref())
                     .map(Some)
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
-            |this, predictions: Vec<CategoryPrediction>, _, _| {
+            move |this, predictions: Vec<CategoryPrediction>, _, _| {
                 if predictions.is_empty() {
                     this.outcome = Some(Outcome::Failed(
-                        "O Mercado Livre não sugeriu categoria para esse título; detalhe mais o \
-                         título e tente de novo."
-                            .into(),
+                        format!(
+                            "{} não sugeriu categoria para esse título; detalhe mais o título e \
+                             tente de novo.",
+                            sales_channels::opening(kind)
+                        )
+                        .into(),
                     ));
                 }
                 if let Some(editor) = this.editor.as_mut() {
@@ -685,7 +751,7 @@ impl DraftsSection {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, _, (publisher, _))) = self.editor_ports(cx) else {
+        let Some((_, kind, (publisher, _))) = self.editor_ports(cx) else {
             return;
         };
         self.save_then(
@@ -700,7 +766,7 @@ impl DraftsSection {
                         publisher.as_ref(),
                     )
                     .await
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             |this, moved: ListingDraft, window, cx| {
                 this.outcome = Some(Outcome::Done(
@@ -738,7 +804,7 @@ impl DraftsSection {
                 listings
                     .match_catalog_item(saved.id, &gtin, publisher.as_ref())
                     .await
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             move |this, matched: CatalogMatch, window, cx| match matched {
                 CatalogMatch::NotFound => {
@@ -785,7 +851,7 @@ impl DraftsSection {
                 listings
                     .offer_catalog_item(saved.id, item, publisher.as_ref())
                     .await
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| failure(kind, &e))
             },
             move |this, offered: ListingDraft, window, cx| {
                 this.outcome = Some(Outcome::Done(offered_text(&offered, kind).into()));
@@ -877,6 +943,127 @@ impl DraftsSection {
                 });
             },
         );
+    }
+
+    /// Adds the Product picked as a variation, with its units on hand; the
+    /// first one brings in the draft's own Product ahead of it, with the
+    /// units typed.
+    fn add_variation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
+        let Some(picked) = editor.variation_pick.read(cx).selected_value().copied() else {
+            self.outcome = Some(Outcome::Failed("Escolha o produto da variação.".into()));
+            cx.notify();
+            return;
+        };
+        if editor.variations.iter().any(|row| row.product == picked) {
+            self.outcome = Some(Outcome::Failed(
+                "Esse produto já é uma variação do rascunho.".into(),
+            ));
+            cx.notify();
+            return;
+        }
+        let (Some(draft), Some(inventory)) = (self.draft(editor.draft), stock::inventory(cx))
+        else {
+            return;
+        };
+        let own = draft.product;
+        let id = editor.draft;
+        let own_units = editor.quantity.read(cx).value().trim().parse().unwrap_or(0);
+        let variation = |product: RecordId, available_quantity: u32| {
+            self.products
+                .iter()
+                .find(|found| found.id == product)
+                .map(|found| {
+                    (
+                        DraftVariation {
+                            product,
+                            seller_sku: found.sku.to_string(),
+                            option: String::new(),
+                            available_quantity,
+                        },
+                        found.name.clone(),
+                    )
+                })
+        };
+        let mut added: Vec<_> = editor
+            .variations
+            .is_empty()
+            .then(|| variation(own, own_units))
+            .flatten()
+            .into_iter()
+            .collect();
+        let Some(picked_variation) = (picked != own).then(|| variation(picked, 0)).flatten() else {
+            self.add_rows(id, added, window, cx);
+            return;
+        };
+        self.outcome = None;
+        let reading = cx.background_executor().spawn(async move {
+            inventory
+                .stock()
+                .await
+                .map_err(|e| stock::inventory_failure(&e))
+                .map(|stock| {
+                    stock
+                        .products
+                        .into_iter()
+                        .find(|stock| stock.product == picked)
+                        .map_or(0, |stock| stock.valuation.quantity())
+                })
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let on_hand = reading.await;
+            let _ = this.update_in(cx, |this, window, cx| match on_hand {
+                Ok(on_hand) => {
+                    let (mut picked, name) = picked_variation;
+                    picked.available_quantity = u32::try_from(on_hand.max(0)).unwrap_or(u32::MAX);
+                    added.push((picked, name));
+                    this.add_rows(id, added, window, cx);
+                }
+                Err(error) => {
+                    this.outcome = Some(Outcome::Failed(error.into()));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn add_rows(
+        &mut self,
+        id: RecordId,
+        added: Vec<(DraftVariation, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.editor.as_mut().filter(|editor| editor.draft == id) else {
+            return;
+        };
+        for (variation, name) in added {
+            let row = variation_row(&variation, name, window, cx);
+            editor.variations.push(row);
+        }
+        editor.validated = None;
+        cx.notify();
+    }
+
+    /// Takes a variation out; with only the draft's own Product left, the
+    /// listing goes back to having none, with that Product's units.
+    fn remove_variation(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        editor.variations.retain(|row| row.product != product);
+        if let [own] = editor.variations.as_slice() {
+            let units = own.units.read(cx).value().to_string();
+            editor
+                .quantity
+                .update(cx, |field, cx| field.set_value(units, window, cx));
+            editor.variations.clear();
+        }
+        editor.validated = None;
+        cx.notify();
     }
 
     fn toggle_picture(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -972,7 +1159,12 @@ impl DraftsSection {
                         .as_ref()
                         .map_or("sem categoria".to_owned(), |c| c.name.clone()),
                 );
-                facts.push(draft.listing_type.name().to_owned());
+                if takes_listing_type(draft.channel) {
+                    facts.push(draft.listing_type.name().to_owned());
+                }
+                if !draft.variations.is_empty() {
+                    facts.push(format!("{} variações", draft.variations.len()));
+                }
             }
             DraftKind::CatalogOffer => facts.push(match catalog_id(draft) {
                 Some(id) => format!("ASIN {id}"),
@@ -986,6 +1178,9 @@ impl DraftsSection {
             facts.push(format!("{} fotos", draft.pictures.len()));
         }
         let state = match (&draft.published, missing) {
+            (Some(_), _) if draft.variations_pending => {
+                kit::tag("publicado, faltam as variações", t.danger, cx)
+            }
             (Some(_), _) => kit::tag("publicado, falta a descrição", t.danger, cx),
             (None, 0) => kit::tag("pronto para publicar", t.success, cx),
             (None, 1) => kit::tag("falta 1 item", t.danger, cx),
@@ -994,7 +1189,11 @@ impl DraftsSection {
         let actions = match &draft.published {
             Some(_) => h_flex().child(
                 Button::new(("finish-draft", index))
-                    .label("Enviar a descrição")
+                    .label(if draft.variations_pending {
+                        "Enviar as variações"
+                    } else {
+                        "Enviar a descrição"
+                    })
                     .primary()
                     .small()
                     .loading(self.busy)
@@ -1383,7 +1582,9 @@ impl DraftsSection {
             .gap_2()
             .flex_wrap()
             .child(field("Preço (R$)", 120., &editor.price))
-            .child(field("Estoque", 100., &editor.quantity));
+            .when(editor.variations.is_empty(), |prices| {
+                prices.child(field("Estoque", 100., &editor.quantity))
+            });
         if draft.kind() == DraftKind::CatalogOffer {
             return v_flex()
                 .gap_3()
@@ -1428,11 +1629,18 @@ impl DraftsSection {
                 h_flex()
                     .gap_4()
                     .flex_wrap()
-                    .child(listing_type)
+                    .when(takes_listing_type(draft.channel), |row| {
+                        row.child(listing_type)
+                    })
                     .child(condition),
             )
-            .child(prices.child(field("Garantia do vendedor", 180., &editor.warranty)))
+            .child(prices.when(takes_listing_type(draft.channel), |prices| {
+                prices.child(field("Garantia do vendedor", 180., &editor.warranty))
+            }))
             .children(suggestion)
+            .when(takes_variations(draft.channel), |form| {
+                form.child(self.render_variations(editor, draft, cx))
+            })
             .child(attributes)
             .child(pictures)
             .child(
@@ -1553,6 +1761,102 @@ impl DraftsSection {
             .into_any_element()
     }
 
+    /// The Products sold as options of one listing, each with its option
+    /// and units, and the picker that adds another.
+    fn render_variations(
+        &self,
+        editor: &Editor,
+        draft: &ListingDraft,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = look(cx).tokens;
+        let heading =
+            |text: &'static str, width: f32| div().w(px(width)).text_xs().font_medium().child(text);
+        let rows = editor.variations.iter().enumerate().map(|(index, row)| {
+            let product = row.product;
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    v_flex()
+                        .w(px(260.))
+                        .min_w_0()
+                        .child(div().text_sm().truncate().child(row.name.clone()))
+                        .child(div().text_xs().text_color(t.text2).child(
+                            if product == draft.product {
+                                format!("{} · produto do rascunho", row.seller_sku)
+                            } else {
+                                row.seller_sku.clone()
+                            },
+                        )),
+                )
+                .child(div().w(px(160.)).child(Input::new(&row.option).small()))
+                .child(div().w(px(90.)).child(Input::new(&row.units).small()))
+                .when(product != draft.product, |line| {
+                    line.child(
+                        Button::new(("remove-variation", index))
+                            .label("Tirar")
+                            .ghost()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_variation(product, window, cx)
+                            })),
+                    )
+                })
+        });
+        v_flex()
+            .gap_2()
+            .child(div().text_xs().font_medium().child("Variações"))
+            .child(div().text_xs().text_color(t.text2).child(format!(
+                "Opcional. Cada variação é um produto seu, com SKU e estoque próprios, e {} \
+                 mostra todas num anúncio só, como cores ou tamanhos.",
+                sales_channels::the(draft.channel)
+            )))
+            .when(!editor.variations.is_empty(), |list| {
+                list.child(
+                    v_flex()
+                        .gap_1()
+                        .w(px(220.))
+                        .child(div().text_xs().font_medium().child("O que muda entre elas"))
+                        .child(Input::new(&editor.variation_tier).small()),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(heading("Produto", 260.))
+                        .child(heading("Opção", 160.))
+                        .child(heading("Estoque", 90.)),
+                )
+                .children(rows)
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div().w(px(320.)).child(
+                            Select::new(&editor.variation_pick)
+                                .search_placeholder("Buscar")
+                                .small()
+                                .placeholder("Produto da variação"),
+                        ),
+                    )
+                    .child(
+                        Button::new("add-variation")
+                            .label("Adicionar variação")
+                            .icon(IconName::Plus)
+                            .outline()
+                            .small()
+                            .disabled(self.busy || editor.variations.len() >= MAX_VARIATIONS)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_variation(window, cx)),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// The button that writes title and description with AI, and what
     /// it needs or what the last text carried.
     fn render_writing(
@@ -1564,6 +1868,16 @@ impl DraftsSection {
         let t = look(cx).tokens;
         let off = listing_copy::writing_off(&listing_copy::anthropic_state(cx))
             .map(str::to_owned)
+            .or_else(|| {
+                (draft.channel != SalesChannelKind::MercadoLivre).then(|| {
+                    format!(
+                        "Por enquanto a IA escreve só para o Mercado Livre, com o limite do título \
+                         e os termos em alta das categorias dele; {} escreva o título e a \
+                         descrição você mesmo.",
+                        sales_channels::on(draft.channel)
+                    )
+                })
+            })
             .or_else(|| {
                 (!sales_channels::is_connected(cx, SalesChannelKind::MercadoLivre)).then(|| {
                     "Conecte a conta do Mercado Livre em Configurações › Conexões: o limite do \
@@ -1651,6 +1965,35 @@ impl Render for DraftsSection {
     }
 }
 
+/// Mercado Livre's Classic and Premium, with the seller's warranty; the
+/// other channels have neither.
+fn takes_listing_type(kind: SalesChannelKind) -> bool {
+    kind == SalesChannelKind::MercadoLivre
+}
+
+fn variation_row(
+    variation: &DraftVariation,
+    name: String,
+    window: &mut Window,
+    cx: &mut Context<DraftsSection>,
+) -> VariationRow {
+    let option = input("Ex.: Azul", window, cx);
+    option.update(cx, |field, cx| {
+        field.set_value(variation.option.clone(), window, cx)
+    });
+    let units = input("0", window, cx);
+    units.update(cx, |field, cx| {
+        field.set_value(variation.available_quantity.to_string(), window, cx)
+    });
+    VariationRow {
+        product: variation.product,
+        seller_sku: variation.seller_sku.clone(),
+        name,
+        option,
+        units,
+    }
+}
+
 /// A channel's publisher and its Sales Channel, which prices the draft.
 type Ports = (Arc<dyn ListingPublisher>, Arc<dyn SalesChannel>);
 
@@ -1704,6 +2047,8 @@ fn edit_of(draft: &ListingDraft) -> DraftEdit {
         warranty: draft.warranty.clone(),
         attributes: Vec::new(),
         pictures: draft.pictures.iter().map(|p| p.path.clone()).collect(),
+        variation_tier: draft.variation_tier.clone(),
+        variations: draft.variations.clone(),
     }
 }
 
@@ -1782,12 +2127,22 @@ fn check_text(check: &Check, kind: SalesChannelKind) -> String {
             DraftKind::OwnPage => "Estoque zero: o anúncio nasce pausado.".into(),
             DraftKind::CatalogOffer => "Estoque zero: a oferta nasce fora de venda.".into(),
         },
+        Check::VariationTier => {
+            "Dê nome ao que muda entre as variações, como Cor ou Tamanho.".into()
+        }
+        Check::VariationOption { seller_sku } => {
+            format!("Escreva a opção da variação {seller_sku}, como Azul.")
+        }
+        Check::RepeatedOption(option) => {
+            format!("Duas variações têm a opção {option}; cada uma precisa da sua.")
+        }
+        Check::TooManyVariations => format!("Use até {MAX_VARIATIONS} variações por anúncio."),
         Check::Channel(message) => format!("{}: {message}", kind.name()),
     }
 }
 
-/// Why a draft action failed, as the owner reads it.
-pub(crate) fn failure(error: &ListingError) -> String {
+/// Why an action on a draft for `kind` failed, as the owner reads it.
+pub(crate) fn failure(kind: SalesChannelKind, error: &ListingError) -> String {
     match error {
         ListingError::Blocked(_) => "Ainda não dá para publicar: veja o checklist.".into(),
         ListingError::Published(_) => {
@@ -1797,10 +2152,11 @@ pub(crate) fn failure(error: &ListingError) -> String {
             "Esse rascunho não existe mais; a lista foi atualizada.".into()
         }
         ListingError::Picture { path, reason } => format!(
-            "A foto {} não pode ir ao Mercado Livre ({reason}). Desmarque-a ou troque o arquivo.",
+            "A foto {} não pode ir {} ({reason}). Desmarque-a ou troque o arquivo.",
             path.file_name()
                 .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            sales_channels::to(kind)
         ),
         ListingError::InvalidGtin => "Digite o GTIN só com os números do código de barras: 8, 12, \
              13 ou 14 dígitos, como na embalagem. O último dígito confere os outros; se ele não \
@@ -1812,9 +2168,22 @@ pub(crate) fn failure(error: &ListingError) -> String {
         ListingError::DescriptionNotSent(_, error) => format!(
             "O anúncio foi publicado, mas a descrição não foi: {} Use Enviar a descrição no \
              rascunho.",
-            mercado_livre::failure(error)
+            sales_channels::failure(kind, error)
         ),
-        other => listings::failure(other),
+        ListingError::VariationsNotSent(_, error) => format!(
+            "O anúncio foi publicado fora de venda, mas as variações não foram: {} Use Enviar as \
+             variações no rascunho; ele só vai à venda com elas.",
+            sales_channels::failure(kind, error)
+        ),
+        ListingError::NoVariations(channel) => format!(
+            "{} não recebe variações pelo app; tire as variações do rascunho.",
+            sales_channels::opening(*channel)
+        ),
+        ListingError::RepeatedVariation(_) => "Cada produto entra uma vez só nas variações.".into(),
+        ListingError::VariationsWithoutTheDraftProduct => {
+            "As variações precisam incluir o produto do rascunho.".into()
+        }
+        other => listings::channel_failure(kind, other),
     }
 }
 
@@ -1825,11 +2194,11 @@ enum PublishFailure {
     Other(String),
 }
 
-impl From<ListingError> for PublishFailure {
-    fn from(error: ListingError) -> Self {
+impl PublishFailure {
+    fn of(kind: SalesChannelKind, error: ListingError) -> Self {
         match error {
             ListingError::Blocked(checklist) => PublishFailure::Blocked(checklist),
-            other => PublishFailure::Other(failure(&other)),
+            other => PublishFailure::Other(failure(kind, &other)),
         }
     }
 }
@@ -1855,7 +2224,7 @@ fn price_failure(error: &PricingError, kind: SalesChannelKind) -> String {
             sales_channels::of_channel(kind)
         ),
         PricingError::Platform(error) => sales_channels::failure(kind, error),
-        PricingError::Listing(error) => failure(error),
+        PricingError::Listing(error) => failure(kind, error),
         other => format!("Não consegui calcular: {other}"),
     }
 }

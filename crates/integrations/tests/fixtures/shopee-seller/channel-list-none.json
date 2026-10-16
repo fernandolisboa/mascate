@@ -1,0 +1,10 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "b2c3d4e5f60718293a4b5c6d7e8f90a1",
+  "response": {
+    "logistics_channel_list": [
+      {"logistics_channel_id": 90002, "logistics_channel_name": "Correios", "cod_enabled": false, "enabled": false, "fee_type": "SIZE_INPUT", "size_list": [], "weight_limit": {"item_max_weight": 30, "item_min_weight": 0}, "mask_channel_id": 0}
+    ]
+  }
+}

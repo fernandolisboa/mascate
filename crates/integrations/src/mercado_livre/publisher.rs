@@ -16,6 +16,7 @@ use super::answers::{
 };
 use super::sales_channel::{is_web_link, listing_type_id, path_id, status};
 use super::{MercadoLivre, SITE, failed, read_json};
+use crate::pictures::PictureForm;
 
 /// Categories asked of the predictor.
 const PREDICTIONS: &str = "3";
@@ -93,19 +94,15 @@ impl ListingPublisher for MercadoLivre {
     }
 
     fn upload_picture(&self, file_name: &str, bytes: &[u8]) -> Result<String, PlatformError> {
-        let boundary = boundary_for(bytes);
-        let body = multipart(&boundary, file_name, bytes);
+        let form = PictureForm::new("file", file_name, bytes);
         let path = "/pictures/items/upload";
         let response = self.signed(path, |bearer| {
             self.agent
                 .post(format!("{}{path}", self.api))
                 .header("Accept", "application/json")
-                .header(
-                    "Content-Type",
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
+                .header("Content-Type", &form.content_type)
                 .header("Authorization", bearer)
-                .send(&body[..])
+                .send(&form.body[..])
         })?;
         Ok(read_json::<PictureAnswer>(response)?.id)
     }
@@ -247,57 +244,4 @@ fn published(item: ItemState) -> PublishedListing {
         link: item.permalink.filter(|link| is_web_link(link)),
         id: item.id,
     }
-}
-
-/// A `multipart/form-data` body with the file in the `file` field. The
-/// name goes in quotes, so quotes and line breaks are taken out of it.
-fn multipart(boundary: &str, file_name: &str, bytes: &[u8]) -> Vec<u8> {
-    let name: String = file_name
-        .chars()
-        .filter(|c| !matches!(c, '"' | '\r' | '\n' | '\\'))
-        .collect();
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\
-         Content-Type: {}\r\n\r\n",
-        content_type(file_name)
-    )
-    .into_bytes();
-    body.extend_from_slice(bytes);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    body
-}
-
-fn content_type(file_name: &str) -> &'static str {
-    let lower = file_name.to_ascii_lowercase();
-    if lower.ends_with(".png") {
-        "image/png"
-    } else {
-        "image/jpeg"
-    }
-}
-
-/// A multipart boundary must not occur in the file: one derived from its
-/// bytes, checked against them, does not.
-fn boundary_for(bytes: &[u8]) -> String {
-    let mut seed = bytes.len() as u64;
-    loop {
-        // FNV-1a over the bytes and the seed.
-        let hash = bytes
-            .iter()
-            .chain(seed.to_le_bytes().iter())
-            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-            });
-        let boundary = format!("mascate-{hash:016x}");
-        if !contains(bytes, boundary.as_bytes()) {
-            return boundary;
-        }
-        seed = seed.wrapping_add(1);
-    }
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
 }
