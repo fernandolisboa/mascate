@@ -208,6 +208,10 @@ pub enum ListingError {
     Picture { path: PathBuf, reason: String },
     #[error("draft {0} is published, but its description was not sent: {1}")]
     DescriptionNotSent(RecordId, PlatformError),
+    #[error("a GTIN has 8, 12, 13 or 14 digits, the last one checking the others")]
+    InvalidGtin,
+    #[error("draft {0} is a page of its own, not an offer on the channel's catalog")]
+    NotACatalogOffer(RecordId),
     #[error("a price is more than zero, in the Listing's currency")]
     InvalidPrice,
     #[error("only an active listing can be paused")]

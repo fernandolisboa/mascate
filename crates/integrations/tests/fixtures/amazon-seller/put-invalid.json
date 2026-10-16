@@ -1,0 +1,21 @@
+{
+  "sku": "FON-TWS-001",
+  "status": "INVALID",
+  "submissionId": "a8c7e3f2-3a1b-4e6b-9d55-0242ac130005",
+  "issues": [
+    {
+      "code": "8541",
+      "message": "Você não tem aprovação para vender nesta marca. Peça a aprovação no Seller Central.",
+      "severity": "ERROR",
+      "attributeNames": ["merchant_suggested_asin"],
+      "categories": ["QUALIFICATION_REQUIRED"]
+    },
+    {
+      "code": "100708",
+      "message": "A oferta não pode ser a oferta em destaque porque o preço não é competitivo.",
+      "severity": "WARNING",
+      "attributeNames": ["our_price"],
+      "categories": ["INVALID_ATTRIBUTE", "INVALID_PRICE"]
+    }
+  ]
+}

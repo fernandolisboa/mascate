@@ -9,12 +9,12 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use mascate_commerce::{
-    AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
-    ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
-    ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock, FeeBasis, ListingPublisher,
-    ListingStatus, ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing,
-    Receiver, Requirement, SaleFee, SalesChannel, SentShipment, Shipment, ShipmentStatus,
-    ShippingLabels, Variation,
+    AttributeValue, BilledOrder, Buyer, CatalogItem, CatalogProduct, CategoryAttribute,
+    CategoryPrediction, ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing,
+    ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock,
+    FeeBasis, Gtin, ListingPublisher, ListingStatus, ListingToPublish, OnSalesChannel, OrderStatus,
+    PaymentRelease, PublishedListing, Receiver, Requirement, SaleFee, SalesChannel, SentShipment,
+    Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
@@ -572,6 +572,11 @@ pub struct Publisher {
     pub searched: Mutex<Vec<String>>,
     /// The listings it has, with their seller SKU.
     pub listings: Mutex<Vec<(String, PublishedListing)>>,
+    pub channel: SalesChannelKind,
+    /// Its catalog's products, by GTIN.
+    pub catalog: Mutex<HashMap<String, Vec<CatalogItem>>>,
+    /// The GTINs looked up.
+    pub looked_up: Mutex<Vec<String>>,
 }
 
 impl Default for Publisher {
@@ -607,6 +612,64 @@ impl Default for Publisher {
             described: Mutex::default(),
             searched: Mutex::default(),
             listings: Mutex::default(),
+            channel: SalesChannelKind::MercadoLivre,
+            catalog: Mutex::default(),
+            looked_up: Mutex::default(),
+        }
+    }
+}
+
+/// A product of Amazon's catalog, of the product type `category`.
+pub fn catalog_item(asin: &str, title: &str, category: &str) -> CatalogItem {
+    CatalogItem {
+        id: asin.into(),
+        title: title.into(),
+        brand: Some("Lenovo".into()),
+        category: ChannelCategory {
+            id: category.into(),
+            name: format!("Tipo {category}"),
+        },
+        attributes: vec![value("merchant_suggested_asin", asin)],
+        link: Some(format!("https://www.amazon.com.br/dp/{asin}")),
+    }
+}
+
+impl Publisher {
+    /// Amazon, where a draft offers a product its catalog has: the earphones
+    /// under one GTIN, two products under another, nothing under a third.
+    pub fn amazon() -> Self {
+        let asin = || {
+            vec![attribute(
+                "merchant_suggested_asin",
+                "ASIN",
+                Requirement::Required,
+            )]
+        };
+        Self {
+            predictions: Mutex::default(),
+            attributes: Mutex::new(HashMap::from([
+                ("HEADPHONES".to_owned(), asin()),
+                ("DRINKING_CUP".to_owned(), asin()),
+            ])),
+            channel: SalesChannelKind::Amazon,
+            catalog: Mutex::new(HashMap::from([
+                (
+                    "7891234567895".to_owned(),
+                    vec![catalog_item(
+                        "B0CFONE001",
+                        "Fone Bluetooth TWS Lenovo LP40",
+                        "HEADPHONES",
+                    )],
+                ),
+                (
+                    "7891000000014".to_owned(),
+                    vec![
+                        catalog_item("B0CCANECA1", "Caneca 350 ml", "DRINKING_CUP"),
+                        catalog_item("B0CCANECA2", "Kit 2 Canecas 350 ml", "DRINKING_CUP"),
+                    ],
+                ),
+            ])),
+            ..Self::default()
         }
     }
 }
@@ -630,7 +693,7 @@ impl Publisher {
 
 impl OnSalesChannel for Publisher {
     fn sales_channel(&self) -> SalesChannelKind {
-        SalesChannelKind::MercadoLivre
+        self.channel
     }
 }
 
@@ -672,7 +735,11 @@ impl ListingPublisher for Publisher {
         self.published.lock().unwrap().push(listing.clone());
         let mut listings = self.listings.lock().unwrap();
         let created = PublishedListing {
-            id: format!("MLB{}", 9_000 + listings.len()),
+            // Amazon keys a listing by its SKU.
+            id: match self.channel {
+                SalesChannelKind::Amazon => listing.seller_sku.clone(),
+                _ => format!("MLB{}", 9_000 + listings.len()),
+            },
             status: if listing.available_quantity == 0 {
                 ListingStatus::Paused
             } else {
@@ -719,5 +786,20 @@ impl ListingPublisher for Publisher {
             .filter(|(sku, _)| sku == seller_sku)
             .map(|(_, listing)| listing.clone())
             .collect())
+    }
+
+    fn catalog_items(&self, gtin: &Gtin) -> Result<Vec<CatalogItem>, PlatformError> {
+        self.check()?;
+        self.looked_up
+            .lock()
+            .unwrap()
+            .push(gtin.digits().to_owned());
+        Ok(self
+            .catalog
+            .lock()
+            .unwrap()
+            .get(gtin.digits())
+            .cloned()
+            .unwrap_or_default())
     }
 }

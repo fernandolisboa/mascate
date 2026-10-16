@@ -241,6 +241,7 @@ fn main() {
                     payments: Some(mercado_livre.clone()),
                     labels: Some(mercado_livre.clone()),
                     shipments: None,
+                    publisher: Some(mercado_livre.clone()),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -251,7 +252,10 @@ fn main() {
                     billing: Some(amazon.clone()),
                     payments: None,
                     labels: None,
-                    shipments: Some(amazon),
+                    shipments: Some(amazon.clone()),
+                    // A draft goes up as an offer on an ASIN found by the
+                    // GTIN.
+                    publisher: Some(amazon),
                 },
             ]));
             cx.set_global(AppMercadoLivre(mercado_livre));

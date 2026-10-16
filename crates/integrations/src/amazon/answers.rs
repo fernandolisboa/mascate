@@ -126,8 +126,8 @@ pub(super) struct Relationship {
     pub child_skus: Vec<String>,
 }
 
-/// The answer to `patchListingsItem`: accepted for processing, or invalid
-/// with the issues why.
+/// The answer to `patchListingsItem` and `putListingsItem`: accepted for
+/// processing (or valid, in a preview), or invalid with the issues why.
 #[derive(Debug, Deserialize)]
 pub(super) struct Submission {
     pub status: String,
@@ -139,6 +139,45 @@ pub(super) struct Submission {
 pub(super) struct Issue {
     pub message: Option<String>,
     pub severity: Option<String>,
+}
+
+/// One page of `searchCatalogItems` (Catalog Items 2022-04-01).
+#[derive(Debug, Deserialize)]
+pub(super) struct CatalogSearch {
+    #[serde(default)]
+    pub items: Vec<CatalogAnswer>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CatalogAnswer {
+    pub asin: String,
+    #[serde(default)]
+    pub summaries: Vec<CatalogSummary>,
+    #[serde(default)]
+    pub product_types: Vec<CatalogProductType>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CatalogSummary {
+    pub marketplace_id: String,
+    pub brand: Option<String>,
+    pub item_name: Option<String>,
+    pub browse_classification: Option<BrowseClassification>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BrowseClassification {
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CatalogProductType {
+    pub marketplace_id: Option<String>,
+    pub product_type: Option<String>,
 }
 
 /// A product type's definition, of which only its name is read.

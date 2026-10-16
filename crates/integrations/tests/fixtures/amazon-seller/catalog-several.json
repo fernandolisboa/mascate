@@ -1,0 +1,43 @@
+{
+  "numberOfResults": 3,
+  "pagination": {},
+  "refinements": { "brands": [], "classifications": [] },
+  "items": [
+    {
+      "asin": "B0CCANECA1",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "brand": "Casa Mascate",
+          "browseClassification": { "displayName": "Canecas", "classificationId": "17125478011" },
+          "itemName": "Caneca de Cerâmica 350 ml Branca"
+        }
+      ],
+      "productTypes": [
+        { "marketplaceId": "A2Q3Y263D00KWC", "productType": "DRINKING_CUP" }
+      ]
+    },
+    {
+      "asin": "B0CCANECA2",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "itemName": "Kit 2 Canecas de Cerâmica 350 ml"
+        }
+      ],
+      "productTypes": [
+        { "marketplaceId": "A2Q3Y263D00KWC", "productType": "DRINKING_CUP" }
+      ]
+    },
+    {
+      "asin": "B0CCANECA3",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "itemName": "Caneca de Cerâmica (anúncio sem tipo de produto)"
+        }
+      ],
+      "productTypes": []
+    }
+  ]
+}

@@ -18,10 +18,10 @@ mod stock_mirror;
 
 pub use channels::{ChannelRanking, OnSalesChannel};
 pub use drafts::{
-    AttributeValue, CategoryAttribute, CategoryPrediction, ChannelCategory, ChannelIssue, Check,
-    ChecklistItem, Condition, DraftAttribute, DraftEdit, DraftPicture, DraftStart, ListingDraft,
-    ListingPublisher, ListingToPublish, MAX_PICTURE_BYTES, MIN_PICTURES, PublishedListing,
-    Requirement, is_blocked, is_picture,
+    AttributeValue, CatalogItem, CatalogMatch, CategoryAttribute, CategoryPrediction,
+    ChannelCategory, ChannelIssue, Check, ChecklistItem, Condition, DraftAttribute, DraftEdit,
+    DraftKind, DraftPicture, DraftStart, Gtin, ListingDraft, ListingPublisher, ListingToPublish,
+    MAX_PICTURE_BYTES, MIN_PICTURES, PublishedListing, Requirement, is_blocked, is_picture,
 };
 pub use fees::{
     AdCost, BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, LineMargin,
