@@ -12,9 +12,9 @@ use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogItem, CatalogProduct, CategoryAttribute,
     CategoryPrediction, ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing,
     ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock,
-    FeeBasis, Gtin, ListingPublisher, ListingStatus, ListingToPublish, OnSalesChannel, OrderStatus,
-    PaymentRelease, PublishedListing, Receiver, Requirement, SaleFee, SalesChannel, SentShipment,
-    Shipment, ShipmentStatus, ShippingLabels, Variation,
+    FeeBasis, Gtin, LabelError, ListingPublisher, ListingStatus, ListingToPublish, OnSalesChannel,
+    OrderStatus, PaymentRelease, PublishedListing, Receiver, Requirement, SaleFee, SalesChannel,
+    SentShipment, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
@@ -105,6 +105,8 @@ pub struct Channel {
     pub labels_asked: Mutex<Vec<String>>,
     /// What a label comes as, when not a small PDF.
     pub label_answer: Mutex<Option<Vec<u8>>>,
+    /// Why the next label is not printed, once.
+    pub label_refusal: Mutex<Option<LabelError>>,
     /// What the billing has billed so far, by Order.
     pub billed: Mutex<Vec<BilledOrder>>,
     /// The Orders each read of the billing asked about, in order.
@@ -152,6 +154,7 @@ impl Default for Channel {
             orders_asked: Mutex::default(),
             labels_asked: Mutex::default(),
             label_answer: Mutex::default(),
+            label_refusal: Mutex::default(),
             billed: Mutex::default(),
             billing_asked: Mutex::default(),
             categories: Mutex::new(HashMap::from([(
@@ -456,9 +459,12 @@ impl ChannelShipments for Channel {
 }
 
 impl ShippingLabels for Channel {
-    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError> {
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, LabelError> {
         self.check()?;
         self.labels_asked.lock().unwrap().push(shipment.to_owned());
+        if let Some(error) = self.label_refusal.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(self
             .label_answer
             .lock()

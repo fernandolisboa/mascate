@@ -1,0 +1,27 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "d4e5f60718293a4b5c6d7e8f90a1b2c3",
+  "response": {
+    "info_needed": {
+      "dropoff": [
+        "branch_id",
+        "sender_real_name"
+      ]
+    },
+    "dropoff": {
+      "branch_list": [
+        {
+          "branch_id": 11,
+          "region": "BR",
+          "state": "SP",
+          "city": "São Paulo",
+          "address": "Agência Centro",
+          "zipcode": "01001000",
+          "district": "Centro",
+          "town": ""
+        }
+      ]
+    }
+  }
+}

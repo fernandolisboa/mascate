@@ -1,6 +1,6 @@
 # Respostas da Shopee Open Platform v2 (vendedor)
 
-Escritas a partir da documentação oficial da Shopee Open Platform v2 (open.shopee.com, guia do desenvolvedor e referência das APIs `auth`, `product`, `order`, `returns` e `payment`), lida em 16/10/2026, sem conta real: o app de vendedor na Shopee pede CNPJ. A regression pass da fase 3 (#116) grava as respostas de verdade e troca estes arquivos.
+Escritas a partir da documentação oficial da Shopee Open Platform v2 (open.shopee.com, guia do desenvolvedor e referência das APIs `auth`, `product`, `order`, `returns`, `payment` e `logistics`), lida em 16/10/2026, sem conta real: o app de vendedor na Shopee pede CNPJ. A regression pass da fase 3 (#116) grava as respostas de verdade e troca estes arquivos.
 
 - `token-get.json`: `POST /api/v2/auth/token/get`, a troca do código do login pelo primeiro token.
 - `access-token-get.json` e `access-token-get-again.json`: `POST /api/v2/auth/access_token/get`, cada renovação com um refresh token novo (o anterior não vale mais).
@@ -18,6 +18,13 @@ Escritas a partir da documentação oficial da Shopee Open Platform v2 (open.sho
 - `order-detail-statuses.json`, `order-detail-escrow.json`, `order-detail-return.json`: o mesmo para os status, para as tarifas e repasses, e para o pedido com devolução sozinho.
 - `return-list.json`, `return-list-accepted.json`, `return-list-refund-only.json`, `return-list-empty.json`: `GET /api/v2/returns/get_return_list` por `update_time`: a devolução de uma caneca a caminho, a mesma aceita com o reembolso, um reembolso sem devolver o item (`needs_logistics` falso) e nenhuma.
 - `escrow-completed.json`, `escrow-ready.json`: `GET /api/v2/payment/get_escrow_detail` de um pedido concluído (comissão, taxa de serviço e parte do frete com o vendedor) e de um ainda aberto, cujo escrow a Shopee muda até concluir.
+- `label-order-detail.json`, `label-order-detail-invoice.json`, `label-order-detail-shipped.json`: `GET /api/v2/order/get_order_detail` com `package_list` do pedido da etiqueta, pronto para enviar, esperando a NF-e e já enviado.
+- `package-detail-ready.json`, `package-detail-arranging.json`, `package-detail-arranged.json`: `GET /api/v2/order/get_package_detail` do pacote antes do envio organizado, organizado com a Shopee ainda gerando o rastreio (`is_shipment_arranged`) e organizado (`LOGISTICS_REQUEST_CREATED`).
+- `shipping-parameter.json`, `shipping-parameter-pickup.json`, `shipping-parameter-branch.json`: `GET /api/v2/logistics/get_shipping_parameter` com entrega no ponto (sem dados) e coleta, só coleta (dois endereços, um horário recomendado), e só entrega numa agência escolhida com o nome do remetente.
+- `ship-order.json`: `POST /api/v2/logistics/ship_order`, que responde sem `response`.
+- `tracking-number-empty.json`, `tracking-number.json`: `GET /api/v2/logistics/get_tracking_number` antes e depois de a transportadora dar o código.
+- `document-parameter.json`, `document-created.json`, `document-processing.json`, `document-ready.json`, `document-failed.json`: `POST` de `get_shipping_document_parameter`, `create_shipping_document` e `get_shipping_document_result` (em preparo, pronto e com falha).
+- `shipping-document.pdf`: o que `POST /api/v2/logistics/download_shipping_document` devolve, um PDF mínimo no lugar da etiqueta.
 - `error-auth.json`, `error-rate-limit.json`, `error-limit.json`: o envelope de erro (`error_auth` token inválido, `error_rate_limit` por segundo, `error_limit` cota diária).
 
 Os ids seguem o exemplo da documentação (partner 2001887, loja 14701711); os itens são inventados.

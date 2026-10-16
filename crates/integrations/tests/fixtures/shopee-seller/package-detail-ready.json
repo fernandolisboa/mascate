@@ -1,0 +1,18 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "b2c3d4e5f60718293a4b5c6d7e8f90a1",
+  "response": {
+    "package_list": [
+      {
+        "order_sn": "261016ETQ0006F",
+        "package_number": "OFG1610000000061",
+        "fulfillment_status": "LOGISTICS_READY",
+        "update_time": 1792148400,
+        "logistics_channel_id": 90021,
+        "shipping_carrier": "Shopee Xpress",
+        "is_shipment_arranged": false
+      }
+    ]
+  }
+}

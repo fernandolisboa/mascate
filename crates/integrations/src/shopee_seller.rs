@@ -3,14 +3,16 @@
 //! listings, one per model (ADR 0014), sends a price once the owner
 //! approves it and the stock that follows the app's Stock Share, and
 //! unlists and relists an item; it reads the Orders with their returns
-//! (#130), and their Fees and money from the escrow. Every call is signed with HMAC-SHA256 of
-//! the partner key; the shop's login comes from Shopee's authorization page
-//! and its refresh token is single use. Shopee has no fee estimate, so the
-//! sale fee is its published table. Separate from Shopee Afiliados, which is
-//! another API with other keys.
+//! (#130), and their Fees and money from the escrow; it arranges an Order's
+//! shipment and prints its label (#131). Every call is signed with
+//! HMAC-SHA256 of the partner key; the shop's login comes from Shopee's
+//! authorization page and its refresh token is single use. Shopee has no fee
+//! estimate, so the sale fee is its published table. Separate from Shopee
+//! Afiliados, which is another API with other keys.
 
 mod answers;
 mod escrow;
+mod labels;
 mod orders;
 mod sales_channel;
 mod tokens;
@@ -25,6 +27,7 @@ use mascate_platform::{Secret, SecretStore, http_agent};
 use serde::de::DeserializeOwned;
 use sha2::Sha256;
 
+use crate::answers::MAX_DOCUMENT_BYTES;
 use crate::retry::{Attempt, Backoff, Pause, ThreadPause, retrying};
 use answers::{Envelope, TokenAnswer};
 use tokens::{Fresh, Tokens};
@@ -49,6 +52,12 @@ const RENEW_TOKEN: &str = "/api/v2/auth/access_token/get";
 const BACKOFF: Backoff = Backoff {
     first: Duration::from_secs(1),
     retries: 4,
+};
+
+/// A single attempt.
+const ONCE: Backoff = Backoff {
+    first: Duration::ZERO,
+    retries: 0,
 };
 
 /// Shopee's seller API, as the owner's Connection sees it.
@@ -306,7 +315,7 @@ impl ShopeeSeller {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, PlatformError> {
-        self.signed(path, |common| {
+        self.signed(path, BACKOFF, attempt, |common| {
             let mut request = self
                 .agent
                 .get(format!("{}{path}", self.api))
@@ -321,26 +330,55 @@ impl ShopeeSeller {
     /// The `response` of Shopee's answer to `POST path` with the JSON
     /// `body`.
     fn post<T: DeserializeOwned>(&self, path: &str, body: &str) -> Result<T, PlatformError> {
-        self.signed(path, |common| {
-            let mut request = self
-                .agent
-                .post(format!("{}{path}", self.api))
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json");
-            for (key, value) in common {
-                request = request.query(*key, *value);
-            }
-            request.send(body)
+        self.signed(path, BACKOFF, attempt, |common| {
+            self.send_post(path, common, body)
         })
     }
 
-    /// The answer to the shop API call `send` makes with the common
-    /// parameters, signed afresh on each attempt, retried while Shopee
-    /// throttles or fails for a moment. A token Shopee turns down is
-    /// renewed once before the login counts as expired.
-    fn signed<T: DeserializeOwned>(
+    /// `POST path` with the JSON `body`, sent once: an answer lost on the
+    /// way or a moment's failure is an error, never a second call, for a
+    /// step that must not happen twice. Its caller reads back what Shopee
+    /// kept before asking again.
+    fn post_once(&self, path: &str, body: &str) -> Result<(), PlatformError> {
+        self.signed(path, ONCE, acknowledged, |common| {
+            self.send_post(path, common, body)
+        })
+    }
+
+    /// The document Shopee answers to `POST path` with the JSON `body`.
+    fn post_for_document(&self, path: &str, body: &str) -> Result<Vec<u8>, PlatformError> {
+        self.signed(path, BACKOFF, document, |common| {
+            self.send_post(path, common, body)
+        })
+    }
+
+    fn send_post(
         &self,
         path: &str,
+        common: &[(&str, &str)],
+        body: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        let mut request = self
+            .agent
+            .post(format!("{}{path}", self.api))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json");
+        for (key, value) in common {
+            request = request.query(*key, *value);
+        }
+        request.send(body)
+    }
+
+    /// The answer to the shop API call `send` makes with the common
+    /// parameters, as `read` makes it out, signed afresh on each attempt,
+    /// retried by `backoff` while Shopee throttles or fails for a moment.
+    /// A token Shopee turns down is renewed once before the login counts
+    /// as expired.
+    fn signed<T>(
+        &self,
+        path: &str,
+        backoff: Backoff,
+        read: impl Fn(ureq::http::Response<ureq::Body>, &str) -> Attempt<T>,
         send: impl Fn(&[(&str, &str)]) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<T, PlatformError> {
         let partner = self.partner()?;
@@ -348,7 +386,7 @@ impl ShopeeSeller {
         let mut renewed = false;
         loop {
             let token = self.tokens.access_token(|| self.renew())?;
-            let answer = retrying(self.pause.as_ref(), BACKOFF, || {
+            let answer = retrying(self.pause.as_ref(), backoff, || {
                 let timestamp = self.timestamp().to_string();
                 let sign = partner.sign(&format!(
                     "{}{path}{timestamp}{}{shop}",
@@ -363,7 +401,7 @@ impl ShopeeSeller {
                     ("sign", sign.as_str()),
                 ];
                 match send(&common) {
-                    Ok(response) => attempt(response, path),
+                    Ok(response) => read(response, path),
                     // The token travels in the query, which a transport
                     // error may quote: it never reaches a message.
                     Err(error) => Attempt::Again(PlatformError::Failed(
@@ -382,17 +420,64 @@ impl ShopeeSeller {
     }
 }
 
-/// What Shopee's answer for `path` means, and whether to ask again. The
-/// envelope's `error` decides when there is one, whatever the HTTP status.
+/// What Shopee's answer for `path` means, and whether to ask again.
 fn attempt<T: DeserializeOwned>(
     response: ureq::http::Response<ureq::Body>,
     path: &str,
 ) -> Attempt<T> {
     let status = response.status().as_u16();
-    let envelope = match read_json::<Envelope<T>>(response) {
-        Ok(envelope) => envelope,
-        Err(_) => return again_or_done(status, path),
+    match read_json::<Envelope<T>>(response) {
+        Ok(envelope) => answered(status, envelope, path),
+        Err(_) => again_or_done(status, path),
+    }
+}
+
+/// Whether Shopee took the call to `path`: some calls answer an empty
+/// `response`, or none.
+fn acknowledged(response: ureq::http::Response<ureq::Body>, path: &str) -> Attempt<()> {
+    let status = response.status().as_u16();
+    match read_json::<Envelope<serde_json::Value>>(response) {
+        Ok(envelope) => answered(
+            status,
+            Envelope {
+                response: Some(()),
+                ..envelope.without_response()
+            },
+            path,
+        ),
+        Err(_) => again_or_done(status, path),
+    }
+}
+
+/// The document Shopee sends for `path`, or the error its envelope tells.
+fn document(response: ureq::http::Response<ureq::Body>, path: &str) -> Attempt<Vec<u8>> {
+    let status = response.status().as_u16();
+    let Ok(bytes) = response
+        .into_body()
+        .into_with_config()
+        .limit(MAX_DOCUMENT_BYTES)
+        .read_to_vec()
+    else {
+        return again_or_done(status, path);
     };
+    if (200..300).contains(&status) && !bytes.trim_ascii_start().starts_with(b"{") {
+        return Attempt::Done(Ok(bytes));
+    }
+    match serde_json::from_slice::<Envelope<serde_json::Value>>(&bytes) {
+        Ok(envelope) => match answered(status, envelope.without_response(), path) {
+            Attempt::Done(Ok(())) => Attempt::Done(Err(PlatformError::Failed(format!(
+                "Shopee answered {path} without the document"
+            )))),
+            Attempt::Done(Err(error)) => Attempt::Done(Err(error)),
+            Attempt::Again(error) => Attempt::Again(error),
+        },
+        Err(_) => again_or_done(status, path),
+    }
+}
+
+/// What Shopee's `envelope` for `path` means, and whether to ask again.
+/// Its `error` decides when there is one, whatever the HTTP status.
+fn answered<T>(status: u16, envelope: Envelope<T>, path: &str) -> Attempt<T> {
     match envelope.error.as_deref().filter(|error| !error.is_empty()) {
         None if (200..300).contains(&status) => match envelope.response {
             Some(answer) => Attempt::Done(Ok(answer)),

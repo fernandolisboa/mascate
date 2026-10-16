@@ -423,7 +423,25 @@ pub trait ChannelOrders: OnSalesChannel + Send + Sync {
 /// them. Calls block on the network, so they run off the UI thread.
 pub trait ShippingLabels: OnSalesChannel + Send + Sync {
     /// The label of the channel's shipment `shipment`, as a PDF document.
-    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError>;
+    /// A channel that prints the label only once the shipment is arranged
+    /// arranges it first, never twice.
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, LabelError>;
+}
+
+/// Why a channel printed no label.
+#[derive(Debug, thiserror::Error)]
+pub enum LabelError {
+    #[error("the channel has nothing of the Order waiting to ship")]
+    NotWaiting,
+    #[error("the channel waits for the Order's NF-e before it ships")]
+    AwaitingInvoice,
+    #[error("the channel needs shipping details the app does not fill in")]
+    ArrangeOnChannel,
+    /// Asking again a little later finds it: what was done stays done.
+    #[error("the channel is still preparing the label")]
+    NotReadyYet,
+    #[error(transparent)]
+    Platform(#[from] PlatformError),
 }
 
 /// A shipping label, ready to save and print.
@@ -677,6 +695,12 @@ pub enum OrderError {
     NoReturnAwaiting,
     #[error("the Order is not waiting to be dispatched, so it has no label to print")]
     NoLabel,
+    #[error("the channel waits for the Order's NF-e before it ships")]
+    AwaitingInvoice,
+    #[error("the channel needs shipping details the app does not fill in")]
+    ArrangeOnChannel,
+    #[error("the channel is still preparing the label")]
+    LabelNotReady,
     #[error("the Order is not waiting to be dispatched: cancelled, shipped or not ready yet")]
     NotAwaitingShipment,
     #[error("a shipment is confirmed with its carrier and tracking code, each up to 64 characters")]
@@ -696,6 +720,18 @@ pub enum OrderError {
     Unreadable(String),
     #[error(transparent)]
     Sql(#[from] libsql::Error),
+}
+
+impl From<LabelError> for OrderError {
+    fn from(error: LabelError) -> Self {
+        match error {
+            LabelError::NotWaiting => OrderError::NoLabel,
+            LabelError::AwaitingInvoice => OrderError::AwaitingInvoice,
+            LabelError::ArrangeOnChannel => OrderError::ArrangeOnChannel,
+            LabelError::NotReadyYet => OrderError::LabelNotReady,
+            LabelError::Platform(error) => OrderError::Platform(error),
+        }
+    }
 }
 
 impl From<StoredValueError> for OrderError {
@@ -964,11 +1000,12 @@ impl Orders {
             });
         }
         let shipment = match &found.sold.shipment {
-            Some(shipment)
-                if shipment.status == ShipmentStatus::ReadyToShip
-                    && found.sold.status != OrderStatus::Cancelled =>
-            {
-                shipment
+            Some(shipment) if found.sold.status != OrderStatus::Cancelled => {
+                match shipment.status {
+                    ShipmentStatus::ReadyToShip => shipment,
+                    ShipmentStatus::AwaitingInvoice => return Err(OrderError::AwaitingInvoice),
+                    _ => return Err(OrderError::NoLabel),
+                }
             }
             _ => return Err(OrderError::NoLabel),
         };

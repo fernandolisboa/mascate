@@ -265,14 +265,16 @@ fn main() {
                     // GTIN.
                     publisher: Some(amazon),
                 },
-                // Shopee's labels and publishing come in their own slices.
+                // Shopee prints the label once the shipment is arranged, and
+                // the label arranges it: no shipment to confirm. Publishing
+                // comes in its own slice.
                 ChannelPorts {
                     connection: Connection::ShopeeSeller,
                     listings: shopee_seller.clone(),
                     orders: Some(shopee_seller.clone()),
                     billing: Some(shopee_seller.clone()),
                     payments: Some(shopee_seller.clone()),
-                    labels: None,
+                    labels: Some(shopee_seller.clone()),
                     shipments: None,
                     publisher: None,
                 },

@@ -14,6 +14,17 @@ pub(super) struct Envelope<T> {
     pub response: Option<T>,
 }
 
+impl<T> Envelope<T> {
+    /// The same answer, its `response` left aside as an empty one.
+    pub fn without_response(self) -> Envelope<()> {
+        Envelope {
+            error: self.error,
+            message: self.message,
+            response: self.response.map(|_| ()),
+        }
+    }
+}
+
 /// `auth/token/get` and `auth/access_token/get`, which answer flat.
 #[derive(Debug, Deserialize)]
 pub(super) struct TokenAnswer {
@@ -208,6 +219,103 @@ pub(super) struct OrderDetail {
     pub pickup_done_time: Option<i64>,
     #[serde(default)]
     pub item_list: Vec<OrderItem>,
+    /// Only when asked for: the parcels the Order ships in.
+    #[serde(default)]
+    pub package_list: Vec<PackageEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PackageEntry {
+    pub package_number: String,
+}
+
+/// `order/get_package_detail`.
+#[derive(Debug, Deserialize)]
+pub(super) struct PackageDetails {
+    #[serde(default)]
+    pub package_list: Vec<PackageDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PackageDetail {
+    pub package_number: String,
+    /// `LOGISTICS_READY` until the shipment is arranged,
+    /// `LOGISTICS_REQUEST_CREATED` after, `LOGISTICS_PICKUP_RETRY` when the
+    /// carrier missed the pickup and it is arranged again, and others once
+    /// it left or was cancelled.
+    #[serde(default)]
+    pub fulfillment_status: String,
+    /// Arranged already while still `LOGISTICS_READY`: Shopee is making
+    /// the tracking number.
+    #[serde(default)]
+    pub is_shipment_arranged: bool,
+}
+
+/// `logistics/get_shipping_parameter`: the ways the parcel can go and what
+/// each needs.
+#[derive(Debug, Deserialize)]
+pub(super) struct ShippingParameter {
+    #[serde(default)]
+    pub info_needed: InfoNeeded,
+    pub pickup: Option<PickupOptions>,
+}
+
+/// The details each way needs; a way absent is not offered.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct InfoNeeded {
+    pub dropoff: Option<Vec<String>>,
+    pub pickup: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PickupOptions {
+    #[serde(default)]
+    pub address_list: Vec<PickupAddress>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PickupAddress {
+    pub address_id: u64,
+    /// `default_address`, `pickup_address`, `return_address`.
+    #[serde(default)]
+    pub address_flag: Vec<String>,
+    #[serde(default)]
+    pub time_slot_list: Vec<TimeSlot>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TimeSlot {
+    #[serde(deserialize_with = "numeric_id")]
+    pub pickup_time_id: String,
+    /// `recommended` on the one Shopee suggests.
+    #[serde(default)]
+    pub flags: Vec<String>,
+}
+
+/// `logistics/get_tracking_number`: empty while the carrier has not given
+/// one yet.
+#[derive(Debug, Deserialize)]
+pub(super) struct TrackingNumber {
+    #[serde(default)]
+    pub tracking_number: String,
+}
+
+/// `logistics/get_shipping_document_parameter`,
+/// `create_shipping_document` and `get_shipping_document_result`: one
+/// result per package.
+#[derive(Debug, Deserialize)]
+pub(super) struct DocumentResults {
+    #[serde(default)]
+    pub result_list: Vec<DocumentResult>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DocumentResult {
+    pub suggest_shipping_document_type: Option<String>,
+    /// `READY`, `PROCESSING` or `FAILED`.
+    pub status: Option<String>,
+    pub fail_error: Option<String>,
+    pub fail_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
