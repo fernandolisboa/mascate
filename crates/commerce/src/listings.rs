@@ -16,7 +16,8 @@ use mascate_kernel::{
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
-use crate::{ChannelCategory, ChecklistItem, OnSalesChannel, SaleFee};
+use crate::stock_mirror::record_stock_sent;
+use crate::{ChannelCategory, ChecklistItem, FeeBasis, OnSalesChannel, SaleFee};
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -110,14 +111,8 @@ pub trait SalesChannel: OnSalesChannel + Send + Sync {
     /// channel no longer knows is left out.
     fn listings(&self, ids: &[String]) -> Result<Vec<ChannelListing>, PlatformError>;
 
-    /// What the channel keeps of a sale at `price` in `category` with
-    /// `listing_type`.
-    fn sale_fee(
-        &self,
-        category: &str,
-        price: Money,
-        listing_type: ListingType,
-    ) -> Result<SaleFee, PlatformError>;
+    /// What the channel keeps of a sale at `price` on `basis`.
+    fn sale_fee(&self, basis: &FeeBasis, price: Money) -> Result<SaleFee, PlatformError>;
 
     /// Changes the price of the listing `id`, every variation of it
     /// included, to `price` in whole cents.
@@ -136,6 +131,14 @@ pub trait SalesChannel: OnSalesChannel + Send + Sync {
 
     /// The channel's category `id`, with its name.
     fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError>;
+
+    /// Whether the channel has no pause of its own, as Amazon: `pause` then
+    /// takes the listing off sale with zero units, which the channel
+    /// reports back as out of stock, and `activate` leaves the units to the
+    /// stock send that follows.
+    fn pauses_with_zero_stock(&self) -> bool {
+        false
+    }
 }
 
 /// A listing of the owner's, as last synced, with the Product it sells.
@@ -360,9 +363,13 @@ impl Listings {
             read: fresh.len(),
             ..ListingSync::default()
         };
+        let zero_pause = channel.pauses_with_zero_stock();
         for listing in &known {
             let key = key_of(&listing.listed);
-            match fresh.remove(&key) {
+            let reported = fresh
+                .remove(&key)
+                .map(|reported| owner_pause_stands(reported, &listing.listed, zero_pause));
+            match reported {
                 Some(reported) if reported == listing.listed => {
                     transaction
                         .execute(
@@ -608,13 +615,44 @@ impl Listings {
             return Err(ListingError::NotActive);
         }
         channel.pause(&listed.id)?;
-        self.set_status(channel.sales_channel(), &listed.id, ListingStatus::Paused)
-            .await
+        let on = channel.sales_channel();
+        if channel.pauses_with_zero_stock() {
+            self.paused_with_zero_stock(on, &listed.id).await?;
+        }
+        self.set_status(on, &listed.id, ListingStatus::Paused).await
+    }
+
+    /// Keeps the zero units a channel without a pause shows now as the
+    /// stock last sent, so the send after a reactivation puts the share
+    /// back.
+    async fn paused_with_zero_stock(
+        &self,
+        channel: SalesChannelKind,
+        id: &str,
+    ) -> Result<(), ListingError> {
+        let now = self.clock.now();
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let listings = read(
+            &transaction,
+            "AND sales_channel = ?1 AND channel_item_id = ?2",
+            params![channel.code(), id.to_owned()],
+        )
+        .await?;
+        for listing in listings {
+            record_stock_sent(&transaction, listing.id, 0, now, self.ids.next_id()).await?;
+        }
+        transaction.commit().await?;
+        Ok(())
     }
 
     /// Puts the channel listing of a paused Listing back on sale, every
     /// variation of it included, and returns its Listings. The channel sells
-    /// only units it has, so a listing without any stays paused.
+    /// only units it has, so a listing without any stays paused; on a
+    /// channel without a pause, the units come with the stock send that
+    /// follows.
     pub async fn reactivate(
         &self,
         listing: RecordId,
@@ -628,11 +666,12 @@ impl Listings {
             return Err(ListingError::NotPaused);
         }
         let on = channel.sales_channel();
-        if self
-            .sharing_price(on, &listed.id)
-            .await?
-            .iter()
-            .all(|listing| listing.listed.available_quantity == 0)
+        if !channel.pauses_with_zero_stock()
+            && self
+                .sharing_price(on, &listed.id)
+                .await?
+                .iter()
+                .all(|listing| listing.listed.available_quantity == 0)
         {
             return Err(ListingError::NoStockToSell);
         }
@@ -768,6 +807,23 @@ impl Listings {
         }
         Ok(ids)
     }
+}
+
+/// What `reported` says of a Listing known as `known`. On a channel that
+/// pauses with zero units, the owner's pause reads back as out of stock:
+/// it stays the owner's, so the Stock Share never puts it back on sale.
+fn owner_pause_stands(
+    mut reported: ChannelListing,
+    known: &ChannelListing,
+    zero_pause: bool,
+) -> ChannelListing {
+    if zero_pause
+        && known.status == ListingStatus::Paused
+        && reported.status == ListingStatus::OutOfStock
+    {
+        reported.status = ListingStatus::Paused;
+    }
+    reported
 }
 
 fn key_of(listing: &ChannelListing) -> (String, Option<String>) {

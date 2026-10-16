@@ -15,7 +15,7 @@ use mascate_commerce::{
     ChannelBilling, ChannelOrders, ChannelPayments, ChannelRanking, SalesChannel, ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
-use mascate_kernel::SalesChannelKind;
+use mascate_kernel::{PlatformError, SalesChannelKind};
 
 use crate::appearance::look;
 use crate::connections::AppConnections;
@@ -23,12 +23,12 @@ use crate::forms::{Outcome, notice};
 use crate::listings;
 
 /// One Sales Channel's adapter, port by port; a port the channel does not
-/// offer is absent.
+/// offer yet is absent.
 #[derive(Clone)]
 pub struct ChannelPorts {
     pub connection: Connection,
     pub listings: Arc<dyn SalesChannel>,
-    pub orders: Arc<dyn ChannelOrders>,
+    pub orders: Option<Arc<dyn ChannelOrders>>,
     pub billing: Option<Arc<dyn ChannelBilling>>,
     pub payments: Option<Arc<dyn ChannelPayments>>,
     pub labels: Option<Arc<dyn ShippingLabels>>,
@@ -76,6 +76,14 @@ pub fn reach(cx: &App) -> Reach {
 }
 
 impl Reach {
+    /// Each channel's Connection state, in the order the app lists them.
+    pub fn states(&self) -> Vec<(SalesChannelKind, ConnectionState)> {
+        self.channels
+            .iter()
+            .map(|channel| (channel.kind(), self.connections.state(channel.connection)))
+            .collect()
+    }
+
     /// The channels whose Connection is up, in the owner's order. Each one
     /// takes its place in the order the first time it is seen connected.
     pub async fn connected(&self) -> Vec<ChannelPorts> {
@@ -107,6 +115,35 @@ impl Reach {
     }
 }
 
+/// Whether any of `states` is connected.
+pub fn any_connected(states: &[(SalesChannelKind, ConnectionState)]) -> bool {
+    states
+        .iter()
+        .any(|(_, state)| *state == ConnectionState::Connected)
+}
+
+/// What to tell the owner about `states`: the first channel's when none is
+/// connected, and each one whose stored login stopped working.
+pub fn connection_notices(states: &[(SalesChannelKind, ConnectionState)]) -> Vec<String> {
+    if !any_connected(states) {
+        return states
+            .first()
+            .map(|(kind, state)| not_connected(*kind, state))
+            .into_iter()
+            .collect();
+    }
+    states
+        .iter()
+        .filter(|(_, state)| {
+            matches!(
+                state,
+                ConnectionState::Expired | ConnectionState::Failed { .. }
+            )
+        })
+        .map(|(kind, state)| not_connected(*kind, state))
+        .collect()
+}
+
 /// The channel `kind`, connected or not.
 pub fn of(cx: &App, kind: SalesChannelKind) -> Option<ChannelPorts> {
     cx.try_global::<SalesChannels>()?
@@ -114,6 +151,52 @@ pub fn of(cx: &App, kind: SalesChannelKind) -> Option<ChannelPorts> {
         .iter()
         .find(|channel| channel.kind() == kind)
         .cloned()
+}
+
+/// Why the channel's Connection is not usable, and what is shown meanwhile.
+pub fn not_connected(kind: SalesChannelKind, state: &ConnectionState) -> String {
+    let why = match state {
+        ConnectionState::Expired => {
+            format!("{} não aceita mais o login da sua conta.", opening(kind))
+        }
+        ConnectionState::Failed { .. } => {
+            format!("Não consegui ler a conexão com {}.", the(kind))
+        }
+        _ => format!(
+            "A conta de vendedor {} não está conectada.",
+            of_channel(kind)
+        ),
+    };
+    format!(
+        "{why} Conecte em Configurações › Conexões para sincronizar; o que aparece abaixo é do \
+         último Sync."
+    )
+}
+
+/// Why a call to the channel failed, as the owner reads it.
+pub fn failure(kind: SalesChannelKind, error: &PlatformError) -> String {
+    let opening = opening(kind);
+    match error {
+        PlatformError::NotConnected => format!(
+            "Conecte a conta {} em Configurações › Conexões para sincronizar.",
+            of_channel(kind)
+        ),
+        PlatformError::Expired => format!(
+            "{opening} não aceita mais o login; reconecte a conta em Configurações › Conexões."
+        ),
+        PlatformError::RateLimited => format!(
+            "{opening} pediu para esperar antes de consultar de novo. Tente daqui a alguns \
+             minutos; o que já foi lido ficou salvo."
+        ),
+        PlatformError::Refused(why) => format!("{opening} recusou a consulta ({why})."),
+        PlatformError::NotFound => format!("{opening} não encontrou o que foi pedido."),
+        PlatformError::Failed(why) => format!("Não consegui falar com {}: {why}", the(kind)),
+    }
+}
+
+/// "o Mercado Livre", "a Amazon": the channel inside a sentence.
+pub fn the(kind: SalesChannelKind) -> String {
+    format!("{} {}", article(kind), kind.name())
 }
 
 /// "O Mercado Livre", "A Amazon": the channel opening a sentence.
@@ -341,5 +424,56 @@ mod tests {
         assert_eq!(of_channel(SalesChannelKind::Shopee), "da Shopee");
         assert_eq!(to(SalesChannelKind::MercadoLivre), "ao Mercado Livre");
         assert_eq!(to(SalesChannelKind::Magalu), "à Magalu");
+    }
+
+    #[test]
+    fn the_notices_name_the_first_channel_or_each_one_that_stopped_working() {
+        use SalesChannelKind::{Amazon, MercadoLivre};
+        let none = [
+            (MercadoLivre, ConnectionState::NotConfigured),
+            (Amazon, ConnectionState::NotConfigured),
+        ];
+        assert_eq!(connection_notices(&none).len(), 1);
+        assert!(connection_notices(&none)[0].contains("Mercado Livre"));
+
+        let amazon_expired = [
+            (MercadoLivre, ConnectionState::Connected),
+            (Amazon, ConnectionState::Expired),
+        ];
+        assert_eq!(
+            connection_notices(&amazon_expired),
+            vec![not_connected(Amazon, &ConnectionState::Expired)]
+        );
+
+        let amazon_only = [
+            (MercadoLivre, ConnectionState::NotConfigured),
+            (Amazon, ConnectionState::Connected),
+        ];
+        assert!(any_connected(&amazon_only));
+        assert!(connection_notices(&amazon_only).is_empty());
+    }
+
+    #[test]
+    fn a_failure_names_its_channel_and_keeps_mercado_livres_wording() {
+        assert_eq!(
+            failure(SalesChannelKind::MercadoLivre, &PlatformError::Expired),
+            "O Mercado Livre não aceita mais o login; reconecte a conta em Configurações › \
+             Conexões."
+        );
+        assert_eq!(
+            failure(SalesChannelKind::Amazon, &PlatformError::NotConnected),
+            "Conecte a conta da Amazon em Configurações › Conexões para sincronizar."
+        );
+        assert_eq!(
+            failure(
+                SalesChannelKind::Amazon,
+                &PlatformError::Failed("timeout".into())
+            ),
+            "Não consegui falar com a Amazon: timeout"
+        );
+        assert!(
+            not_connected(SalesChannelKind::Amazon, &ConnectionState::NotConfigured)
+                .starts_with("A conta de vendedor da Amazon não está conectada.")
+        );
     }
 }

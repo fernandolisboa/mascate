@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use libsql::{Row, TransactionBehavior, params};
+use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_inventory::Inventory;
 use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, stored};
@@ -330,36 +330,18 @@ impl StockMirror {
     }
 
     async fn record_sent(&self, stock: &MirroredStock) -> Result<(), ListingError> {
-        let quantity = stock.to_send.unwrap_or_default();
-        let now = stored(self.listings.clock.now());
         let connection = self.listings.database.connect_for_transaction().await?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        transaction
-            .execute(
-                "UPDATE commerce_listings SET available_quantity = ?1, updated_at = ?2
-                 WHERE id = ?3",
-                params![quantity, now.clone(), stock.listing.to_string()],
-            )
-            .await?;
-        transaction
-            .execute(
-                "INSERT INTO commerce_listing_stock
-                     (id, listing_id, stock_sent, stock_sent_at, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4, ?4)
-                 ON CONFLICT (listing_id) DO UPDATE SET
-                     stock_sent = excluded.stock_sent, stock_sent_at = excluded.stock_sent_at,
-                     stock_failure = NULL, stock_failure_detail = NULL,
-                     stock_failed_at = NULL, updated_at = excluded.updated_at",
-                params![
-                    self.listings.ids.next_id().to_string(),
-                    stock.listing.to_string(),
-                    quantity,
-                    now
-                ],
-            )
-            .await?;
+        record_stock_sent(
+            &transaction,
+            stock.listing,
+            stock.to_send.unwrap_or_default(),
+            self.listings.clock.now(),
+            self.listings.ids.next_id(),
+        )
+        .await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -464,6 +446,35 @@ impl StockMirror {
             })
             .collect())
     }
+}
+
+/// Keeps `quantity` as the stock `listing` last took in its channel, and
+/// as its units there; `id` is the stock row's, should it be the first.
+pub(crate) async fn record_stock_sent(
+    on: &Connection,
+    listing: RecordId,
+    quantity: u32,
+    now: Timestamp,
+    id: RecordId,
+) -> Result<(), ListingError> {
+    let now = stored(now);
+    on.execute(
+        "UPDATE commerce_listings SET available_quantity = ?1, updated_at = ?2 WHERE id = ?3",
+        params![quantity, now.clone(), listing.to_string()],
+    )
+    .await?;
+    on.execute(
+        "INSERT INTO commerce_listing_stock
+             (id, listing_id, stock_sent, stock_sent_at, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?4)
+         ON CONFLICT (listing_id) DO UPDATE SET
+             stock_sent = excluded.stock_sent, stock_sent_at = excluded.stock_sent_at,
+             stock_failure = NULL, stock_failure_detail = NULL,
+             stock_failed_at = NULL, updated_at = excluded.updated_at",
+        params![id.to_string(), listing.to_string(), quantity, now],
+    )
+    .await?;
+    Ok(())
 }
 
 /// The Stock Share of each Listing that takes one: each Product's units

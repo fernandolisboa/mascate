@@ -1,0 +1,38 @@
+{
+  "numberOfResults": 5,
+  "pagination": {
+    "nextToken": "eyJsYXN0U2t1IjoiQ0FORUNBLTAxIn0"
+  },
+  "items": [
+    {
+      "sku": "FONE-BT-001",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CFONE001",
+          "productType": "HEADPHONES",
+          "conditionType": "new_new",
+          "status": ["BUYABLE", "DISCOVERABLE"],
+          "itemName": "Fone de Ouvido Bluetooth Mascate Preto",
+          "createdDate": "2026-09-02T14:10:05.120Z",
+          "lastUpdatedDate": "2026-10-15T09:30:41.007Z"
+        }
+      ]
+    },
+    {
+      "sku": "CANECA-01",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CCANECA1",
+          "productType": "DRINKING_CUP",
+          "conditionType": "new_new",
+          "status": ["DISCOVERABLE"],
+          "itemName": "Caneca de Cerâmica 350 ml",
+          "createdDate": "2026-09-05T11:00:00.000Z",
+          "lastUpdatedDate": "2026-10-14T18:02:11.513Z"
+        }
+      ]
+    }
+  ]
+}

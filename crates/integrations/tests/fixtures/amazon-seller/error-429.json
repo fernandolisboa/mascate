@@ -1,0 +1,9 @@
+{
+  "errors": [
+    {
+      "code": "QuotaExceeded",
+      "message": "You exceeded your quota for the requested resource.",
+      "details": ""
+    }
+  ]
+}

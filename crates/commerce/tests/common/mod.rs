@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogProduct, CategoryAttribute, CategoryPrediction,
     ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing, ChannelOrder, ChannelOrderLine,
-    ChannelOrders, ChannelPayments, ChannelStock, ListingPublisher, ListingStatus,
+    ChannelOrders, ChannelPayments, ChannelStock, FeeBasis, ListingPublisher, ListingStatus,
     ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing, Receiver,
     Requirement, SaleFee, SalesChannel, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
@@ -70,6 +70,9 @@ pub type StockLog = Arc<Mutex<Vec<(SalesChannelKind, String, Vec<ChannelStock>)>
 pub struct Channel {
     /// The Sales Channel it stands for: Mercado Livre unless a test says.
     pub kind: SalesChannelKind,
+    /// Like Amazon, it has no pause: pausing sends zero units, which it
+    /// reports as out of stock, and reactivating waits for units.
+    pub zero_pause: bool,
     pub listings: Mutex<Vec<ChannelListing>>,
     pub asked: Mutex<Vec<Vec<String>>>,
     /// Fails every call while set.
@@ -80,6 +83,8 @@ pub struct Channel {
     pub fee_asked: Mutex<Vec<Money>>,
     /// The Listing Types it was asked the fee for, in order.
     pub fee_types: Mutex<Vec<ListingType>>,
+    /// The listing it was asked the fee of, in order; `None` for a draft.
+    pub fee_listings: Mutex<Vec<Option<String>>>,
     /// Each listing id and price it was told to set, in order.
     pub prices_set: Mutex<Vec<(String, Money)>>,
     /// Each listing id and the stock it was told to set, in order.
@@ -120,6 +125,7 @@ impl Default for Channel {
     fn default() -> Self {
         Self {
             kind: SalesChannelKind::MercadoLivre,
+            zero_pause: false,
             listings: Mutex::default(),
             asked: Mutex::default(),
             failure: Mutex::default(),
@@ -132,6 +138,7 @@ impl Default for Channel {
             )]),
             fee_asked: Mutex::default(),
             fee_types: Mutex::default(),
+            fee_listings: Mutex::default(),
             prices_set: Mutex::default(),
             stocks_set: Mutex::default(),
             stock_failure: Mutex::default(),
@@ -293,15 +300,14 @@ impl SalesChannel for Channel {
             .collect())
     }
 
-    fn sale_fee(
-        &self,
-        _category: &str,
-        price: Money,
-        listing_type: ListingType,
-    ) -> Result<SaleFee, PlatformError> {
+    fn sale_fee(&self, basis: &FeeBasis, price: Money) -> Result<SaleFee, PlatformError> {
         self.check()?;
         self.fee_asked.lock().unwrap().push(price);
-        self.fee_types.lock().unwrap().push(listing_type);
+        self.fee_types.lock().unwrap().push(basis.listing_type);
+        self.fee_listings
+            .lock()
+            .unwrap()
+            .push(basis.listing.clone());
         let bands = self.fee_bands.lock().unwrap();
         Ok(bands
             .iter()
@@ -350,7 +356,14 @@ impl SalesChannel for Channel {
             .lock()
             .unwrap()
             .push((id.to_owned(), true));
-        self.change(id, |listing| listing.status = ListingStatus::Paused);
+        if self.zero_pause {
+            self.change(id, |listing| {
+                listing.available_quantity = 0;
+                listing.status = ListingStatus::OutOfStock;
+            });
+        } else {
+            self.change(id, |listing| listing.status = ListingStatus::Paused);
+        }
         Ok(())
     }
 
@@ -360,8 +373,14 @@ impl SalesChannel for Channel {
             .lock()
             .unwrap()
             .push((id.to_owned(), false));
-        self.change(id, |listing| listing.status = ListingStatus::Active);
+        if !self.zero_pause {
+            self.change(id, |listing| listing.status = ListingStatus::Active);
+        }
         Ok(())
+    }
+
+    fn pauses_with_zero_stock(&self) -> bool {
+        self.zero_pause
     }
 
     fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError> {

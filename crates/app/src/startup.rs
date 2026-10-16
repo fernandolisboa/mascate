@@ -54,6 +54,7 @@ const MODULE_REMINDERS: &[&[Reminder]] = &[
     mascate_commerce::REMINDERS,
     mascate_affiliate::REMINDERS,
     mascate_marketing::REMINDERS,
+    mascate_integrations::REMINDERS,
 ];
 
 /// The ready database and what is read from it before the first window, or
@@ -459,7 +460,7 @@ mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
-        ChannelStock, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
+        ChannelStock, FeeBasis, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
         OnSalesChannel, PromotionKind, PromotionPlan, PromotionStatus, PurchaseOrderStatus,
         Receiving, SaleFee, SalesChannel,
     };
@@ -531,7 +532,7 @@ mod tests {
             Ok(vec![sample_listing()])
         }
 
-        fn sale_fee(&self, _: &str, _: Money, _: ListingType) -> Result<SaleFee, PlatformError> {
+        fn sale_fee(&self, _: &FeeBasis, _: Money) -> Result<SaleFee, PlatformError> {
             Err(PlatformError::NotFound)
         }
 

@@ -1,0 +1,9 @@
+{
+  "errors": [
+    {
+      "code": "NotFound",
+      "message": "The requested resource was not found.",
+      "details": ""
+    }
+  ]
+}

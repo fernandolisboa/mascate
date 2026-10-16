@@ -27,6 +27,7 @@ impl Global for AppConnections {}
 pub(crate) fn connection_name(connection: Connection) -> &'static str {
     match connection {
         Connection::MercadoLivre => "Mercado Livre",
+        Connection::Amazon => "Amazon",
         Connection::ShopeeAffiliates => "Shopee Afiliados",
         Connection::Anthropic => "Anthropic",
         Connection::Hotmart => "Hotmart",
@@ -40,6 +41,10 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
 pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
     match connection {
         Connection::MercadoLivre => "Conta de vendedor: anúncios, pedidos e estoque.",
+        Connection::Amazon => {
+            "Conta de vendedor na Amazon.com.br: anúncios, estoque e preço, pela Selling \
+             Partner API."
+        }
         Connection::ShopeeAffiliates => {
             "Open API de afiliados: busca de ofertas. Sem credenciais, fica aguardando \
              aprovação e a descoberta usa o cadastro manual de ofertas."
@@ -80,6 +85,10 @@ fn credential_label(credential: Credential) -> &'static str {
         "KIWIFY_ACCOUNT_ID" => "Account ID",
         "EDUZZ_PERSONAL_TOKEN" => "Token pessoal",
         "TELEGRAM_BOT_TOKEN" => "Token do bot",
+        "AMAZON_LWA_CLIENT_ID" => "Client ID (LWA)",
+        "AMAZON_LWA_CLIENT_SECRET" => "Client Secret (LWA)",
+        "AMAZON_REFRESH_TOKEN" => "Refresh token",
+        "AMAZON_SELLER_ID" => "ID de vendedor",
         other => other,
     }
 }
@@ -94,6 +103,8 @@ fn is_identifier(credential: Credential) -> bool {
             | "MONETIZZE_EMAIL"
             | "KIWIFY_CLIENT_ID"
             | "KIWIFY_ACCOUNT_ID"
+            | "AMAZON_LWA_CLIENT_ID"
+            | "AMAZON_SELLER_ID"
     )
 }
 

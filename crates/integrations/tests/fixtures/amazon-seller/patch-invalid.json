@@ -1,0 +1,21 @@
+{
+  "sku": "FONE-BT-001",
+  "status": "INVALID",
+  "submissionId": "f1dc2914-75dd-11ea-bc55-0242ac130004",
+  "issues": [
+    {
+      "code": "90220",
+      "message": "O valor de 'our_price' precisa ser maior que 0.",
+      "severity": "ERROR",
+      "attributeNames": ["our_price"],
+      "categories": ["INVALID_ATTRIBUTE", "INVALID_PRICE"]
+    },
+    {
+      "code": "100708",
+      "message": "Not eligible to be the Featured Offer due to uncompetitive price.",
+      "severity": "WARNING",
+      "attributeNames": ["our_price"],
+      "categories": ["INVALID_ATTRIBUTE", "INVALID_PRICE"]
+    }
+  ]
+}

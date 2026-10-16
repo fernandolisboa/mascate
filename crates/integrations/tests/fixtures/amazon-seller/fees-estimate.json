@@ -1,0 +1,40 @@
+{
+  "payload": {
+    "FeesEstimateResult": {
+      "Status": "Success",
+      "FeesEstimateIdentifier": {
+        "MarketplaceId": "A2Q3Y263D00KWC",
+        "IdType": "SellerSKU",
+        "SellerId": "A1MASCATE0SELLER",
+        "SellerInputIdentifier": "FONE-BT-001",
+        "IsAmazonFulfilled": false,
+        "IdValue": "FONE-BT-001",
+        "PriceToEstimateFees": {
+          "ListingPrice": { "CurrencyCode": "BRL", "Amount": 129.9 }
+        }
+      },
+      "FeesEstimate": {
+        "TimeOfFeesEstimation": "Fri Oct 16 12:00:00 UTC 2026",
+        "TotalFeesEstimate": { "CurrencyCode": "BRL", "Amount": 18.89 },
+        "FeeDetailList": [
+          {
+            "FeeType": "ReferralFee",
+            "FeeAmount": { "CurrencyCode": "BRL", "Amount": 16.89 },
+            "FinalFee": { "CurrencyCode": "BRL", "Amount": 16.89 }
+          },
+          {
+            "FeeType": "VariableClosingFee",
+            "FeeAmount": { "CurrencyCode": "BRL", "Amount": 0.0 },
+            "FinalFee": { "CurrencyCode": "BRL", "Amount": 0.0 }
+          },
+          {
+            "FeeType": "PerItemFee",
+            "FeeAmount": { "CurrencyCode": "BRL", "Amount": 2.0 },
+            "FinalFee": { "CurrencyCode": "BRL", "Amount": 2.0 }
+          }
+        ]
+      },
+      "Error": { "Type": "", "Code": "", "Message": "", "Detail": [] }
+    }
+  }
+}

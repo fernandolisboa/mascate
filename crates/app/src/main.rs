@@ -4,6 +4,7 @@
 mod ads;
 mod affiliate;
 mod affiliate_links;
+mod amazon;
 mod amazon_import;
 mod appearance;
 mod backups;
@@ -77,8 +78,9 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
-    AMAZON_LINKS, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS, Hotmart,
-    KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates, Telegram,
+    AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS,
+    Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates,
+    Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -178,6 +180,14 @@ fn main() {
         &user_agent,
         secrets.clone(),
     ));
+    let (amazon_api, amazon_auth) = amazon::urls(Build::CURRENT, &process_environment());
+    let amazon = Arc::new(Amazon::new(
+        &amazon_api,
+        &amazon_auth,
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -222,14 +232,25 @@ fn main() {
                 saved,
             ));
             cx.set_global(AppConnections(connections));
-            cx.set_global(SalesChannels(vec![ChannelPorts {
-                connection: Connection::MercadoLivre,
-                listings: mercado_livre.clone(),
-                orders: mercado_livre.clone(),
-                billing: Some(mercado_livre.clone()),
-                payments: Some(mercado_livre.clone()),
-                labels: Some(mercado_livre.clone()),
-            }]));
+            cx.set_global(SalesChannels(vec![
+                ChannelPorts {
+                    connection: Connection::MercadoLivre,
+                    listings: mercado_livre.clone(),
+                    orders: Some(mercado_livre.clone()),
+                    billing: Some(mercado_livre.clone()),
+                    payments: Some(mercado_livre.clone()),
+                    labels: Some(mercado_livre.clone()),
+                },
+                // Amazon's Orders arrive with #127.
+                ChannelPorts {
+                    connection: Connection::Amazon,
+                    listings: amazon,
+                    orders: None,
+                    billing: None,
+                    payments: None,
+                    labels: None,
+                },
+            ]));
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));

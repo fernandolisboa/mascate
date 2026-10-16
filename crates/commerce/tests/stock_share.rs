@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelRanking, LineStock, Listings, MirroredStock, NewPurchaseLine,
-    NewPurchaseOrder, Orders, PurchaseOrders, Receiving, SalesChannel, StockMirror, StockSend,
-    StockShort,
+    ChannelListing, ChannelRanking, LineStock, ListingStatus, Listings, MirroredStock,
+    NewPurchaseLine, NewPurchaseOrder, Orders, PurchaseOrders, Receiving, SalesChannel,
+    StockMirror, StockSend, StockShort,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, StockAdjustment};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -439,6 +439,48 @@ fn a_listing_the_owner_paused_leaves_its_share_to_the_others() {
         let shares = fx.shares().await;
         assert_eq!(shares["MLB1"], None);
         assert_eq!(shares["B0FONE1"], Some(4));
+    });
+}
+
+#[test]
+fn on_a_channel_without_a_pause_the_owners_pause_is_zero_units_until_reactivated() {
+    block_on(async {
+        let mut fx = Fixture::selling(&["MLB1"], &["B0FONE1"]).await;
+        fx.amazon.zero_pause = true;
+        fx.receive(4).await;
+        fx.send().await;
+        let amazon = fx
+            .listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.channel == AMAZON)
+            .unwrap();
+
+        fx.listings.pause(amazon.id, &fx.amazon).await.unwrap();
+        fx.later();
+        // Amazon reports the zero units as out of stock; the pause stays.
+        fx.listings.sync(&fx.amazon).await.unwrap();
+        fx.send().await;
+
+        let paused = fx.listings.listing(amazon.id).await.unwrap();
+        assert_eq!(paused.listed.status, ListingStatus::Paused);
+        let dealt = fx.shares().await;
+        assert_eq!((dealt["MLB1"], dealt["B0FONE1"]), (Some(4), None));
+        assert_eq!(fx.shown(), 4);
+
+        // Reactivated with no units on Amazon: the next send brings them.
+        fx.listings.reactivate(amazon.id, &fx.amazon).await.unwrap();
+        fx.send().await;
+
+        assert_eq!(fx.shares().await, shares(&[("MLB1", 2), ("B0FONE1", 2)]));
+        let listed = fx.amazon.listings.lock().unwrap()[0].clone();
+        assert_eq!(
+            (listed.status, listed.available_quantity),
+            (ListingStatus::Active, 2)
+        );
+        assert_eq!(fx.shown(), 4);
     });
 }
 

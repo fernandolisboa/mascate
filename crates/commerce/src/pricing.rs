@@ -61,6 +61,17 @@ pub struct SaleFee {
     pub fixed: Money,
 }
 
+/// What a Sales Channel's sale fee depends on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeBasis {
+    /// The channel's category id.
+    pub category: String,
+    pub listing_type: ListingType,
+    /// The channel's id of the listing, once published: a channel that
+    /// tells the fee of each of its listings, as Amazon does, asks by it.
+    pub listing: Option<String>,
+}
+
 impl SaleFee {
     /// The fee on a sale at `sale_price`.
     pub fn on(self, sale_price: Money) -> Result<Money, CurrencyMismatch> {
@@ -429,7 +440,7 @@ impl Pricing {
             .listings
             .listing_on(listing, channel.sales_channel())
             .await?;
-        let (category, listing_type) = fee_basis(&asked)?;
+        let basis = fee_basis(&asked)?;
         let mut products = Vec::new();
         for sibling in self.open_variations(&asked).await? {
             let product = sibling.product.ok_or(PricingError::NotLinked(sibling.id))?;
@@ -439,18 +450,12 @@ impl Pricing {
         }
 
         let today = asked.listed.price;
-        let today_fee = channel.sale_fee(&category, today, listing_type)?;
+        let today_fee = channel.sale_fee(&basis, today)?;
         let costs: Vec<(RecordId, Money, TargetMargin)> = products
             .iter()
             .map(|(_, product, cost, target)| (*product, *cost, *target))
             .collect();
-        let settled = settle(
-            channel,
-            (&category, listing_type),
-            (today, today_fee),
-            &costs,
-            assumptions,
-        )?;
+        let settled = settle(channel, &basis, (today, today_fee), &costs, assumptions)?;
         let (product, cost, target) = costs[settled.highest];
         Ok(PriceSuggestion {
             listings: products.iter().map(|(id, ..)| *id).collect(),
@@ -475,7 +480,11 @@ impl Pricing {
         offer_cost: Option<Money>,
     ) -> Result<DraftPrice, PricingError> {
         let draft = self.listings.draft(draft).await?;
-        let category = draft.category.ok_or(PricingError::NoFeeBasis)?.id;
+        let basis = FeeBasis {
+            category: draft.category.ok_or(PricingError::NoFeeBasis)?.id,
+            listing_type: draft.listing_type,
+            listing: None,
+        };
         let (cost, cost_from) = match self.inventory.average_cost(draft.product).await? {
             Some(cost) => (cost, CostSource::AverageCost),
             None => (
@@ -487,10 +496,10 @@ impl Pricing {
         // Any price tells the channel's fee band to start from; the cost is
         // a near one.
         let probe = Money::new(cost.amount().max(CENT), cost.currency());
-        let fee = channel.sale_fee(&category, probe, draft.listing_type)?;
+        let fee = channel.sale_fee(&basis, probe)?;
         let settled = settle(
             channel,
-            (&category, draft.listing_type),
+            &basis,
             (probe, fee),
             &[(draft.product, cost, target)],
             assumptions,
@@ -515,11 +524,11 @@ impl Pricing {
             .listings
             .listing_on(listing, channel.sales_channel())
             .await?;
-        let (category, listing_type) = fee_basis(&asked)?;
+        let basis = fee_basis(&asked)?;
         let product = asked.product.ok_or(PricingError::NotLinked(asked.id))?;
         let cost = self.cost(product).await?;
         let price = asked.listed.price;
-        let fee = channel.sale_fee(&category, price, listing_type)?;
+        let fee = channel.sale_fee(&basis, price)?;
         Ok(sale(price, fee, cost, assumptions))
     }
 
@@ -539,10 +548,10 @@ impl Pricing {
             .listings
             .listing_on(listing, channel.sales_channel())
             .await?;
-        let (category, listing_type) = fee_basis(&asked)?;
+        let basis = fee_basis(&asked)?;
         // The channel prices nothing below a cent.
         let price = Money::new(price.amount().max(CENT), price.currency());
-        let fee = channel.sale_fee(&category, price, listing_type)?;
+        let fee = channel.sale_fee(&basis, price)?;
         let target = TargetMargin {
             margin: minimum,
             own: false,
@@ -555,13 +564,7 @@ impl Pricing {
             .into_iter()
             .map(|(product, cost)| (product, cost, target))
             .collect();
-        let lowest = match settle(
-            channel,
-            (&category, listing_type),
-            (price, fee),
-            &costs,
-            assumptions,
-        ) {
+        let lowest = match settle(channel, &basis, (price, fee), &costs, assumptions) {
             Ok(settled) => Some(settled.price),
             Err(PricingError::Unreachable) => None,
             Err(error) => return Err(error),
@@ -591,9 +594,9 @@ impl Pricing {
             .listings
             .listing_on(listing, channel.sales_channel())
             .await?;
-        let (category, listing_type) = fee_basis(&asked)?;
+        let basis = fee_basis(&asked)?;
         let price = asked.listed.price;
-        let fee = channel.sale_fee(&category, price, listing_type)?;
+        let fee = channel.sale_fee(&basis, price)?;
         let ((_, before_ads, _), _) = self
             .worst_variation(&asked, price, fee, assumptions)
             .await?;
@@ -656,14 +659,19 @@ type WorstVariation = (
     Vec<(RecordId, Money)>,
 );
 
-/// What the channel needs to tell its fee: the listing's category and type.
-/// A closed listing sells no more, so it has no price to work out.
-fn fee_basis(listing: &Listing) -> Result<(String, ListingType), PricingError> {
+/// What the channel needs to tell its fee: the listing's category and type,
+/// and the listing itself. A closed listing sells no more, so it has no
+/// price to work out.
+fn fee_basis(listing: &Listing) -> Result<FeeBasis, PricingError> {
     if listing.listed.status == ListingStatus::Closed {
         return Err(PricingError::Closed);
     }
     match (&listing.listed.category, listing.listed.listing_type) {
-        (Some(category), Some(listing_type)) => Ok((category.clone(), listing_type)),
+        (Some(category), Some(listing_type)) => Ok(FeeBasis {
+            category: category.clone(),
+            listing_type,
+            listing: Some(listing.listed.id.clone()),
+        }),
         _ => Err(PricingError::NoFeeBasis),
     }
 }
@@ -685,7 +693,7 @@ struct Settled {
 /// then the first cent past the edge, found between the two.
 fn settle(
     channel: &dyn SalesChannel,
-    (category, listing_type): (&str, ListingType),
+    basis: &FeeBasis,
     start: (Money, SaleFee),
     costs: &[(RecordId, Money, TargetMargin)],
     assumptions: PriceAssumptions,
@@ -695,16 +703,10 @@ fn settle(
     for _ in 0..MAX_FEE_LOOKUPS {
         let (price, index) = highest_price(probe, fee, costs, assumptions)?;
         if solved.iter().any(|(seen, _)| *seen == price) {
-            return band_edge(
-                channel,
-                (category, listing_type),
-                &solved,
-                costs,
-                assumptions,
-            );
+            return band_edge(channel, basis, &solved, costs, assumptions);
         }
         let cost = costs[index].1;
-        let fee_there = channel.sale_fee(category, price, listing_type)?;
+        let fee_there = channel.sale_fee(basis, price)?;
         if fee_there == fee
             && sale(price, fee, cost, assumptions).shipping
                 == sale(probe, fee, cost, assumptions).shipping
@@ -762,7 +764,7 @@ fn all_reach(
 /// lowest above it that reaches, halving the gap with one fee lookup a step.
 fn band_edge(
     channel: &dyn SalesChannel,
-    (category, listing_type): (&str, ListingType),
+    basis: &FeeBasis,
     solved: &[(Money, SaleFee)],
     costs: &[(RecordId, Money, TargetMargin)],
     assumptions: PriceAssumptions,
@@ -792,7 +794,7 @@ fn band_edge(
                 .round_dp_with_strategy(2, RoundingStrategy::ToNegativeInfinity),
             currency,
         );
-        let fee = channel.sale_fee(category, middle, listing_type)?;
+        let fee = channel.sale_fee(basis, middle)?;
         if all_reach(middle, fee, costs, assumptions)? {
             (high, high_fee) = (middle, fee);
         } else {
