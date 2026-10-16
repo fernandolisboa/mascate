@@ -18,9 +18,9 @@ use mascate_commerce::{ListingStatus, Listings, Orders};
 use mascate_integrations::ConnectionState;
 use mascate_kernel::{SalesChannelKind, Timestamp};
 use mascate_marketing::{
-    ActionKind, IMPACT_DAYS, ListedItem, ListingQuality, MetricUnit, PerformanceMetric,
-    PerformanceRating, QualityAction, QualityError, QualityLevel, QualityRow, QualitySource,
-    QualitySync, Rating, ShopPerformance,
+    ActionKind, Comparator, IMPACT_DAYS, ListedItem, ListingQuality, MetricTarget, MetricUnit,
+    PerformanceMetric, PerformanceRating, QualityAction, QualityError, QualityLevel, QualityRow,
+    QualitySource, QualitySync, Rating, ShopPerformance,
 };
 use rust_decimal::Decimal;
 
@@ -652,11 +652,7 @@ fn render_metric(metric: &PerformanceMetric, t: &Tokens, cx: &App) -> AnyElement
         ));
     }
     if let Some(target) = &metric.target {
-        facts.push(format!(
-            "meta: {} {}",
-            target.comparator.sign(),
-            metric_value(target.value, metric.unit)
-        ));
+        facts.push(target_text(target, metric.unit));
     }
     let (value, ink) = match (metric.current, metric.meets_target()) {
         (None, _) => ("sem dado".to_owned(), t.text2),
@@ -692,6 +688,18 @@ fn render_metric(metric: &PerformanceMetric, t: &Tokens, cx: &App) -> AnyElement
 }
 
 /// "12,5%", "3 dias": a metric's value in its unit.
+/// `Comparator::sign` keeps the channel's ASCII form; the reader gets ≤ and ≥.
+fn target_text(target: &MetricTarget, unit: MetricUnit) -> String {
+    let sign = match target.comparator {
+        Comparator::Below => "<",
+        Comparator::AtMost => "≤",
+        Comparator::Above => ">",
+        Comparator::AtLeast => "≥",
+        Comparator::Equal => "=",
+    };
+    format!("meta: {sign} {}", metric_value(target.value, unit))
+}
+
 fn metric_value(value: Decimal, unit: MetricUnit) -> String {
     let number = value.normalize().to_string().replace('.', ",");
     match unit {
@@ -835,5 +843,31 @@ mod tests {
             "3 dias"
         );
         assert_eq!(metric_value(Decimal::from(42), MetricUnit::Number), "42");
+    }
+
+    #[test]
+    fn a_target_reads_with_the_signs_a_reader_writes() {
+        let target = |value, comparator| MetricTarget { value, comparator };
+        assert_eq!(
+            target_text(
+                &target(Decimal::new(5, 0), Comparator::Below),
+                MetricUnit::Percent
+            ),
+            "meta: < 5%"
+        );
+        assert_eq!(
+            target_text(
+                &target(Decimal::from(70), Comparator::AtLeast),
+                MetricUnit::Percent
+            ),
+            "meta: ≥ 70%"
+        );
+        assert_eq!(
+            target_text(
+                &target(Decimal::from(2), Comparator::AtMost),
+                MetricUnit::Days
+            ),
+            "meta: ≤ 2 dias"
+        );
     }
 }
