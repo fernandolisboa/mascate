@@ -157,8 +157,8 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
         fone.image.as_deref(),
         Some("https://down-br.img.susercontent.com/file/br-11134207-7r98o-fone")
     );
-    assert_eq!(fone.price, brl("29.90"));
-    assert_eq!(fone.highest_price, brl("29.90"));
+    assert_eq!(fone.price, Some(brl("29.90")));
+    assert_eq!(fone.highest_price, Some(brl("29.90")));
     assert_eq!(fone.sales, 12_400);
     assert_eq!(fone.commission, Some(percent("10")));
     assert_eq!(fone.rating, Some(Decimal::from_str("4.9").unwrap()));
@@ -168,8 +168,8 @@ fn found_items_carry_their_price_sales_commission_and_shop() {
     let luminaria = &found.items[1];
     // A picture over plain HTTP is left out.
     assert_eq!(luminaria.image, None);
-    assert_eq!(luminaria.price, brl("45.50"));
-    assert_eq!(luminaria.highest_price, brl("59.90"));
+    assert_eq!(luminaria.price, Some(brl("45.50")));
+    assert_eq!(luminaria.highest_price, Some(brl("59.90")));
     assert_eq!(luminaria.commission, Some(percent("6")));
     // A link that only looks like Shopee's never reaches the screen; the
     // item's own page takes its place. Ids may come as text.

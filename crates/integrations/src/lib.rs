@@ -1,6 +1,7 @@
 //! Integrations: one adapter per Platform, publishing normalized data to the other modules.
 
 mod amazon;
+mod amazon_crawler;
 mod amazon_earnings;
 mod answers;
 mod anthropic;
@@ -12,6 +13,7 @@ mod hotmart;
 mod kiwify;
 mod link_tags;
 mod magalu;
+mod magalu_crawler;
 mod mercado_livre;
 mod mercado_livre_crawler;
 mod monetizze;
@@ -24,6 +26,7 @@ mod spreadsheet;
 mod telegram;
 
 pub use amazon::{API_URL as AMAZON_API_URL, AUTH_URL as AMAZON_AUTH_URL, Amazon};
+pub use amazon_crawler::{AMAZON_CRAWLER, AmazonCrawler, SEARCH_URL as AMAZON_SEARCH_URL};
 pub use amazon_earnings::{
     EarningsImport, EarningsReport, LINKS as AMAZON_LINKS, PLATFORM as AMAZON_PLATFORM,
     ReportError, SkippedRow, read_earnings_report,
@@ -43,6 +46,7 @@ pub use magalu::{
     API_URL as MAGALU_API_URL, ID_URL as MAGALU_ID_URL, Magalu, SANDBOX_URL as MAGALU_SANDBOX_URL,
     SCOPES as MAGALU_SCOPES, StoreAuthorization,
 };
+pub use magalu_crawler::{MAGALU_CRAWLER, MagaluCrawler, SEARCH_URL as MAGALU_SEARCH_URL};
 pub use mercado_livre::{
     API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
 };
@@ -107,4 +111,4 @@ pub const REMINDERS: &[Reminder] = &[
 
 /// The Restricted Features of the adapters, which know each Platform's
 /// terms (ADR 0035).
-pub const FLAGS: &[Flag] = &[MERCADO_LIVRE_CRAWLER];
+pub const FLAGS: &[Flag] = &[MERCADO_LIVRE_CRAWLER, AMAZON_CRAWLER, MAGALU_CRAWLER];

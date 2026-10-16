@@ -6,6 +6,7 @@
 //! proxy, no other identity, no browser imitation, no captcha solving. A
 //! block is the site's answer, not an obstacle.
 
+mod offers;
 mod page_data;
 mod robots;
 
@@ -18,6 +19,9 @@ use mascate_kernel::{Clock, Pause, PlatformError, ThreadPause, Timestamp};
 use mascate_platform::crawling_agent;
 use ureq::http::Uri;
 
+pub(crate) use offers::{
+    count_before, is_product, money, no_shops, number_in, search_words, stars, walk,
+};
 pub(crate) use page_data::{assigned_json, json_ld, script_json};
 use robots::Robots;
 
@@ -46,14 +50,17 @@ const BLOCKING_PATHS: [&str; 6] = [
     "verification",
     "verify",
 ];
-/// Marks of a captcha or a check of who is asking on a page answered 200.
-const BLOCKING_PAGES: [&str; 6] = [
+/// Marks of a captcha or a check of who is asking on a page, in lower
+/// case: answered 200, or 503 as Amazon's robot check is.
+const BLOCKING_PAGES: [&str; 8] = [
     "g-recaptcha",
     "h-captcha",
     "hcaptcha.com",
     "captcha-delivery.com",
     "/cdn-cgi/challenge-platform/",
     "cf-chl-",
+    "/errors/validatecaptcha",
+    "api-services-support@amazon.com",
 ];
 
 /// Reads public pages for the crawlers, one instance for the whole app so
@@ -327,9 +334,8 @@ impl Crawler {
                     .limit(MAX_PAGE_BYTES)
                     .read_to_string()
                     .map_err(|error| PlatformError::Failed(error.to_string()))?;
-                let lower = body.to_ascii_lowercase();
-                Ok(if BLOCKING_PAGES.iter().any(|mark| lower.contains(mark)) {
-                    Reply::Blocked("respondeu com uma verificação de robô".into())
+                Ok(if robot_check(&body) {
+                    Reply::Blocked(ROBOT_CHECK.into())
                 } else {
                     Reply::Page(body)
                 })
@@ -359,10 +365,22 @@ impl Crawler {
             401 | 403 => Ok(Reply::Blocked(format!("recusou o acesso ({status})"))),
             429 => Ok(Reply::Blocked("pediu para esperar (429)".into())),
             400..=499 => Ok(Reply::Missing),
-            status => Err(PlatformError::Failed(format!(
-                "{} respondeu {status}",
-                address.host
-            ))),
+            status => {
+                let body = response
+                    .into_body()
+                    .into_with_config()
+                    .limit(MAX_PAGE_BYTES)
+                    .read_to_string()
+                    .unwrap_or_default();
+                if robot_check(&body) {
+                    Ok(Reply::Blocked(ROBOT_CHECK.into()))
+                } else {
+                    Err(PlatformError::Failed(format!(
+                        "{} respondeu {status}",
+                        address.host
+                    )))
+                }
+            }
         }
     }
 
@@ -433,6 +451,14 @@ impl Crawler {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+const ROBOT_CHECK: &str = "respondeu com uma verificação de robô";
+
+/// Whether `body` is a captcha or a check of who is asking.
+fn robot_check(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    BLOCKING_PAGES.iter().any(|mark| lower.contains(mark))
 }
 
 fn delta(duration: Duration) -> TimeDelta {

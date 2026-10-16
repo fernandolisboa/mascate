@@ -44,14 +44,12 @@ pub fn item_card(
     if let Some(rating) = found.rating.filter(|rating| !rating.is_zero()) {
         facts.push(format!("nota {}", stars_text(rating)));
     }
-    let price = if found.highest_price.amount() > found.price.amount() {
-        format!(
-            "{} a {}",
-            found.price.to_pt_br(),
-            found.highest_price.to_pt_br()
-        )
-    } else {
-        found.price.to_pt_br()
+    let price = match (found.price, found.highest_price) {
+        (Some(price), Some(highest)) if highest.amount() > price.amount() => {
+            format!("{} a {}", price.to_pt_br(), highest.to_pt_br())
+        }
+        (Some(price), _) => price.to_pt_br(),
+        (None, _) => "Sem preço na busca".to_owned(),
     };
     v_flex()
         .gap_2()
@@ -107,6 +105,13 @@ pub fn keep_action<T: 'static>(
 ) -> AnyElement {
     if item.up_to_date() {
         return kit::tag("Nas ofertas", look(cx).tokens.success, cx).into_any_element();
+    }
+    if item.found.price.is_none() {
+        return div()
+            .text_xs()
+            .text_color(look(cx).tokens.text2)
+            .child("Sem preço, não dá para guardar")
+            .into_any_element();
     }
     let offer = item.found.clone();
     let label = match &item.kept {

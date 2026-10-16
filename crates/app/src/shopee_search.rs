@@ -426,11 +426,11 @@ impl ShopeeSearch {
                         .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
                 )
                 .children(panel.tagged.clone().map(|(link, tagged)| {
-                    let found = OfferPrice {
-                        price: offer.price,
+                    let found = offer.price.map(|price| OfferPrice {
+                        price,
                         before: None,
                         seen_at: self.searched_at,
-                    };
+                    });
                     let image = offer.image.clone();
                     h_flex()
                         .gap_2()
@@ -460,7 +460,7 @@ impl ShopeeSearch {
                                 .on_click(cx.listener(move |_, _, _, cx| {
                                     cx.emit(StartPost {
                                         link,
-                                        found: Some(found),
+                                        found,
                                         image: image.clone(),
                                     })
                                 })),
@@ -689,7 +689,7 @@ impl ShopeeSearch {
         let pending: Vec<FoundOffer> = self
             .items
             .iter()
-            .filter(|item| !item.up_to_date())
+            .filter(|item| item.keeping_adds())
             .map(|item| item.found.clone())
             .collect();
         let list = v_flex()

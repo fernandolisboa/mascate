@@ -278,7 +278,7 @@ impl CrawlerSearch {
         let pending: Vec<FoundOffer> = self
             .items
             .iter()
-            .filter(|item| !item.up_to_date())
+            .filter(|item| item.keeping_adds())
             .map(|item| item.found.clone())
             .collect();
         let cards: Vec<AnyElement> = (0..self.items.len())
@@ -305,8 +305,8 @@ impl CrawlerSearch {
             .gap_2()
             .when(self.items.is_empty(), |list| {
                 list.child(div().text_sm().text_color(t.text2).child(format!(
-                    "O {} não achou nada com essa busca.",
-                    self.site.name
+                    "{} não achou nada com essa busca.",
+                    self.site.the_capitalized()
                 )))
             })
             .when(!self.items.is_empty(), |list| {
@@ -316,10 +316,10 @@ impl CrawlerSearch {
                         .gap_2()
                         .items_center()
                         .child(div().flex_1().text_xs().text_color(t.text2).child(format!(
-                            "A busca do {} não diz quanto custa a entrega até você: a oferta \
+                            "A busca {} não diz quanto custa a entrega até você: a oferta \
                              guardada entra com frete zero. Registre o mesmo link à mão com o \
                              frete para corrigir.",
-                            self.site.name
+                            self.site.of()
                         )))
                         .when(!pending.is_empty(), |row| {
                             let count = pending.len();
@@ -363,9 +363,9 @@ impl Render for CrawlerSearch {
         let t = look(cx).tokens;
         let blocked = source.blocked_until().filter(|until| *until > Utc::now());
         let about = format!(
-            "Lê as páginas públicas de busca do {}: uma página a cada 3 segundos ou mais, como o \
+            "Lê as páginas públicas de busca {}: uma página a cada 3 segundos ou mais, como o \
              robots.txt do site pedir, e a mesma busca dentro de 1 hora vem da memória.{}",
-            self.site.name,
+            self.site.of(),
             if source.finds_shops() {
                 ""
             } else {
@@ -384,10 +384,7 @@ impl Render for CrawlerSearch {
                     .gap_2()
                     .flex_wrap()
                     .items_center()
-                    .child(kit::section_heading(format!(
-                        "Buscar no {}",
-                        self.site.name
-                    )))
+                    .child(kit::section_heading(format!("Buscar {}", self.site.on())))
                     .child(kit::tag("Crawler ligado", t.danger, cx)),
             )
             .child(div().text_sm().text_color(t.text2).child(about))

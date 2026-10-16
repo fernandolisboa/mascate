@@ -2,53 +2,24 @@
 //! serving search pages written by hand (see the fixtures' README).
 
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use chrono::{TimeDelta, TimeZone, Utc};
+use chrono::TimeDelta;
 use futures::executor::block_on;
 use mascate_catalog::{Catalog, KeptOffers, OfferOrder, OfferSearch, OfferSource, ProductSource};
-use mascate_integrations::{Crawler, FLAGS, MERCADO_LIVRE_CRAWLER, MercadoLivreCrawler, Pause};
+use mascate_integrations::{FLAGS, MERCADO_LIVRE_CRAWLER, MercadoLivreCrawler};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, Currency, Money, PlatformError};
+use mascate_kernel::{Clock, PlatformError};
 use mascate_platform::testing::FakeHttpServer;
 use mascate_platform::{Database, FlagKind, Phase, migrate};
 use rust_decimal::Decimal;
 
+mod crawling;
+
+use crawling::{ClockPause, brl, pages};
+
 fn fixture(name: &str) -> String {
-    std::fs::read_to_string(format!(
-        "{}/tests/fixtures/mercado-livre-crawler/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap()
-}
-
-fn brl(amount: &str) -> Money {
-    Money::new(Decimal::from_str(amount).unwrap(), Currency::Brl)
-}
-
-/// Moves the clock instead of sleeping, and remembers each wait.
-struct ClockPause {
-    clock: Arc<ManualClock>,
-    waits: Mutex<Vec<Duration>>,
-}
-
-impl Pause for ClockPause {
-    fn pause(&self, duration: Duration) {
-        self.waits.lock().unwrap().push(duration);
-        self.clock.advance(TimeDelta::from_std(duration).unwrap());
-    }
-}
-
-impl ClockPause {
-    fn seconds(&self) -> Vec<u64> {
-        self.waits
-            .lock()
-            .unwrap()
-            .iter()
-            .map(Duration::as_secs)
-            .collect()
-    }
+    crawling::fixture("mercado-livre-crawler", name)
 }
 
 struct Setup {
@@ -61,21 +32,12 @@ struct Setup {
 /// The crawler at the fake server, with its robots.txt, on 2026-10-16
 /// 12:00 UTC.
 fn setup() -> Setup {
-    let server = FakeHttpServer::start();
-    server.serve("/robots.txt", 200, fixture("robots.txt"));
-    let clock = Arc::new(ManualClock::at(
-        Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap(),
-    ));
-    let pauses = Arc::new(ClockPause {
-        clock: clock.clone(),
-        waits: Mutex::new(Vec::new()),
-    });
-    let engine = Crawler::new("Mascate/0.5.0", clock.clone()).with_pause(pauses.clone());
-    let crawler = MercadoLivreCrawler::new(server.url(), Arc::new(engine));
+    let site = crawling::site(fixture("robots.txt"));
+    let crawler = MercadoLivreCrawler::new(site.server.url(), site.engine);
     Setup {
-        server,
-        clock,
-        pauses,
+        server: site.server,
+        clock: site.clock,
+        pauses: site.pauses,
         crawler,
     }
 }
@@ -87,15 +49,6 @@ fn search(keyword: &str) -> OfferSearch {
         page: 1,
         ..OfferSearch::default()
     }
-}
-
-/// The pages requested, robots.txt aside.
-fn pages(server: &FakeHttpServer) -> Vec<String> {
-    server
-        .requests()
-        .into_iter()
-        .filter(|path| path != "/robots.txt")
-        .collect()
 }
 
 #[test]
@@ -119,8 +72,8 @@ fn a_search_page_yields_found_offers_with_id_title_link_image_and_price() {
         fone.image.as_deref(),
         Some("https://http2.mlstatic.com/D_NQ_NP_612345-MLA79876543210_102024-O.jpg")
     );
-    assert_eq!(fone.price, brl("89.9"));
-    assert_eq!(fone.highest_price, brl("89.9"));
+    assert_eq!(fone.price, Some(brl("89.9")));
+    assert_eq!(fone.highest_price, Some(brl("89.9")));
     assert_eq!(fone.shop.name, "Casa dos Fones");
     assert_eq!(fone.shop.id, "casa-dos-fones");
     assert_eq!(fone.sales, 10_000);
@@ -133,13 +86,13 @@ fn a_search_page_yields_found_offers_with_id_title_link_image_and_price() {
         "https://www.mercadolivre.com.br/fone-de-ouvido-xiaomi-redmi-buds/p/MLB22446688"
     );
     assert_eq!(official.shop.name, "Xiaomi Loja Oficial");
-    assert_eq!(official.price, brl("149"));
+    assert_eq!(official.price, Some(brl("149")));
     assert_eq!((official.sales, official.rating), (500, None));
 
     let unnamed = &found.items[2];
     assert_eq!(unnamed.title, "Fone com Fio P2");
     assert_eq!(unnamed.shop.name, "Mercado Livre");
-    assert_eq!(unnamed.price, brl("24.5"));
+    assert_eq!(unnamed.price, Some(brl("24.5")));
     assert_eq!((unnamed.image.as_deref(), unnamed.sales), (None, 0));
 }
 
@@ -165,7 +118,7 @@ fn a_later_page_and_the_lowest_price_go_in_the_address() {
     assert!(!found.more);
     let gamer = &found.items[1];
     assert_eq!(gamer.title, "Fone Gamer RGB {com} \"chaves\"");
-    assert_eq!(gamer.price, brl("199.99"));
+    assert_eq!(gamer.price, Some(brl("199.99")));
     assert_eq!(gamer.sales, 1_500);
     assert_eq!(gamer.rating, Some(Decimal::from_str("4.5").unwrap()));
     assert_eq!(found.items[0].shop.name, "Casa dos Fones");
@@ -202,7 +155,7 @@ fn a_page_without_its_state_is_read_from_its_json_ld() {
     let ids: Vec<&str> = found.items.iter().map(|item| item.id.as_str()).collect();
     assert_eq!(ids, ["MLB4055555555", "MLB22334455"]);
     let speaker = &found.items[0];
-    assert_eq!(speaker.price, brl("199.90"));
+    assert_eq!(speaker.price, Some(brl("199.90")));
     assert_eq!(speaker.shop.name, "Som Total");
     assert_eq!(speaker.rating, Some(Decimal::from_str("4.6").unwrap()));
     assert_eq!(
@@ -210,8 +163,8 @@ fn a_page_without_its_state_is_read_from_its_json_ld() {
         Some("https://http2.mlstatic.com/D_NQ_NP_777777-MLA70000000000_012025-O.jpg")
     );
     let portable = &found.items[1];
-    assert_eq!(portable.price, brl("120"));
-    assert_eq!(portable.highest_price, brl("180"));
+    assert_eq!(portable.price, Some(brl("120")));
+    assert_eq!(portable.highest_price, Some(brl("180")));
     assert_eq!(portable.shop.name, "Mercado Livre");
     assert_eq!(
         portable.image.as_deref(),
