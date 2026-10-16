@@ -1,0 +1,12 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "5c6d7e8f90a1b2c3d4e5f60718293a4b",
+  "response": {
+    "category_list": [
+      {"category_id": 100017, "parent_category_id": 100011, "original_category_name": "T-shirts", "display_category_name": "Camisetas", "has_children": false},
+      {"category_id": 100636, "parent_category_id": 100535, "original_category_name": "Headphones", "display_category_name": "Fones de Ouvido", "has_children": false}
+    ]
+  }
+}

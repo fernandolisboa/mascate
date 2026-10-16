@@ -63,6 +63,7 @@ mod settings;
 mod shell;
 mod shopee;
 mod shopee_search;
+mod shopee_seller;
 mod span;
 mod startup;
 mod stock;
@@ -80,7 +81,7 @@ use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS,
     Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, MercadoLivre, Monetizze, ShopeeAffiliates,
-    Telegram,
+    ShopeeSeller, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -114,6 +115,7 @@ use crate::sales_channels::{AppChannelRanking, ChannelPorts, SalesChannels};
 use crate::sales_events::AppSalesEvents;
 use crate::shell::Shell;
 use crate::shopee::AppShopee;
+use crate::shopee_seller::AppShopeeSeller;
 use crate::stock::AppInventory;
 use crate::stock_mirror::AppStockMirror;
 use crate::telegram::AppTelegram;
@@ -188,6 +190,12 @@ fn main() {
         secrets.clone(),
         Arc::new(SystemClock),
     ));
+    let shopee_seller = Arc::new(ShopeeSeller::new(
+        &shopee_seller::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -257,7 +265,20 @@ fn main() {
                     // GTIN.
                     publisher: Some(amazon),
                 },
+                // Listings, stock and price for now: Shopee's Orders,
+                // labels and publishing come in their own slices.
+                ChannelPorts {
+                    connection: Connection::ShopeeSeller,
+                    listings: shopee_seller.clone(),
+                    orders: None,
+                    billing: None,
+                    payments: None,
+                    labels: None,
+                    shipments: None,
+                    publisher: None,
+                },
             ]));
+            cx.set_global(AppShopeeSeller(shopee_seller));
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));

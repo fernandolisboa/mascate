@@ -11,6 +11,7 @@ publish.workspace = true
 calamine.workspace = true
 chrono.workspace = true
 csv.workspace = true
+hmac.workspace = true
 mascate-affiliate.workspace = true
 mascate-catalog.workspace = true
 mascate-commerce.workspace = true
