@@ -38,4 +38,15 @@ Escritas a partir da documentação oficial da Shopee Open Platform v2 (open.sho
 - `init-tier-variation.json`, `model-list-new.json`: `POST /api/v2/product/init_tier_variation` e os dois modelos que ele cria.
 - `update-item.json`: `POST /api/v2/product/update_item` com a descrição.
 
+Qualidade e Promoções (#136), da referência das APIs `account_health`, `discount` e `product` lida em 16/10/2026:
+
+- `listings-with-issues-page-1.json`, `listings-with-issues-page-2.json`, `listings-with-issues-empty.json`: `GET /api/v2/account_health/get_listings_with_issues` em duas páginas (um item com dois motivos, e outro na segunda página), e nenhum.
+- `shop-performance.json`: `GET /api/v2/account_health/get_shop_performance` com a avaliação da loja, um grupo de métricas (id negativo, deixado de fora), métricas de envio, anúncios e atendimento e uma de tipo desconhecido.
+- `discount-list-upcoming.json`, `discount-list-ongoing.json`: `GET /api/v2/discount/get_discount_list` por `discount_status` (agendado e em andamento).
+- `discount-upcoming.json`, `discount-ongoing.json`, `discount-expired.json`: `GET /api/v2/discount/get_discount`; o em andamento com um item de dois modelos.
+- `discount-not-found.json`: o envelope `common.error_not_found` de um desconto que não existe mais.
+- `add-discount.json`, `update-discount.json`, `delete-discount.json`, `end-discount.json`: `POST` de `add_discount`, `update_discount`, `delete_discount` e `end_discount`.
+- `add-discount-item.json`, `add-discount-item-refused.json`, `delete-discount-item.json`: `POST` de `add_discount_item` (aceito, e recusado em `error_list` com a resposta de sucesso) e `delete_discount_item`.
+- `item-promotion.json`, `item-promotion-none.json`: `GET /api/v2/product/get_item_promotion` de um item com um desconto da loja em dois modelos e uma campanha da Shopee, e de um item sem promoção. O valor exato de `promotion_type` de um desconto da loja não está na documentação: o adapter reconhece o desconto pelo id.
+
 Os ids seguem o exemplo da documentação (partner 2001887, loja 14701711); os itens são inventados.

@@ -191,8 +191,12 @@ Título e descrição de um Listing gerados como rascunho para o Fernando editar
 _Avoid_: copy (sozinho), descrição
 
 **Listing Quality**:
-Nota de 0 a 100 e nível (Básica, Satisfatória, Profissional) que o Sales Channel dá a um Listing publicado, com as ações que ele diz faltar, cada uma com o link para corrigir no canal. As que derrubam a nota são problemas; as outras, sugestões. O painel põe primeiro os Listings com algo pendente que mais venderam e receberam visitas nos últimos 30 dias. Variações do mesmo anúncio dividem a mesma nota.
+O que o Sales Channel diz de um Listing publicado: as ações que faltam, cada uma com o link para corrigir no canal, e, no Mercado Livre, a nota de 0 a 100 e o nível (Básica, Satisfatória, Profissional). Na Amazon são os problemas do anúncio; na Shopee, os anúncios com problema que podem render pontos de penalidade; a Magalu não informa. As que derrubam a nota ou põem o anúncio em risco são problemas; as outras, sugestões. O painel põe primeiro os Listings com algo pendente que mais venderam e receberam visitas nos últimos 30 dias (só o Mercado Livre informa visitas). Variações do mesmo anúncio dividem a mesma nota. Ao lado fica o Shop Performance.
 _Avoid_: saúde do anúncio, health, score (sozinho), Checklist (é do rascunho)
+
+**Shop Performance**:
+Avaliação que a Shopee dá à loja (Ruim, Precisa melhorar, Bom, Excelente), com cada métrica de envio, anúncios e atendimento contra a meta do canal. O app mostra as fora da meta primeiro; a correção é feita no canal.
+_Avoid_: saúde da conta, account health, Reputation (é a cor do Mercado Livre)
 
 **Question**:
 Pergunta de um comprador num Listing publicado, lida do Sales Channel com o status (sem resposta, respondida, encerrada sem resposta, em análise, removida) e o tempo de espera. Na caixa, as sem resposta ficam em cima, a que espera há mais tempo primeiro. Cada pergunta é respondida uma vez, só depois que o Fernando confere e confirma o texto final, que o app guarda com ela; contato e link para fora do canal nunca saem numa resposta.
@@ -211,7 +215,7 @@ Avaliação de 1 a 5 estrelas que um comprador deixa num Listing, com título e 
 _Avoid_: opinião (é o nome da API), comentário, nota (sozinho)
 
 **Promotion**:
-Preço menor por alguns dias num Sales Channel: o desconto de um Listing (até 14 dias), a campanha do vendedor com os Listings que ele põe nela (até 14 dias), o cupom do vendedor tirado no checkout de compras acima de um mínimo (até 31 dias), ou a campanha do canal em que o Listing entrou pelo próprio canal (só mostrada). Os dias contam no horário de Brasília, o primeiro e o último incluídos. Exige a Reputation que libera Promotions e passa pela Margin Guard; só vai ao canal quando o Fernando confirma.
+Preço menor por alguns dias num Sales Channel. No Mercado Livre: o desconto de um Listing (até 14 dias), a campanha do vendedor com os Listings que ele põe nela (até 14 dias) e o cupom do vendedor tirado no checkout de compras acima de um mínimo (até 31 dias), que exigem a Reputation que libera Promotions. Na Shopee: o desconto da loja, uma campanha do vendedor de menos de 180 dias que começa ao menos uma hora depois de criada e depois só encurta. Em qualquer canal, a campanha do canal em que o Listing entrou pelo próprio canal é só mostrada; Amazon e Magalu não têm Promotion do vendedor por API. Os dias contam no horário de Brasília, o primeiro e o último incluídos. Passa pela Margin Guard; só vai ao canal quando o Fernando confirma.
 _Avoid_: campanha (sozinho), oferta
 
 **Minimum Margin**:

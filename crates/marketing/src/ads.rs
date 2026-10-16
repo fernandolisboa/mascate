@@ -529,9 +529,9 @@ impl ProductAds {
         for campaign in campaigns {
             on.execute(
                 "INSERT INTO marketing_ad_campaigns
-                     (id, ml_campaign_id, name, status, created_at, updated_at)
+                     (id, channel_campaign_id, name, status, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-                 ON CONFLICT (ml_campaign_id) WHERE deleted_at IS NULL
+                 ON CONFLICT (sales_channel, channel_campaign_id) WHERE deleted_at IS NULL
                  DO UPDATE SET name = excluded.name, status = excluded.status,
                      updated_at = excluded.updated_at",
                 params![
@@ -575,11 +575,11 @@ impl ProductAds {
             }
             on.execute(
                 "INSERT INTO marketing_ad_days
-                     (id, ml_item_id, day, ml_campaign_id, cost, attributed, currency,
+                     (id, channel_item_id, day, channel_campaign_id, cost, attributed, currency,
                       clicks, prints, units, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
-                 ON CONFLICT (ml_item_id, day) WHERE deleted_at IS NULL
-                 DO UPDATE SET ml_campaign_id = excluded.ml_campaign_id,
+                 ON CONFLICT (sales_channel, channel_item_id, day) WHERE deleted_at IS NULL
+                 DO UPDATE SET channel_campaign_id = excluded.channel_campaign_id,
                      cost = excluded.cost, attributed = excluded.attributed,
                      currency = excluded.currency, clicks = excluded.clicks,
                      prints = excluded.prints, units = excluded.units,
@@ -615,10 +615,10 @@ impl ProductAds {
             .database
             .connection()
             .query(
-                "SELECT ml_item_id, day, ml_campaign_id, cost, attributed, currency,
+                "SELECT channel_item_id, day, channel_campaign_id, cost, attributed, currency,
                      clicks, prints, units
                  FROM marketing_ad_days WHERE deleted_at IS NULL
-                 ORDER BY day, ml_item_id",
+                 ORDER BY day, channel_item_id",
                 (),
             )
             .await?;
@@ -646,7 +646,7 @@ impl ProductAds {
             .database
             .connection()
             .query(
-                "SELECT ml_campaign_id, name, status FROM marketing_ad_campaigns
+                "SELECT channel_campaign_id, name, status FROM marketing_ad_campaigns
                  WHERE deleted_at IS NULL",
                 (),
             )

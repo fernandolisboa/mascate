@@ -141,6 +141,44 @@ pub(super) struct Issue {
     pub severity: Option<String>,
 }
 
+/// `getListingsItem` with `includedData=issues`: what Amazon says is wrong
+/// with a listing.
+#[derive(Debug, Deserialize)]
+pub(super) struct ItemIssues {
+    #[serde(default)]
+    pub issues: Vec<ListingIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListingIssue {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub severity: Option<String>,
+    #[serde(default)]
+    pub attribute_names: Vec<String>,
+    pub enforcements: Option<Enforcements>,
+    #[serde(default)]
+    pub marketplace_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Enforcements {
+    #[serde(default)]
+    pub actions: Vec<EnforcementAction>,
+    pub exemption: Option<Exemption>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct EnforcementAction {
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Exemption {
+    pub status: String,
+}
+
 /// One page of `searchCatalogItems` (Catalog Items 2022-04-01).
 #[derive(Debug, Deserialize)]
 pub(super) struct CatalogSearch {

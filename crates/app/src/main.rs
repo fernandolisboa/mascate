@@ -265,6 +265,8 @@ fn main() {
                     // Mercado Livre reprices the listing itself within the
                     // limits.
                     repricing: Some(ChannelRepricing::Automation(mercado_livre.clone())),
+                    quality: Some(mercado_livre.clone()),
+                    promotions: Some(mercado_livre.clone()),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -280,7 +282,11 @@ fn main() {
                     // GTIN.
                     publisher: Some(amazon.clone()),
                     // The app follows the featured offer after each Sync.
-                    repricing: Some(ChannelRepricing::FeaturedOffer(amazon)),
+                    repricing: Some(ChannelRepricing::FeaturedOffer(amazon.clone())),
+                    // The listing's issues; Amazon gives no score.
+                    quality: Some(amazon),
+                    // Amazon offers sellers no Promotion by its API.
+                    promotions: None,
                 },
                 // Shopee prints the label once the shipment is arranged, and
                 // the label arranges it: no shipment to confirm.
@@ -296,6 +302,10 @@ fn main() {
                     publisher: Some(shopee_seller.clone()),
                     // Shopee and Magalu tell no competitor's price.
                     repricing: None,
+                    // The listings with issues and the shop's performance.
+                    quality: Some(shopee_seller.clone()),
+                    // The owner's discounts.
+                    promotions: Some(shopee_seller.clone()),
                 },
                 // The owner sends the NF-e and ships in Magalu's panel:
                 // nothing to print or confirm here. Publishing is out of the
@@ -310,6 +320,10 @@ fn main() {
                     shipments: None,
                     publisher: None,
                     repricing: None,
+                    // Magalu's API tells no listing quality and offers
+                    // sellers no Promotion.
+                    quality: None,
+                    promotions: None,
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));

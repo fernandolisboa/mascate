@@ -9,7 +9,9 @@ use chrono::{TimeZone, Utc};
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::PlatformError;
 use mascate_kernel::testing::ManualClock;
-use mascate_marketing::{ActionKind, ChannelQuality, QualityAction, QualityLevel, QualitySource};
+use mascate_marketing::{
+    ActionKind, ChannelQuality, QualityAction, QualityLevel, QualitySource, Score,
+};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Secret, SecretStore};
 
@@ -79,8 +81,10 @@ fn the_quality_comes_with_its_level_score_and_only_the_pending_actions() {
     assert_eq!(
         quality,
         Some(ChannelQuality {
-            score: 69,
-            level: QualityLevel::Professional,
+            score: Some(Score {
+                points: 69,
+                level: QualityLevel::Professional,
+            }),
             pending: vec![
                 QualityAction {
                     key: "PICTURES_QUANTITY_MIN".into(),
@@ -145,13 +149,16 @@ fn the_level_follows_the_score_when_mercado_livre_does_not_name_it() {
 
         let quality = fake.quality_with(answer);
 
-        assert_eq!(quality.level, level, "{score}");
+        assert_eq!(quality.score.unwrap().level, level, "{score}");
     }
     let mut basic = performance();
     basic["score"] = 30.into();
     basic["level"] = "Bad".into();
     basic["level_wording"] = "Básica".into();
-    assert_eq!(fake.quality_with(basic).level, QualityLevel::Basic);
+    assert_eq!(
+        fake.quality_with(basic).score.unwrap().level,
+        QualityLevel::Basic
+    );
 }
 
 #[test]
@@ -188,7 +195,7 @@ fn the_visits_are_the_last_thirty_days_total() {
     fake.server
         .serve(VISITS, 200, fixture("item-MLB4100000001-visits.json"));
 
-    assert_eq!(fake.adapter.visits(FONE, 30).unwrap(), 412);
+    assert_eq!(fake.adapter.visits(FONE, 30).unwrap(), Some(412));
 }
 
 #[test]

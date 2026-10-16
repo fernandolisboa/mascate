@@ -491,7 +491,7 @@ async fn write_question(
 ) -> Result<bool, QuestionError> {
     let mut rows = on
         .query(
-            "SELECT 1 FROM marketing_questions WHERE ml_question_id = ?1 AND deleted_at IS NULL",
+            "SELECT 1 FROM marketing_questions WHERE channel_question_id = ?1 AND deleted_at IS NULL",
             params![question.id.clone()],
         )
         .await?;
@@ -500,11 +500,11 @@ async fn write_question(
     let answer = question.answer.as_ref();
     on.execute(
         "INSERT INTO marketing_questions
-             (id, ml_question_id, ml_item_id, text, status, asked_at, answer_text, answered_at,
+             (id, channel_question_id, channel_item_id, text, status, asked_at, answer_text, answered_at,
               created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-         ON CONFLICT (ml_question_id) WHERE deleted_at IS NULL
-         DO UPDATE SET ml_item_id = excluded.ml_item_id, text = excluded.text,
+         ON CONFLICT (sales_channel, channel_question_id) WHERE deleted_at IS NULL
+         DO UPDATE SET channel_item_id = excluded.channel_item_id, text = excluded.text,
              status = excluded.status, asked_at = excluded.asked_at,
              answer_text = COALESCE(excluded.answer_text, marketing_questions.answer_text),
              answered_at = COALESCE(excluded.answered_at, marketing_questions.answered_at),
@@ -529,7 +529,7 @@ async fn write_question(
 async fn read_questions(on: &Connection) -> Result<Vec<Question>, QuestionError> {
     let mut rows = on
         .query(
-            "SELECT id, ml_question_id, ml_item_id, text, status, asked_at, answer_text,
+            "SELECT id, channel_question_id, channel_item_id, text, status, asked_at, answer_text,
                     answered_at, sent_text, sent_at
              FROM marketing_questions WHERE deleted_at IS NULL",
             (),

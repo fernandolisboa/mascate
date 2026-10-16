@@ -1,12 +1,14 @@
-//! Promoções (#26): the owner's Promotions on Mercado Livre, a listing's
-//! own price discount, a campaign of theirs and a coupon, with the margin
-//! guard that refuses any that would leave a sale below the minimum margin
-//! and shows the calculation. Creating one needs the Reputation that
-//! unlocks Promotions (from Marketing); each is checked, shown and sent
-//! only once the owner confirms it. The active ones are listed by listing,
-//! with their last day and the margin left in the worst case. Read hourly
-//! after an Order Sync and on this screen's button. The rules live in
-//! Commerce (ADR 0024).
+//! Promoções (#26, #136): the owner's Promotions on each Sales Channel, one
+//! channel at a time. On Mercado Livre a listing's own price discount, a
+//! campaign of theirs and a coupon; on Shopee the shop's discounts; Amazon
+//! and Magalu offer sellers none by their APIs, and the screen says so.
+//! The margin guard refuses any that would leave a sale below the minimum
+//! margin and shows the calculation. Creating one on Mercado Livre needs
+//! the Reputation that unlocks Promotions (from Marketing); each is
+//! checked, shown and sent only once the owner confirms it. The active ones
+//! are listed by listing, with their last day and the margin left in the
+//! worst case. Read hourly after an Order Sync and on this screen's button.
+//! The rules live in Commerce (ADR 0024).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,9 +27,9 @@ use mascate_catalog::Product;
 use mascate_commerce::{
     CouponDiscount, CouponTerms, DiscountPlan, Listing, ListingStatus, Offer, Promotion,
     PromotionCheck, PromotionError, PromotionKind, PromotionPlan, PromotionRequest,
-    PromotionStatus, PromotionSync, Promotions,
+    PromotionStatus, PromotionSync, Promotions, promotion_kinds,
 };
-use mascate_integrations::{Connection, ConnectionState};
+use mascate_integrations::ConnectionState;
 use mascate_kernel::{
     Currency, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp, channel_day,
     parse_amount,
@@ -36,15 +38,14 @@ use mascate_marketing::SellerTool;
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
-use crate::connections::AppConnections;
 use crate::forms::{Choice, Outcome, Picker, day_text, input, notice, parse_day, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::listings::{self, breakdown_line, listings, price_failure};
-use crate::mercado_livre;
 use crate::parts::ScreenParts;
 use crate::pricing;
 use crate::reputation::reputation;
+use crate::sales_channels::{self, ChannelPorts, of_channel, on, opening, to};
 
 /// The app's Promotions; absent when the database did not open.
 pub struct AppPromotions(pub Arc<Promotions>);
@@ -64,10 +65,11 @@ pub struct PromotionSyncs {
 
 impl Global for PromotionSyncs {}
 
-/// Why a Promotion was not checked, sent or read, as the owner reads it.
-/// `listing` is the one being priced, when there is one.
+/// Why a Promotion on `channel` was not checked, sent or read, as the
+/// owner reads it. `listing` is the one being priced, when there is one.
 pub(crate) fn failure(
     error: &PromotionError,
+    channel: SalesChannelKind,
     listing: Option<RecordId>,
     products: &[Product],
 ) -> String {
@@ -77,19 +79,30 @@ pub(crate) fn failure(
             SellerTool::Promotions.requirement()
         ),
         PromotionError::Listing(error) => listings::failure(error),
-        PromotionError::Closed => "O anúncio está encerrado no Mercado Livre.".into(),
+        PromotionError::Closed => format!("O anúncio está encerrado {}.", on(channel)),
         PromotionError::UnknownPromotion(_) | PromotionError::UnknownOffer(_) => {
             "Essa promoção não existe mais; atualize a tela.".into()
         }
-        PromotionError::NotOwn => "Campanhas do Mercado Livre se aceitam e se encerram no próprio \
-             Mercado Livre."
-            .into(),
+        PromotionError::NotOwn => format!(
+            "Campanhas {} se aceitam e se encerram no próprio canal.",
+            of_channel(channel)
+        ),
+        PromotionError::NotOffered { kind, channel } => format!(
+            "{} não oferece {} pela API.",
+            opening(*channel),
+            kind_name(*kind, *channel).to_lowercase()
+        ),
         PromotionError::NoName => "Dê um nome à promoção.".into(),
         PromotionError::EndsBeforeStart => "O último dia vem antes do primeiro.".into(),
         PromotionError::StartsInPast => "O primeiro dia já passou; comece hoje ou depois.".into(),
         PromotionError::AlreadyStarted => {
             "A promoção já começou: o primeiro dia fica como está.".into()
         }
+        PromotionError::OnlyShortens(channel) => format!(
+            "{} só deixa encurtar uma promoção: o primeiro dia pode ficar mais tarde e o último \
+             mais cedo, nunca o contrário.",
+            opening(*channel)
+        ),
         PromotionError::TooLong(days) => format!(
             "Esse tipo de promoção dura no máximo {days} dias, contando o primeiro e o último."
         ),
@@ -104,50 +117,67 @@ pub(crate) fn failure(
         }
         PromotionError::AlreadyIn => "O anúncio já está nessa promoção.".into(),
         PromotionError::BelowMinimum(_) => "A margem ficaria abaixo da mínima.".into(),
-        PromotionError::InvalidMinimum => "A margem mínima vai de 0 até menos de 100%.".into(),
-        PromotionError::Sending => {
-            "Essa promoção já está a caminho do Mercado Livre; aguarde a resposta.".into()
-        }
+        PromotionError::Sending => format!(
+            "Essa promoção já está a caminho {}; aguarde a resposta.",
+            of_channel(channel)
+        ),
         PromotionError::Pricing(error) => match listing {
-            Some(listing) => {
-                price_failure(error, SalesChannelKind::MercadoLivre, listing, products)
-            }
+            Some(listing) => price_failure(error, channel, listing, products),
             None => format!("Não consegui calcular a margem: {error}"),
         },
-        PromotionError::Platform(error) => mercado_livre::failure(error),
+        PromotionError::Platform(error) => sales_channels::failure(channel, error),
         PromotionError::Currencies(_) => "Os valores estão em moedas diferentes.".into(),
-        PromotionError::Unreadable(_) | PromotionError::Sql(_) => {
-            format!("Não consegui ler ou gravar as promoções no banco: {error}")
-        }
+        error => minimum_failure(error),
     }
 }
 
-/// Runs a Sync of the Promotions off the UI thread: when `forced`, or when
-/// the last one is an hour old. `Ok(None)` when the Connection is not up or
-/// nothing was due.
+/// Why the minimum margin, the same on every channel, was not read or
+/// saved.
+pub(crate) fn minimum_failure(error: &PromotionError) -> String {
+    match error {
+        PromotionError::InvalidMinimum => "A margem mínima vai de 0 até menos de 100%.".into(),
+        error => format!("Não consegui ler ou gravar as promoções no banco: {error}"),
+    }
+}
+
+/// Runs a Sync of the Promotions of every connected channel that has them,
+/// off the UI thread: when `forced`, or when its last one is an hour old.
+/// `Ok(None)` when none is connected or nothing was due; one channel
+/// failing leaves the others read.
 pub fn sync_now(cx: &mut App, forced: bool) -> Option<Task<Result<Option<PromotionSync>, String>>> {
-    let (Some(promotions), Some(channel)) = (promotions(cx), mercado_livre::adapter(cx)) else {
-        return None;
-    };
-    let connections = cx.global::<AppConnections>().0.clone();
+    let promotions = promotions(cx)?;
+    let reach = sales_channels::reach(cx).only(|channel| channel.promotions.is_some());
     Some(cx.background_executor().spawn(async move {
-        if connections.state(Connection::MercadoLivre) != ConnectionState::Connected {
-            return Ok(None);
+        let mut read: Option<PromotionSync> = None;
+        let mut failures = Vec::new();
+        for channel in reach.connected().await {
+            let (kind, Some(port)) = (channel.kind(), channel.promotions) else {
+                continue;
+            };
+            let why = |error: PromotionError| failure(&error, kind, None, &[]);
+            let synced = async {
+                if !forced && !promotions.is_due(kind).await? {
+                    return Ok(None);
+                }
+                promotions.sync(port.as_ref()).await.map(Some)
+            }
+            .await;
+            match synced {
+                Ok(Some(report)) => {
+                    let total = read.get_or_insert_with(PromotionSync::default);
+                    total.promotions += report.promotions;
+                    total.offers += report.offers;
+                    total.ended += report.ended;
+                }
+                Ok(None) => {}
+                Err(error) => failures.push(why(error)),
+            }
         }
-        let why = |error: PromotionError| failure(&error, None, &[]);
-        if !forced
-            && !promotions
-                .is_due(SalesChannelKind::MercadoLivre)
-                .await
-                .map_err(why)?
-        {
-            return Ok(None);
+        if failures.is_empty() {
+            Ok(read)
+        } else {
+            Err(failures.join(" "))
         }
-        promotions
-            .sync(channel.as_ref())
-            .await
-            .map(Some)
-            .map_err(why)
     }))
 }
 
@@ -159,12 +189,15 @@ pub fn finished(outcome: &Result<Option<PromotionSync>, String>, cx: &mut App) {
     cx.default_global::<PromotionSyncs>().finished += 1;
 }
 
-pub(crate) fn kind_name(kind: PromotionKind) -> &'static str {
-    match kind {
-        PromotionKind::PriceDiscount => "Desconto no anúncio",
-        PromotionKind::SellerCampaign => "Campanha do vendedor",
-        PromotionKind::Coupon => "Cupom",
-        PromotionKind::ChannelCampaign => "Campanha do Mercado Livre",
+/// What the channel calls the kind: Shopee's campaign of the owner's is
+/// the shop's discount.
+pub(crate) fn kind_name(kind: PromotionKind, channel: SalesChannelKind) -> String {
+    match (kind, channel) {
+        (PromotionKind::PriceDiscount, _) => "Desconto no anúncio".into(),
+        (PromotionKind::SellerCampaign, SalesChannelKind::Shopee) => "Desconto da loja".into(),
+        (PromotionKind::SellerCampaign, _) => "Campanha do vendedor".into(),
+        (PromotionKind::Coupon, _) => "Cupom".into(),
+        (PromotionKind::ChannelCampaign, _) => format!("Campanha {}", of_channel(channel)),
     }
 }
 
@@ -209,7 +242,7 @@ enum Form {
 /// A Promotion checked and waiting for the owner's confirmation.
 struct Pending {
     request: PromotionRequest,
-    /// What goes to Mercado Livre, in words.
+    /// What goes to the channel, in words.
     summary: String,
     listing: Option<RecordId>,
 }
@@ -227,10 +260,15 @@ enum NotPrepared {
 }
 
 impl NotPrepared {
-    fn from(error: PromotionError, listing: Option<RecordId>, products: &[Product]) -> Self {
+    fn from(
+        error: PromotionError,
+        channel: SalesChannelKind,
+        listing: Option<RecordId>,
+        products: &[Product],
+    ) -> Self {
         match error {
             PromotionError::BelowMinimum(check) => NotPrepared::Below(check),
-            error => NotPrepared::Failed(failure(&error, listing, products)),
+            error => NotPrepared::Failed(failure(&error, channel, listing, products)),
         }
     }
 }
@@ -242,17 +280,20 @@ enum Ending {
     Promotion(RecordId),
 }
 
+/// A listing by its channel and the channel's id.
+type ChannelId = (SalesChannelKind, String);
+
 /// Everything the screen shows, read in one go off the UI thread.
 struct Snapshot {
     promotions: Vec<Promotion>,
     offers: Vec<Offer>,
     listings: Vec<Listing>,
-    names: BTreeMap<String, String>,
+    names: BTreeMap<ChannelId, String>,
     products: Vec<Product>,
     minimum: Percentage,
     unlocks: Option<bool>,
-    last_sync: Option<Timestamp>,
-    connection: ConnectionState,
+    last_syncs: BTreeMap<SalesChannelKind, Timestamp>,
+    connections: Vec<(SalesChannelKind, ConnectionState)>,
 }
 
 /// The fields of the form, one per thing a Promotion may need.
@@ -270,20 +311,24 @@ struct Fields {
 }
 
 pub struct PromotionsScreen {
+    /// The Sales Channel shown.
+    channel: SalesChannelKind,
     promotions: Vec<Promotion>,
     offers: Vec<Offer>,
     /// The open listings, one variation each, for the pickers.
     listings: Vec<Listing>,
-    names: BTreeMap<String, String>,
+    names: BTreeMap<ChannelId, String>,
     products: Vec<Product>,
     minimum: Option<Percentage>,
-    /// Whether the Reputation unlocks Promotions; `None` before it is read.
+    /// Whether the Reputation unlocks Mercado Livre's Promotions; `None`
+    /// before it is read.
     unlocks: Option<bool>,
-    last_sync: Option<Timestamp>,
-    connection: Option<ConnectionState>,
-    /// The worst-case margin of each listing in a Promotion, by its id on
-    /// the channel, or why there is none.
-    margins: BTreeMap<String, Result<PromotionCheck, String>>,
+    last_syncs: BTreeMap<SalesChannelKind, Timestamp>,
+    /// Each channel the app knows, with its Connection.
+    connections: Vec<(SalesChannelKind, ConnectionState)>,
+    /// The worst-case margin of each listing in a Promotion, or why there
+    /// is none.
+    margins: BTreeMap<ChannelId, Result<PromotionCheck, String>>,
     fields: Fields,
     form: Option<Form>,
     pending: Option<Pending>,
@@ -314,6 +359,7 @@ impl PromotionsScreen {
             coupon_percent: false,
         };
         let mut screen = Self {
+            channel: SalesChannelKind::MercadoLivre,
             promotions: Vec::new(),
             offers: Vec::new(),
             listings: Vec::new(),
@@ -321,8 +367,8 @@ impl PromotionsScreen {
             products: Vec::new(),
             minimum: None,
             unlocks: None,
-            last_sync: None,
-            connection: None,
+            last_syncs: BTreeMap::new(),
+            connections: Vec::new(),
             margins: BTreeMap::new(),
             fields,
             form: None,
@@ -351,22 +397,43 @@ impl PromotionsScreen {
         ) else {
             return;
         };
-        let connections = cx.global::<AppConnections>().0.clone();
+        let reach = sales_channels::reach(cx);
         self.reads += 1;
         let read = self.reads;
         let reading = cx.background_executor().spawn(async move {
-            let why = |error: PromotionError| failure(&error, None, &[]);
-            let names = listings::listing_products(&listings, &catalog)
-                .await?
-                .into_iter()
-                .map(|(listing, sold)| (listing, sold.name))
-                .collect();
+            let why = |error: PromotionError| minimum_failure(&error);
+            let products = catalog.products().await.map_err(|e| catalog::failure(&e))?;
             let mut open: Vec<Listing> = Vec::new();
-            for listing in listings::mercado_livre_listings(&listings).await? {
+            let mut names = BTreeMap::new();
+            for listing in listings
+                .listings()
+                .await
+                .map_err(|e| listings::failure(&e))?
+            {
+                let key = (listing.channel, listing.listed.id.clone());
+                let product = listing
+                    .product
+                    .and_then(|id| products.iter().find(|product| product.id == id));
+                if let Some(product) = product {
+                    names.insert(key.clone(), product.name.clone());
+                } else {
+                    names
+                        .entry(key.clone())
+                        .or_insert_with(|| listing.listed.title.clone());
+                }
                 if listing.listed.status != ListingStatus::Closed
-                    && !open.iter().any(|kept| kept.listed.id == listing.listed.id)
+                    && !open
+                        .iter()
+                        .any(|kept| (kept.channel, kept.listed.id.clone()) == key)
                 {
                     open.push(listing);
+                }
+            }
+            let connections = reach.states();
+            let mut last_syncs = BTreeMap::new();
+            for (kind, _) in &connections {
+                if let Some(at) = promotions.last_sync(*kind).await.map_err(why)? {
+                    last_syncs.insert(*kind, at);
                 }
             }
             let standing = reputation
@@ -378,7 +445,7 @@ impl PromotionsScreen {
                 offers: promotions.offers().await.map_err(why)?,
                 listings: open,
                 names,
-                products: catalog.products().await.map_err(|e| catalog::failure(&e))?,
+                products,
                 minimum: promotions.minimum_margin().await.map_err(why)?,
                 unlocks: standing.map(|standing| {
                     standing
@@ -386,11 +453,8 @@ impl PromotionsScreen {
                         .iter()
                         .any(|(tool, unlocked)| *tool == SellerTool::Promotions && *unlocked)
                 }),
-                last_sync: promotions
-                    .last_sync(SalesChannelKind::MercadoLivre)
-                    .await
-                    .map_err(why)?,
-                connection: connections.state(Connection::MercadoLivre),
+                last_syncs,
+                connections,
             })
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -410,15 +474,6 @@ impl PromotionsScreen {
     }
 
     fn show(&mut self, snapshot: Snapshot, window: &mut Window, cx: &mut Context<Self>) {
-        let choices = snapshot
-            .listings
-            .iter()
-            .map(|listing| Choice {
-                id: listing.id,
-                title: listing_title(&snapshot.names, &listing.listed.id).into(),
-            })
-            .collect();
-        refill(&self.fields.listing, choices, window, cx);
         self.promotions = snapshot.promotions;
         self.offers = snapshot.offers;
         self.listings = snapshot.listings;
@@ -426,33 +481,74 @@ impl PromotionsScreen {
         self.products = snapshot.products;
         self.minimum = Some(snapshot.minimum);
         self.unlocks = snapshot.unlocks;
-        self.last_sync = snapshot.last_sync;
-        self.connection = Some(snapshot.connection);
+        self.last_syncs = snapshot.last_syncs;
+        self.connections = snapshot.connections;
         self.margins.clear();
+        self.refill_listings(window, cx);
         self.read_margins(cx);
     }
 
-    /// Works out, on Mercado Livre's sale fees, the margin each listing in
-    /// a Promotion keeps at its lowest price.
-    fn read_margins(&mut self, cx: &mut Context<Self>) {
-        let (Some(promotions), Some(channel), Some(catalog), Some(taxes)) = (
-            promotions(cx),
-            mercado_livre::adapter(cx),
-            catalog::catalog(cx),
-            pricing::taxes(cx),
-        ) else {
-            return;
-        };
-        if !self.connected() {
+    /// The picker offers the open listings on the channel shown.
+    fn refill_listings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let choices = self
+            .listings
+            .iter()
+            .filter(|listing| listing.channel == self.channel)
+            .map(|listing| Choice {
+                id: listing.id,
+                title: listing_title(&self.names, listing.channel, &listing.listed.id).into(),
+            })
+            .collect();
+        refill(&self.fields.listing, choices, window, cx);
+    }
+
+    /// Shows the channel `kind`.
+    fn pick_channel(
+        &mut self,
+        kind: SalesChannelKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.channel == kind {
             return;
         }
-        let mut items: Vec<(String, Option<RecordId>)> = Vec::new();
+        self.channel = kind;
+        self.form = None;
+        self.pending = None;
+        self.blocked = None;
+        self.ending = None;
+        self.form_outcome = None;
+        self.refill_listings(window, cx);
+        cx.notify();
+    }
+
+    /// The ports of the channel shown, when the app has its adapter.
+    fn ports(&self, cx: &App) -> Option<ChannelPorts> {
+        sales_channels::of(cx, self.channel)
+    }
+
+    /// The channel shown's Promotions port, when it offers Promotions.
+    fn promotions_port(&self, cx: &App) -> Option<Arc<dyn mascate_commerce::ChannelPromotions>> {
+        self.ports(cx)?.promotions
+    }
+
+    /// Works out, on each connected channel's sale fees, the margin each
+    /// listing in a Promotion keeps at its lowest price.
+    fn read_margins(&mut self, cx: &mut Context<Self>) {
+        let (Some(promotions), Some(catalog), Some(taxes)) =
+            (promotions(cx), catalog::catalog(cx), pricing::taxes(cx))
+        else {
+            return;
+        };
+        let mut items: Vec<(ChannelId, Option<RecordId>, ChannelPorts)> = Vec::new();
         for offer in &self.offers {
-            if !items.iter().any(|(item, _)| *item == offer.listed.listing) {
-                items.push((
-                    offer.listed.listing.clone(),
-                    self.listing_record(&offer.listed.listing),
-                ));
+            let key = (offer.channel, offer.listed.listing.clone());
+            if items.iter().any(|(item, _, _)| *item == key) || !self.connected(offer.channel) {
+                continue;
+            }
+            if let Some(ports) = sales_channels::of(cx, offer.channel) {
+                let record = self.listing_record(offer.channel, &offer.listed.listing);
+                items.push((key, record, ports));
             }
         }
         if items.is_empty() {
@@ -463,12 +559,12 @@ impl PromotionsScreen {
         let working = cx.background_executor().spawn(async move {
             let assumptions = pricing::assumptions(&catalog, &taxes).await?;
             let mut margins = BTreeMap::new();
-            for (item, listing) in items {
+            for (key, listing, ports) in items {
                 let margin = promotions
-                    .margin_of(&item, channel.as_ref(), assumptions)
+                    .margin_of(&key.1, ports.listings.as_ref(), assumptions)
                     .await
-                    .map_err(|error| failure(&error, listing, &products));
-                margins.insert(item, margin);
+                    .map_err(|error| failure(&error, key.0, listing, &products));
+                margins.insert(key, margin);
             }
             Ok::<_, String>(margins)
         });
@@ -488,22 +584,26 @@ impl PromotionsScreen {
         .detach();
     }
 
-    fn listing_record(&self, item: &str) -> Option<RecordId> {
+    fn listing_record(&self, channel: SalesChannelKind, item: &str) -> Option<RecordId> {
         self.listings
             .iter()
-            .find(|listing| listing.listed.id == item)
+            .find(|listing| listing.channel == channel && listing.listed.id == item)
             .map(|listing| listing.id)
     }
 
-    fn connected(&self) -> bool {
-        self.connection == Some(ConnectionState::Connected)
+    fn connected(&self, kind: SalesChannelKind) -> bool {
+        self.connections
+            .iter()
+            .any(|(each, state)| *each == kind && *state == ConnectionState::Connected)
     }
 
+    /// Whether the owner may create Promotions on the channel shown: on
+    /// Mercado Livre only once the Reputation unlocks them.
     fn unlocked(&self) -> bool {
-        self.unlocks == Some(true)
+        self.channel != SalesChannelKind::MercadoLivre || self.unlocks == Some(true)
     }
 
-    /// Reads the Promotions from Mercado Livre now.
+    /// Reads the Promotions from every connected channel now.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let Some(round) = sync_now(cx, true) else {
             return;
@@ -516,9 +616,9 @@ impl PromotionsScreen {
                 this.syncing = false;
                 this.outcome = Some(match &outcome {
                     Ok(Some(report)) => Outcome::Done(synced_text(report).into()),
-                    Ok(None) => {
-                        Outcome::Failed(mercado_livre::failure(&PlatformError::NotConnected).into())
-                    }
+                    Ok(None) => Outcome::Failed(
+                        sales_channels::failure(this.channel, &PlatformError::NotConnected).into(),
+                    ),
                     Err(error) => Outcome::Failed(error.clone().into()),
                 });
                 finished(&outcome, cx);
@@ -583,7 +683,7 @@ impl PromotionsScreen {
     }
 
     fn name_of(&self, listing: &Listing) -> String {
-        listing_title(&self.names, &listing.listed.id)
+        listing_title(&self.names, listing.channel, &listing.listed.id)
     }
 
     fn fail_form(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -592,17 +692,19 @@ impl PromotionsScreen {
     }
 
     /// Checks what the form holds: the days, the price, the coupon and the
-    /// margin it leaves. Nothing goes to Mercado Livre yet.
+    /// margin it leaves. Nothing goes to the channel yet.
     fn check(&mut self, cx: &mut Context<Self>) {
-        let (Some(form), Some(promotions), Some(channel), Some(catalog), Some(taxes)) = (
+        let (Some(form), Some(promotions), Some(ports), Some(catalog), Some(taxes)) = (
             self.form,
             promotions(cx),
-            mercado_livre::adapter(cx),
+            self.ports(cx),
             catalog::catalog(cx),
             pricing::taxes(cx),
         ) else {
             return;
         };
+        let on_channel = self.channel;
+        let channel = ports.listings;
         let value = |field: &Entity<InputState>| field.read(cx).value().to_string();
         let (Some(starts), Some(ends)) = (
             parse_day(&value(&self.fields.starts)),
@@ -646,7 +748,9 @@ impl PromotionsScreen {
                         promotions
                             .prepare_discount(plan, unlocks, channel.as_ref(), assumptions)
                             .await
-                            .map_err(|error| NotPrepared::from(error, Some(id), &products))
+                            .map_err(|error| {
+                                NotPrepared::from(error, on_channel, Some(id), &products)
+                            })
                     }),
                     summary,
                     Some(id),
@@ -674,8 +778,9 @@ impl PromotionsScreen {
                         coupon_text(terms)
                     ),
                     None => format!(
-                        "Campanha “{name}”, de {days}. Os anúncios entram nela depois, cada um \
-                         com seu preço e a margem conferida."
+                        "{} “{name}”, de {days}. Os anúncios entram depois, cada um com seu \
+                         preço e a margem conferida.",
+                        kind_name(kind, on_channel)
                     ),
                 };
                 let plan = PromotionPlan {
@@ -686,21 +791,21 @@ impl PromotionsScreen {
                     coupon,
                 };
                 let prepared = promotions
-                    .prepare_promotion(plan, unlocks)
-                    .map_err(|error| NotPrepared::from(error, None, &products));
+                    .prepare_promotion(on_channel, plan, unlocks)
+                    .map_err(|error| NotPrepared::from(error, on_channel, None, &products));
                 (Task::ready(prepared), summary, None)
             }
             Form::Edit(id) => {
-                let kind = self
-                    .promotion(id)
-                    .map_or("Promoção", |promotion| kind_name(promotion.listed.kind));
+                let kind = self.promotion(id).map_or("Promoção".into(), |promotion| {
+                    kind_name(promotion.listed.kind, on_channel)
+                });
                 let summary = format!("{kind} “{name}” passa a valer de {days}.");
                 (
                     cx.background_executor().spawn(async move {
                         promotions
                             .prepare_change(id, &name, starts, ends)
                             .await
-                            .map_err(|error| NotPrepared::from(error, None, &products))
+                            .map_err(|error| NotPrepared::from(error, on_channel, None, &products))
                     }),
                     summary,
                     None,
@@ -715,12 +820,13 @@ impl PromotionsScreen {
                 };
                 let (price, summary) = if promotion.listed.kind == PromotionKind::SellerCampaign {
                     let Some(price) = parse_amount(&value(&self.fields.price)) else {
-                        return self.fail_form("Digite o preço na campanha, como 89,90.", cx);
+                        return self.fail_form("Digite o preço na promoção, como 89,90.", cx);
                     };
                     let price = Money::new(price, listing.listed.price.currency());
                     let summary = format!(
-                        "{} entra na campanha “{}”: de {} por {}.",
+                        "{} entra {} “{}”: de {} por {}.",
                         self.name_of(listing),
+                        in_campaign(on_channel),
                         promotion.listed.name,
                         listing.listed.price.to_pt_br(),
                         price.to_pt_br()
@@ -750,7 +856,9 @@ impl PromotionsScreen {
                                 assumptions,
                             )
                             .await
-                            .map_err(|error| NotPrepared::from(error, Some(listing), &products))
+                            .map_err(|error| {
+                                NotPrepared::from(error, on_channel, Some(listing), &products)
+                            })
                     }),
                     summary,
                     Some(listing),
@@ -820,10 +928,11 @@ impl PromotionsScreen {
         let (Some(pending), Some(promotions), Some(channel)) = (
             self.pending.as_ref(),
             promotions(cx),
-            mercado_livre::adapter(cx),
+            self.promotions_port(cx),
         ) else {
             return;
         };
+        let kind = pending.request.channel();
         let confirmed = pending.request.clone().confirm();
         let summary = pending.summary.clone();
         let listing = pending.listing;
@@ -841,13 +950,13 @@ impl PromotionsScreen {
                         this.form = None;
                         this.pending = None;
                         this.outcome = Some(Outcome::Done(
-                            format!("Enviado ao Mercado Livre. {summary}").into(),
+                            format!("Enviado {}. {summary}", to(kind)).into(),
                         ));
                         cx.default_global::<PromotionSyncs>().finished += 1;
                     }
                     Err(error) => {
                         this.form_outcome = Some(Outcome::Failed(
-                            failure(&error, listing, &this.products).into(),
+                            failure(&error, kind, listing, &this.products).into(),
                         ))
                     }
                 }
@@ -866,9 +975,10 @@ impl PromotionsScreen {
     /// Ends a Promotion or takes a listing out of one: only ever on the
     /// owner's confirmed click.
     fn end(&mut self, ending: Ending, cx: &mut Context<Self>) {
-        let (Some(promotions), Some(channel)) = (promotions(cx), mercado_livre::adapter(cx)) else {
+        let (Some(promotions), Some(channel)) = (promotions(cx), self.promotions_port(cx)) else {
             return;
         };
+        let kind = self.channel;
         self.busy = true;
         self.outcome = None;
         let ending_it = cx.background_executor().spawn(async move {
@@ -887,9 +997,11 @@ impl PromotionsScreen {
                 this.outcome = Some(match ended {
                     Ok(()) => {
                         cx.default_global::<PromotionSyncs>().finished += 1;
-                        Outcome::Done("Encerrada no Mercado Livre.".into())
+                        Outcome::Done(format!("Encerrada {}.", on(kind)).into())
                     }
-                    Err(error) => Outcome::Failed(failure(&error, None, &this.products).into()),
+                    Err(error) => {
+                        Outcome::Failed(failure(&error, kind, None, &this.products).into())
+                    }
                 });
                 cx.notify();
             });
@@ -898,10 +1010,37 @@ impl PromotionsScreen {
         cx.notify();
     }
 
+    /// A chip for each Sales Channel the app knows.
+    fn render_channels(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chips = self
+            .connections
+            .iter()
+            .enumerate()
+            .map(|(index, (kind, _))| {
+                let kind = *kind;
+                let button = Button::new(("promotion-channel", index))
+                    .label(kind.name())
+                    .small()
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.pick_channel(kind, window, cx)),
+                    );
+                if kind == self.channel {
+                    button.primary()
+                } else {
+                    button.outline()
+                }
+            });
+        h_flex()
+            .flex_wrap()
+            .gap_1()
+            .children(chips)
+            .into_any_element()
+    }
+
     fn render_sync(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let when = match self.last_sync {
-            Some(at) => format!("Lidas em {}", catalog::day_and_time(at)),
+        let when = match self.last_syncs.get(&self.channel) {
+            Some(at) => format!("Lidas em {}", catalog::day_and_time(*at)),
             None => "Promoções ainda não lidas.".into(),
         };
         h_flex()
@@ -915,7 +1054,7 @@ impl PromotionsScreen {
                     .primary()
                     .small()
                     .loading(self.syncing)
-                    .disabled(self.syncing || !self.connected())
+                    .disabled(self.syncing || !self.connected(self.channel))
                     .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
             )
             .into_any_element()
@@ -924,15 +1063,11 @@ impl PromotionsScreen {
     fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let unlocked = self.unlocked();
-        let kinds = [
-            PromotionKind::PriceDiscount,
-            PromotionKind::SellerCampaign,
-            PromotionKind::Coupon,
-        ];
-        let buttons = kinds.into_iter().map(|kind| {
+        let channel = self.channel;
+        let buttons = promotion_kinds(channel).iter().map(|&kind| {
             let open = self.form == Some(Form::New(kind));
             let button = Button::new(SharedString::from(format!("new-{kind:?}")))
-                .label(kind_name(kind))
+                .label(kind_name(kind, channel))
                 .icon(IconName::Plus)
                 .small()
                 .disabled(!unlocked || self.busy)
@@ -946,6 +1081,7 @@ impl PromotionsScreen {
             }
         });
         let gate = match self.unlocks {
+            _ if channel != SalesChannelKind::MercadoLivre => None,
             Some(true) => None,
             Some(false) => Some(format!(
                 "Criar promoções pede {}; sua reputação ainda não chegou lá. Veja em Reputação; \
@@ -1004,11 +1140,12 @@ impl PromotionsScreen {
             Form::Edit(_) => None,
             Form::Join(id) => self.promotion(id).map(|promotion| promotion.listed.kind),
         };
+        let channel = self.channel;
         let max_days = match form {
-            Form::New(kind) => kind.max_days(),
+            Form::New(kind) => kind.max_days(channel),
             Form::Edit(id) => self
                 .promotion(id)
-                .and_then(|promotion| promotion.listed.kind.max_days()),
+                .and_then(|promotion| promotion.listed.kind.max_days(channel)),
             Form::Join(_) => None,
         };
         let mut row = h_flex().flex_wrap().gap_3().items_end();
@@ -1029,7 +1166,7 @@ impl PromotionsScreen {
             Form::Join(_) => {
                 row = row.child(listing_field());
                 if kind == Some(PromotionKind::SellerCampaign) {
-                    row = row.child(field("Preço na campanha (R$)", &fields.price, 190.));
+                    row = row.child(field("Preço na promoção (R$)", &fields.price, 190.));
                 }
             }
         }
@@ -1080,10 +1217,18 @@ impl PromotionsScreen {
                 .child(field("Orçamento (R$)", &fields.coupon_budget, 140.))
         });
         let rule = max_days.map(|days| {
-            format!(
-                "Até {days} dias, contando o primeiro e o último, em dias de Brasília. Nada vai ao \
-                 Mercado Livre antes de você conferir e confirmar."
-            )
+            let mut rule = format!(
+                "Até {days} dias, contando o primeiro e o último, em dias de Brasília. Nada vai {} \
+                 antes de você conferir e confirmar.",
+                to(channel)
+            );
+            if channel == SalesChannelKind::Shopee {
+                rule.push_str(
+                    " A Shopee começa um desconto pelo menos uma hora depois de criado, e depois só \
+                     deixa encurtá-lo.",
+                );
+            }
+            rule
         });
         let buttons = h_flex()
             .gap_2()
@@ -1168,7 +1313,10 @@ impl PromotionsScreen {
                     .gap_2()
                     .child(
                         Button::new("send-promotion")
-                            .label("Confirmar e enviar ao ML")
+                            .label(format!(
+                                "Confirmar e enviar {}",
+                                to(pending.request.channel())
+                            ))
                             .icon(IconName::Check)
                             .primary()
                             .small()
@@ -1255,7 +1403,7 @@ impl PromotionsScreen {
                 div()
                     .text_sm()
                     .text_color(t.danger)
-                    .child("Encerrar no Mercado Livre agora?"),
+                    .child(format!("Encerrar {} agora?", on(self.channel))),
             )
             .child(
                 Button::new("confirm-end")
@@ -1281,24 +1429,36 @@ impl PromotionsScreen {
 
     fn render_promotions(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let body = if self.promotions.is_empty() {
+        let shown: Vec<(usize, &Promotion)> = self
+            .promotions
+            .iter()
+            .enumerate()
+            .filter(|(_, promotion)| promotion.channel == self.channel)
+            .collect();
+        let title = match self.channel {
+            SalesChannelKind::Shopee => "Descontos da loja",
+            _ => "Campanhas e cupons",
+        };
+        let body = if shown.is_empty() {
             muted(
-                "Nenhuma campanha ou cupom seu em andamento ou agendado. Crie acima; os que você \
-                 criar no Mercado Livre aparecem depois de Atualizar.",
+                format!(
+                    "Nenhuma promoção sua em andamento ou agendada. Crie acima; as que você criar \
+                     {} aparecem depois de Atualizar.",
+                    on(self.channel)
+                ),
                 &t,
             )
         } else {
             v_flex()
                 .gap_2()
                 .children(
-                    self.promotions
-                        .iter()
-                        .enumerate()
+                    shown
+                        .into_iter()
                         .map(|(index, promotion)| self.render_promotion(index, promotion, cx)),
                 )
                 .into_any_element()
         };
-        section("Campanhas e cupons", body, &t)
+        section(title, body, &t)
     }
 
     fn render_promotion(
@@ -1313,7 +1473,10 @@ impl PromotionsScreen {
         let listings = self
             .offers
             .iter()
-            .filter(|offer| offer.listed.promotion.as_deref() == Some(listed.id.as_str()))
+            .filter(|offer| {
+                offer.channel == promotion.channel
+                    && offer.listed.promotion.as_deref() == Some(listed.id.as_str())
+            })
             .count();
         let mut facts = vec![days_text(listed.starts, listed.ends)];
         if let Some(terms) = &listed.coupon {
@@ -1369,7 +1532,11 @@ impl PromotionsScreen {
                 h_flex()
                     .gap_3()
                     .items_center()
-                    .child(kit::tag(kind_name(listed.kind), t.accent_text, cx))
+                    .child(kit::tag(
+                        kind_name(listed.kind, promotion.channel),
+                        t.accent_text,
+                        cx,
+                    ))
                     .child(
                         v_flex()
                             .flex_1()
@@ -1398,6 +1565,9 @@ impl PromotionsScreen {
         let t = look(cx).tokens;
         let mut by_listing: Vec<(&str, Vec<(usize, &Offer)>)> = Vec::new();
         for (index, offer) in self.offers.iter().enumerate() {
+            if offer.channel != self.channel {
+                continue;
+            }
             let item = offer.listed.listing.as_str();
             match by_listing.iter_mut().find(|(each, _)| *each == item) {
                 Some((_, offers)) => offers.push((index, offer)),
@@ -1426,7 +1596,8 @@ impl PromotionsScreen {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
-        let (margin, ink) = match self.margins.get(item) {
+        let channel = self.channel;
+        let (margin, ink) = match self.margins.get(&(channel, item.to_owned())) {
             Some(Ok(check)) => {
                 let sale = &check.margin.breakdown;
                 let passes = check.margin.passes();
@@ -1447,9 +1618,12 @@ impl PromotionsScreen {
                 )
             }
             Some(Err(error)) => (format!("Sem margem: {error}"), t.text2),
-            None if self.connected() => ("Calculando a margem…".into(), t.text2),
+            None if self.connected(channel) => ("Calculando a margem…".into(), t.text2),
             None => (
-                "A margem é calculada com a tarifa do Mercado Livre; conecte a conta.".into(),
+                format!(
+                    "A margem é calculada com a tarifa {}; conecte a conta.",
+                    of_channel(channel)
+                ),
                 t.text2,
             ),
         };
@@ -1471,7 +1645,7 @@ impl PromotionsScreen {
                     .pl_3()
                     .border_l_2()
                     .border_color(t.border)
-                    .child(kit::tag(kind_name(listed.kind), t.accent_text, cx))
+                    .child(kit::tag(kind_name(listed.kind, channel), t.accent_text, cx))
                     .child(div().flex_1().min_w_0().text_sm().truncate().child(
                         if facts.is_empty() {
                             listed.name.clone()
@@ -1498,7 +1672,7 @@ impl PromotionsScreen {
                         div()
                             .text_xs()
                             .text_color(t.text2)
-                            .child("no Mercado Livre")
+                            .child(on(channel))
                             .into_any_element()
                     })
                     .into_any_element()
@@ -1519,12 +1693,11 @@ impl PromotionsScreen {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(
-                        div()
-                            .font_medium()
-                            .truncate()
-                            .child(listing_title(&self.names, item)),
-                    )
+                    .child(div().font_medium().truncate().child(listing_title(
+                        &self.names,
+                        channel,
+                        item,
+                    )))
                     .child(div().text_xs().text_color(ink).child(margin)),
             )
             .children(rows)
@@ -1542,20 +1715,34 @@ impl Render for PromotionsScreen {
                 .push(kit::error_notice(NO_DATABASE, cx).into_any_element());
             return layout::screen(parts, cx);
         }
-        parts.actions.push(self.render_sync(cx));
-        if let Some(state) = &self.connection
-            && *state != ConnectionState::Connected
+        let offered = !promotion_kinds(self.channel).is_empty();
+        if offered {
+            parts.actions.push(self.render_sync(cx));
+        }
+        if let Some((kind, state)) = self
+            .connections
+            .iter()
+            .find(|(kind, _)| *kind == self.channel)
+            .filter(|(_, state)| offered && *state != ConnectionState::Connected)
         {
-            parts
-                .notices
-                .push(kit::info_notice(mercado_livre::not_connected(state), cx).into_any_element());
+            parts.notices.push(
+                kit::info_notice(sales_channels::not_connected(*kind, state), cx)
+                    .into_any_element(),
+            );
         }
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        parts.content.push(self.render_new(cx));
-        parts.content.push(self.render_promotions(cx));
-        parts.content.push(self.render_offers(cx));
+        parts.content.push(self.render_channels(cx));
+        if offered {
+            parts.content.push(self.render_new(cx));
+            parts.content.push(self.render_promotions(cx));
+            parts.content.push(self.render_offers(cx));
+        } else {
+            parts
+                .content
+                .push(kit::info_notice(no_promotions(self.channel), cx).into_any_element());
+        }
         layout::screen(parts, cx)
     }
 }
@@ -1576,11 +1763,35 @@ fn synced_text(report: &PromotionSync) -> String {
 }
 
 /// "Fone Bluetooth · MLB4100000001".
-fn listing_title(names: &BTreeMap<String, String>, item: &str) -> String {
-    match names.get(item) {
+fn listing_title(
+    names: &BTreeMap<ChannelId, String>,
+    channel: SalesChannelKind,
+    item: &str,
+) -> String {
+    match names.get(&(channel, item.to_owned())) {
         Some(name) => format!("{name} · {item}"),
         None => format!("Anúncio {item}"),
     }
+}
+
+/// "na campanha", "no desconto": where a listing goes in a campaign of the
+/// owner's.
+fn in_campaign(channel: SalesChannelKind) -> &'static str {
+    match channel {
+        SalesChannelKind::Shopee => "no desconto",
+        _ => "na campanha",
+    }
+}
+
+/// Why the channel shows no Promotions, and where the owner runs them.
+fn no_promotions(channel: SalesChannelKind) -> String {
+    format!(
+        "{} não oferece promoções de vendedor pela API: crie cupons e ofertas no painel {} se \
+         quiser. Os preços dos seus anúncios lá seguem conferidos pela margem em Anúncios e \
+         Preços.",
+        opening(channel),
+        of_channel(channel)
+    )
 }
 
 fn status_ink(status: PromotionStatus, t: &Tokens) -> gpui_kit::Hsla {
@@ -1650,8 +1861,31 @@ mod tests {
 
     #[test]
     fn a_listing_reads_by_its_product_and_id() {
-        let names = BTreeMap::from([("MLB1".to_owned(), "Fone".to_owned())]);
-        assert_eq!(listing_title(&names, "MLB1"), "Fone · MLB1");
-        assert_eq!(listing_title(&names, "MLB2"), "Anúncio MLB2");
+        let ml = SalesChannelKind::MercadoLivre;
+        let names = BTreeMap::from([((ml, "MLB1".to_owned()), "Fone".to_owned())]);
+        assert_eq!(listing_title(&names, ml, "MLB1"), "Fone · MLB1");
+        assert_eq!(listing_title(&names, ml, "MLB2"), "Anúncio MLB2");
+        assert_eq!(
+            listing_title(&names, SalesChannelKind::Shopee, "MLB1"),
+            "Anúncio MLB1"
+        );
+    }
+
+    #[test]
+    fn each_channel_names_its_promotions_in_its_own_words() {
+        assert_eq!(
+            kind_name(PromotionKind::SellerCampaign, SalesChannelKind::Shopee),
+            "Desconto da loja"
+        );
+        assert_eq!(
+            kind_name(PromotionKind::ChannelCampaign, SalesChannelKind::Shopee),
+            "Campanha da Shopee"
+        );
+        assert_eq!(
+            no_promotions(SalesChannelKind::Magalu),
+            "A Magalu não oferece promoções de vendedor pela API: crie cupons e ofertas no \
+             painel da Magalu se quiser. Os preços dos seus anúncios lá seguem conferidos pela \
+             margem em Anúncios e Preços."
+        );
     }
 }

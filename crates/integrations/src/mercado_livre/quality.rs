@@ -2,8 +2,10 @@
 //! pending actions of `/item/{id}/performance`, which replaced `/health`,
 //! and the visits of `/items/{id}/visits/time_window`.
 
-use mascate_kernel::{PlatformError, mercado_livre_link};
-use mascate_marketing::{ActionKind, ChannelQuality, QualityAction, QualityLevel, QualitySource};
+use mascate_kernel::{PlatformError, SalesChannelKind, mercado_livre_link};
+use mascate_marketing::{
+    ActionKind, ChannelQuality, QualityAction, QualityLevel, QualitySource, Score,
+};
 use rust_decimal::prelude::ToPrimitive;
 
 use super::MercadoLivre;
@@ -14,6 +16,10 @@ use super::sales_channel::path_id;
 const FIX_LABEL: &str = "Corrigir no Mercado Livre";
 
 impl QualitySource for MercadoLivre {
+    fn rated_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
+    }
+
     /// Mercado Livre answers 404 while it has not worked the quality out.
     fn quality(&self, listing: &str) -> Result<Option<ChannelQuality>, PlatformError> {
         let path = format!("/item/{}/performance", path_id(listing)?);
@@ -40,18 +46,20 @@ impl QualitySource for MercadoLivre {
             })
             .collect();
         Ok(Some(ChannelQuality {
-            score,
-            level: level(&answer, score),
+            score: Some(Score {
+                points: score,
+                level: level(&answer, score),
+            }),
             pending,
         }))
     }
 
-    fn visits(&self, listing: &str, days: u32) -> Result<u32, PlatformError> {
+    fn visits(&self, listing: &str, days: u32) -> Result<Option<u32>, PlatformError> {
         let answer: VisitsAnswer = self.get(
             &format!("/items/{}/visits/time_window", path_id(listing)?),
             &[("last", &days.to_string()), ("unit", "day")],
         )?;
-        Ok(answer.total_visits)
+        Ok(Some(answer.total_visits))
     }
 }
 

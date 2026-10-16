@@ -12,12 +12,13 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Window, div, px};
 use mascate_commerce::{
-    ChannelBilling, ChannelOrders, ChannelPayments, ChannelPriceAutomation, ChannelRanking,
-    ChannelShipments, FeaturedOfferPrices, ListingPublisher, RepricingPort, SalesChannel,
-    ShippingLabels,
+    ChannelBilling, ChannelOrders, ChannelPayments, ChannelPriceAutomation, ChannelPromotions,
+    ChannelRanking, ChannelShipments, FeaturedOfferPrices, ListingPublisher, RepricingPort,
+    SalesChannel, ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
+use mascate_marketing::QualitySource;
 
 use crate::appearance::look;
 use crate::connections::AppConnections;
@@ -41,6 +42,10 @@ pub struct ChannelPorts {
     /// How the channel reprices; absent where it tells no competitor's
     /// price.
     pub repricing: Option<ChannelRepricing>,
+    /// What the channel says to fix in each listing (#23, #136).
+    pub quality: Option<Arc<dyn QualitySource>>,
+    /// The owner's Promotions; absent where the channel offers none.
+    pub promotions: Option<Arc<dyn ChannelPromotions>>,
 }
 
 /// The port a Sales Channel reprices through (#135).
@@ -103,6 +108,12 @@ pub fn reach(cx: &App) -> Reach {
 }
 
 impl Reach {
+    /// The same, with only the channels that offer what `has` asks for.
+    pub fn only(mut self, has: impl Fn(&ChannelPorts) -> bool) -> Self {
+        self.channels.retain(|channel| has(channel));
+        self
+    }
+
     /// Each channel's Connection state, in the order the app lists them.
     pub fn states(&self) -> Vec<(SalesChannelKind, ConnectionState)> {
         self.channels

@@ -15,6 +15,7 @@ mod billing;
 mod featured_offers;
 mod orders;
 mod publisher;
+mod quality;
 mod sales_channel;
 mod shipments;
 mod tokens;

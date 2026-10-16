@@ -1,9 +1,11 @@
-//! Promotions (#26): the owner's own discounts, campaigns and coupons on the
-//! Sales Channel, created, changed and ended from the app, and the margin
-//! each listing keeps while they run. A Promotion that would leave a sale
-//! below the minimum margin is refused before anything reaches the channel,
-//! and creating one waits for the Reputation the channel asks for, which
-//! the caller reads from marketing (ADR 0024).
+//! Promotions (#26, #136): the owner's own discounts, campaigns and coupons
+//! on each Sales Channel that offers them, created, changed and ended from
+//! the app, and the margin each listing keeps while they run. Mercado Livre
+//! offers all three; Shopee its discounts, which work as a campaign; Amazon
+//! and Magalu none through the API this app uses (ADR 0033). A Promotion
+//! that would leave a sale below the minimum margin is refused before
+//! anything reaches the channel, and creating one waits for the Reputation
+//! the channel asks for, which the caller reads from marketing (ADR 0024).
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -131,19 +133,37 @@ impl PromotionKind {
         Self::ALL.into_iter().find(|kind| kind.code() == code)
     }
 
-    /// The most days it may run, its first and last included: 14 for a
-    /// discount or campaign, 31 for a coupon.
-    pub fn max_days(self) -> Option<i64> {
-        match self {
-            PromotionKind::PriceDiscount | PromotionKind::SellerCampaign => Some(14),
-            PromotionKind::Coupon => Some(31),
-            PromotionKind::ChannelCampaign => None,
+    /// The most days it may run on `channel`, its first and last included:
+    /// on Mercado Livre 14 for a discount or campaign and 31 for a coupon;
+    /// a Shopee discount runs less than 180 days. `None` where the channel
+    /// does not offer it.
+    pub fn max_days(self, channel: SalesChannelKind) -> Option<i64> {
+        if !promotion_kinds(channel).contains(&self) {
+            return None;
+        }
+        match (channel, self) {
+            (SalesChannelKind::Shopee, _) => Some(179),
+            (_, PromotionKind::Coupon) => Some(31),
+            _ => Some(14),
         }
     }
 
     /// Whether the owner creates, changes and ends it from the app.
     pub fn is_own(self) -> bool {
         self != PromotionKind::ChannelCampaign
+    }
+}
+
+/// The kinds of Promotion the owner creates on `channel` through its API.
+pub fn promotion_kinds(channel: SalesChannelKind) -> &'static [PromotionKind] {
+    match channel {
+        SalesChannelKind::MercadoLivre => &[
+            PromotionKind::PriceDiscount,
+            PromotionKind::SellerCampaign,
+            PromotionKind::Coupon,
+        ],
+        SalesChannelKind::Shopee => &[PromotionKind::SellerCampaign],
+        SalesChannelKind::Amazon | SalesChannelKind::Magalu => &[],
     }
 }
 
@@ -399,6 +419,11 @@ pub enum PromotionError {
     UnknownOffer(RecordId),
     #[error("the channel's own campaigns are joined and left on the channel")]
     NotOwn,
+    #[error("{} offers no {kind:?} through its API", .channel.name())]
+    NotOffered {
+        kind: PromotionKind,
+        channel: SalesChannelKind,
+    },
     #[error("a Promotion needs a name")]
     NoName,
     #[error("the last day comes before the first")]
@@ -407,6 +432,8 @@ pub enum PromotionError {
     StartsInPast,
     #[error("a Promotion that started keeps its first day")]
     AlreadyStarted,
+    #[error("{} only shortens a Promotion: its first day later, its last earlier", .0.name())]
+    OnlyShortens(SalesChannelKind),
     #[error("this kind of Promotion runs at most {0} days")]
     TooLong(i64),
     #[error("a Promotion's price is above zero and below the listed price")]
@@ -475,6 +502,7 @@ enum Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "a Promotion does nothing until confirmed and passed to Promotions::send"]
 pub struct PromotionRequest {
+    channel: SalesChannelKind,
     action: Action,
     check: Option<PromotionCheck>,
 }
@@ -486,9 +514,15 @@ impl PromotionRequest {
         self.check.as_ref()
     }
 
+    /// The channel it goes to.
+    pub fn channel(&self) -> SalesChannelKind {
+        self.channel
+    }
+
     /// The owner read what goes to the channel and confirmed it.
     pub fn confirm(self) -> ConfirmedPromotion {
         ConfirmedPromotion {
+            channel: self.channel,
             action: self.action,
         }
     }
@@ -497,6 +531,7 @@ impl PromotionRequest {
 /// A Promotion the owner confirmed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmedPromotion {
+    channel: SalesChannelKind,
     action: Action,
 }
 
@@ -692,18 +727,18 @@ impl Promotions {
         channel: &dyn SalesChannel,
         assumptions: PriceAssumptions,
     ) -> Result<PromotionRequest, PromotionError> {
+        let on = channel.sales_channel();
+        offered(PromotionKind::PriceDiscount, on)?;
         if !reputation_unlocks {
             return Err(PromotionError::Locked);
         }
-        let listing = self
-            .listings
-            .listing_on(plan.listing, channel.sales_channel())
-            .await?;
+        let listing = self.listings.listing_on(plan.listing, on).await?;
         if listing.listed.status == ListingStatus::Closed {
             return Err(PromotionError::Closed);
         }
         check_days(
             PromotionKind::PriceDiscount,
+            on,
             (plan.starts, plan.ends),
             self.today(),
             None,
@@ -723,6 +758,7 @@ impl Promotions {
             .await
             .and_then(holding)?;
         Ok(PromotionRequest {
+            channel: on,
             action: Action::Discount {
                 listing: item,
                 price,
@@ -733,18 +769,22 @@ impl Promotions {
         })
     }
 
-    /// Checks a campaign or coupon to create: its name, its days and a
-    /// coupon's terms. Its listings join it afterwards, each guarded.
+    /// Checks a campaign or coupon to create on `channel`: its name, its
+    /// days and a coupon's terms. Its listings join it afterwards, each
+    /// guarded.
     pub fn prepare_promotion(
         &self,
+        channel: SalesChannelKind,
         plan: PromotionPlan,
         reputation_unlocks: bool,
     ) -> Result<PromotionRequest, PromotionError> {
+        offered(plan.kind, channel)?;
         if !reputation_unlocks {
             return Err(PromotionError::Locked);
         }
-        let plan = checked_plan(plan, self.today(), None)?;
+        let plan = checked_plan(plan, channel, self.today(), None)?;
         Ok(PromotionRequest {
+            channel,
             action: Action::Create(plan),
             check: None,
         })
@@ -765,7 +805,8 @@ impl Promotions {
             return Err(PromotionError::Locked);
         }
         let promotion = self.promotion(promotion).await?;
-        let listing = self.listings.listing_on(listing, promotion.channel).await?;
+        let promotion_channel = promotion.channel;
+        let listing = self.listings.listing_on(listing, promotion_channel).await?;
         let promotion = promotion.listed;
         if listing.listed.status == ListingStatus::Closed {
             return Err(PromotionError::Closed);
@@ -795,6 +836,7 @@ impl Promotions {
             .await
             .and_then(holding)?;
         Ok(PromotionRequest {
+            channel: promotion_channel,
             action: Action::Join {
                 listing: item,
                 promotion: promotion.id,
@@ -821,7 +863,16 @@ impl Promotions {
         if name.is_empty() {
             return Err(PromotionError::NoName);
         }
-        check_days(kept.listed.kind, (starts, ends), self.today(), started)?;
+        check_days(
+            kept.listed.kind,
+            kept.channel,
+            (starts, ends),
+            self.today(),
+            started,
+        )?;
+        if only_shortens(kept.channel) && (starts < kept.listed.starts || ends > kept.listed.ends) {
+            return Err(PromotionError::OnlyShortens(kept.channel));
+        }
         let plan = PromotionPlan {
             kind: kept.listed.kind,
             name: name.to_owned(),
@@ -830,6 +881,7 @@ impl Promotions {
             coupon: kept.listed.coupon,
         };
         Ok(PromotionRequest {
+            channel: kept.channel,
             action: Action::Change {
                 promotion,
                 id: kept.listed.id,
@@ -848,6 +900,7 @@ impl Promotions {
         channel: &dyn ChannelPromotions,
         promotion: ConfirmedPromotion,
     ) -> Result<(), PromotionError> {
+        on_channel(promotion.channel, channel)?;
         match promotion.action {
             Action::Discount {
                 listing,
@@ -1195,11 +1248,27 @@ fn discounted(price: Money, listed: Money) -> Result<Money, PromotionError> {
     }
 }
 
+/// Whether `channel` changes a Promotion's days only by moving its first
+/// day later and its last earlier: Shopee's discounts.
+fn only_shortens(channel: SalesChannelKind) -> bool {
+    channel == SalesChannelKind::Shopee
+}
+
+/// Refuses a kind of Promotion `channel` does not offer.
+fn offered(kind: PromotionKind, channel: SalesChannelKind) -> Result<(), PromotionError> {
+    if promotion_kinds(channel).contains(&kind) {
+        Ok(())
+    } else {
+        Err(PromotionError::NotOffered { kind, channel })
+    }
+}
+
 /// A campaign's or coupon's plan, with its name trimmed, once its name,
 /// days and terms hold. `started` is the first day of one already running,
 /// which it keeps.
 fn checked_plan(
     plan: PromotionPlan,
+    channel: SalesChannelKind,
     today: NaiveDate,
     started: Option<NaiveDate>,
 ) -> Result<PromotionPlan, PromotionError> {
@@ -1207,7 +1276,7 @@ fn checked_plan(
     if name.is_empty() {
         return Err(PromotionError::NoName);
     }
-    check_days(plan.kind, (plan.starts, plan.ends), today, started)?;
+    check_days(plan.kind, channel, (plan.starts, plan.ends), today, started)?;
     match (plan.kind, plan.coupon) {
         (PromotionKind::SellerCampaign, None) => {}
         (PromotionKind::Coupon, Some(terms)) => terms.check(terms.minimum_purchase.currency())?,
@@ -1219,14 +1288,15 @@ fn checked_plan(
 
 /// The channel's rules for a Promotion's days: the last on or after the
 /// first, the first not past (unless it already started on it), and no
-/// more days than the kind allows.
+/// more days than the kind allows on the channel.
 fn check_days(
     kind: PromotionKind,
+    channel: SalesChannelKind,
     (starts, ends): (NaiveDate, NaiveDate),
     today: NaiveDate,
     started: Option<NaiveDate>,
 ) -> Result<(), PromotionError> {
-    let max_days = kind.max_days().ok_or(PromotionError::NotOwn)?;
+    let max_days = kind.max_days(channel).ok_or(PromotionError::NotOwn)?;
     if let Some(started) = started
         && starts != started
     {

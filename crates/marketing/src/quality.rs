@@ -1,7 +1,9 @@
-//! Listing Quality (#23): how the Sales Channel rates each of the owner's
+//! Listing Quality (#23, #136): how each Sales Channel rates the owner's
 //! listings and what it says is missing, read in each Sync through a port a
 //! Platform's adapter implements (ADR 0013), and the listings to work on
-//! first, by sales and visits. The listings and their sales come from the
+//! first, by sales and visits. Mercado Livre scores each listing and counts
+//! its visits; Amazon and Shopee only list what is wrong, and Shopee rates
+//! the whole shop as well. The listings and their sales come from the
 //! caller (ADR 0021): Marketing never reads Commerce. The panel only points
 //! and links; any change reaches the channel from the owner's own hands.
 
@@ -10,8 +12,12 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use libsql::{Connection, TransactionBehavior, params};
-use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, Timestamp};
+use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
+
+use crate::performance::{
+    ChannelPerformance, ShopPerformance, read_performances, write_performance,
+};
 
 pub(crate) const CREATE_LISTING_QUALITY: Migration = Migration {
     version: 1,
@@ -127,30 +133,57 @@ pub struct QualityAction {
     pub link: Option<String>,
 }
 
+/// A channel's score of a listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Score {
+    /// From 0 to 100.
+    pub points: u8,
+    pub level: QualityLevel,
+}
+
 /// A listing's quality as the channel last worked it out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelQuality {
-    /// From 0 to 100.
-    pub score: u8,
-    pub level: QualityLevel,
+    /// `None` on a channel that only lists what is wrong.
+    pub score: Option<Score>,
     /// The actions still pending, in the channel's order.
     pub pending: Vec<QualityAction>,
 }
 
-/// How a Sales Channel rates the owner's listings, as a Platform's adapter
-/// reports it. Calls block on the network, so they run off the UI thread.
+/// How a Sales Channel rates the owner's listings and shop, as a
+/// Platform's adapter reports it. Calls block on the network, so they run
+/// off the UI thread.
 pub trait QualitySource: Send + Sync {
+    /// The Sales Channel whose listings it rates.
+    fn rated_channel(&self) -> SalesChannelKind;
+
     /// The quality of the listing `listing` (the channel's id); `None`
     /// while the channel has not worked it out yet.
     fn quality(&self, listing: &str) -> Result<Option<ChannelQuality>, PlatformError>;
 
-    /// The visits the listing had in the last `days` days.
-    fn visits(&self, listing: &str, days: u32) -> Result<u32, PlatformError>;
+    /// The quality of each of `listings`, in their order: one at a time,
+    /// unless the channel answers for all of them at once.
+    fn qualities(&self, listings: &[String]) -> Result<Vec<Option<ChannelQuality>>, PlatformError> {
+        listings
+            .iter()
+            .map(|listing| self.quality(listing))
+            .collect()
+    }
+
+    /// The visits the listing had in the last `days` days; `None` where
+    /// the channel does not tell them.
+    fn visits(&self, listing: &str, days: u32) -> Result<Option<u32>, PlatformError>;
+
+    /// The channel's rating of the whole shop; `None` where it has none.
+    fn performance(&self) -> Result<Option<ChannelPerformance>, PlatformError> {
+        Ok(None)
+    }
 }
 
-/// A listing the owner has in the Sales Channel, as the caller knows it.
+/// A listing the owner has in a Sales Channel, as the caller knows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedItem {
+    pub channel: SalesChannelKind,
     /// The channel's id of the listing; its variations share it.
     pub listing: String,
     pub title: String,
@@ -176,7 +209,8 @@ pub enum Rating {
 pub struct QualityRow {
     pub listing: ListedItem,
     pub rating: Rating,
-    /// Visits in the last [`IMPACT_DAYS`] days, as of the last Sync.
+    /// Visits in the last [`IMPACT_DAYS`] days, as of the last Sync; `None`
+    /// before it, or where the channel does not tell them.
     pub visits: Option<u32>,
     pub checked_at: Option<Timestamp>,
 }
@@ -200,6 +234,9 @@ pub struct QualitySync {
     pub not_rated: usize,
     /// Pending actions, every listing together.
     pub pending: usize,
+    /// The shop's metrics below the channel's target; `None` where the
+    /// channel does not rate the shop.
+    pub below_target: Option<usize>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -242,30 +279,50 @@ impl ListingQuality {
         self.clock.now() - TimeDelta::days(i64::from(IMPACT_DAYS))
     }
 
-    /// Asks the channel for the quality and the visits of each of
-    /// `listings` (the channel's ids, each once), and keeps them by the
-    /// channel's id of the listing and of each rule: the same answers again
-    /// change nothing, and an action the channel no longer reports is done.
-    /// Nothing is kept unless every listing was read.
+    /// Asks the source's channel for the quality and the visits of each of
+    /// `listings` (the channel's ids, each once) and for its rating of the
+    /// shop, and keeps them by the channel and its id of the listing, of
+    /// each rule and of each metric: the same answers again change nothing,
+    /// and an action or metric the channel no longer reports is gone.
+    /// Another channel's stay. Nothing is kept unless everything was read.
     pub async fn sync(
         &self,
         source: &dyn QualitySource,
         listings: &[String],
     ) -> Result<QualitySync, QualityError> {
+        let channel = source.rated_channel();
         let mut seen = HashSet::new();
+        let asked: Vec<String> = listings
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .cloned()
+            .collect();
+        let qualities = source.qualities(&asked)?;
+        if qualities.len() != asked.len() {
+            return Err(PlatformError::Failed(format!(
+                "{} answered for {} of {} listings",
+                channel.name(),
+                qualities.len(),
+                asked.len()
+            ))
+            .into());
+        }
         let mut read = Vec::new();
-        for listing in listings.iter().filter(|id| seen.insert(id.as_str())) {
-            let quality = source.quality(listing)?;
+        for (listing, quality) in asked.iter().zip(qualities) {
             let visits = source.visits(listing, IMPACT_DAYS)?;
             read.push((listing, quality, visits));
         }
+        let performance = source.performance()?;
 
         let now = self.clock.now();
         let connection = self.database.connect_for_transaction().await?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
-        let mut report = QualitySync::default();
+        let mut report = QualitySync {
+            below_target: performance.as_ref().map(ChannelPerformance::below_target),
+            ..QualitySync::default()
+        };
         for (listing, quality, visits) in read {
             report.checked += 1;
             match &quality {
@@ -273,13 +330,28 @@ impl ListingQuality {
                 None => report.not_rated += 1,
             }
             let id = self
-                .write_quality(&transaction, listing, quality.as_ref(), visits, now)
+                .write_quality(
+                    &transaction,
+                    channel,
+                    listing,
+                    quality.as_ref(),
+                    visits,
+                    now,
+                )
                 .await?;
             let pending = quality.map(|quality| quality.pending).unwrap_or_default();
             self.write_actions(&transaction, id, &pending, now).await?;
         }
+        if let Some(performance) = &performance {
+            write_performance(&transaction, self.ids.as_ref(), channel, performance, now).await?;
+        }
         transaction.commit().await?;
         Ok(report)
+    }
+
+    /// Each channel's last rating of the shop, where the channel rates it.
+    pub async fn performances(&self) -> Result<Vec<ShopPerformance>, QualityError> {
+        read_performances(self.database.connection()).await
     }
 
     /// When the quality was last read; `None` before the first Sync.
@@ -298,7 +370,7 @@ impl ListingQuality {
         }
     }
 
-    /// Each of `listings` (the first of each channel id) with its quality,
+    /// Each of `listings` (the first of each channel and id) with its quality,
     /// where to work first on top: the listings with something pending, by
     /// units sold, then visits, then the lowest score; then the ones not
     /// rated yet, and last the ones with nothing pending.
@@ -307,21 +379,23 @@ impl ListingQuality {
         let mut seen = HashSet::new();
         let mut rows: Vec<QualityRow> = listings
             .iter()
-            .filter(|listed| seen.insert(listed.listing.as_str()))
-            .map(|listed| match known.remove(&listed.listing) {
-                Some(stored) => QualityRow {
-                    listing: listed.clone(),
-                    rating: stored.rating,
-                    visits: Some(stored.visits),
-                    checked_at: Some(stored.checked_at),
+            .filter(|listed| seen.insert((listed.channel, listed.listing.as_str())))
+            .map(
+                |listed| match known.remove(&(listed.channel, listed.listing.clone())) {
+                    Some(stored) => QualityRow {
+                        listing: listed.clone(),
+                        rating: stored.rating,
+                        visits: stored.visits,
+                        checked_at: Some(stored.checked_at),
+                    },
+                    None => QualityRow {
+                        listing: listed.clone(),
+                        rating: Rating::NotChecked,
+                        visits: None,
+                        checked_at: None,
+                    },
                 },
-                None => QualityRow {
-                    listing: listed.clone(),
-                    rating: Rating::NotChecked,
-                    visits: None,
-                    checked_at: None,
-                },
-            })
+            )
             .collect();
         rows.sort_by(|a, b| {
             urgency(a)
@@ -334,30 +408,39 @@ impl ListingQuality {
         Ok(rows)
     }
 
-    /// Writes a listing's score, level and visits by the channel's id, and
-    /// returns the row's id.
+    /// Writes a listing's score, level and visits by the channel and its
+    /// id, and returns the row's id.
     async fn write_quality(
         &self,
         on: &Connection,
+        channel: SalesChannelKind,
         listing: &str,
         quality: Option<&ChannelQuality>,
-        visits: u32,
+        visits: Option<u32>,
         now: Timestamp,
     ) -> Result<RecordId, QualityError> {
+        let score = quality.and_then(|quality| quality.score);
+        // Rated with no score: the channel only lists what is wrong.
+        let unscored = quality.is_some() && score.is_none();
         on.execute(
             "INSERT INTO marketing_listing_quality
-                 (id, ml_item_id, score, level, visits, checked_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
-             ON CONFLICT (ml_item_id) WHERE deleted_at IS NULL
+                 (id, sales_channel, channel_item_id, score, level, unscored, visits,
+                  counts_visits, checked_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)
+             ON CONFLICT (sales_channel, channel_item_id) WHERE deleted_at IS NULL
              DO UPDATE SET score = excluded.score, level = excluded.level,
-                 visits = excluded.visits, checked_at = excluded.checked_at,
+                 unscored = excluded.unscored, visits = excluded.visits,
+                 counts_visits = excluded.counts_visits, checked_at = excluded.checked_at,
                  updated_at = excluded.updated_at",
             params![
                 self.ids.next_id().to_string(),
+                channel.code(),
                 listing,
-                quality.map(|quality| u32::from(quality.score)),
-                quality.map(|quality| quality.level.code()),
-                visits,
+                score.map(|score| u32::from(score.points)),
+                score.map(|score| score.level.code()),
+                unscored,
+                visits.unwrap_or(0),
+                visits.is_some(),
                 stored(now)
             ],
         )
@@ -365,8 +448,8 @@ impl ListingQuality {
         let mut rows = on
             .query(
                 "SELECT id FROM marketing_listing_quality
-                 WHERE ml_item_id = ?1 AND deleted_at IS NULL",
-                params![listing],
+                 WHERE sales_channel = ?1 AND channel_item_id = ?2 AND deleted_at IS NULL",
+                params![channel.code(), listing],
             )
             .await?;
         let row = rows
@@ -392,10 +475,10 @@ impl ListingQuality {
             }
             on.execute(
                 "INSERT INTO marketing_quality_actions
-                     (id, quality_id, ml_rule_key, kind, text, label, link, position,
+                     (id, quality_id, channel_rule_key, kind, text, label, link, position,
                       created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT (quality_id, ml_rule_key) WHERE deleted_at IS NULL
+                 ON CONFLICT (quality_id, channel_rule_key) WHERE deleted_at IS NULL
                  DO UPDATE SET kind = excluded.kind, text = excluded.text,
                      label = excluded.label, link = excluded.link,
                      position = excluded.position, updated_at = excluded.updated_at",
@@ -415,7 +498,7 @@ impl ListingQuality {
         }
         let mut rows = on
             .query(
-                "SELECT id, ml_rule_key FROM marketing_quality_actions
+                "SELECT id, channel_rule_key FROM marketing_quality_actions
                  WHERE quality_id = ?1 AND deleted_at IS NULL",
                 params![quality.to_string()],
             )
@@ -450,7 +533,9 @@ fn urgency(row: &QualityRow) -> u8 {
 
 fn score(row: &QualityRow) -> u8 {
     match &row.rating {
-        Rating::Rated(quality) => quality.score,
+        Rating::Rated(ChannelQuality {
+            score: Some(score), ..
+        }) => score.points,
         _ => u8::MAX,
     }
 }
@@ -458,17 +543,19 @@ fn score(row: &QualityRow) -> u8 {
 /// A listing's quality as kept.
 struct Stored {
     rating: Rating,
-    visits: u32,
+    visits: Option<u32>,
     checked_at: Timestamp,
 }
 
-/// Every listing's quality as kept, by the channel's id, with its pending
-/// actions, the problems first.
-async fn read_quality(on: &Connection) -> Result<BTreeMap<String, Stored>, QualityError> {
+/// Every listing's quality as kept, by the channel and its id, with its
+/// pending actions, the problems first.
+async fn read_quality(
+    on: &Connection,
+) -> Result<BTreeMap<(SalesChannelKind, String), Stored>, QualityError> {
     let mut actions: BTreeMap<RecordId, Vec<(ActionKind, i64, QualityAction)>> = BTreeMap::new();
     let mut rows = on
         .query(
-            "SELECT quality_id, ml_rule_key, kind, text, label, link, position
+            "SELECT quality_id, channel_rule_key, kind, text, label, link, position
              FROM marketing_quality_actions WHERE deleted_at IS NULL",
             (),
         )
@@ -492,33 +579,38 @@ async fn read_quality(on: &Connection) -> Result<BTreeMap<String, Stored>, Quali
     let mut known = BTreeMap::new();
     let mut rows = on
         .query(
-            "SELECT id, ml_item_id, score, level, visits, checked_at
+            "SELECT id, sales_channel, channel_item_id, score, level, unscored, visits,
+                 counts_visits, checked_at
              FROM marketing_listing_quality WHERE deleted_at IS NULL",
             (),
         )
         .await?;
     while let Some(row) = rows.next().await? {
         let id = row.id_at(0)?;
-        let rating = match (row.get::<Option<u32>>(2)?, row.get::<Option<String>>(3)?) {
-            (Some(score), Some(level)) => {
-                let mut pending = actions.remove(&id).unwrap_or_default();
-                pending.sort_by_key(|(kind, position, _)| (*kind, *position));
-                Rating::Rated(ChannelQuality {
-                    score: u8::try_from(score)
-                        .map_err(|_| QualityError::Unreadable(score.to_string()))?,
-                    level: QualityLevel::from_code(&level)
-                        .ok_or(QualityError::Unreadable(level))?,
-                    pending: pending.into_iter().map(|(_, _, action)| action).collect(),
-                })
-            }
-            _ => Rating::NotRated,
+        let score = match (row.get::<Option<u32>>(3)?, row.get::<Option<String>>(4)?) {
+            (Some(points), Some(level)) => Some(Score {
+                points: u8::try_from(points)
+                    .map_err(|_| QualityError::Unreadable(points.to_string()))?,
+                level: QualityLevel::from_code(&level).ok_or(QualityError::Unreadable(level))?,
+            }),
+            _ => None,
+        };
+        let rating = if score.is_some() || row.get::<bool>(5)? {
+            let mut pending = actions.remove(&id).unwrap_or_default();
+            pending.sort_by_key(|(kind, position, _)| (*kind, *position));
+            Rating::Rated(ChannelQuality {
+                score,
+                pending: pending.into_iter().map(|(_, _, action)| action).collect(),
+            })
+        } else {
+            Rating::NotRated
         };
         known.insert(
-            row.get::<String>(1)?,
+            (row.sales_channel_at(1)?, row.get::<String>(2)?),
             Stored {
                 rating,
-                visits: row.get(4)?,
-                checked_at: row.time_at(5)?,
+                visits: row.get::<bool>(7)?.then_some(row.get::<u32>(6)?),
+                checked_at: row.time_at(8)?,
             },
         );
     }

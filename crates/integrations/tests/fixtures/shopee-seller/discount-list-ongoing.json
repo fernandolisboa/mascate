@@ -1,0 +1,19 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "b4db3f9ee101ceb355448dae39dac0be",
+  "response": {
+    "discount_list": [
+      {
+        "status": "ongoing",
+        "discount_name": "Outubro",
+        "start_time": 1791601200,
+        "end_time": 1793501999,
+        "discount_id": 665123666665500,
+        "source": 0
+      }
+    ],
+    "more": false
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "sku": "FON-TWS-001",
+  "issues": [
+    {
+      "code": "90220",
+      "message": "Os atributos marcados como relevantes estão incompletos. Informe: item_weight, color",
+      "severity": "WARNING",
+      "attributeName": "item_weight",
+      "attributeNames": ["item_weight", "color"],
+      "categories": ["MISSING_ATTRIBUTE"],
+      "marketplaceIds": ["A2Q3Y263D00KWC"]
+    },
+    {
+      "code": "18027",
+      "message": "A imagem principal tem texto, logotipo ou marca d'água não permitidos para este tipo de produto.",
+      "severity": "ERROR",
+      "categories": ["INVALID_IMAGE"],
+      "enforcements": {
+        "actions": [{ "action": "SEARCH_SUPPRESSED" }],
+        "exemption": { "status": "NOT_EXEMPT" }
+      },
+      "marketplaceIds": ["A2Q3Y263D00KWC"]
+    },
+    {
+      "code": "8541",
+      "message": "O preço está muito abaixo do preço de referência.",
+      "severity": "WARNING",
+      "categories": ["INVALID_PRICE"],
+      "enforcements": {
+        "actions": [{ "action": "LISTING_SUPPRESSED" }],
+        "exemption": { "status": "EXEMPT_UNTIL_EXPIRY_DATE", "expiryDate": "2026-11-01T00:00:00Z" }
+      },
+      "marketplaceIds": ["A2Q3Y263D00KWC"]
+    },
+    {
+      "code": "99001",
+      "message": "Issue on another marketplace.",
+      "severity": "ERROR",
+      "marketplaceIds": ["ATVPDKIKX0DER"]
+    }
+  ]
+}

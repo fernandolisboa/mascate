@@ -27,7 +27,6 @@ use mascate_commerce::{
 };
 use mascate_integrations::ConnectionState;
 use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
-use mascate_marketing::QualitySync;
 use rust_decimal::Decimal;
 
 use crate::appearance::{Tokens, look};
@@ -36,7 +35,6 @@ use crate::drafts::{self, DraftPublished, DraftsSection};
 use crate::forms::{Outcome, Picker, amount_text, input, notice, percent_text, picker, refill};
 use crate::kit;
 use crate::layout;
-use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::orders;
 use crate::parts::ScreenParts;
@@ -65,9 +63,8 @@ pub(crate) struct ListingProduct {
     pub open: bool,
 }
 
-/// The Mercado Livre Listings: the only ones Marketing (quality, questions,
-/// Reputation, Product Ads) and Promotions read until their tables say the
-/// channel too (ADR 0033).
+/// The Mercado Livre Listings: the only ones questions, Reputation and
+/// Product Ads read, which only Mercado Livre offers by API (ADR 0033).
 pub(crate) async fn mercado_livre_listings(listings: &Listings) -> Result<Vec<Listing>, String> {
     Ok(listings
         .listings()
@@ -427,8 +424,8 @@ impl ListingsScreen {
     }
 
     /// Reads the listings of every connected Sales Channel, sends the stock
-    /// still to send, then reads the quality of each Mercado Livre listing
-    /// (#23).
+    /// still to send, then reads the quality of each listing on the channels
+    /// that rate them (#23, #136).
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(mirror), Some(rated), Some(kept)) = (
             stock_mirror::mirror(cx),
@@ -438,7 +435,6 @@ impl ListingsScreen {
             return;
         };
         let reach = sales_channels::reach(cx);
-        let rating = mercado_livre::adapter(cx);
         let repricing = repricing::repricing(cx).zip(pricing::taxes(cx));
         self.outcome = None;
         self.step = None;
@@ -472,14 +468,7 @@ impl ListingsScreen {
                     }
                     None => Default::default(),
                 };
-                let rated = match rating.filter(|_| {
-                    channels
-                        .iter()
-                        .any(|channel| channel.kind() == SalesChannelKind::MercadoLivre)
-                }) {
-                    Some(rating) => Some(quality::sync(&listings, &rated, rating.as_ref()).await),
-                    None => None,
-                };
+                let rated = quality::sync_channels(&listings, &rated, &channels).await;
                 Ok(Some((report, failures, round, repriced, rated)))
             },
             |this,
@@ -488,7 +477,7 @@ impl ListingsScreen {
                 Vec<String>,
                 orders::RoundOutcome,
                 repricing::RepricingOutcome,
-                Option<Result<QualitySync, String>>,
+                quality::ChannelsRead,
             ),
              _,
              cx| {
@@ -501,25 +490,23 @@ impl ListingsScreen {
                     text.push(' ');
                     text.push_str(failed);
                 }
-                this.outcome = Some(match rated {
-                    None if failures.is_empty() => Outcome::Done(text.into()),
-                    None => Outcome::Failed(text.into()),
-                    Some(Ok(rated)) => {
-                        text.push(' ');
-                        text.push_str(&quality::synced(&rated));
-                        if rated.pending > 0 {
-                            text.push_str(" Veja em Qualidade.");
-                        }
-                        if failures.is_empty() {
-                            Outcome::Done(text.into())
-                        } else {
-                            Outcome::Failed(text.into())
-                        }
+                let mut failed = !failures.is_empty();
+                if !rated.is_empty() {
+                    let (read, quality_failed) = quality::synced_channels(&rated);
+                    text.push(' ');
+                    text.push_str(&read);
+                    if rated.iter().any(|(_, read)| {
+                        read.as_ref()
+                            .is_ok_and(|read| read.pending > 0 || read.below_target > Some(0))
+                    }) {
+                        text.push_str(" Veja em Qualidade.");
                     }
-                    Some(Err(error)) => {
-                        text.push_str(&format!(" Não li a qualidade dos anúncios: {error}"));
-                        Outcome::Failed(text.into())
-                    }
+                    failed |= quality_failed;
+                }
+                this.outcome = Some(if failed {
+                    Outcome::Failed(text.into())
+                } else {
+                    Outcome::Done(text.into())
                 });
             },
         );

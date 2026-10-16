@@ -1,4 +1,4 @@
-//! Marketing: Listing quality, questions, reputation, Promotions, Ads cost, Listing Copy,
+//! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost, Listing Copy,
 //! Promotion Channels and Offer Posts, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
@@ -8,12 +8,14 @@ mod channels;
 mod copy;
 mod merge;
 mod offer_posts;
+mod performance;
 mod publishing;
 mod quality;
 mod questions;
 mod queue;
 mod replies;
 mod reputation;
+mod sales_channels;
 mod sales_events;
 
 pub use ads::{
@@ -38,13 +40,17 @@ pub use offer_posts::{
     TELEGRAM_LIMITS, check_post, default_template, discount, has_disclosure, post_limits,
     price_time,
 };
+pub use performance::{
+    ChannelPerformance, Comparator, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
+    PerformanceRating, ShopPerformance,
+};
 pub use publishing::{
     ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PublishFailure,
     PublishRequest, PublishedPost,
 };
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
-    QualityError, QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
+    QualityError, QualityLevel, QualityRow, QualitySource, QualitySync, Rating, Score,
 };
 pub use questions::{
     AnswerRequest, ChannelAnswer, ChannelQuestion, ChannelQuestions, ConfirmedAnswer, Question,
@@ -104,6 +110,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         publishing::PUBLISH_OFFER_POSTS,
         queue::SCHEDULE_OFFER_POSTS,
         sales_events::CREATE_SALES_EVENTS,
+        sales_channels::ADD_SALES_CHANNELS,
     ],
 };
 

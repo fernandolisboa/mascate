@@ -1,8 +1,8 @@
 //! Listing Quality through marketing's public interface, with a real
-//! temporary database and an in-memory channel: each listing's level, score,
-//! pending actions and visits are kept once by the channel's ids, and the
-//! panel puts first the listings with something to fix that sell and draw
-//! the most.
+//! temporary database and in-memory channels: each listing's level, score,
+//! pending actions and visits are kept once by the channel and its ids, a
+//! channel's rating of the shop beside them, and the panel puts first the
+//! listings with something to fix that sell and draw the most.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -10,17 +10,23 @@ use std::sync::{Arc, Mutex};
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Clock, PlatformError};
+use mascate_kernel::{Clock, PlatformError, SalesChannelKind};
 use mascate_marketing::{
-    ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, MIGRATIONS, QualityAction,
-    QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
+    ActionKind, ChannelPerformance, ChannelQuality, Comparator, IMPACT_DAYS, ListedItem,
+    ListingQuality, MIGRATIONS, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
+    PerformanceRating, QualityAction, QualityLevel, QualityRow, QualitySource, QualitySync, Rating,
+    Score,
 };
 use mascate_platform::{Database, migrate};
+use rust_decimal::Decimal;
 
 /// A channel answering from memory: each listing's quality (absent while
-/// not worked out) and visits, and what it was asked.
-#[derive(Default)]
+/// not worked out), visits (none where it does not count them) and the
+/// shop's rating, and what it was asked.
 struct Channel {
+    kind: SalesChannelKind,
+    counts_visits: bool,
+    performance: Mutex<Option<ChannelPerformance>>,
     quality: Mutex<HashMap<String, ChannelQuality>>,
     visits: Mutex<HashMap<String, u32>>,
     asked: Mutex<Vec<String>>,
@@ -28,7 +34,25 @@ struct Channel {
     failing: Mutex<Option<(String, PlatformError)>>,
 }
 
+impl Default for Channel {
+    fn default() -> Self {
+        Self::on(SalesChannelKind::MercadoLivre)
+    }
+}
+
 impl Channel {
+    fn on(kind: SalesChannelKind) -> Self {
+        Self {
+            kind,
+            counts_visits: kind == SalesChannelKind::MercadoLivre,
+            performance: Mutex::default(),
+            quality: Mutex::default(),
+            visits: Mutex::default(),
+            asked: Mutex::default(),
+            failing: Mutex::default(),
+        }
+    }
+
     fn rates(&self, listing: &str, quality: ChannelQuality) {
         self.quality.lock().unwrap().insert(listing.into(), quality);
     }
@@ -39,6 +63,10 @@ impl Channel {
 }
 
 impl QualitySource for Channel {
+    fn rated_channel(&self) -> SalesChannelKind {
+        self.kind
+    }
+
     fn quality(&self, listing: &str) -> Result<Option<ChannelQuality>, PlatformError> {
         if let Some((failing, error)) = self.failing.lock().unwrap().clone()
             && failing == listing
@@ -49,15 +77,20 @@ impl QualitySource for Channel {
         Ok(self.quality.lock().unwrap().get(listing).cloned())
     }
 
-    fn visits(&self, listing: &str, days: u32) -> Result<u32, PlatformError> {
+    fn visits(&self, listing: &str, days: u32) -> Result<Option<u32>, PlatformError> {
         assert_eq!(days, IMPACT_DAYS);
-        Ok(self
-            .visits
-            .lock()
-            .unwrap()
-            .get(listing)
-            .copied()
-            .unwrap_or(0))
+        Ok(self.counts_visits.then(|| {
+            self.visits
+                .lock()
+                .unwrap()
+                .get(listing)
+                .copied()
+                .unwrap_or(0)
+        }))
+    }
+
+    fn performance(&self) -> Result<Option<ChannelPerformance>, PlatformError> {
+        Ok(self.performance.lock().unwrap().clone())
     }
 }
 
@@ -97,16 +130,28 @@ fn gtin() -> QualityAction {
     )
 }
 
-fn rated(score: u8, level: QualityLevel, pending: Vec<QualityAction>) -> ChannelQuality {
+fn rated(points: u8, level: QualityLevel, pending: Vec<QualityAction>) -> ChannelQuality {
     ChannelQuality {
-        score,
-        level,
+        score: Some(Score { points, level }),
+        pending,
+    }
+}
+
+/// A channel's issues, with no score.
+fn issues(pending: Vec<QualityAction>) -> ChannelQuality {
+    ChannelQuality {
+        score: None,
         pending,
     }
 }
 
 fn listed(listing: &str, title: &str, units_sold: u32) -> ListedItem {
+    listed_on(SalesChannelKind::MercadoLivre, listing, title, units_sold)
+}
+
+fn listed_on(channel: SalesChannelKind, listing: &str, title: &str, units_sold: u32) -> ListedItem {
     ListedItem {
+        channel,
         listing: listing.into(),
         title: title.into(),
         link: Some(format!("https://produto.mercadolivre.com.br/{listing}")),
@@ -185,6 +230,7 @@ fn the_sync_keeps_each_listings_level_score_pending_actions_and_visits() {
                 checked: 1,
                 not_rated: 0,
                 pending: 3,
+                below_target: None,
             }
         );
         let panel = fixture
@@ -399,4 +445,187 @@ fn sales_count_toward_the_order_over_the_last_thirty_days() {
         );
         assert_eq!(fixture.quality.last_sync().await.unwrap(), None);
     });
+}
+
+fn amazon_issue(code: &str, kind: ActionKind) -> QualityAction {
+    QualityAction {
+        key: code.into(),
+        kind,
+        text: format!("Problema {code}"),
+        label: "Corrigir na Amazon".into(),
+        link: None,
+    }
+}
+
+fn metric(key: &str, current: i64, target: i64, comparator: Comparator) -> PerformanceMetric {
+    PerformanceMetric {
+        key: key.into(),
+        group: MetricGroup::Fulfillment,
+        name: format!("Metric {key}"),
+        current: Some(Decimal::new(current, 2)),
+        previous: None,
+        unit: MetricUnit::Percent,
+        target: Some(MetricTarget {
+            value: Decimal::new(target, 2),
+            comparator,
+        }),
+    }
+}
+
+#[test]
+fn a_channel_without_scores_keeps_its_issues_apart_from_mercado_livres_listing_of_the_same_id() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let amazon = Channel::on(SalesChannelKind::Amazon);
+        fixture
+            .channel
+            .rates("SKU-1", rated(48, QualityLevel::Basic, vec![photos()]));
+        fixture.channel.visited("SKU-1", 12);
+        amazon.rates(
+            "SKU-1",
+            issues(vec![
+                amazon_issue("90220", ActionKind::Opportunity),
+                amazon_issue("18027", ActionKind::Problem),
+            ]),
+        );
+        amazon.rates("SKU-2", issues(Vec::new()));
+
+        fixture.sync(&["SKU-1"]).await;
+        let report = fixture
+            .quality
+            .sync(&amazon, &ids(&["SKU-1", "SKU-2", "SKU-3"]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            report,
+            QualitySync {
+                checked: 3,
+                not_rated: 1,
+                pending: 2,
+                below_target: None,
+            }
+        );
+        let panel = fixture
+            .quality
+            .panel(&[
+                listed("SKU-1", "Fone no Mercado Livre", 0),
+                listed_on(SalesChannelKind::Amazon, "SKU-1", "Fone na Amazon", 0),
+                listed_on(SalesChannelKind::Amazon, "SKU-2", "Caneca na Amazon", 0),
+                listed_on(SalesChannelKind::Amazon, "SKU-3", "Sumiu da Amazon", 0),
+            ])
+            .await
+            .unwrap();
+        let row = |channel: SalesChannelKind, listing: &str| {
+            panel
+                .iter()
+                .find(|row| row.listing.channel == channel && row.listing.listing == listing)
+                .unwrap()
+                .clone()
+        };
+        let mercado_livre = row(SalesChannelKind::MercadoLivre, "SKU-1");
+        assert_eq!(
+            mercado_livre.rating,
+            Rating::Rated(rated(48, QualityLevel::Basic, vec![photos()]))
+        );
+        assert_eq!(mercado_livre.visits, Some(12));
+        let on_amazon = row(SalesChannelKind::Amazon, "SKU-1");
+        // The problem first; no score and no visits on Amazon.
+        assert_eq!(
+            on_amazon.rating,
+            Rating::Rated(issues(vec![
+                amazon_issue("18027", ActionKind::Problem),
+                amazon_issue("90220", ActionKind::Opportunity),
+            ]))
+        );
+        assert_eq!(on_amazon.visits, None);
+        assert_eq!(
+            row(SalesChannelKind::Amazon, "SKU-2").rating,
+            Rating::Rated(issues(Vec::new()))
+        );
+        assert_eq!(
+            row(SalesChannelKind::Amazon, "SKU-3").rating,
+            Rating::NotRated
+        );
+        // Mercado Livre's Sync again leaves Amazon's as they were.
+        fixture.sync(&["SKU-1"]).await;
+        let again = fixture
+            .quality
+            .panel(&[listed_on(
+                SalesChannelKind::Amazon,
+                "SKU-1",
+                "Fone na Amazon",
+                0,
+            )])
+            .await
+            .unwrap();
+        assert_eq!(again[0].rating, on_amazon.rating);
+    });
+}
+
+#[test]
+fn a_channels_rating_of_the_shop_is_kept_and_replaced_by_the_next_sync() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let shopee = Channel::on(SalesChannelKind::Shopee);
+        *shopee.performance.lock().unwrap() = Some(ChannelPerformance {
+            rating: Some(PerformanceRating::ImprovementNeeded),
+            metrics: vec![
+                metric("1", 1250, 1000, Comparator::Below),
+                metric("3", 150, 1000, Comparator::Below),
+            ],
+        });
+
+        let report = fixture.quality.sync(&shopee, &[]).await.unwrap();
+
+        assert_eq!(report.below_target, Some(1));
+        let shops = fixture.quality.performances().await.unwrap();
+        assert_eq!(shops.len(), 1);
+        assert_eq!(shops[0].channel, SalesChannelKind::Shopee);
+        assert_eq!(shops[0].checked_at, fixture.clock.now());
+        assert_eq!(
+            shops[0].performance.rating,
+            Some(PerformanceRating::ImprovementNeeded)
+        );
+        let late = &shops[0].performance.metrics[0];
+        assert_eq!(late.meets_target(), Some(false));
+        assert_eq!(shops[0].performance.metrics[1].meets_target(), Some(true));
+
+        // Shipping got better and Shopee dropped the other metric.
+        fixture.clock.advance(TimeDelta::days(1));
+        *shopee.performance.lock().unwrap() = Some(ChannelPerformance {
+            rating: Some(PerformanceRating::Good),
+            metrics: vec![metric("1", 500, 1000, Comparator::Below)],
+        });
+        let report = fixture.quality.sync(&shopee, &[]).await.unwrap();
+
+        assert_eq!(report.below_target, Some(0));
+        let shops = fixture.quality.performances().await.unwrap();
+        assert_eq!(shops.len(), 1);
+        assert_eq!(
+            shops[0].performance,
+            ChannelPerformance {
+                rating: Some(PerformanceRating::Good),
+                metrics: vec![metric("1", 500, 1000, Comparator::Below)],
+            }
+        );
+        // A channel that does not rate the shop leaves Shopee's as it was.
+        fixture.sync(&[]).await;
+        assert_eq!(fixture.quality.performances().await.unwrap(), shops);
+    });
+}
+
+#[test]
+fn a_metric_without_a_value_or_target_neither_meets_nor_misses_it() {
+    let mut no_value = metric("4", 0, 200, Comparator::AtMost);
+    no_value.current = None;
+    let mut no_target = metric("11", 9000, 0, Comparator::AtLeast);
+    no_target.target = None;
+    let exact = metric("12", 1000, 1000, Comparator::AtLeast);
+
+    assert_eq!(no_value.meets_target(), None);
+    assert_eq!(no_target.meets_target(), None);
+    assert_eq!(exact.meets_target(), Some(true));
+    assert_eq!(Comparator::from_sign(" <= "), Some(Comparator::AtMost));
+    assert_eq!(Comparator::from_sign("≈"), None);
 }

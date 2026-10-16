@@ -5,7 +5,8 @@
 //! unlists and relists an item; it reads the Orders with their returns
 //! (#130), and their Fees and money from the escrow; it arranges an Order's
 //! shipment and prints its label (#131); it publishes a draft, with its
-//! variations as models (#132). Every call is signed with
+//! variations as models (#132); it reads the shop's listings with issues and
+//! its performance, and runs the owner's discounts (#136). Every call is signed with
 //! HMAC-SHA256 of the partner key; the shop's login comes from Shopee's
 //! authorization page and its refresh token is single use. Shopee has no fee
 //! estimate, so the sale fee is its published table. Separate from Shopee
@@ -15,7 +16,9 @@ mod answers;
 mod escrow;
 mod labels;
 mod orders;
+mod promotions;
 mod publisher;
+mod quality;
 mod sales_channel;
 
 use std::sync::Arc;
@@ -509,9 +512,12 @@ fn answered<T>(status: u16, envelope: Envelope<T>, path: &str) -> Attempt<T> {
         Some("error_server") => {
             Attempt::Again(PlatformError::Failed(format!("Shopee failed on {path}")))
         }
-        Some("error_item_not_found" | "error_not_found") => {
-            Attempt::Done(Err(PlatformError::NotFound))
-        }
+        Some(
+            "error_item_not_found"
+            | "error_not_found"
+            | "common.error_not_found"
+            | "discount.discount_item_not_exist",
+        ) => Attempt::Done(Err(PlatformError::NotFound)),
         Some(error) => Attempt::Done(Err(PlatformError::Refused(
             envelope
                 .message

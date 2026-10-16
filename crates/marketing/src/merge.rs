@@ -11,26 +11,52 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         TableMerge::new(
             "marketing_listing_quality",
             "Qualidade do anúncio",
-            Keys(&[UniqueKey::live(&[Column("ml_item_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_item_id"),
+            ])]),
         )
-        .platform_ids(&["ml_item_id"])
-        .label(&["ml_item_id"]),
+        .platform_ids(&["channel_item_id"])
+        .label(&["sales_channel", "channel_item_id"]),
         TableMerge::new(
             "marketing_quality_actions",
             "Ação de qualidade",
             Keys(&[UniqueKey::live(&[
                 Column("quality_id"),
-                Column("ml_rule_key"),
+                Column("channel_rule_key"),
             ])]),
         )
         .references(&[Reference::to("quality_id", "marketing_listing_quality")])
         .label(&["quality_id", "label"]),
         TableMerge::new(
+            "marketing_shop_performance",
+            "Desempenho da loja",
+            Keys(&[UniqueKey::live(&[Column("sales_channel")])]),
+        )
+        .label(&["sales_channel"]),
+        TableMerge::new(
+            "marketing_performance_metrics",
+            "Métrica de desempenho",
+            Keys(&[UniqueKey::live(&[
+                Column("performance_id"),
+                Column("channel_metric_id"),
+            ])]),
+        )
+        .references(&[Reference::to(
+            "performance_id",
+            "marketing_shop_performance",
+        )])
+        .platform_ids(&["channel_metric_id"])
+        .label(&["name"]),
+        TableMerge::new(
             "marketing_questions",
             "Pergunta",
-            Keys(&[UniqueKey::live(&[Column("ml_question_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_question_id"),
+            ])]),
         )
-        .platform_ids(&["ml_question_id", "ml_item_id"])
+        .platform_ids(&["channel_question_id", "channel_item_id"])
         .label(&["text"]),
         TableMerge::new("marketing_question_syncs", "Sync de perguntas", SingleRow),
         TableMerge::new(
@@ -43,16 +69,22 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         TableMerge::new(
             "marketing_listing_reviews",
             "Opiniões do anúncio",
-            Keys(&[UniqueKey::live(&[Column("ml_item_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_item_id"),
+            ])]),
         )
-        .platform_ids(&["ml_item_id"])
-        .label(&["ml_item_id"]),
+        .platform_ids(&["channel_item_id"])
+        .label(&["sales_channel", "channel_item_id"]),
         TableMerge::new(
             "marketing_low_reviews",
             "Opinião baixa",
-            Keys(&[UniqueKey::live(&[Column("ml_review_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_review_id"),
+            ])]),
         )
-        .platform_ids(&["ml_review_id", "ml_item_id"])
+        .platform_ids(&["channel_review_id", "channel_item_id"])
         .label(&["title"]),
         TableMerge::new(
             "marketing_seller_tools",
@@ -63,17 +95,24 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         TableMerge::new(
             "marketing_ad_campaigns",
             "Campanha de Product Ads",
-            Keys(&[UniqueKey::live(&[Column("ml_campaign_id")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_campaign_id"),
+            ])]),
         )
-        .platform_ids(&["ml_campaign_id"])
+        .platform_ids(&["channel_campaign_id"])
         .label(&["name"]),
         TableMerge::new(
             "marketing_ad_days",
             "Dia de Product Ads",
-            Keys(&[UniqueKey::live(&[Column("ml_item_id"), Column("day")])]),
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_item_id"),
+                Column("day"),
+            ])]),
         )
-        .platform_ids(&["ml_item_id", "ml_campaign_id"])
-        .label(&["ml_item_id", "day"]),
+        .platform_ids(&["channel_item_id", "channel_campaign_id"])
+        .label(&["channel_item_id", "day"]),
         TableMerge::new("marketing_ads_syncs", "Sync de Product Ads", SingleRow),
         TableMerge::new("marketing_copy_settings", "Opções de texto", SingleRow),
         TableMerge::new(

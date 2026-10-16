@@ -1,0 +1,15 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "b4db3f9ee101ceb355448dae39dac0be",
+  "response": {
+    "success_list": [
+      {
+        "item_id": 800001,
+        "promotion": []
+      }
+    ],
+    "failure_list": []
+  }
+}
