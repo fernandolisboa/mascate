@@ -10,6 +10,7 @@ mod crawler;
 mod eduzz;
 mod escaped;
 mod hotmart;
+mod hotmart_crawler;
 mod kiwify;
 mod link_tags;
 mod magalu;
@@ -39,6 +40,10 @@ pub use crawler::Crawler;
 pub use eduzz::{API_URL as EDUZZ_API_URL, Eduzz, LINKS as EDUZZ_LINKS};
 pub use hotmart::{
     API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart, LINKS as HOTMART_LINKS,
+};
+pub use hotmart_crawler::{
+    HOTMART_CATEGORIES, HOTMART_CRAWLER, HotmartCrawler,
+    MARKETPLACE_URL as HOTMART_MARKETPLACE_URL, MarketplaceCategory,
 };
 pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify, LINKS as KIWIFY_LINKS};
 pub use link_tags::UrlTagger;
@@ -111,4 +116,9 @@ pub const REMINDERS: &[Reminder] = &[
 
 /// The Restricted Features of the adapters, which know each Platform's
 /// terms (ADR 0035).
-pub const FLAGS: &[Flag] = &[MERCADO_LIVRE_CRAWLER, AMAZON_CRAWLER, MAGALU_CRAWLER];
+pub const FLAGS: &[Flag] = &[
+    MERCADO_LIVRE_CRAWLER,
+    AMAZON_CRAWLER,
+    MAGALU_CRAWLER,
+    HOTMART_CRAWLER,
+];

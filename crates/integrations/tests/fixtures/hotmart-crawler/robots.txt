@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Disallow: *initialSelectedCategory=*
+Disallow: *q=*
+Disallow: /wp-admin/
