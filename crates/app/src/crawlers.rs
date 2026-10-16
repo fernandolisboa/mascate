@@ -72,9 +72,9 @@ pub async fn source_if_on(
 pub fn blocked_text(site: &CrawledSite, until: Timestamp) -> String {
     let until = until.with_timezone(&Local);
     let when = if until.date_naive() == Local::now().date_naive() {
-        until.format("às %H:%M").to_string()
+        until.format("as %H:%M").to_string()
     } else {
-        until.format("em %d/%m às %H:%M").to_string()
+        until.format("%d/%m, às %H:%M").to_string()
     };
     format!(
         "O {} bloqueou o crawler três vezes seguidas, então o app não pede nada ao site até \
