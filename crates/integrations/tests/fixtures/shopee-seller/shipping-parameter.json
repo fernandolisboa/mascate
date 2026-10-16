@@ -1,0 +1,70 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "c3d4e5f60718293a4b5c6d7e8f90a1b2",
+  "response": {
+    "info_needed": {
+      "dropoff": [],
+      "pickup": [
+        "address_id",
+        "pickup_time_id"
+      ]
+    },
+    "dropoff": {
+      "branch_list": []
+    },
+    "pickup": {
+      "address_list": [
+        {
+          "address_id": 234,
+          "region": "BR",
+          "state": "SP",
+          "city": "São Paulo",
+          "district": "Centro",
+          "town": "",
+          "address": "Rua Exemplo, 100",
+          "zipcode": "01001000",
+          "address_flag": [
+            "default_address"
+          ],
+          "time_slot_list": [
+            {
+              "date": 1792238400,
+              "time_text": "",
+              "pickup_time_id": "1792238400"
+            }
+          ]
+        },
+        {
+          "address_id": 235,
+          "region": "BR",
+          "state": "SP",
+          "city": "São Paulo",
+          "district": "Mooca",
+          "town": "",
+          "address": "Rua da Coleta, 200",
+          "zipcode": "03101000",
+          "address_flag": [
+            "pickup_address",
+            "return_address"
+          ],
+          "time_slot_list": [
+            {
+              "date": 1792238400,
+              "time_text": "",
+              "pickup_time_id": "1792238400"
+            },
+            {
+              "date": 1792324800,
+              "time_text": "",
+              "pickup_time_id": "1792324800",
+              "flags": [
+                "recommended"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

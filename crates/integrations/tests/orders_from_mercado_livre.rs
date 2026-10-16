@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_commerce::{
-    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, OrderStatus, Receiver,
-    ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, LabelError, OrderStatus,
+    Receiver, ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
 };
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::ManualClock;
@@ -401,12 +401,12 @@ fn a_label_mercado_livre_refuses_or_an_odd_shipment_id_is_an_error() {
     fake.server.serve(LABEL, 400, fixture("error-403.json"));
     assert!(matches!(
         fake.adapter.label_pdf("44100000001"),
-        Err(PlatformError::Refused(_))
+        Err(LabelError::Platform(PlatformError::Refused(_)))
     ));
 
     // An id that is not one never reaches the network.
-    assert_eq!(
+    assert!(matches!(
         fake.adapter.label_pdf("441&response_type=zpl2"),
-        Err(PlatformError::NotFound)
-    );
+        Err(LabelError::Platform(PlatformError::NotFound))
+    ));
 }

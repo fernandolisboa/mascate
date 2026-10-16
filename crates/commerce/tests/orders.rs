@@ -13,10 +13,10 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelReturn, ChannelStock, DispatchDue, LineStock, Listings, NewPurchaseLine,
-    NewPurchaseOrder, Order, OrderError, OrderSettings, OrderStatus, Orders, PurchaseOrders,
-    Receiving, ReturnReceipt, ReturnStatus, ReturnedItem, ShipmentStatus, StockMirror, StockShort,
-    UnitsBack,
+    ChannelListing, ChannelReturn, ChannelStock, DispatchDue, LabelError, LineStock, Listings,
+    NewPurchaseLine, NewPurchaseOrder, Order, OrderError, OrderSettings, OrderStatus, Orders,
+    PurchaseOrders, Receiving, ReturnReceipt, ReturnStatus, ReturnedItem, ShipmentStatus,
+    StockMirror, StockShort, UnitsBack,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory, LowStock, MovementReason};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -767,6 +767,45 @@ fn a_label_that_is_not_a_pdf_is_refused() {
             fx.orders.shipping_label(&fx.channel, kept.id).await,
             Err(OrderError::Platform(PlatformError::Failed(_)))
         ));
+    });
+}
+
+#[test]
+fn a_label_the_channel_is_still_preparing_or_that_needs_the_channel_says_so_and_can_be_asked_again()
+{
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let kept = fx.sold_fones("2000053", 1).await;
+
+        let refused = |refusal: LabelError| {
+            *fx.channel.label_refusal.lock().unwrap() = Some(refusal);
+            fx.orders.shipping_label(&fx.channel, kept.id)
+        };
+        assert!(matches!(
+            refused(LabelError::NotReadyYet).await,
+            Err(OrderError::LabelNotReady)
+        ));
+        assert!(matches!(
+            refused(LabelError::ArrangeOnChannel).await,
+            Err(OrderError::ArrangeOnChannel)
+        ));
+        assert!(matches!(
+            refused(LabelError::AwaitingInvoice).await,
+            Err(OrderError::AwaitingInvoice)
+        ));
+        assert!(matches!(
+            refused(LabelError::NotWaiting).await,
+            Err(OrderError::NoLabel)
+        ));
+
+        // Nothing was kept from the refusals: the next ask prints it.
+        let label = fx
+            .orders
+            .shipping_label(&fx.channel, kept.id)
+            .await
+            .unwrap();
+        assert!(label.pdf.starts_with(b"%PDF-"));
+        assert_eq!(fx.channel.labels_asked.lock().unwrap().len(), 5);
     });
 }
 
@@ -1602,12 +1641,13 @@ fn a_shopee_order_waiting_for_its_invoice_raises_the_reminder_and_keeps_its_time
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].order.sold.id, "261015NFE0002B");
         assert_eq!(alerts[0].due, DispatchDue::Soon);
-        // Shopee prints no label before the NF-e.
+        // Shopee prints no label before the NF-e, and the app says why.
         let kept = fx.order("261015NFE0002B").await;
         assert!(matches!(
             fx.orders.shipping_label(&shopee, kept.id).await,
-            Err(OrderError::NoLabel)
+            Err(OrderError::AwaitingInvoice)
         ));
+        assert!(shopee.labels_asked.lock().unwrap().is_empty());
 
         // The owner sent the NF-e: Shopee lets it ship.
         let at = fx.later(1);

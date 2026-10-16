@@ -10,6 +10,9 @@ use serde::{Deserialize, Deserializer};
 /// Answers are small JSON documents; anything bigger is not one.
 const MAX_ANSWER_BYTES: u64 = 2 * 1024 * 1024;
 
+/// A shipping label is a page or two of PDF; anything bigger is not one.
+pub(crate) const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
+
 /// The JSON document `platform` answered.
 pub(crate) fn read_json<T: DeserializeOwned>(
     response: ureq::http::Response<ureq::Body>,

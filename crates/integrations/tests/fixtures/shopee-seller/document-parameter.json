@@ -1,0 +1,18 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "18293a4b5c6d7e8f90a1b2c3d4e5f607",
+  "response": {
+    "result_list": [
+      {
+        "order_sn": "261016ETQ0006F",
+        "package_number": "OFG1610000000061",
+        "suggest_shipping_document_type": "THERMAL_AIR_WAYBILL",
+        "selectable_shipping_document_type": [
+          "NORMAL_AIR_WAYBILL",
+          "THERMAL_AIR_WAYBILL"
+        ]
+      }
+    ]
+  }
+}

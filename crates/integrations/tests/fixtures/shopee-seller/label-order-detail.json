@@ -1,0 +1,29 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "response": {
+    "order_list": [
+      {
+        "order_sn": "261016ETQ0006F",
+        "order_status": "READY_TO_SHIP",
+        "create_time": 1792065600,
+        "update_time": 1792148400,
+        "package_list": [
+          {
+            "package_number": "OFG1610000000061",
+            "logistics_status": "LOGISTICS_READY",
+            "shipping_carrier": "Shopee Xpress",
+            "logistics_channel_id": 90021,
+            "item_list": [
+              {
+                "item_id": 800001,
+                "model_id": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

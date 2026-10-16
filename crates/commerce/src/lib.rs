@@ -35,10 +35,10 @@ pub use listings::{
 pub use merge::MERGE;
 pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
-    DispatchDue, FulfillmentMode, LineStock, Order, OrderError, OrderLine, OrderSettings,
-    OrderStatus, OrderSync, Orders, Receiver, ReturnReceipt, ReturnReceived, ReturnStatus,
-    ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels, SoldWithoutStock,
-    StockShort, UnitsBack,
+    DispatchDue, FulfillmentMode, LabelError, LineStock, Order, OrderError, OrderLine,
+    OrderSettings, OrderStatus, OrderSync, Orders, Receiver, ReturnReceipt, ReturnReceived,
+    ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels,
+    SoldWithoutStock, StockShort, UnitsBack,
 };
 pub use pricing::{
     CostSource, DraftPrice, FeeBasis, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,
@@ -93,8 +93,9 @@ pub const SHOPEE_SALE_INVOICE: Reminder = Reminder {
     title: "NF-e dos pedidos da Shopee",
     text: "A Shopee pede a NF-e antes de liberar o envio de um pedido fora dos Correios, e o \
            pedido aparece em Pedidos como \"Aguardando NF-e\". Quem vende com CNPJ emite a \
-           nota e a envia na Central do Vendedor; o app segue com a baixa no estoque e o \
-           prazo de envio normalmente.",
+           nota e a envia na Central do Vendedor (seller.shopee.com.br); a etiqueta sai em \
+           Pedidos logo depois. O app segue com a baixa no estoque e o prazo de envio \
+           normalmente.",
     reappears_after_days: 7,
     shows: ReminderShows::WhenRaised,
 };

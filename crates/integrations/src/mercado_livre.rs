@@ -28,6 +28,7 @@ use mascate_kernel::{Clock, Currency, ListingType, Money, PlatformError};
 use mascate_platform::{SecretStore, http_agent};
 use serde::de::DeserializeOwned;
 
+use crate::answers::MAX_DOCUMENT_BYTES;
 use answers::{
     CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrice, ListingPrices,
     MultigetEntry, ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
@@ -43,9 +44,6 @@ pub const PAYMENTS_API_URL: &str = "https://api.mercadopago.com";
 
 /// Mercado Livre Brasil, the only site the app sells on.
 const SITE: &str = "MLB";
-
-/// A shipping label is a page or two of PDF; anything bigger is not one.
-const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Listings read per catalog product: the first page is enough for a price
 /// range, and `paging.total` still counts them all.

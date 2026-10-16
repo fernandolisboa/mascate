@@ -9,8 +9,8 @@ use chrono::SecondsFormat;
 use std::str::FromStr;
 
 use mascate_commerce::{
-    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, OrderStatus, Receiver,
-    ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
+    Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, LabelError, OrderStatus,
+    Receiver, ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabels,
 };
 use mascate_kernel::{Currency, Money, PlatformError, Timestamp};
 use rust_decimal::Decimal;
@@ -65,15 +65,15 @@ impl ChannelOrders for MercadoLivre {
 impl ShippingLabels for MercadoLivre {
     /// The label as Mercado Livre prints it for a drop-off or a pickup, in
     /// its standard 10 x 15 cm size.
-    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, PlatformError> {
-        self.get_bytes(
+    fn label_pdf(&self, shipment: &str) -> Result<Vec<u8>, LabelError> {
+        Ok(self.get_bytes(
             "/shipment_labels",
             &[
                 ("shipment_ids", path_id(shipment)?),
                 ("response_type", "pdf"),
             ],
             "application/pdf",
-        )
+        )?)
     }
 }
 

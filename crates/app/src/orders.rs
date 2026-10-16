@@ -48,6 +48,7 @@ use crate::questions;
 use crate::reputation;
 use crate::sales;
 use crate::sales_channels::{self, ChannelFilter, ChannelPorts};
+use crate::shopee_seller;
 use crate::stock::product_label;
 use crate::stock_mirror;
 
@@ -111,10 +112,24 @@ pub fn failure(error: &OrderError) -> String {
 }
 
 /// Why a call about an Order on the channel `kind` failed, naming the
-/// channel when the channel failed.
+/// channel when the channel failed or holds the Order.
 fn failure_on(kind: SalesChannelKind, error: &OrderError) -> String {
+    let channel = sales_channels::opening(kind);
     match error {
         OrderError::Platform(error) => sales_channels::failure(kind, error),
+        OrderError::AwaitingInvoice => format!(
+            "{channel} pede a NF-e deste pedido antes do envio. Envie a nota no painel de \
+             vendedor e baixe a etiqueta de novo."
+        ),
+        OrderError::ArrangeOnChannel => format!(
+            "{channel} pede para este envio dados que o app não preenche, como a agência de \
+             postagem. Organize o envio no painel de vendedor; depois a etiqueta baixa por \
+             aqui."
+        ),
+        OrderError::LabelNotReady => format!(
+            "{channel} ainda está preparando a etiqueta. Tente de novo em alguns minutos: o \
+             que já foi feito não se repete."
+        ),
         error => failure(error),
     }
 }
@@ -908,14 +923,17 @@ impl OrdersScreen {
         let id = order.id;
         let channel = order.channel;
         let busy = self.working_on.is_some();
-        let waiting = order.sold.status != OrderStatus::Cancelled
-            && order
-                .sold
-                .shipment
-                .as_ref()
-                .is_some_and(|shipment| shipment.status == ShipmentStatus::ReadyToShip);
+        let shipment = order
+            .sold
+            .shipment
+            .as_ref()
+            .filter(|_| order.sold.status != OrderStatus::Cancelled)
+            .map(|shipment| shipment.status);
+        let waiting = shipment == Some(ShipmentStatus::ReadyToShip);
+        let invoice_first = shipment == Some(ShipmentStatus::AwaitingInvoice)
+            && channel == SalesChannelKind::Shopee;
         let awaiting = order.units_awaiting_return();
-        if !waiting && awaiting == 0 {
+        if !waiting && !invoice_first && awaiting == 0 {
             return None;
         }
         let ports = sales_channels::of(cx, channel);
@@ -990,6 +1008,18 @@ impl OrdersScreen {
                                 }),
                             ),
                     )
+                })
+                .when(invoice_first, |row| {
+                    row.child(div().text_sm().text_color(t.accent_text).child(
+                        "A Shopee pede a NF-e antes do envio; a etiqueta sai depois que a nota \
+                         for enviada.",
+                    ))
+                    .child(kit::external_link(
+                        format!("seller-center-{index}"),
+                        "Abrir a Central do Vendedor",
+                        shopee_seller::SELLER_CENTER,
+                        cx,
+                    ))
                 })
                 .when(awaiting > 0, |row| {
                     row.child(div().text_sm().text_color(t.accent_text).child(format!(
