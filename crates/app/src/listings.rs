@@ -23,7 +23,7 @@ use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
     CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
     MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
-    SalesChannel, StockSend, SuggestedBy,
+    SalesChannel, SentPrice, SentPriceState, StockSend, SuggestedBy,
 };
 use mascate_integrations::ConnectionState;
 use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
@@ -867,15 +867,21 @@ impl ListingsScreen {
                 this.price = None;
                 let price = price.rounded().to_pt_br();
                 let to = sales_channels::to(kind);
-                this.outcome = Some(Outcome::Done(
-                    match changed.len() {
-                        0 | 1 => format!("Preço de {price} enviado {to}."),
-                        count => format!(
+                let mut done = match changed.len() {
+                    0 | 1 => format!("Preço de {price} enviado {to}."),
+                    count => {
+                        format!(
                             "Preço de {price} enviado {to} para as {count} variações do anúncio."
-                        ),
+                        )
                     }
-                    .into(),
-                ));
+                };
+                if changed.iter().any(|listing| listing.sent_price.is_some()) {
+                    done.push_str(&format!(
+                        " {} aplica o preço depois; o próximo Sync confirma.",
+                        sales_channels::opening(kind)
+                    ));
+                }
+                this.outcome = Some(Outcome::Done(done.into()));
             },
         );
     }
@@ -1344,6 +1350,16 @@ impl ListingsScreen {
                             .on_click(move |_, _, cx| cx.open_url(&link))
                     })),
             )
+            .children(listing.sent_price.as_ref().map(|sent| {
+                let ink = match sent.state {
+                    SentPriceState::Waiting => t.text2,
+                    SentPriceState::NotApplied => t.danger,
+                };
+                div()
+                    .text_xs()
+                    .text_color(ink)
+                    .child(sent_price_text(sent, listing))
+            }))
     }
 
     fn render_to_link(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -1735,6 +1751,25 @@ fn status_ink(status: ListingStatus, t: &Tokens) -> Hsla {
         ListingStatus::Active => t.success,
         ListingStatus::UnderReview | ListingStatus::Inactive => t.danger,
         ListingStatus::Paused | ListingStatus::OutOfStock | ListingStatus::Closed => t.text2,
+    }
+}
+
+/// Where a price sent to a channel that applies it later stands.
+fn sent_price_text(sent: &SentPrice, listing: &Listing) -> String {
+    let price = sent.price.to_pt_br();
+    let at = catalog::day_and_time(sent.sent_at);
+    match sent.state {
+        SentPriceState::Waiting => format!(
+            "Preço de {price} enviado em {at}; {} ainda aplica, e o próximo Sync confirma.",
+            sales_channels::the(listing.channel)
+        ),
+        SentPriceState::NotApplied => format!(
+            "{} não aplicou o preço de {price} enviado em {at}: o anúncio continua a {}. \
+             Envie de novo ou confira no painel {}.",
+            sales_channels::opening(listing.channel),
+            listing.listed.price.to_pt_br(),
+            sales_channels::of_channel(listing.channel)
+        ),
     }
 }
 

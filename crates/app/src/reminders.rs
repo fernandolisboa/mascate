@@ -5,8 +5,9 @@
 //! checked again whenever they change, the disclosure one of Offer Posts
 //! (#102), checked again whenever a post is copied, the client secret
 //! one of Amazon (#126), while its Connection holds the keys, the invoice
-//! one of Amazon sales (#127), checked again on each Order Sync, and the
-//! CNPJ one of the Shopee seller (#129), once any of its keys is saved.
+//! one of Amazon sales (#127), checked again on each Order Sync, the
+//! CNPJ one of the Shopee seller (#129) and the company store one of Magalu
+//! (#133), once any of the Connection's keys is saved.
 
 use std::sync::Arc;
 
@@ -15,7 +16,8 @@ use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Global, SharedString, Subscription, Window, div};
 use mascate_integrations::{
-    AMAZON_CLIENT_SECRET, Connection, ConnectionState, Connections, SHOPEE_SELLER_CNPJ,
+    AMAZON_CLIENT_SECRET, Connection, ConnectionState, Connections, MAGALU_COMPANY_STORE,
+    SHOPEE_SELLER_CNPJ,
 };
 use mascate_platform::{Reminder, ReminderError, ReminderTopic, Reminders};
 
@@ -41,8 +43,9 @@ fn topic_name(topic: ReminderTopic) -> &'static str {
 }
 
 /// The keys of the Connections' Reminders raised now: Amazon's client
-/// secret while its keys are stored, expired ones included, and Shopee's
-/// CNPJ once the owner starts setting up the seller Connection.
+/// secret while its keys are stored, expired ones included, Shopee's CNPJ
+/// and Magalu's company store once the owner starts setting up the
+/// Connection.
 fn connection_reminders(connections: &Connections) -> Vec<&'static str> {
     let mut raised = Vec::new();
     if matches!(
@@ -51,12 +54,19 @@ fn connection_reminders(connections: &Connections) -> Vec<&'static str> {
     ) {
         raised.push(AMAZON_CLIENT_SECRET.key);
     }
-    let shopee_started = Connection::ShopeeSeller
-        .credentials()
-        .iter()
-        .any(|credential| connections.has_credential(credential.name).unwrap_or(false));
-    if shopee_started {
-        raised.push(SHOPEE_SELLER_CNPJ.key);
+    let started = |connection: Connection| {
+        connection
+            .credentials()
+            .iter()
+            .any(|credential| connections.has_credential(credential.name).unwrap_or(false))
+    };
+    for (connection, reminder) in [
+        (Connection::ShopeeSeller, SHOPEE_SELLER_CNPJ),
+        (Connection::Magalu, MAGALU_COMPANY_STORE),
+    ] {
+        if started(connection) {
+            raised.push(reminder.key);
+        }
     }
     raised
 }
@@ -241,5 +251,22 @@ mod tests {
             .unwrap();
 
         assert_eq!(connection_reminders(&connections), [SHOPEE_SELLER_CNPJ.key]);
+    }
+
+    #[test]
+    fn magalus_company_store_is_raised_once_any_of_its_keys_is_saved() {
+        let connections = Connections::new(Arc::new(MemorySecretStore::default()));
+
+        connections
+            .save(
+                Connection::Magalu,
+                &[("MAGALU_CLIENT_ID", "mascate-client")],
+            )
+            .unwrap();
+
+        assert_eq!(
+            connection_reminders(&connections),
+            [MAGALU_COMPANY_STORE.key]
+        );
     }
 }

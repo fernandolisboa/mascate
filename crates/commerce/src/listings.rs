@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use chrono::TimeDelta;
 use libsql::{Connection, Row, TransactionBehavior, params};
 use mascate_inventory::InventoryError;
 use mascate_kernel::{
@@ -139,6 +140,13 @@ pub trait SalesChannel: OnSalesChannel + Send + Sync {
     fn pauses_with_zero_stock(&self) -> bool {
         false
     }
+
+    /// Whether the channel takes a new price to apply it later, as Magalu
+    /// answering 202: `set_price` succeeding then means only that the
+    /// channel took it, and the price waits as sent until a Sync shows it.
+    fn applies_price_later(&self) -> bool {
+        false
+    }
 }
 
 /// A listing of the owner's, as last synced, with the Product it sells.
@@ -149,6 +157,30 @@ pub struct Listing {
     pub listed: ChannelListing,
     pub product: Option<RecordId>,
     pub synced_at: Timestamp,
+    /// A price the channel took to apply later and no Sync showed yet.
+    pub sent_price: Option<SentPrice>,
+}
+
+/// How long a channel that applies prices later gets before a Sync that
+/// still shows the old price flags the new one as not applied.
+pub const PRICE_APPLY_WINDOW: TimeDelta = TimeDelta::minutes(15);
+
+/// A price sent to a channel that applies it later (see
+/// [`SalesChannel::applies_price_later`]); the Listing's own price stays
+/// the one the channel shows until a Sync shows this one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentPrice {
+    pub price: Money,
+    pub sent_at: Timestamp,
+    pub state: SentPriceState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SentPriceState {
+    /// No Sync since the window ran out: the channel may still apply it.
+    Waiting,
+    /// A Sync past the window still showed another price.
+    NotApplied,
 }
 
 /// A Product as the catalog knows it: what a link suggestion compares a
@@ -302,9 +334,17 @@ pub(crate) const ADD_CATEGORY_NAMES: Migration = Migration {
         ON commerce_channel_categories (ml_category_id) WHERE deleted_at IS NULL;",
 };
 
+pub(crate) const ADD_SENT_PRICES: Migration = Migration {
+    version: 14,
+    name: "add the price sent to a channel that applies it later",
+    risky: false,
+    sql: "ALTER TABLE commerce_listings ADD COLUMN sent_price TEXT;
+    ALTER TABLE commerce_listings ADD COLUMN price_sent_at TEXT;",
+};
+
 const LISTING_COLUMNS: &str = "id, channel_item_id, channel_variation_id, variation_name, title,
      price, currency, available_quantity, status, link, listing_type, category_id, seller_sku,
-     product_id, synced_at, sales_channel
+     product_id, synced_at, sales_channel, sent_price, price_sent_at
      FROM commerce_listings WHERE deleted_at IS NULL AND channel_item_id IS NOT NULL";
 
 /// The owner's Listings in the Sales Channel.
@@ -381,6 +421,17 @@ impl Listings {
             let reported = fresh
                 .remove(&key)
                 .map(|reported| owner_pause_stands(reported, &listing.listed, zero_pause));
+            if let (Some(sent), Some(reported)) = (&listing.sent_price, &reported)
+                && reported.price == sent.price
+            {
+                transaction
+                    .execute(
+                        "UPDATE commerce_listings SET sent_price = NULL, price_sent_at = NULL
+                         WHERE id = ?1",
+                        params![listing.id.to_string()],
+                    )
+                    .await?;
+            }
             match reported {
                 Some(reported) if reported == listing.listed => {
                     transaction
@@ -560,7 +611,9 @@ impl Listings {
 
     /// Sends `price`, rounded to cents, to the channel as the price of the
     /// Listing and of every variation of the same listing, which share it
-    /// (ADR 0014), and keeps it once the channel takes it. Returns those
+    /// (ADR 0014), and keeps it once the channel takes it. A channel that
+    /// applies prices later keeps its price until a Sync shows the new one,
+    /// which waits as the Listing's sent price meanwhile. Returns those
     /// Listings. Only the owner's own action calls this: nothing in the app
     /// changes a price on its own.
     pub async fn change_price(
@@ -579,11 +632,18 @@ impl Listings {
         }
         channel.set_price(&listed.id, price)?;
         let on = channel.sales_channel();
+        let sql = if channel.applies_price_later() {
+            "UPDATE commerce_listings SET sent_price = ?1, price_sent_at = ?2, updated_at = ?2
+             WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL"
+        } else {
+            "UPDATE commerce_listings SET price = ?1, sent_price = NULL, price_sent_at = NULL,
+                 updated_at = ?2
+             WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL"
+        };
         self.database
             .connection()
             .execute(
-                "UPDATE commerce_listings SET price = ?1, updated_at = ?2
-                 WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL",
+                sql,
                 params![
                     price.amount().to_string(),
                     stored(self.clock.now()),
@@ -912,6 +972,23 @@ fn listing_from(row: &Row) -> Result<Listing, ListingError> {
     };
     let status: String = row.get(8)?;
     let listing_type: Option<String> = row.get(10)?;
+    let currency = row.currency_at(6)?;
+    let synced_at = row.time_at(14)?;
+    let sent_price = match row.get::<Option<String>>(16)? {
+        Some(_) => {
+            let sent_at = row.time_at(17)?;
+            Some(SentPrice {
+                price: Money::new(row.decimal_at(16)?, currency),
+                sent_at,
+                state: if synced_at >= sent_at + PRICE_APPLY_WINDOW {
+                    SentPriceState::NotApplied
+                } else {
+                    SentPriceState::Waiting
+                },
+            })
+        }
+        None => None,
+    };
     Ok(Listing {
         id: row.id_at(0)?,
         channel: row.sales_channel_at(15)?,
@@ -919,7 +996,7 @@ fn listing_from(row: &Row) -> Result<Listing, ListingError> {
             id: row.get(1)?,
             variation,
             title: row.get(4)?,
-            price: Money::new(row.decimal_at(5)?, row.currency_at(6)?),
+            price: Money::new(row.decimal_at(5)?, currency),
             available_quantity: row.get(7)?,
             status: ListingStatus::from_code(&status).ok_or(ListingError::Unreadable(status))?,
             link: row.get(9)?,
@@ -928,7 +1005,8 @@ fn listing_from(row: &Row) -> Result<Listing, ListingError> {
             seller_sku: row.get(12)?,
         },
         product: row.optional_id_at(13)?,
-        synced_at: row.time_at(14)?,
+        synced_at,
+        sent_price,
     })
 }
 

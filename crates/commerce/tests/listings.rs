@@ -9,8 +9,8 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, Listing, ListingError, ListingStatus, ListingSync, Listings, SuggestedBy,
-    Variation,
+    ChannelListing, Listing, ListingError, ListingStatus, ListingSync, Listings, SentPrice,
+    SentPriceState, SuggestedBy, Variation,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{
@@ -579,6 +579,129 @@ fn a_new_price_goes_to_the_channel_in_cents_and_every_variation_takes_it() {
         assert_eq!(fx.find("MLB2", None).await.listed.price, brl("89.90"));
         // The channel now reports the same price: the next Sync sees no change.
         assert_eq!(fx.sync().await.changed, 0);
+    });
+}
+
+/// A Fixture whose channel applies a price later, as Magalu, with a
+/// listing of two variations synced at 13:00.
+async fn applying_prices_later() -> Fixture {
+    let mut fx = Fixture::new().await;
+    fx.channel = Channel {
+        late_prices: true,
+        ..Channel::on(SalesChannelKind::Magalu)
+    };
+    let base = listing("CAM-1", "Camiseta Básica");
+    fx.channel.has(vec![
+        variation(&base, "11", "Cor: Preto"),
+        variation(&base, "12", "Cor: Branco"),
+    ]);
+    fx.sync().await;
+    fx
+}
+
+fn sent(price: &str, at: chrono::DateTime<Utc>, state: SentPriceState) -> Option<SentPrice> {
+    Some(SentPrice {
+        price: brl(price),
+        sent_at: at,
+        state,
+    })
+}
+
+#[test]
+fn a_price_the_channel_applies_later_waits_as_sent_until_a_sync_shows_it() {
+    block_on(async {
+        let fx = applying_prices_later().await;
+        let black = fx.find("CAM-1", Some("11")).await;
+        let sent_at = fx.clock.now();
+
+        let changed = fx
+            .listings
+            .change_price(black.id, brl("99.904"), &fx.channel)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *fx.channel.prices_set.lock().unwrap(),
+            [("CAM-1".to_owned(), brl("99.90"))]
+        );
+        // The channel still shows the old price: each variation keeps it,
+        // with the new one waiting beside it.
+        assert_eq!(changed.len(), 2);
+        for listing in &changed {
+            assert_eq!(listing.listed.price, brl("89.90"));
+            assert_eq!(
+                listing.sent_price,
+                sent("99.90", sent_at, SentPriceState::Waiting)
+            );
+        }
+
+        fx.channel
+            .change("CAM-1", |listing| listing.price = brl("99.90"));
+        assert_eq!(fx.sync().await.changed, 2);
+
+        for listing in fx.all().await {
+            assert_eq!(listing.listed.price, brl("99.90"));
+            assert_eq!(listing.sent_price, None);
+        }
+    });
+}
+
+#[test]
+fn a_sync_past_the_window_that_still_shows_the_old_price_flags_the_sent_one() {
+    block_on(async {
+        let fx = applying_prices_later().await;
+        let black = fx.find("CAM-1", Some("11")).await;
+        let sent_at = fx.clock.now();
+        fx.listings
+            .change_price(black.id, brl("99.90"), &fx.channel)
+            .await
+            .unwrap();
+
+        // Five minutes on, the channel may still be applying it.
+        fx.clock.advance(TimeDelta::minutes(5));
+        fx.listings.sync(&fx.channel).await.unwrap();
+        assert_eq!(
+            fx.find("CAM-1", Some("11")).await.sent_price,
+            sent("99.90", sent_at, SentPriceState::Waiting)
+        );
+
+        // An hour on, it should show: the price did not take.
+        assert_eq!(fx.sync().await.changed, 0);
+        let flagged = fx.find("CAM-1", Some("11")).await;
+        assert_eq!(flagged.listed.price, brl("89.90"));
+        assert_eq!(
+            flagged.sent_price,
+            sent("99.90", sent_at, SentPriceState::NotApplied)
+        );
+
+        // Sending it again starts the wait over.
+        fx.listings
+            .change_price(black.id, brl("99.90"), &fx.channel)
+            .await
+            .unwrap();
+        assert_eq!(
+            fx.find("CAM-1", Some("12")).await.sent_price,
+            sent("99.90", fx.clock.now(), SentPriceState::Waiting)
+        );
+    });
+}
+
+#[test]
+fn a_channel_that_applies_a_price_at_once_never_leaves_one_waiting() {
+    block_on(async {
+        let fx = Fixture::new().await;
+        fx.channel.has(vec![listing("MLB1", "Fone Bluetooth TWS")]);
+        fx.sync().await;
+        let id = fx.find("MLB1", None).await.id;
+
+        let changed = fx
+            .listings
+            .change_price(id, brl("79.90"), &fx.channel)
+            .await
+            .unwrap();
+
+        assert_eq!(changed[0].listed.price, brl("79.90"));
+        assert_eq!(changed[0].sent_price, None);
     });
 }
 

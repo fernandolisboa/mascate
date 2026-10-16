@@ -1,0 +1,46 @@
+{
+  "sku": "FONE-TWS",
+  "title": "Fone Bluetooth TWS",
+  "description": "",
+  "status": "PUBLISHED",
+  "url_marketplace": [
+    {
+      "channel": "netshoes",
+      "url": "https://www.netshoes.com.br/p/fone-tws"
+    },
+    {
+      "channel": "magazineluiza",
+      "url": "https://www.magazineluiza.com.br/p/fone-tws/"
+    }
+  ],
+  "condition": "NEW",
+  "perishable": false,
+  "brand": "Mascate",
+  "group": {
+    "id": "6102dd82a413a2ee06b78",
+    "main_variation": true
+  },
+  "channels": [
+    {
+      "id": "9fe0d853-732b-4e4a-a0b0-cff988ed043d"
+    }
+  ],
+  "identifiers": [
+    {
+      "value": "7891234567895",
+      "type": "ean"
+    }
+  ],
+  "has_ean": true,
+  "datasheet": [],
+  "attributes": [],
+  "fulfillment": false,
+  "active": true,
+  "type": "product",
+  "created_at": "2026-09-01T10:00:00.000Z",
+  "updated_at": "2026-10-15T21:31:19.880Z",
+  "creator": null,
+  "updater": null,
+  "extra_data": [],
+  "category": {}
+}

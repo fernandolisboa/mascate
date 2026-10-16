@@ -1,0 +1,12 @@
+{
+  "detail": [
+    {
+      "loc": [
+        "body",
+        "price"
+      ],
+      "msg": "ensure this value is greater than 0",
+      "type": "value_error.number.not_gt"
+    }
+  ]
+}

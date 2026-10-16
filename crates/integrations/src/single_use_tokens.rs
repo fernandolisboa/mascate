@@ -1,7 +1,8 @@
-//! The shop's access token. Shopee hands out a new single-use refresh token
-//! on every renewal, valid for 30 days, so renewals run one at a time and
-//! the new refresh token is in the secret store before the access token is
-//! used: two renewals racing, or a crash in between, would lose the login.
+//! An access token renewed with a single-use refresh token, as Shopee's and
+//! Magalu's: each renewal hands out the next refresh token, so renewals run
+//! one at a time and the new refresh token is in the secret store before
+//! the access token is used. Two renewals racing, or a crash in between,
+//! would lose the login.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -9,18 +10,18 @@ use chrono::TimeDelta;
 use mascate_kernel::{Clock, PlatformError, Timestamp};
 use mascate_platform::Secret;
 
-/// Renews this long before the access token's 4 hours run out, so a
-/// request never leaves with a token about to lapse.
+/// Renews this long before the access token runs out, so a request never
+/// leaves with a token about to lapse.
 const RENEW_BEFORE: TimeDelta = TimeDelta::minutes(5);
 
-/// A login Shopee just handed out.
-pub(super) struct Fresh {
+/// A login the Platform just handed out.
+pub(crate) struct Fresh {
     pub access_token: Secret,
     pub refresh_token: Secret,
     pub expires_at: Timestamp,
 }
 
-pub(super) struct Tokens {
+pub(crate) struct Tokens {
     clock: Arc<dyn Clock>,
     /// Held while renewing, so a second caller waits and reuses the result.
     current: Mutex<Option<AccessToken>>,
@@ -76,7 +77,7 @@ impl Tokens {
         Ok(())
     }
 
-    /// Drops `used` after Shopee turned it down, so the next request
+    /// Drops `used` after the Platform turned it down, so the next request
     /// renews. A token another request already replaced is left alone.
     pub fn forget(&self, used: &Secret) {
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);

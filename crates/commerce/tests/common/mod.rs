@@ -74,6 +74,9 @@ pub struct Channel {
     /// Like Amazon, it has no pause: pausing sends zero units, which it
     /// reports as out of stock, and reactivating waits for units.
     pub zero_pause: bool,
+    /// Takes a price to apply it later, as Magalu: the listing keeps its
+    /// price until the test changes it.
+    pub late_prices: bool,
     pub listings: Mutex<Vec<ChannelListing>>,
     pub asked: Mutex<Vec<Vec<String>>>,
     /// Fails every call while set.
@@ -132,6 +135,7 @@ impl Default for Channel {
         Self {
             kind: SalesChannelKind::MercadoLivre,
             zero_pause: false,
+            late_prices: false,
             listings: Mutex::default(),
             asked: Mutex::default(),
             failure: Mutex::default(),
@@ -328,7 +332,9 @@ impl SalesChannel for Channel {
     fn set_price(&self, id: &str, price: Money) -> Result<(), PlatformError> {
         self.check()?;
         self.prices_set.lock().unwrap().push((id.to_owned(), price));
-        self.change(id, |listing| listing.price = price);
+        if !self.late_prices {
+            self.change(id, |listing| listing.price = price);
+        }
         Ok(())
     }
 
@@ -389,6 +395,10 @@ impl SalesChannel for Channel {
 
     fn pauses_with_zero_stock(&self) -> bool {
         self.zero_pause
+    }
+
+    fn applies_price_later(&self) -> bool {
+        self.late_prices
     }
 
     fn category(&self, id: &str) -> Result<ChannelCategory, PlatformError> {

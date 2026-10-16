@@ -17,7 +17,8 @@ use serde_json::{Map, Value, json};
 
 use super::answers::{CatalogAnswer, CatalogSearch, Item, Submission};
 use super::sales_channel::{OWN_FULFILLMENT, offer_value, summary};
-use super::{Amazon, MARKETPLACE, path_segment};
+use super::{Amazon, MARKETPLACE};
+use crate::escaped::escaped;
 
 /// The attribute that names the ASIN an offer joins.
 const ASIN: &str = "merchant_suggested_asin";
@@ -109,7 +110,7 @@ impl ListingPublisher for Amazon {
             return Ok(Vec::new());
         }
         let found: Result<Item, PlatformError> = self.get(
-            &format!("{}/{}", self.items_path()?, path_segment(seller_sku)),
+            &format!("{}/{}", self.items_path()?, escaped(seller_sku)),
             &[
                 ("marketplaceIds", MARKETPLACE),
                 ("includedData", "summaries,fulfillmentAvailability"),
@@ -153,11 +154,7 @@ impl Amazon {
                 "an Amazon listing needs a SKU".into(),
             ));
         }
-        let path = format!(
-            "{}/{}",
-            self.items_path()?,
-            path_segment(&listing.seller_sku)
-        );
+        let path = format!("{}/{}", self.items_path()?, escaped(&listing.seller_sku));
         let mut query = vec![("marketplaceIds", MARKETPLACE), ("issueLocale", "pt_BR")];
         if preview {
             query.push(("mode", "VALIDATION_PREVIEW"));

@@ -1,5 +1,4 @@
 //! Shopee as a Sales Channel (#129): where the seller adapter points, the
-//! address Shopee's authorization page sends the browser back to, the
 //! Seller Center, and how a failed login reads in Portuguese.
 
 use std::sync::Arc;
@@ -8,12 +7,6 @@ use gpui_kit::{App, Global};
 use mascate_integrations::ShopeeSeller;
 use mascate_kernel::PlatformError;
 use mascate_platform::{Build, Environment};
-
-/// Where Shopee sends the browser after the owner authorizes the app. The
-/// app has no address of its own yet (#10), so the owner copies the one
-/// the browser lands on, code and shop id included, back into the app; the
-/// app's redirect domain in Shopee's console is this one.
-pub const REDIRECT: &str = "https://github.com/fernandolisboa";
 
 /// Shopee's Seller Center, where the owner sends an Order's NF-e and
 /// arranges a shipment the app cannot.
