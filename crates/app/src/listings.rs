@@ -1144,9 +1144,8 @@ impl ListingsScreen {
                     .text_xs()
                     .text_color(t.text2)
                     .child(match (queue.is_empty(), last_sent) {
-                        (false, _) => "a parte destes anúncios mudou no app; vai ao canal agora \
-                                       ou no próximo Sync, as que diminuem antes das que \
-                                       aumentam, e o que falhar fica aqui"
+                        (false, _) => "vai no próximo Sync, as partes que diminuem antes das \
+                                       que aumentam; o que falhar fica aqui"
                             .to_owned(),
                         (true, Some(at)) => format!(
                             "o saldo de cada produto é dividido entre os anúncios dele · \
