@@ -957,6 +957,8 @@ fn a_premium_draft_is_priced_with_the_premium_fee() {
         let fx = Fixture::new().await;
         let draft = fx.draft(1, &Publisher::default()).await;
         let premium = DraftEdit {
+            variation_tier: String::new(),
+            variations: Vec::new(),
             title: draft.title.clone(),
             description: String::new(),
             listing_type: mascate_kernel::ListingType::Premium,

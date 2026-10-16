@@ -20,8 +20,10 @@ pub use channels::{ChannelRanking, OnSalesChannel};
 pub use drafts::{
     AttributeValue, CatalogItem, CatalogMatch, CategoryAttribute, CategoryPrediction,
     ChannelCategory, ChannelIssue, Check, ChecklistItem, Condition, DraftAttribute, DraftEdit,
-    DraftKind, DraftPicture, DraftStart, Gtin, ListingDraft, ListingPublisher, ListingToPublish,
-    MAX_PICTURE_BYTES, MIN_PICTURES, PublishedListing, Requirement, is_blocked, is_picture,
+    DraftKind, DraftPicture, DraftStart, DraftVariation, Gtin, ListingDraft, ListingPublisher,
+    ListingToPublish, MAX_PICTURE_BYTES, MAX_VARIATIONS, MIN_PICTURES, PublishedListing,
+    PublishedVariation, Requirement, VariationToPublish, VariationsToPublish, is_blocked,
+    is_picture, takes_variations,
 };
 pub use fees::{
     AdCost, BilledOrder, ChannelBilling, ChannelFee, Fee, FeeImport, FeeKind, LineMargin,
@@ -123,5 +125,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         listings::ADD_CATEGORY_NAMES,
         releases::CREATE_MONEY_RELEASES,
         channels::ADD_SALES_CHANNELS,
+        drafts::ADD_DRAFT_VARIATIONS,
     ],
 };

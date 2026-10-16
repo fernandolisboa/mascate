@@ -102,6 +102,8 @@ impl Fixture {
 
 fn edit(draft: &ListingDraft) -> DraftEdit {
     DraftEdit {
+        variation_tier: draft.variation_tier.clone(),
+        variations: draft.variations.clone(),
         title: draft.title.clone(),
         description: draft.description.clone(),
         listing_type: draft.listing_type,

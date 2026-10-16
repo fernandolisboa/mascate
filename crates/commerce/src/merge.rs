@@ -47,6 +47,9 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             .references(&[TO_LISTING])
             .platform_ids(&["channel_picture_id"])
             .label(&["listing_id", "path"]),
+        TableMerge::new("commerce_draft_variations", "Variação de rascunho", Id)
+            .references(&[TO_LISTING, TO_PRODUCT])
+            .label(&["listing_id", "option_name"]),
         TableMerge::new(
             "commerce_listing_stock",
             "Estoque enviado ao anúncio",

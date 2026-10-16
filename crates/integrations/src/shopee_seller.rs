@@ -4,7 +4,8 @@
 //! approves it and the stock that follows the app's Stock Share, and
 //! unlists and relists an item; it reads the Orders with their returns
 //! (#130), and their Fees and money from the escrow; it arranges an Order's
-//! shipment and prints its label (#131). Every call is signed with
+//! shipment and prints its label (#131); it publishes a draft, with its
+//! variations as models (#132). Every call is signed with
 //! HMAC-SHA256 of the partner key; the shop's login comes from Shopee's
 //! authorization page and its refresh token is single use. Shopee has no fee
 //! estimate, so the sale fee is its published table. Separate from Shopee
@@ -14,6 +15,7 @@ mod answers;
 mod escrow;
 mod labels;
 mod orders;
+mod publisher;
 mod sales_channel;
 mod tokens;
 
@@ -341,6 +343,19 @@ impl ShopeeSeller {
     /// kept before asking again.
     fn post_once(&self, path: &str, body: &str) -> Result<(), PlatformError> {
         self.signed(path, ONCE, acknowledged, |common| {
+            self.send_post(path, common, body)
+        })
+    }
+
+    /// The `response` of Shopee's answer to `POST path` with the JSON
+    /// `body`, sent once, as [`Self::post_once`]: for a call that creates
+    /// something.
+    fn post_once_for<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &str,
+    ) -> Result<T, PlatformError> {
+        self.signed(path, ONCE, attempt, |common| {
             self.send_post(path, common, body)
         })
     }

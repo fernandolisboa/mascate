@@ -103,6 +103,7 @@ impl Fake {
 fn earphones() -> ListingToPublish {
     ListingToPublish {
         title: "Fone de Ouvido Bluetooth TWS Lenovo LP40".into(),
+        description: String::new(),
         category: "MLB196208".into(),
         listing_type: ListingType::Premium,
         condition: Condition::New,
@@ -112,6 +113,7 @@ fn earphones() -> ListingToPublish {
         warranty: Some("90 dias".into()),
         attributes: vec![value("BRAND", "Lenovo"), value("MODEL", "LP40")],
         pictures: vec!["123-MLB456_102026".into(), "789-MLB456_102026".into()],
+        variations: None,
     }
 }
 
@@ -499,6 +501,8 @@ fn a_draft_from_a_product_is_published_on_mercado_livre_end_to_end() {
                     warranty: String::new(),
                     attributes: vec![value("MODEL", "LP40")],
                     pictures,
+                    variation_tier: String::new(),
+                    variations: Vec::new(),
                 },
             )
             .await

@@ -1,0 +1,15 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "8f90a1b2c3d4e5f60718293a4b5c6d7e",
+  "response": {
+    "brand_list": [
+      {"brand_id": 1200, "original_brand_name": "Malwee", "display_brand_name": "Malwee"}
+    ],
+    "has_next_page": false,
+    "next_offset": 0,
+    "is_mandatory": false,
+    "input_type": "DROP_DOWN"
+  }
+}

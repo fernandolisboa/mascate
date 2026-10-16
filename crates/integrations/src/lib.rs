@@ -11,6 +11,7 @@ mod kiwify;
 mod link_tags;
 mod mercado_livre;
 mod monetizze;
+mod pictures;
 mod retry;
 mod shopee_affiliate;
 mod shopee_seller;

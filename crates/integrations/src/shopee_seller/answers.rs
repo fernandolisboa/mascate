@@ -405,3 +405,143 @@ pub(super) struct OrderIncome {
     pub reverse_shipping_fee: Option<serde_json::Number>,
     pub final_return_to_seller_shipping_fee: Option<serde_json::Number>,
 }
+
+/// `product/category_recommend`: the categories Shopee sees in a title,
+/// likeliest first.
+#[derive(Debug, Deserialize)]
+pub(super) struct CategoryRecommendation {
+    #[serde(default)]
+    pub category_id: Vec<u64>,
+}
+
+/// `product/get_attribute_tree`, one entry per category asked.
+#[derive(Debug, Deserialize)]
+pub(super) struct AttributeTrees {
+    #[serde(default)]
+    pub list: Vec<AttributeTree>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttributeTree {
+    #[serde(default)]
+    pub attribute_tree: Vec<AttributeNode>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttributeNode {
+    pub attribute_id: u64,
+    #[serde(default)]
+    pub mandatory: bool,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub multi_lang: Vec<Translation>,
+    #[serde(default)]
+    pub attribute_value_list: Vec<AttributeOption>,
+    pub attribute_info: Option<AttributeInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttributeOption {
+    pub value_id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub multi_lang: Vec<Translation>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Translation {
+    pub language: String,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttributeInfo {
+    /// 1 single drop-down, 2 single combo box, 3 free text, 4 multiple
+    /// drop-down, 5 multiple combo box.
+    pub input_type: Option<u8>,
+    /// 2 for a quantity with its unit.
+    pub format_type: Option<u8>,
+    #[serde(default)]
+    pub attribute_unit_list: Vec<String>,
+}
+
+/// One page of `product/get_brand_list`.
+#[derive(Debug, Deserialize)]
+pub(super) struct BrandList {
+    #[serde(default)]
+    pub brand_list: Vec<Brand>,
+    #[serde(default)]
+    pub has_next_page: bool,
+    #[serde(default)]
+    pub next_offset: u64,
+    #[serde(default)]
+    pub is_mandatory: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Brand {
+    pub brand_id: u64,
+    #[serde(default)]
+    pub original_brand_name: String,
+    pub display_brand_name: Option<String>,
+}
+
+/// `logistics/get_channel_list`: the shop's shipping channels.
+#[derive(Debug, Deserialize)]
+pub(super) struct LogisticsChannels {
+    #[serde(default)]
+    pub logistics_channel_list: Vec<LogisticsChannel>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct LogisticsChannel {
+    pub logistics_channel_id: u64,
+    #[serde(default)]
+    pub enabled: bool,
+    /// `SIZE_SELECTION`, `SIZE_INPUT`, `FIXED_DEFAULT_PRICE` or
+    /// `CUSTOM_PRICE`.
+    pub fee_type: Option<String>,
+    /// 0 for a channel buyers pick at checkout; another channel's id for
+    /// one that fulfils it.
+    #[serde(default)]
+    pub mask_channel_id: u64,
+    pub weight_limit: Option<WeightLimit>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WeightLimit {
+    /// Kilograms; 0 or none for no limit.
+    pub item_max_weight: Option<serde_json::Number>,
+    pub item_min_weight: Option<serde_json::Number>,
+}
+
+/// `media_space/upload_image`.
+#[derive(Debug, Deserialize)]
+pub(super) struct UploadedImage {
+    pub image_info: Option<ImageInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ImageInfo {
+    pub image_id: String,
+}
+
+/// `product/add_item`: the item Shopee created.
+#[derive(Debug, Deserialize)]
+pub(super) struct AddedItem {
+    #[serde(deserialize_with = "numeric_id")]
+    pub item_id: String,
+    pub item_status: Option<String>,
+}
+
+/// One page of `product/search_item`.
+#[derive(Debug, Deserialize)]
+pub(super) struct FoundItems {
+    #[serde(default)]
+    pub item_id_list: Vec<u64>,
+    /// Empty on the last page.
+    #[serde(default)]
+    pub next_offset: String,
+}

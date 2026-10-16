@@ -208,6 +208,14 @@ pub enum ListingError {
     Picture { path: PathBuf, reason: String },
     #[error("draft {0} is published, but its description was not sent: {1}")]
     DescriptionNotSent(RecordId, PlatformError),
+    #[error("draft {0} is published, but its variations were not sent: {1}")]
+    VariationsNotSent(RecordId, PlatformError),
+    #[error("the app publishes no variations to {0:?}")]
+    NoVariations(SalesChannelKind),
+    #[error("the Product {0} is a variation twice")]
+    RepeatedVariation(RecordId),
+    #[error("the draft's own Product is one of its variations")]
+    VariationsWithoutTheDraftProduct,
     #[error("a GTIN has 8, 12, 13 or 14 digits, the last one checking the others")]
     InvalidGtin,
     #[error("draft {0} is a page of its own, not an offer on the channel's catalog")]

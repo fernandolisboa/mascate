@@ -13,8 +13,8 @@ use mascate_commerce::{
     CategoryPrediction, ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing,
     ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock,
     FeeBasis, Gtin, LabelError, ListingPublisher, ListingStatus, ListingToPublish, OnSalesChannel,
-    OrderStatus, PaymentRelease, PublishedListing, Receiver, Requirement, SaleFee, SalesChannel,
-    SentShipment, Shipment, ShipmentStatus, ShippingLabels, Variation,
+    OrderStatus, PaymentRelease, PublishedListing, PublishedVariation, Receiver, Requirement,
+    SaleFee, SalesChannel, SentShipment, Shipment, ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
@@ -583,6 +583,13 @@ pub struct Publisher {
     pub catalog: Mutex<HashMap<String, Vec<CatalogItem>>>,
     /// The GTINs looked up.
     pub looked_up: Mutex<Vec<String>>,
+    /// What giving a listing its variations does: `Creates` adds them,
+    /// `CreatesUnanswered` adds them and loses the answer.
+    pub adding: Mutex<Publishing>,
+    /// The variations each listing has, by its id.
+    pub variations: Mutex<HashMap<String, Vec<PublishedVariation>>>,
+    /// Each listing given its variations, with what was sent, in order.
+    pub added: Mutex<Vec<(String, ListingToPublish)>>,
 }
 
 impl Default for Publisher {
@@ -621,6 +628,9 @@ impl Default for Publisher {
             channel: SalesChannelKind::MercadoLivre,
             catalog: Mutex::default(),
             looked_up: Mutex::default(),
+            adding: Mutex::new(Publishing::Creates),
+            variations: Mutex::default(),
+            added: Mutex::default(),
         }
     }
 }
@@ -681,6 +691,18 @@ impl Publisher {
 }
 
 impl Publisher {
+    /// Shopee, whose listings take variations, with the default's category.
+    pub fn shopee() -> Self {
+        Self {
+            channel: SalesChannelKind::Shopee,
+            ..Self::default()
+        }
+    }
+
+    pub fn adds_variations(&self, adding: Publishing) {
+        *self.adding.lock().unwrap() = adding;
+    }
+
     fn check(&self) -> Result<(), PlatformError> {
         match self.failure.lock().unwrap().clone() {
             Some(error) => Err(error),
@@ -792,6 +814,52 @@ impl ListingPublisher for Publisher {
             .filter(|(sku, _)| sku == seller_sku)
             .map(|(_, listing)| listing.clone())
             .collect())
+    }
+
+    fn add_variations(
+        &self,
+        id: &str,
+        listing: &ListingToPublish,
+    ) -> Result<Vec<PublishedVariation>, PlatformError> {
+        self.check()?;
+        self.added
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), listing.clone()));
+        let mut variations = self.variations.lock().unwrap();
+        if let Some(found) = variations.get(id) {
+            return Ok(found.clone());
+        }
+        let wanted = listing
+            .variations
+            .as_ref()
+            .ok_or_else(|| PlatformError::Refused("no variations".into()))?;
+        let created: Vec<PublishedVariation> = wanted
+            .options
+            .iter()
+            .enumerate()
+            .map(|(at, option)| PublishedVariation {
+                id: format!("{id}-{}", at + 1),
+                seller_sku: option.seller_sku.clone(),
+                name: format!("{}: {}", wanted.tier, option.option),
+                status: if option.available_quantity == 0 {
+                    ListingStatus::OutOfStock
+                } else {
+                    ListingStatus::Active
+                },
+            })
+            .collect();
+        match self.adding.lock().unwrap().clone() {
+            Publishing::Creates => {
+                variations.insert(id.to_owned(), created.clone());
+                Ok(created)
+            }
+            Publishing::CreatesUnanswered => {
+                variations.insert(id.to_owned(), created);
+                Err(PlatformError::Failed("the connection dropped".into()))
+            }
+            Publishing::Fails(error) => Err(error),
+        }
     }
 
     fn catalog_items(&self, gtin: &Gtin) -> Result<Vec<CatalogItem>, PlatformError> {

@@ -1,0 +1,29 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "4b5c6d7e8f90a1b2c3d4e5f60718293a",
+  "response": {
+    "tier_variation": [
+      {"name": "Cor", "option_list": [{"option": "Preto"}, {"option": "Branco"}]}
+    ],
+    "model": [
+      {
+        "model_id": 910001,
+        "model_sku": "CAM-PRE-M",
+        "model_status": "MODEL_NORMAL",
+        "tier_index": [0],
+        "price_info": [{"currency": "BRL", "original_price": 49.9, "current_price": 49.9}],
+        "stock_info_v2": {"summary_info": {"total_reserved_stock": 0, "total_available_stock": 4}, "seller_stock": [{"location_id": "", "stock": 4}]}
+      },
+      {
+        "model_id": 910002,
+        "model_sku": "CAM-BRA-M",
+        "model_status": "MODEL_NORMAL",
+        "tier_index": [1],
+        "price_info": [{"currency": "BRL", "original_price": 49.9, "current_price": 49.9}],
+        "stock_info_v2": {"summary_info": {"total_reserved_stock": 0, "total_available_stock": 2}, "seller_stock": [{"location_id": "", "stock": 2}]}
+      }
+    ]
+  }
+}

@@ -3,7 +3,9 @@
 //! from the Product's folder and a price, checked before it goes out, and
 //! published only on the owner's click. The same Listing then carries the
 //! channel's id (ADR 0016). On Amazon a draft is an offer on a product its
-//! catalog already has, found by the GTIN (#128, ADR 0033).
+//! catalog already has, found by the GTIN (#128, ADR 0033). On Shopee a
+//! draft can join other Products as its variations, each with its own
+//! option, units and Listing once published (#132, ADR 0034).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,9 @@ pub const MAX_PICTURE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// How a draft is kept in the Listings' status column until it is published.
 const DRAFT_STATUS: &str = "draft";
+
+/// The most variations a listing takes: Shopee's limit of models.
+pub const MAX_VARIATIONS: usize = 50;
 
 pub(crate) const CREATE_DRAFTS: Migration = Migration {
     version: 4,
@@ -75,6 +80,28 @@ pub(crate) const CREATE_DRAFTS: Migration = Migration {
     CREATE INDEX commerce_draft_pictures_by_listing ON commerce_draft_pictures (listing_id);",
 };
 
+pub(crate) const ADD_DRAFT_VARIATIONS: Migration = Migration {
+    version: 13,
+    name: "add variations to listing drafts",
+    risky: false,
+    // Each variation is a Product of its own; the draft's Product is one of
+    // them. The tier names what sets them apart, as "Cor".
+    sql: "ALTER TABLE commerce_listing_drafts ADD COLUMN variation_tier TEXT NOT NULL DEFAULT '';
+    CREATE TABLE commerce_draft_variations (
+        id                 TEXT    PRIMARY KEY,
+        listing_id         TEXT    NOT NULL,
+        position           INTEGER NOT NULL,
+        product_id         TEXT    NOT NULL,
+        seller_sku         TEXT    NOT NULL,
+        option_name        TEXT    NOT NULL,
+        available_quantity INTEGER NOT NULL,
+        created_at         TEXT    NOT NULL,
+        updated_at         TEXT    NOT NULL,
+        deleted_at         TEXT
+    );
+    CREATE INDEX commerce_draft_variations_by_listing ON commerce_draft_variations (listing_id);",
+};
+
 /// Whether `path` is a picture file a Sales Channel takes, by its extension.
 pub fn is_picture(path: &Path) -> bool {
     path.extension()
@@ -108,6 +135,12 @@ impl DraftKind {
             | SalesChannelKind::Magalu => DraftKind::OwnPage,
         }
     }
+}
+
+/// Whether the app publishes drafts with variations to `channel`: Shopee,
+/// whose items take them from the app as models (#132).
+pub fn takes_variations(channel: SalesChannelKind) -> bool {
+    channel == SalesChannelKind::Shopee
 }
 
 /// A product barcode: 8, 12, 13 or 14 digits whose last one checks the
@@ -276,8 +309,19 @@ pub struct DraftPicture {
     pub uploaded: Option<String>,
 }
 
-/// A Listing still in the app, or published with its description still to
-/// send.
+/// One variation of a draft: a Product of its own, sold under the option
+/// buyers pick, as "Azul".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftVariation {
+    pub product: RecordId,
+    /// The Product's SKU, sent as the variation's seller SKU.
+    pub seller_sku: String,
+    pub option: String,
+    pub available_quantity: u32,
+}
+
+/// A Listing still in the app, or published with its description or its
+/// variations still to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListingDraft {
     /// The Listing's id, which stays once it is published.
@@ -301,10 +345,17 @@ pub struct ListingDraft {
     pub attributes: Vec<DraftAttribute>,
     /// In order: the first is the cover.
     pub pictures: Vec<DraftPicture>,
+    /// What sets the variations apart, as "Cor"; empty without them.
+    pub variation_tier: String,
+    /// The Products sold under the listing, the draft's own among them;
+    /// none for a listing without variations.
+    pub variations: Vec<DraftVariation>,
     /// The channel's id once published.
     pub published: Option<String>,
     /// Published, but its description did not reach the channel yet.
     pub description_pending: bool,
+    /// Published, but its variations did not reach the channel yet.
+    pub variations_pending: bool,
     pub updated_at: Timestamp,
 }
 
@@ -329,6 +380,16 @@ pub enum Check {
     Description,
     /// No units: the listing starts paused.
     Stock,
+    /// Variations without the name of what sets them apart, as "Cor".
+    VariationTier,
+    /// A variation without its option.
+    VariationOption {
+        seller_sku: String,
+    },
+    /// Two variations with the same option.
+    RepeatedOption(String),
+    /// More than [`MAX_VARIATIONS`] variations.
+    TooManyVariations,
     /// What the channel's validator said, in its words.
     Channel(String),
 }
@@ -355,6 +416,19 @@ pub fn is_blocked(checklist: &[ChecklistItem]) -> bool {
 impl ListingDraft {
     pub fn kind(&self) -> DraftKind {
         DraftKind::on(self.channel)
+    }
+
+    /// The units the listing goes out with: its variations' together, when
+    /// it has them.
+    pub fn units(&self) -> u32 {
+        if self.variations.is_empty() {
+            self.available_quantity
+        } else {
+            self.variations
+                .iter()
+                .map(|variation| variation.available_quantity)
+                .fold(0, u32::saturating_add)
+        }
     }
 
     /// What the draft lacks, blocking items first, without asking the
@@ -405,7 +479,31 @@ impl ListingDraft {
         if own_page && self.description.trim().is_empty() {
             add(Check::Description, false);
         }
-        if self.available_quantity == 0 {
+        if !self.variations.is_empty() {
+            if self.variation_tier.trim().is_empty() {
+                add(Check::VariationTier, true);
+            }
+            if self.variations.len() > MAX_VARIATIONS {
+                add(Check::TooManyVariations, true);
+            }
+            let mut options: Vec<String> = Vec::new();
+            for variation in &self.variations {
+                let option = variation.option.trim();
+                if option.is_empty() {
+                    add(
+                        Check::VariationOption {
+                            seller_sku: variation.seller_sku.clone(),
+                        },
+                        true,
+                    );
+                } else if options.iter().any(|seen| seen.eq_ignore_ascii_case(option)) {
+                    add(Check::RepeatedOption(option.to_owned()), true);
+                } else {
+                    options.push(option.to_owned());
+                }
+            }
+        }
+        if self.units() == 0 {
             add(Check::Stock, false);
         }
         items.sort_by_key(|item| !item.blocks);
@@ -427,6 +525,12 @@ pub struct DraftEdit {
     pub attributes: Vec<AttributeValue>,
     /// The pictures, in order; a file already uploaded keeps its id.
     pub pictures: Vec<PathBuf>,
+    /// What sets the variations apart, as "Cor".
+    pub variation_tier: String,
+    /// Every variation, the draft's Product among them, in order; none for
+    /// a listing without. With them, the draft's units are its Product's
+    /// variation's.
+    pub variations: Vec<DraftVariation>,
 }
 
 /// Where a new draft starts besides the Product: the units on hand and the
@@ -441,11 +545,15 @@ pub struct DraftStart {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListingToPublish {
     pub title: String,
+    /// For a channel that takes it with the listing; the others get it from
+    /// [`ListingPublisher::describe`].
+    pub description: String,
     pub category: String,
     pub listing_type: ListingType,
     pub condition: Condition,
-    /// In whole cents.
+    /// In whole cents; every variation's too.
     pub price: Money,
+    /// The variations' units together, when it has them.
     pub available_quantity: u32,
     pub seller_sku: String,
     pub warranty: Option<String>,
@@ -453,6 +561,33 @@ pub struct ListingToPublish {
     pub attributes: Vec<AttributeValue>,
     /// The channel's ids of the uploaded pictures, cover first.
     pub pictures: Vec<String>,
+    pub variations: Option<VariationsToPublish>,
+}
+
+/// The variations of a listing as they go to the channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariationsToPublish {
+    /// What sets them apart, as "Cor".
+    pub tier: String,
+    pub options: Vec<VariationToPublish>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariationToPublish {
+    pub option: String,
+    pub seller_sku: String,
+    pub available_quantity: u32,
+}
+
+/// A variation the channel has of a listing just published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedVariation {
+    /// The channel's id of the variation.
+    pub id: String,
+    pub seller_sku: String,
+    /// What sets it apart, as a Sync names it: "Cor: Azul".
+    pub name: String,
+    pub status: ListingStatus,
 }
 
 /// A listing the channel has: one just published, or one found by its
@@ -493,6 +628,20 @@ pub trait ListingPublisher: OnSalesChannel + Send + Sync {
     /// The owner's listings with `seller_sku`, in any status.
     fn find_by_seller_sku(&self, seller_sku: &str) -> Result<Vec<PublishedListing>, PlatformError>;
 
+    /// Gives the listing `id`, just published, the variations of `listing`
+    /// and puts it on sale. A listing that has them already keeps them, as
+    /// when the answer of an earlier call was lost: they are what comes
+    /// back. Only a channel [`takes_variations`] is asked.
+    fn add_variations(
+        &self,
+        _id: &str,
+        _listing: &ListingToPublish,
+    ) -> Result<Vec<PublishedVariation>, PlatformError> {
+        Err(PlatformError::Refused(
+            "the channel takes no variations from the app".into(),
+        ))
+    }
+
     /// The products of the channel's catalog with `gtin`, for a catalog
     /// offer. A channel whose listings are pages of their own offers on
     /// none.
@@ -504,7 +653,7 @@ pub trait ListingPublisher: OnSalesChannel + Send + Sync {
 const DRAFT_COLUMNS: &str = "l.id, l.product_id, l.seller_sku, l.title, d.description,
      l.category_id, d.category_name, l.listing_type, d.item_condition, l.price, l.currency,
      l.available_quantity, d.warranty, l.channel_item_id, l.updated_at, d.description_pending,
-     l.sales_channel
+     l.sales_channel, d.variation_tier, l.channel_variation_id
      FROM commerce_listings l
      JOIN commerce_listing_drafts d ON d.listing_id = l.id AND d.deleted_at IS NULL
      WHERE l.deleted_at IS NULL";
@@ -601,10 +750,13 @@ impl Listings {
     }
 
     /// The drafts not yet published, and the published ones whose
-    /// description is still to send, by title.
+    /// description or variations are still to send, by title.
     pub async fn drafts(&self) -> Result<Vec<ListingDraft>, ListingError> {
         self.read_drafts(
-            "AND (l.channel_item_id IS NULL OR d.description_pending = 1)",
+            "AND (l.channel_item_id IS NULL OR d.description_pending = 1
+                  OR (l.channel_variation_id IS NULL AND EXISTS (
+                      SELECT 1 FROM commerce_draft_variations v
+                      WHERE v.listing_id = l.id AND v.deleted_at IS NULL)))",
             (),
         )
         .await
@@ -753,7 +905,9 @@ impl Listings {
 
     /// Saves what the owner changed in the draft. A picture already
     /// uploaded keeps the channel's id; only files of the channel's kinds
-    /// are kept, and none on a catalog offer.
+    /// are kept, and none on a catalog offer. Variations go only to a
+    /// channel that [`takes_variations`], each Product once, the draft's
+    /// own among them.
     pub async fn save_draft(
         &self,
         id: RecordId,
@@ -763,6 +917,27 @@ impl Listings {
         if edit.price.currency() != draft.price.currency() || edit.price.amount() < Decimal::ZERO {
             return Err(ListingError::InvalidPrice);
         }
+        let available_quantity = match edit.variations.as_slice() {
+            [] => edit.available_quantity,
+            _ if !takes_variations(draft.channel) => {
+                return Err(ListingError::NoVariations(draft.channel));
+            }
+            variations => {
+                for (at, variation) in variations.iter().enumerate() {
+                    if variations[..at]
+                        .iter()
+                        .any(|earlier| earlier.product == variation.product)
+                    {
+                        return Err(ListingError::RepeatedVariation(variation.product));
+                    }
+                }
+                variations
+                    .iter()
+                    .find(|variation| variation.product == draft.product)
+                    .ok_or(ListingError::VariationsWithoutTheDraftProduct)?
+                    .available_quantity
+            }
+        };
         let own_page = draft.kind() == DraftKind::OwnPage;
         let uploaded: HashMap<PathBuf, String> = draft
             .pictures
@@ -797,7 +972,7 @@ impl Listings {
                     edit.title.trim().to_owned(),
                     edit.listing_type.code(),
                     edit.price.amount().to_string(),
-                    edit.available_quantity,
+                    available_quantity,
                     now.clone(),
                     id.to_string()
                 ],
@@ -806,12 +981,18 @@ impl Listings {
         transaction
             .execute(
                 "UPDATE commerce_listing_drafts
-                 SET description = ?1, item_condition = ?2, warranty = ?3, updated_at = ?4
-                 WHERE listing_id = ?5 AND deleted_at IS NULL",
+                 SET description = ?1, item_condition = ?2, warranty = ?3, variation_tier = ?4,
+                     updated_at = ?5
+                 WHERE listing_id = ?6 AND deleted_at IS NULL",
                 params![
                     edit.description.trim().to_owned(),
                     edit.condition.code(),
                     edit.warranty.trim().to_owned(),
+                    if edit.variations.is_empty() {
+                        String::new()
+                    } else {
+                        edit.variation_tier.trim().to_owned()
+                    },
                     now.clone(),
                     id.to_string()
                 ],
@@ -840,6 +1021,33 @@ impl Listings {
             .await?;
         self.write_pictures(&transaction, id, &pictures, &now)
             .await?;
+        transaction
+            .execute(
+                "UPDATE commerce_draft_variations SET deleted_at = ?1, updated_at = ?1
+                 WHERE listing_id = ?2 AND deleted_at IS NULL",
+                params![now.clone(), id.to_string()],
+            )
+            .await?;
+        for (position, variation) in edit.variations.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO commerce_draft_variations
+                         (id, listing_id, position, product_id, seller_sku, option_name,
+                          available_quantity, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    params![
+                        self.ids.next_id().to_string(),
+                        id.to_string(),
+                        position as i64,
+                        variation.product.to_string(),
+                        variation.seller_sku.trim().to_owned(),
+                        variation.option.trim().to_owned(),
+                        variation.available_quantity,
+                        now.clone()
+                    ],
+                )
+                .await?;
+        }
         transaction.commit().await?;
         self.draft(id).await
     }
@@ -858,6 +1066,7 @@ impl Listings {
             ("commerce_listing_drafts", "listing_id"),
             ("commerce_draft_attributes", "listing_id"),
             ("commerce_draft_pictures", "listing_id"),
+            ("commerce_draft_variations", "listing_id"),
         ] {
             transaction
                 .execute(
@@ -909,7 +1118,8 @@ impl Listings {
     /// Publishing again never lists the Product twice: a draft already in
     /// the channel only sends what is left of it, and one whose earlier
     /// attempt ended without an answer is first looked for in the channel
-    /// by its seller SKU.
+    /// by its seller SKU. A draft with variations goes out with them next,
+    /// each variation a Listing of its Product.
     pub async fn publish(
         &self,
         id: RecordId,
@@ -920,6 +1130,13 @@ impl Listings {
             draft = self.create_in_channel(draft, publisher).await?;
         }
         let channel_id = draft.published.clone().expect("in the channel by now");
+        if draft.variations_pending {
+            let listing = to_publish(&draft).expect("a published draft has a category");
+            let added = publisher
+                .add_variations(&channel_id, &listing)
+                .map_err(|error| ListingError::VariationsNotSent(id, error))?;
+            self.keep_variations(&draft, &channel_id, &added).await?;
+        }
         if draft.description_pending {
             publisher
                 .describe(&channel_id, &draft.description)
@@ -974,6 +1191,18 @@ impl Listings {
             // No answer: the channel may have created it; the next attempt
             // looks for it first.
             Err(error @ PlatformError::Failed(_)) => Err(error.into()),
+            // The channel turned the listing down, as Shopee, whose checks
+            // run only on creating it: one more item of the checklist.
+            Err(PlatformError::Refused(message)) => {
+                self.set_publishing_since(id, None).await?;
+                let mut checklist = checklist;
+                checklist.push(ChecklistItem {
+                    check: Check::Channel(message),
+                    blocks: true,
+                });
+                checklist.sort_by_key(|item| !item.blocks);
+                Err(ListingError::Blocked(checklist))
+            }
             Err(error) => {
                 self.set_publishing_since(id, None).await?;
                 Err(error.into())
@@ -1077,6 +1306,151 @@ impl Listings {
                 ],
             )
             .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Gives each of the draft's variations its Listing: the draft's own
+    /// Listing becomes its Product's, the others are new, or the ones a
+    /// Sync already brought in, without a Product or with theirs. A Sync's
+    /// copy of the draft's own variation gives way to the draft.
+    async fn keep_variations(
+        &self,
+        draft: &ListingDraft,
+        channel_id: &str,
+        added: &[PublishedVariation],
+    ) -> Result<(), ListingError> {
+        let id = draft.id;
+        let mut found = Vec::new();
+        for variation in &draft.variations {
+            let published = added
+                .iter()
+                .find(|published| published.seller_sku == variation.seller_sku)
+                .ok_or_else(|| {
+                    ListingError::VariationsNotSent(
+                        id,
+                        PlatformError::Failed(format!(
+                            "the channel answered without the variation {}",
+                            variation.seller_sku
+                        )),
+                    )
+                })?;
+            found.push((variation, published));
+        }
+        let now = stored(self.clock.now());
+        let price = draft.price.rounded().amount().to_string();
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        let mut rows = transaction
+            .query(
+                "SELECT link FROM commerce_listings WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .await?;
+        let link: Option<String> = match rows.next().await? {
+            Some(row) => row.get(0)?,
+            None => return Err(ListingError::UnknownDraft(id)),
+        };
+        drop(rows);
+        for (variation, published) in found {
+            let mut rows = transaction
+                .query(
+                    "SELECT id, product_id FROM commerce_listings
+                     WHERE sales_channel = ?1 AND channel_item_id = ?2
+                         AND channel_variation_id = ?3 AND deleted_at IS NULL AND id != ?4",
+                    params![
+                        draft.channel.code(),
+                        channel_id.to_owned(),
+                        published.id.clone(),
+                        id.to_string()
+                    ],
+                )
+                .await?;
+            let synced = match rows.next().await? {
+                Some(row) => Some((row.id_at(0)?, row.optional_id_at(1)?)),
+                None => None,
+            };
+            drop(rows);
+            let own = variation.product == draft.product;
+            match synced {
+                Some((synced, _)) if own => {
+                    transaction
+                        .execute(
+                            "UPDATE commerce_listings SET deleted_at = ?1, updated_at = ?1
+                             WHERE id = ?2",
+                            params![now.clone(), synced.to_string()],
+                        )
+                        .await?;
+                }
+                Some((synced, product)) => {
+                    if product.is_none() {
+                        transaction
+                            .execute(
+                                "UPDATE commerce_listings SET product_id = ?1, updated_at = ?2
+                                 WHERE id = ?3",
+                                params![
+                                    variation.product.to_string(),
+                                    now.clone(),
+                                    synced.to_string()
+                                ],
+                            )
+                            .await?;
+                    }
+                    continue;
+                }
+                None => {}
+            }
+            if own {
+                transaction
+                    .execute(
+                        "UPDATE commerce_listings
+                         SET channel_variation_id = ?1, variation_name = ?2, status = ?3,
+                             available_quantity = ?4, synced_at = ?5, updated_at = ?5
+                         WHERE id = ?6",
+                        params![
+                            published.id.clone(),
+                            published.name.clone(),
+                            published.status.code(),
+                            variation.available_quantity,
+                            now.clone(),
+                            id.to_string()
+                        ],
+                    )
+                    .await?;
+            } else {
+                transaction
+                    .execute(
+                        "INSERT INTO commerce_listings
+                             (id, sales_channel, product_id, channel_item_id,
+                              channel_variation_id, variation_name, title, price, currency,
+                              available_quantity, status, link, listing_type, category_id,
+                              seller_sku, synced_at, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                                 ?15, ?16, ?16, ?16)",
+                        params![
+                            self.ids.next_id().to_string(),
+                            draft.channel.code(),
+                            variation.product.to_string(),
+                            channel_id.to_owned(),
+                            published.id.clone(),
+                            published.name.clone(),
+                            draft.title.clone(),
+                            price.clone(),
+                            draft.price.currency().code(),
+                            variation.available_quantity,
+                            published.status.code(),
+                            link.clone(),
+                            draft.listing_type.code(),
+                            draft.category.as_ref().map(|category| category.id.clone()),
+                            variation.seller_sku.clone(),
+                            now.clone()
+                        ],
+                    )
+                    .await?;
+            }
+        }
         transaction.commit().await?;
         Ok(())
     }
@@ -1233,6 +1607,8 @@ impl Listings {
                 }),
                 (None, _) => None,
             };
+            let published: Option<String> = row.get(13)?;
+            let variation_published = row.get::<Option<String>>(18)?.is_some();
             drafts.push(ListingDraft {
                 id: row.id_at(0)?,
                 channel: row.sales_channel_at(16)?,
@@ -1250,16 +1626,22 @@ impl Listings {
                 price: Money::new(row.decimal_at(9)?, row.currency_at(10)?),
                 available_quantity: row.get(11)?,
                 warranty: row.get(12)?,
-                published: row.get(13)?,
+                // Until the variations go out, there is nothing to tell.
+                variations_pending: published.is_some() && !variation_published,
+                published,
                 updated_at: row.time_at(14)?,
                 description_pending: row.get::<i64>(15)? != 0,
+                variation_tier: row.get(17)?,
                 attributes: Vec::new(),
                 pictures: Vec::new(),
+                variations: Vec::new(),
             });
         }
         for draft in &mut drafts {
             draft.attributes = attributes_of(connection, draft.id).await?;
             draft.pictures = pictures_of(connection, draft.id).await?;
+            draft.variations = variations_of(connection, draft.id).await?;
+            draft.variations_pending &= !draft.variations.is_empty();
         }
         Ok(drafts)
     }
@@ -1295,11 +1677,12 @@ fn draft_attributes(
 fn to_publish(draft: &ListingDraft) -> Option<ListingToPublish> {
     Some(ListingToPublish {
         title: draft.title.clone(),
+        description: draft.description.clone(),
         category: draft.category.as_ref()?.id.clone(),
         listing_type: draft.listing_type,
         condition: draft.condition,
         price: draft.price.rounded(),
-        available_quantity: draft.available_quantity,
+        available_quantity: draft.units(),
         seller_sku: draft.seller_sku.clone(),
         warranty: Some(draft.warranty.clone()).filter(|warranty| !warranty.is_empty()),
         attributes: draft
@@ -1316,6 +1699,18 @@ fn to_publish(draft: &ListingDraft) -> Option<ListingToPublish> {
             .iter()
             .filter_map(|picture| picture.uploaded.clone())
             .collect(),
+        variations: (!draft.variations.is_empty()).then(|| VariationsToPublish {
+            tier: draft.variation_tier.clone(),
+            options: draft
+                .variations
+                .iter()
+                .map(|variation| VariationToPublish {
+                    option: variation.option.clone(),
+                    seller_sku: variation.seller_sku.clone(),
+                    available_quantity: variation.available_quantity,
+                })
+                .collect(),
+        }),
     })
 }
 
@@ -1357,6 +1752,27 @@ async fn pictures_of(on: &Connection, id: RecordId) -> Result<Vec<DraftPicture>,
         });
     }
     Ok(pictures)
+}
+
+async fn variations_of(on: &Connection, id: RecordId) -> Result<Vec<DraftVariation>, ListingError> {
+    let mut rows = on
+        .query(
+            "SELECT product_id, seller_sku, option_name, available_quantity
+             FROM commerce_draft_variations
+             WHERE listing_id = ?1 AND deleted_at IS NULL ORDER BY position",
+            params![id.to_string()],
+        )
+        .await?;
+    let mut variations = Vec::new();
+    while let Some(row) = rows.next().await? {
+        variations.push(DraftVariation {
+            product: row.id_at(0)?,
+            seller_sku: row.get(1)?,
+            option: row.get(2)?,
+            available_quantity: row.get(3)?,
+        });
+    }
+    Ok(variations)
 }
 
 /// The name and bytes of a picture file, if a Sales Channel takes its size.

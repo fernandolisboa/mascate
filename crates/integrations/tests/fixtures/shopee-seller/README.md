@@ -27,4 +27,15 @@ Escritas a partir da documentação oficial da Shopee Open Platform v2 (open.sho
 - `shipping-document.pdf`: o que `POST /api/v2/logistics/download_shipping_document` devolve, um PDF mínimo no lugar da etiqueta.
 - `error-auth.json`, `error-rate-limit.json`, `error-limit.json`: o envelope de erro (`error_auth` token inválido, `error_rate_limit` por segundo, `error_limit` cota diária).
 
+- `category-recommend.json`: `GET /api/v2/product/category_recommend` pelo título do anúncio.
+- `attribute-tree-camisetas.json`: `GET /api/v2/product/get_attribute_tree` de uma categoria com um atributo obrigatório de lista (`input_type` 1), um de lista com texto livre (2) e um de quantidade com unidade (`format_type` 2).
+- `brand-list.json`, `brand-list-page-2.json`, `brand-list-mandatory.json`: `GET /api/v2/product/get_brand_list` em duas páginas por `next_offset`, e numa categoria que pede a marca (`is_mandatory`).
+- `channel-list.json`, `channel-list-none.json`: `GET /api/v2/logistics/get_channel_list` com um canal ligado, um desligado, um mascarado, um de preço próprio e um de até 0,5 kg; e nenhum ligado.
+- `upload-image.json`: `POST /api/v2/media_space/upload_image` (multipart, campo `image`).
+- `add-item.json`, `add-item-unlisted.json`, `add-item-refused.json`: `POST /api/v2/product/add_item` à venda, deslistado (o item com variações espera os modelos assim) e recusado com `error_param`.
+- `search-item.json`, `search-item-empty.json`: `GET /api/v2/product/search_item` por `item_sku`, que também acha SKUs parecidos.
+- `published-base-info.json`: `get_item_base_info` dos dois itens achados: só um com o SKU exato.
+- `init-tier-variation.json`, `model-list-new.json`: `POST /api/v2/product/init_tier_variation` e os dois modelos que ele cria.
+- `update-item.json`: `POST /api/v2/product/update_item` com a descrição.
+
 Os ids seguem o exemplo da documentação (partner 2001887, loja 14701711); os itens são inventados.

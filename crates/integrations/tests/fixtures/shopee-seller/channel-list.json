@@ -1,0 +1,14 @@
+{
+  "error": "",
+  "message": "",
+  "request_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "response": {
+    "logistics_channel_list": [
+      {"logistics_channel_id": 90001, "logistics_channel_name": "Shopee Xpress", "cod_enabled": false, "enabled": true, "fee_type": "SIZE_INPUT", "size_list": [], "weight_limit": {"item_max_weight": 30, "item_min_weight": 0}, "mask_channel_id": 0},
+      {"logistics_channel_id": 90002, "logistics_channel_name": "Correios", "cod_enabled": false, "enabled": false, "fee_type": "SIZE_INPUT", "size_list": [], "weight_limit": {"item_max_weight": 30, "item_min_weight": 0}, "mask_channel_id": 0},
+      {"logistics_channel_id": 90003, "logistics_channel_name": "Shopee Xpress - Coleta", "cod_enabled": false, "enabled": true, "fee_type": "SIZE_INPUT", "size_list": [], "weight_limit": {"item_max_weight": 30, "item_min_weight": 0}, "mask_channel_id": 90001},
+      {"logistics_channel_id": 90004, "logistics_channel_name": "Entrega do vendedor", "cod_enabled": false, "enabled": true, "fee_type": "CUSTOM_PRICE", "size_list": [], "weight_limit": {"item_max_weight": 0, "item_min_weight": 0}, "mask_channel_id": 0},
+      {"logistics_channel_id": 90005, "logistics_channel_name": "Envio Leve", "cod_enabled": false, "enabled": true, "fee_type": "SIZE_INPUT", "size_list": [], "weight_limit": {"item_max_weight": 0.5, "item_min_weight": 0}, "mask_channel_id": 0}
+    ]
+  }
+}

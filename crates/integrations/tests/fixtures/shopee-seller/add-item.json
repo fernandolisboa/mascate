@@ -1,0 +1,16 @@
+{
+  "error": "",
+  "message": "",
+  "warning": "",
+  "request_id": "d4e5f60718293a4b5c6d7e8f90a1b2c3",
+  "response": {
+    "item_id": 3000142341,
+    "item_name": "Camiseta Básica 100% Algodão",
+    "item_status": "NORMAL",
+    "category_id": 100017,
+    "price_info": {"current_price": 49.9, "original_price": 49.9},
+    "weight": 0.35,
+    "condition": "NEW",
+    "seller_stock": [{"location_id": "", "stock": 6}]
+  }
+}
