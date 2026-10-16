@@ -266,8 +266,7 @@ fn main() {
                     publisher: Some(amazon),
                 },
                 // Shopee prints the label once the shipment is arranged, and
-                // the label arranges it: no shipment to confirm. Publishing
-                // comes in its own slice.
+                // the label arranges it: no shipment to confirm.
                 ChannelPorts {
                     connection: Connection::ShopeeSeller,
                     listings: shopee_seller.clone(),
@@ -276,7 +275,8 @@ fn main() {
                     payments: Some(shopee_seller.clone()),
                     labels: Some(shopee_seller.clone()),
                     shipments: None,
-                    publisher: None,
+                    // A draft goes up with its pictures, then its models.
+                    publisher: Some(shopee_seller.clone()),
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));

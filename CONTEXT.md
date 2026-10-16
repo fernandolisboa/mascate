@@ -53,7 +53,7 @@ Anúncio de um Product num Sales Channel. Nasce como rascunho no app e passa a p
 _Avoid_: anúncio de afiliado, publicação, item do ML
 
 **Listing Draft**:
-Listing ainda não publicado, montado a partir de um Product: título, descrição, categoria e atributos do Sales Channel, fotos da pasta do Product, Listing Type, preço e estoque. Só sobe para o canal quando o Fernando clica em publicar.
+Listing ainda não publicado, montado a partir de um Product: título, descrição, categoria e atributos do Sales Channel, fotos da pasta do Product, Listing Type, preço e estoque. Na Shopee pode ter variações: outros Products vendidos como opções do mesmo anúncio (como cores), cada um com a sua opção e o seu estoque, e cada uma vira um Listing do seu Product ao publicar. Só sobe para o canal quando o Fernando clica em publicar.
 _Avoid_: pré-anúncio, rascunho de produto
 
 **Catalog Offer**:
@@ -69,7 +69,7 @@ Parte do saldo de um Product que um Listing mostra no Sales Channel. O saldo é 
 _Avoid_: reserva, cota, estoque do canal
 
 **Checklist**:
-O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (título, categoria, preço, atributos obrigatórios, mínimo de 3 fotos, erros do validador do canal) impedem a publicação; os avisos (GTIN e atributos recomendados, descrição vazia, estoque zero, avisos do validador) não. Uma Catalog Offer pede o produto do catálogo no lugar da categoria e não pede fotos nem descrição.
+O que um Listing Draft ainda pede antes de publicar. Os itens que bloqueiam (título, categoria, preço, atributos obrigatórios, mínimo de 3 fotos, nome e opções das variações, erros do validador do canal, inclusive uma recusa do canal ao publicar) impedem a publicação; os avisos (GTIN e atributos recomendados, descrição vazia, estoque zero, avisos do validador) não. Uma Catalog Offer pede o produto do catálogo no lugar da categoria e não pede fotos nem descrição.
 _Avoid_: pendências, validação (sozinho)
 
 **Order**:

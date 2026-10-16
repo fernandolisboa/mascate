@@ -1883,7 +1883,11 @@ pub(crate) fn channel_failure(kind: SalesChannelKind, error: &ListingError) -> S
         | ListingError::Picture { .. }
         | ListingError::DescriptionNotSent(..)
         | ListingError::InvalidGtin
-        | ListingError::NotACatalogOffer(_) => drafts::failure(error),
+        | ListingError::NotACatalogOffer(_)
+        | ListingError::VariationsNotSent(..)
+        | ListingError::NoVariations(_)
+        | ListingError::RepeatedVariation(_)
+        | ListingError::VariationsWithoutTheDraftProduct => drafts::failure(kind, error),
     }
 }
 

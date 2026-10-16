@@ -185,7 +185,10 @@ fn a_draft_keeps_its_variations_and_its_units_follow_its_products_variation() {
         assert_eq!(draft.available_quantity, 4);
         assert_eq!(draft.units(), 6);
         assert!(!draft.variations_pending);
-        assert_eq!(fx.listings.drafts().await.unwrap(), [draft.clone()]);
+        assert_eq!(
+            fx.listings.drafts().await.unwrap(),
+            std::slice::from_ref(&draft)
+        );
 
         // Without variations again, the draft's own units stand.
         let single = fx
