@@ -5,8 +5,10 @@ use std::sync::Arc;
 
 use gpui_kit::{App, Global};
 use mascate_integrations::{ConnectionState, MercadoLivre};
-use mascate_kernel::PlatformError;
+use mascate_kernel::{PlatformError, SalesChannelKind};
 use mascate_platform::{Build, Environment};
+
+use crate::sales_channels;
 
 /// Mercado Livre's adapter, shared by the screens that read it.
 pub struct AppMercadoLivre(pub Arc<MercadoLivre>);
@@ -45,35 +47,10 @@ pub fn local_fake(build: Build, environment: &Environment, variable: &str) -> Op
 
 /// Why the Connection is not usable, and what is shown meanwhile.
 pub fn not_connected(state: &ConnectionState) -> String {
-    let why = match state {
-        ConnectionState::Expired => "O Mercado Livre não aceita mais o login da sua conta.",
-        ConnectionState::Failed { .. } => "Não consegui ler a conexão com o Mercado Livre.",
-        _ => "A conta de vendedor do Mercado Livre não está conectada.",
-    };
-    format!(
-        "{why} Conecte em Configurações › Conexões para sincronizar; o que aparece abaixo é do \
-         último Sync."
-    )
+    sales_channels::not_connected(SalesChannelKind::MercadoLivre, state)
 }
 
 /// Why a call to Mercado Livre failed, as the owner reads it.
 pub fn failure(error: &PlatformError) -> String {
-    match error {
-        PlatformError::NotConnected => {
-            "Conecte a conta do Mercado Livre em Configurações › Conexões para sincronizar.".into()
-        }
-        PlatformError::Expired => {
-            "O Mercado Livre não aceita mais o login; reconecte a conta em Configurações › \
-             Conexões."
-                .into()
-        }
-        PlatformError::RateLimited => {
-            "O Mercado Livre pediu para esperar antes de consultar de novo. Tente daqui a \
-             alguns minutos; o que já foi lido ficou salvo."
-                .into()
-        }
-        PlatformError::Refused(why) => format!("O Mercado Livre recusou a consulta ({why})."),
-        PlatformError::NotFound => "O Mercado Livre não encontrou o que foi pedido.".into(),
-        PlatformError::Failed(why) => format!("Não consegui falar com o Mercado Livre: {why}"),
-    }
+    sales_channels::failure(SalesChannelKind::MercadoLivre, error)
 }

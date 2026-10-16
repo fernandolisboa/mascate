@@ -24,6 +24,8 @@ pub enum Connection {
     Eduzz,
     /// The bot that publishes Offer Posts on the owner's Telegram channels.
     Telegram,
+    /// The owner's Amazon seller account, a Sales Channel.
+    Amazon,
 }
 
 /// How a credential reaches the store.
@@ -51,7 +53,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 8] = [
+    pub const ALL: [Connection; 9] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -60,6 +62,7 @@ impl Connection {
         Connection::Kiwify,
         Connection::Eduzz,
         Connection::Telegram,
+        Connection::Amazon,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -97,6 +100,15 @@ impl Connection {
         // The channel's chat is not secret: it lives on each Promotion
         // Channel.
         const TELEGRAM: &[Credential] = &[pasted("TELEGRAM_BOT_TOKEN")];
+        // A private app authorizes itself: the Solution Provider Portal
+        // shows the refresh token, so nothing comes by login. The seller id
+        // is not secret: every listing path names it.
+        const AMAZON: &[Credential] = &[
+            pasted("AMAZON_LWA_CLIENT_ID"),
+            pasted("AMAZON_LWA_CLIENT_SECRET"),
+            pasted("AMAZON_REFRESH_TOKEN"),
+            pasted("AMAZON_SELLER_ID"),
+        ];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -106,6 +118,7 @@ impl Connection {
             Connection::Kiwify => KIWIFY,
             Connection::Eduzz => EDUZZ,
             Connection::Telegram => TELEGRAM,
+            Connection::Amazon => AMAZON,
         }
     }
 

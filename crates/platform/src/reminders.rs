@@ -1,4 +1,5 @@
-//! Reminders: fiscal and legal notes that never block anything (ADR 0006).
+//! Reminders: fiscal, legal and account notes that never block anything
+//! (ADR 0006).
 //! Each module declares its own in code; the owner dismisses one and it
 //! comes back after the interval it declares.
 
@@ -16,6 +17,9 @@ use crate::{Database, Migration, Registered, Registry};
 pub enum ReminderTopic {
     Fiscal,
     Legal,
+    /// Something a Platform account needs from the owner, such as a key
+    /// that expires.
+    Connection,
 }
 
 /// When a Reminder shows.

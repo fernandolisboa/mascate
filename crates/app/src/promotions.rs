@@ -109,7 +109,9 @@ pub(crate) fn failure(
             "Essa promoção já está a caminho do Mercado Livre; aguarde a resposta.".into()
         }
         PromotionError::Pricing(error) => match listing {
-            Some(listing) => price_failure(error, listing, products),
+            Some(listing) => {
+                price_failure(error, SalesChannelKind::MercadoLivre, listing, products)
+            }
             None => format!("Não consegui calcular a margem: {error}"),
         },
         PromotionError::Platform(error) => mercado_livre::failure(error),

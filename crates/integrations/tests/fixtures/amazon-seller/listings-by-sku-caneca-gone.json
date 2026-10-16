@@ -1,0 +1,189 @@
+{
+  "numberOfResults": 4,
+  "pagination": {},
+  "items": [
+    {
+      "sku": "FONE-BT-001",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CFONE001",
+          "productType": "HEADPHONES",
+          "conditionType": "new_new",
+          "status": [
+            "BUYABLE",
+            "DISCOVERABLE"
+          ],
+          "itemName": "Fone de Ouvido Bluetooth Mascate Preto",
+          "createdDate": "2026-09-02T14:10:05.120Z",
+          "lastUpdatedDate": "2026-10-15T09:30:41.007Z",
+          "mainImage": {
+            "link": "https://m.media-amazon.com/images/I/41fone001.jpg",
+            "height": 500,
+            "width": 500
+          }
+        }
+      ],
+      "offers": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "offerType": "B2C",
+          "price": {
+            "currencyCode": "BRL",
+            "amount": "129.90"
+          },
+          "audience": {
+            "value": "ALL",
+            "displayName": "Todos"
+          }
+        }
+      ],
+      "fulfillmentAvailability": [
+        {
+          "fulfillmentChannelCode": "DEFAULT",
+          "quantity": 7
+        }
+      ],
+      "relationships": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "relationships": []
+        }
+      ]
+    },
+    {
+      "sku": "CAMISETA-PAI",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CCAMIPAI",
+          "productType": "SHIRT",
+          "conditionType": "new_new",
+          "status": [],
+          "itemName": "Camiseta Básica Algodão",
+          "createdDate": "2026-09-10T08:00:00.000Z",
+          "lastUpdatedDate": "2026-10-01T08:00:00.000Z"
+        }
+      ],
+      "offers": [],
+      "fulfillmentAvailability": [],
+      "relationships": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "relationships": [
+            {
+              "type": "VARIATION",
+              "childSkus": [
+                "CAMISETA-P",
+                "CAMISETA-M"
+              ],
+              "variationTheme": {
+                "attributes": [
+                  "color",
+                  "size"
+                ],
+                "theme": "SIZE/COLOR"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sku": "CAMISETA-P",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CCAMI00P",
+          "productType": "SHIRT",
+          "conditionType": "new_new",
+          "status": [
+            "BUYABLE",
+            "DISCOVERABLE"
+          ],
+          "itemName": "Camiseta Básica Algodão Preta P",
+          "createdDate": "2026-09-10T08:00:01.000Z",
+          "lastUpdatedDate": "2026-10-12T16:45:00.000Z"
+        }
+      ],
+      "offers": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "offerType": "B2C",
+          "price": {
+            "currencyCode": "BRL",
+            "amount": "49.90"
+          }
+        },
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "offerType": "B2B",
+          "price": {
+            "currencyCode": "BRL",
+            "amount": "44.90"
+          }
+        }
+      ],
+      "fulfillmentAvailability": [
+        {
+          "fulfillmentChannelCode": "DEFAULT",
+          "quantity": 3
+        }
+      ],
+      "relationships": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "relationships": [
+            {
+              "type": "VARIATION",
+              "parentSkus": [
+                "CAMISETA-PAI"
+              ],
+              "variationTheme": {
+                "attributes": [
+                  "color",
+                  "size"
+                ],
+                "theme": "SIZE/COLOR"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sku": "FONE-FBA",
+      "summaries": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CFONE001",
+          "productType": "HEADPHONES",
+          "conditionType": "new_new",
+          "status": [
+            "BUYABLE",
+            "DISCOVERABLE"
+          ],
+          "itemName": "Fone de Ouvido Bluetooth Mascate Preto",
+          "createdDate": "2026-09-20T10:00:00.000Z",
+          "lastUpdatedDate": "2026-10-10T10:00:00.000Z"
+        }
+      ],
+      "offers": [
+        {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "offerType": "B2C",
+          "price": {
+            "currencyCode": "BRL",
+            "amount": "134.90"
+          }
+        }
+      ],
+      "fulfillmentAvailability": [
+        {
+          "fulfillmentChannelCode": "AMAZON_NA",
+          "quantity": 12
+        }
+      ]
+    }
+  ]
+}

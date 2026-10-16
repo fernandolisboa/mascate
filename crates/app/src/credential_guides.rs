@@ -200,6 +200,55 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Amazon => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    // Only the Professional plan reaches the Selling Partner API.
+                    step(
+                        "No Seller Central da Amazon.com.br, confira em Configurações › \
+                     Informações da conta que a conta está no plano Profissional: o plano \
+                     Individual não usa a API. Entre como usuário principal da conta, o único \
+                     que autoriza apps.",
+                    ),
+                    step_at(
+                        "Abra Apps e serviços › Desenvolver apps e preencha o perfil de \
+                     desenvolvedor como desenvolvedor privado, para uso só na própria conta. \
+                     Marque os papéis Product Listing, Pricing e Inventory and Order \
+                     Tracking; peça também Direct-to-Consumer Shipping, o papel restrito que \
+                     libera o endereço do comprador para os pedidos e passa por análise da \
+                     Amazon.",
+                        "Abrir Desenvolver apps",
+                        "https://sellercentral.amazon.com.br/sellingpartner/developerconsole",
+                    ),
+                    step_at(
+                        "Com o perfil aprovado, clique em Adicionar novo cliente de app, dê um \
+                     nome como Mascate, escolha SP API e os mesmos papéis. Em Credenciais LWA, \
+                     clique em Visualizar e copie o Client ID e o Client Secret.",
+                        "Ver os papéis da API",
+                        "https://developer-docs.amazon.com/sp-api/docs/roles-in-the-selling-partner-api",
+                    ),
+                    step_at(
+                        "Na linha do app, abra Autorizar e clique em Autorizar app: a Amazon \
+                     mostra o refresh token uma vez só. Copie inteiro; se perder, autorize de \
+                     novo e cole o novo.",
+                        "Como autorizar o próprio app",
+                        "https://developer-docs.amazon.com/sp-api/docs/self-authorization",
+                    ),
+                    step_at(
+                        "Em Configurações › Informações da conta › Seu token de comerciante, \
+                     copie o ID de vendedor (o Merchant Token, como A1B2C3D4E5F6G7).",
+                        "Abrir o token de comerciante",
+                        "https://sellercentral.amazon.com.br/sw/AccountInfo/MerchantToken/step/MerchantToken",
+                    ),
+                ],
+                then: Some(
+                    "O Client Secret vence a cada 180 dias: a Amazon avisa antes, e o app lembra \
+                 em Lembretes. Gere um novo na mesma tela de credenciais e cole aqui só o \
+                 Client Secret; o resto continua valendo.",
+                ),
+            };
+            GUIDE
+        }
         Connection::Eduzz => {
             const GUIDE: Guide = Guide {
                 steps: &[
@@ -265,23 +314,24 @@ mod tests {
     use crate::connections::{connection_name, connection_purpose};
 
     /// The phases with generated cards on the page.
-    const PHASES: [u8; 2] = [1, 2];
+    const PHASES: [u8; 3] = [1, 2, 3];
 
     fn credentials_page() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/credentials.html")
     }
 
     /// The hosts each Platform documents its setup on.
-    fn official_host(connection: Connection) -> &'static str {
+    fn official_hosts(connection: Connection) -> &'static [&'static str] {
         match connection {
-            Connection::MercadoLivre => "developers.mercadolivre.com.br",
-            Connection::ShopeeAffiliates => "affiliate.shopee.com.br",
-            Connection::Anthropic => "platform.claude.com",
-            Connection::Hotmart => "app-vlc.hotmart.com",
-            Connection::Monetizze => "app.monetizze.com.br",
-            Connection::Kiwify => "dashboard.kiwify.com.br",
-            Connection::Eduzz => "console.eduzz.com",
-            Connection::Telegram => "t.me",
+            Connection::MercadoLivre => &["developers.mercadolivre.com.br"],
+            Connection::Amazon => &["sellercentral.amazon.com.br", "developer-docs.amazon.com"],
+            Connection::ShopeeAffiliates => &["affiliate.shopee.com.br"],
+            Connection::Anthropic => &["platform.claude.com"],
+            Connection::Hotmart => &["app-vlc.hotmart.com"],
+            Connection::Monetizze => &["app.monetizze.com.br"],
+            Connection::Kiwify => &["dashboard.kiwify.com.br"],
+            Connection::Eduzz => &["console.eduzz.com"],
+            Connection::Telegram => &["t.me"],
         }
     }
 
@@ -295,6 +345,7 @@ mod tests {
             | Connection::Kiwify
             | Connection::Eduzz
             | Connection::Telegram => 2,
+            Connection::Amazon => 3,
         }
     }
 
@@ -403,10 +454,12 @@ mod tests {
                 "{connection:?} never says where to go"
             );
             for link in guide.steps.iter().filter_map(|step| step.link) {
-                let host = official_host(connection);
+                let hosts = official_hosts(connection);
                 assert!(
-                    link.url.starts_with(&format!("https://{host}/")),
-                    "{} is not on {host}",
+                    hosts
+                        .iter()
+                        .any(|host| link.url.starts_with(&format!("https://{host}/"))),
+                    "{} is not on {hosts:?}",
                     link.url
                 );
             }

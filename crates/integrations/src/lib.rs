@@ -1,5 +1,6 @@
 //! Integrations: one adapter per Platform, publishing normalized data to the other modules.
 
+mod amazon;
 mod amazon_earnings;
 mod answers;
 mod anthropic;
@@ -15,6 +16,7 @@ mod shopee_affiliate;
 mod spreadsheet;
 mod telegram;
 
+pub use amazon::{API_URL as AMAZON_API_URL, AUTH_URL as AMAZON_AUTH_URL, Amazon};
 pub use amazon_earnings::{
     EarningsImport, EarningsReport, LINKS as AMAZON_LINKS, PLATFORM as AMAZON_PLATFORM,
     ReportError, SkippedRow, read_earnings_report,
@@ -38,3 +40,20 @@ pub use shopee_affiliate::{API_URL as SHOPEE_AFFILIATE_API_URL, ShopeeAffiliates
 pub use telegram::{
     API_URL as TELEGRAM_API_URL, MAX_PHOTO_BYTES as TELEGRAM_MAX_PHOTO_BYTES, Telegram,
 };
+
+use mascate_platform::{Reminder, ReminderShows, ReminderTopic};
+
+/// Raised while the Amazon Connection holds its keys.
+pub const AMAZON_CLIENT_SECRET: Reminder = Reminder {
+    key: "integrations.amazon_client_secret",
+    topic: ReminderTopic::Connection,
+    title: "Client secret da Amazon",
+    text: "O client secret do app na Amazon vence a cada 180 dias. Quando a Amazon avisar, gere \
+           um novo no Solution Provider Portal e cole em Configurações › Conexões › Amazon; \
+           vencido, a Amazon para de responder ao app até a troca.",
+    reappears_after_days: 60,
+    shows: ReminderShows::WhenRaised,
+};
+
+/// The Reminders of the Platform accounts the adapters reach.
+pub const REMINDERS: &[Reminder] = &[AMAZON_CLIENT_SECRET];

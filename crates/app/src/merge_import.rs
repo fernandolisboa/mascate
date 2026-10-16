@@ -352,8 +352,8 @@ mod tests {
     use mascate_catalog::Catalog;
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOrder, ChannelOrderLine, ChannelOrders,
-        ChannelStock, ListingStatus, Listings, NewPurchaseLine, NewPurchaseOrder, OnSalesChannel,
-        OrderStatus, Orders, PurchaseOrders, Receiving, SaleFee, SalesChannel,
+        ChannelStock, FeeBasis, ListingStatus, Listings, NewPurchaseLine, NewPurchaseOrder,
+        OnSalesChannel, OrderStatus, Orders, PurchaseOrders, Receiving, SaleFee, SalesChannel,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, Inventory};
@@ -438,7 +438,7 @@ mod tests {
             Ok(vec![listing()])
         }
 
-        fn sale_fee(&self, _: &str, _: Money, _: ListingType) -> Result<SaleFee, PlatformError> {
+        fn sale_fee(&self, _: &FeeBasis, _: Money) -> Result<SaleFee, PlatformError> {
             Err(PlatformError::NotFound)
         }
 

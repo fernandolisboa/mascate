@@ -40,7 +40,7 @@ pub use orders::{
     StockShort, UnitsBack,
 };
 pub use pricing::{
-    CostSource, DraftPrice, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,
+    CostSource, DraftPrice, FeeBasis, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,
     PriceSuggestion, Pricing, PricingError, SaleFee, TargetMargin,
 };
 pub use promotions::{

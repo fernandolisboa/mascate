@@ -397,6 +397,11 @@ fn the_suggestion_covers_the_fee_shipping_tax_and_average_cost_and_sends_nothing
             *fx.channel.fee_asked.lock().unwrap(),
             [brl("89.90"), brl("91.67")]
         );
+        // A channel that tells each listing's fee, as Amazon, is asked by it.
+        assert_eq!(
+            *fx.channel.fee_listings.lock().unwrap(),
+            [Some("MLB1".to_owned()), Some("MLB1".to_owned())]
+        );
         assert!(fx.channel.prices_set.lock().unwrap().is_empty());
         assert_eq!(
             fx.listings
@@ -970,5 +975,7 @@ fn a_premium_draft_is_priced_with_the_premium_fee() {
             *fx.channel.fee_types.lock().unwrap(),
             [mascate_kernel::ListingType::Premium; 2]
         );
+        // A draft is no listing yet.
+        assert_eq!(*fx.channel.fee_listings.lock().unwrap(), [None, None]);
     });
 }

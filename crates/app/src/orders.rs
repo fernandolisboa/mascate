@@ -191,10 +191,14 @@ pub async fn round(
     }
     let mut synced = OrderSync::default();
     let mut failures = Vec::new();
+    let mut syncing = 0;
     for channel in channels {
-        match orders.sync(channel.orders.as_ref()).await {
-            Ok(part) => add(&mut synced, part),
-            Err(error) => failures.push(on_channel(channel.kind(), &failure(&error), channels)),
+        if let Some(channel_orders) = &channel.orders {
+            syncing += 1;
+            match orders.sync(channel_orders.as_ref()).await {
+                Ok(part) => add(&mut synced, part),
+                Err(error) => failures.push(on_channel(channel.kind(), &failure(&error), channels)),
+            }
         }
         if let Some(billing) = &channel.billing
             && let Err(error) = orders.import_fees(billing.as_ref()).await
@@ -214,7 +218,7 @@ pub async fn round(
             StockSend::default()
         }
     };
-    if failures.len() == channels.len() {
+    if syncing > 0 && failures.len() == syncing {
         return Err(failures.join(" "));
     }
     let products = if synced.reached_reorder_point.is_empty() {

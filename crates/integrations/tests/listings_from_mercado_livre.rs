@@ -9,8 +9,8 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelStock, ListingError, ListingStatus, ListingSync, Listings, SaleFee,
-    SalesChannel, Variation,
+    ChannelListing, ChannelStock, FeeBasis, ListingError, ListingStatus, ListingSync, Listings,
+    SaleFee, SalesChannel, Variation,
 };
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -87,6 +87,15 @@ impl Fake {
             .into_iter()
             .filter(|path| path.contains("/items/search"))
             .collect()
+    }
+}
+
+/// A Clássico listing's fee in `category`.
+fn classic_in(category: &str) -> FeeBasis {
+    FeeBasis {
+        category: category.into(),
+        listing_type: ListingType::Classic,
+        listing: Some("MLB4100000001".into()),
     }
 }
 
@@ -405,11 +414,11 @@ fn the_sale_fee_comes_as_its_percentage_and_its_fixed_part() {
 
     let below = fake
         .adapter
-        .sale_fee("MLB3697", brl("49.90"), ListingType::Classic)
+        .sale_fee(&classic_in("MLB3697"), brl("49.90"))
         .unwrap();
     let above = fake
         .adapter
-        .sale_fee("MLB3697", brl("100"), ListingType::Classic)
+        .sale_fee(&classic_in("MLB3697"), brl("100"))
         .unwrap();
 
     assert_eq!(
@@ -435,7 +444,7 @@ fn without_its_details_the_whole_sale_fee_is_a_share_of_the_price() {
 
     let fee = fake
         .adapter
-        .sale_fee("MLB3697", brl("100"), ListingType::Classic)
+        .sale_fee(&classic_in("MLB3697"), brl("100"))
         .unwrap();
 
     assert_eq!(

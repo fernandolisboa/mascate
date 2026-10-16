@@ -25,14 +25,13 @@ use mascate_commerce::{
     MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
     SalesChannel, StockSend, SuggestedBy,
 };
-use mascate_integrations::{Connection, ConnectionState};
+use mascate_integrations::ConnectionState;
 use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
 use mascate_marketing::QualitySync;
 use rust_decimal::Decimal;
 
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE, product_choice};
-use crate::connections::AppConnections;
 use crate::drafts::{self, DraftPublished, DraftsSection};
 use crate::forms::{Outcome, Picker, amount_text, input, notice, percent_text, picker, refill};
 use crate::kit;
@@ -216,7 +215,7 @@ struct Snapshot {
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
-    connection: ConnectionState,
+    connections: Vec<(SalesChannelKind, ConnectionState)>,
 }
 
 pub struct ListingsScreen {
@@ -226,7 +225,8 @@ pub struct ListingsScreen {
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
-    connection: Option<ConnectionState>,
+    /// Each Sales Channel's Connection, once read.
+    connections: Vec<(SalesChannelKind, ConnectionState)>,
     /// The listing to link whose row is open, and for what.
     step: Option<(RecordId, Step)>,
     product_pick: Picker,
@@ -277,7 +277,7 @@ impl ListingsScreen {
             to_link: Vec::new(),
             products: Vec::new(),
             last_sync: None,
-            connection: None,
+            connections: Vec::new(),
             step: None,
             product_pick: picker(window, cx),
             product_name: input("Nome do produto", window, cx),
@@ -328,7 +328,7 @@ impl ListingsScreen {
         else {
             return;
         };
-        let connections = cx.global::<AppConnections>().0.clone();
+        let reach = sales_channels::reach(cx);
         self.reads += 1;
         let read = self.reads;
         self.busy = true;
@@ -342,7 +342,7 @@ impl ListingsScreen {
                     mirrored: mirror.mirrored().await.map_err(|e| failure(&e))?,
                     to_link: listings.to_link(&known).await.map_err(|e| failure(&e))?,
                     last_sync: listings.last_sync().await.map_err(|e| failure(&e))?,
-                    connection: connections.state(Connection::MercadoLivre),
+                    connections: reach.states(),
                     products,
                 })
             }
@@ -410,11 +410,12 @@ impl ListingsScreen {
         self.to_link = snapshot.to_link;
         self.products = snapshot.products;
         self.last_sync = snapshot.last_sync;
-        self.connection = Some(snapshot.connection);
+        self.connections = snapshot.connections;
     }
 
+    /// Whether any Sales Channel is connected.
     fn connected(&self) -> bool {
-        self.connection == Some(ConnectionState::Connected)
+        sales_channels::any_connected(&self.connections)
     }
 
     fn product(&self, id: RecordId) -> Option<&Product> {
@@ -444,15 +445,20 @@ impl ListingsScreen {
             move |listings, catalog| async move {
                 let channels = reach.connected().await;
                 let mut report = ListingSync::default();
+                let mut failures = Vec::new();
                 for channel in &channels {
-                    let synced = listings
-                        .sync(channel.listings.as_ref())
-                        .await
-                        .map_err(|e| failure(&e))?;
-                    report.read += synced.read;
-                    report.new += synced.new;
-                    report.changed += synced.changed;
-                    report.gone += synced.gone;
+                    match listings.sync(channel.listings.as_ref()).await {
+                        Ok(synced) => {
+                            report.read += synced.read;
+                            report.new += synced.new;
+                            report.changed += synced.changed;
+                            report.gone += synced.gone;
+                        }
+                        Err(error) => failures.push(channel_failure(channel.kind(), &error)),
+                    }
+                }
+                if !channels.is_empty() && failures.len() == channels.len() {
+                    return Err(failures.join(" "));
                 }
                 let round = orders::round(&kept, &mirror, &catalog, &channels).await;
                 let rated = match rating.filter(|_| {
@@ -463,11 +469,12 @@ impl ListingsScreen {
                     Some(rating) => Some(quality::sync(&listings, &rated, rating.as_ref()).await),
                     None => None,
                 };
-                Ok(Some((report, round, rated)))
+                Ok(Some((report, failures, round, rated)))
             },
             |this,
-             (report, round, rated): (
+             (report, failures, round, rated): (
                 ListingSync,
+                Vec<String>,
                 orders::RoundOutcome,
                 Option<Result<QualitySync, String>>,
             ),
@@ -476,15 +483,24 @@ impl ListingsScreen {
                 let mut text = synced(&report);
                 text.push_str(&stock_sent(&sent_in(&round)));
                 orders::finished(&round, cx);
+                for failed in &failures {
+                    text.push(' ');
+                    text.push_str(failed);
+                }
                 this.outcome = Some(match rated {
-                    None => Outcome::Done(text.into()),
+                    None if failures.is_empty() => Outcome::Done(text.into()),
+                    None => Outcome::Failed(text.into()),
                     Some(Ok(rated)) => {
                         text.push(' ');
                         text.push_str(&quality::synced(&rated));
                         if rated.pending > 0 {
                             text.push_str(" Veja em Qualidade.");
                         }
-                        Outcome::Done(text.into())
+                        if failures.is_empty() {
+                            Outcome::Done(text.into())
+                        } else {
+                            Outcome::Failed(text.into())
+                        }
                     }
                     Some(Err(error)) => {
                         text.push_str(&format!(" Não li a qualidade dos anúncios: {error}"));
@@ -563,7 +579,7 @@ impl ListingsScreen {
                 } else {
                     listings.reactivate(listing, channel.as_ref()).await
                 };
-                changed.map(Some).map_err(|e| failure(&e))
+                changed.map(Some).map_err(|e| channel_failure(kind, &e))
             },
             move |this, changed: Vec<Listing>, _, cx| {
                 // Its share goes to the product's other listings, or comes
@@ -751,7 +767,7 @@ impl ListingsScreen {
     /// channel's fee at today's price, in the simulator, and the Price
     /// Suggestion. Nothing is sent to the channel.
     fn open_price(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some((_, channel)), Some(pricing), Some(taxes), Some(catalog)) = (
+        let (Some((kind, channel)), Some(pricing), Some(taxes), Some(catalog)) = (
             self.channel_of(listing, cx),
             pricing::pricing(cx),
             pricing::taxes(cx),
@@ -795,7 +811,8 @@ impl ListingsScreen {
                             this.simulator.fill(sale, window, cx);
                         }
                         let products = &this.products;
-                        let why = |error: PricingError| price_failure(&error, listing, products);
+                        let why =
+                            |error: PricingError| price_failure(&error, kind, listing, products);
                         let panel = this.price.as_mut().expect("still open");
                         panel.today = Some(today.map_err(why));
                         panel.suggestion = suggestion.map(|found| found.map_err(why));
@@ -844,7 +861,7 @@ impl ListingsScreen {
                     .change_price(listing, price, channel.as_ref())
                     .await
                     .map(Some)
-                    .map_err(|e| failure(&e))
+                    .map_err(|e| channel_failure(kind, &e))
             },
             move |this, changed: Vec<Listing>, _, _| {
                 this.price = None;
@@ -883,15 +900,24 @@ impl ListingsScreen {
         }
     }
 
+    /// The Sales Channel `listing` is on, Mercado Livre while unknown.
+    fn kind_of(&self, listing: RecordId) -> SalesChannelKind {
+        self.listings
+            .iter()
+            .find(|known| known.id == listing)
+            .map_or(SalesChannelKind::MercadoLivre, |known| known.channel)
+    }
+
     fn render_price(&self, panel: &PricePanel, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let listing = panel.listing;
+        let kind = self.kind_of(listing);
         let mut body = v_flex().gap_3();
         if panel.loading {
-            body =
-                body.child(div().text_sm().text_color(t.text2).child(
-                    "Consultando a tarifa do Mercado Livre para o preço de hoje e o sugerido…",
-                ));
+            body = body.child(div().text_sm().text_color(t.text2).child(format!(
+                "Consultando a tarifa {} para o preço de hoje e o sugerido…",
+                sales_channels::of_channel(kind)
+            )));
         }
         if let Some(Err(error)) = &panel.today {
             body = body.child(kit::error_notice(error.clone(), cx));
@@ -959,8 +985,9 @@ impl ListingsScreen {
                                 .child(
                                     Button::new("approve-price")
                                         .label(format!(
-                                            "Aprovar e enviar {} ao ML",
-                                            price.to_pt_br()
+                                            "Aprovar e enviar {} {}",
+                                            price.to_pt_br(),
+                                            send_to(kind)
                                         ))
                                         .icon(IconName::Check)
                                         .primary()
@@ -1024,6 +1051,7 @@ impl ListingsScreen {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
+        let kind = self.kind_of(listing);
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
@@ -1072,7 +1100,7 @@ impl ListingsScreen {
             .gap_2()
             .child(div().font_medium().child("Simulador"))
             .child(div().text_xs().text_color(t.text2).child(
-                "Começa com a venda de hoje: tarifa do Mercado Livre no preço de hoje, frete \
+                "Começa com a venda de hoje: tarifa do canal no preço de hoje, frete \
                  estimado a partir de R$ 79,00, imposto das configurações e custo médio do \
                  estoque. Mexa em qualquer parte para ver a margem; a tarifa não é consultada \
                  de novo.",
@@ -1095,8 +1123,10 @@ impl ListingsScreen {
                 h_flex().child(
                     Button::new("send-simulated")
                         .label(match send {
-                            Some(price) => format!("Enviar {} ao ML", price.to_pt_br()),
-                            None => "Enviar ao ML".into(),
+                            Some(price) => {
+                                format!("Enviar {} {}", price.to_pt_br(), send_to(kind))
+                            }
+                            None => format!("Enviar {}", send_to(kind)),
                         })
                         .outline()
                         .small()
@@ -1213,7 +1243,7 @@ impl ListingsScreen {
                         div().text_xs().text_color(t.danger).child(format!(
                             "Não foi em {}: {}",
                             catalog::day_and_time(failed.at),
-                            mercado_livre::failure(&failed.error)
+                            sales_channels::failure(listing.channel, &failed.error)
                         ))
                     })),
             );
@@ -1253,7 +1283,10 @@ impl ListingsScreen {
             listed.price.to_pt_br(),
             stock_text(listed.available_quantity, listing.channel),
         ];
-        facts.extend(listed.listing_type.map(|kind| kind.name().to_owned()));
+        // Classic and Premium are Mercado Livre's own listing types.
+        if listing.channel == SalesChannelKind::MercadoLivre {
+            facts.extend(listed.listing_type.map(|kind| kind.name().to_owned()));
+        }
         facts.extend(
             listed
                 .seller_sku
@@ -1303,7 +1336,7 @@ impl ListingsScreen {
                             .items_center()
                             .text_color(t.accent_text)
                             .cursor_pointer()
-                            .child("Abrir no Mercado Livre")
+                            .child(format!("Abrir {}", sales_channels::on(listing.channel)))
                             .child(
                                 gpui_kit::component::Icon::new(IconName::ExternalLink)
                                     .size(px(12.)),
@@ -1595,12 +1628,10 @@ impl Render for ListingsScreen {
             return layout::screen(parts, cx);
         }
         parts.actions.push(self.render_sync(cx));
-        if let Some(state) = &self.connection
-            && *state != ConnectionState::Connected
-        {
+        for text in sales_channels::connection_notices(&self.connections) {
             parts
                 .notices
-                .push(kit::info_notice(mercado_livre::not_connected(state), cx).into_any_element());
+                .push(kit::info_notice(text, cx).into_any_element());
         }
         if self.step.is_none() && self.price.is_none() {
             parts
@@ -1781,6 +1812,14 @@ fn stock_sent(sent: &StockSend) -> String {
     text
 }
 
+/// "ao ML", "à Amazon": where a price goes, short enough for a button.
+fn send_to(kind: SalesChannelKind) -> String {
+    match kind {
+        SalesChannelKind::MercadoLivre => "ao ML".into(),
+        other => sales_channels::to(other),
+    }
+}
+
 /// The stock a round of Orders and stock sent; none when it did not run.
 fn sent_in(round: &orders::RoundOutcome) -> StockSend {
     match round {
@@ -1797,7 +1836,7 @@ fn synced(report: &ListingSync) -> String {
     );
     if report.gone > 0 {
         text.push_str(&format!(
-            " {} que o Mercado Livre não tem mais ficaram como encerrados.",
+            " {} que o canal de venda não tem mais ficaram como encerrados.",
             report.gone
         ));
     }
@@ -1805,6 +1844,11 @@ fn synced(report: &ListingSync) -> String {
 }
 
 pub(crate) fn failure(error: &ListingError) -> String {
+    channel_failure(SalesChannelKind::MercadoLivre, error)
+}
+
+/// Why an action on a listing of `kind` failed, as the owner reads it.
+pub(crate) fn channel_failure(kind: SalesChannelKind, error: &ListingError) -> String {
     match error {
         ListingError::UnknownListing(_) => {
             "Esse anúncio não existe mais; a lista foi atualizada.".into()
@@ -1829,7 +1873,7 @@ pub(crate) fn failure(error: &ListingError) -> String {
              a lista foi atualizada."
             .into(),
         ListingError::Stock(_) => format!("Não consegui ler o estoque: {error}"),
-        ListingError::Platform(error) => mercado_livre::failure(error),
+        ListingError::Platform(error) => sales_channels::failure(kind, error),
         ListingError::Unreadable(_) | ListingError::Sql(_) => {
             format!("Não consegui ler ou gravar no banco: {error}")
         }
@@ -1861,6 +1905,7 @@ pub(crate) fn breakdown_line(sale: &PriceBreakdown, cx: &App) -> gpui_kit::Div {
 /// Why a listing has no price to work out, as the owner reads it.
 pub(crate) fn price_failure(
     error: &PricingError,
+    kind: SalesChannelKind,
     listing: RecordId,
     products: &[Product],
 ) -> String {
@@ -1872,8 +1917,8 @@ pub(crate) fn price_failure(
             .unwrap_or_else(|| "do anúncio".into())
     };
     match error {
-        PricingError::Listing(error) => failure(error),
-        PricingError::Closed => "O anúncio está encerrado no Mercado Livre.".into(),
+        PricingError::Listing(error) => channel_failure(kind, error),
+        PricingError::Closed => format!("O anúncio está encerrado {}.", sales_channels::on(kind)),
         PricingError::NotLinked(id) if *id == listing => {
             "Vincule o anúncio a um produto para ter o custo.".into()
         }
@@ -1885,19 +1930,21 @@ pub(crate) fn price_failure(
              recebimento em Compras.",
             sku(*product)
         ),
-        PricingError::NoFeeBasis => "O Mercado Livre não informou a categoria ou o tipo do \
-             anúncio; sincronize de novo."
-            .into(),
+        PricingError::NoFeeBasis => format!(
+            "{} não informou a categoria ou o tipo do anúncio; sincronize de novo.",
+            sales_channels::opening(kind)
+        ),
         PricingError::Unreachable => "Nenhum preço chega à margem alvo: tarifa, imposto e \
              margem alvo somam 100% ou mais. Baixe a margem alvo na ficha do produto ou em \
              Configurações."
             .into(),
-        PricingError::Unsettled => "A tarifa do Mercado Livre mudou a cada preço consultado; \
-             use o simulador."
-            .into(),
+        PricingError::Unsettled => format!(
+            "A tarifa {} mudou a cada preço consultado; use o simulador.",
+            sales_channels::of_channel(kind)
+        ),
         PricingError::InvalidTarget => pricing::target_failure(error),
         PricingError::Currencies(_) => "O custo e o preço estão em moedas diferentes.".into(),
-        PricingError::Platform(error) => mercado_livre::failure(error),
+        PricingError::Platform(error) => sales_channels::failure(kind, error),
         PricingError::Stock(_) | PricingError::Unreadable(_) | PricingError::Sql(_) => {
             format!("Não consegui ler ou gravar no banco: {error}")
         }

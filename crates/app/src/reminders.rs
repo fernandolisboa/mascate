@@ -1,9 +1,10 @@
-//! The Reminders on the home screen (#7): fiscal and legal notes in a
+//! The Reminders on the home screen (#7): fiscal, legal and account notes in a
 //! quiet corner, each dismissable until its interval runs out. Some show
 //! only while raised, like the sales volume one (#28), checked again on
 //! each Order Sync, the income one of affiliate Commissions (#77),
-//! checked again whenever they change, and the disclosure one of Offer
-//! Posts (#102), checked again whenever a post is copied.
+//! checked again whenever they change, the disclosure one of Offer Posts
+//! (#102), checked again whenever a post is copied, and the client secret
+//! one of Amazon (#126), while its Connection holds the keys.
 
 use std::sync::Arc;
 
@@ -11,10 +12,12 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Global, SharedString, Subscription, Window, div};
+use mascate_integrations::{AMAZON_CLIENT_SECRET, Connection, ConnectionState, Connections};
 use mascate_platform::{Reminder, ReminderError, ReminderTopic, Reminders};
 
 use crate::affiliate::{self, CommissionChanges};
 use crate::appearance::look;
+use crate::connections::AppConnections;
 use crate::finance::{self, VolumeSources};
 use crate::kit;
 use crate::offer_posts::{PostChanges, offer_posts};
@@ -29,6 +32,16 @@ fn topic_name(topic: ReminderTopic) -> &'static str {
     match topic {
         ReminderTopic::Fiscal => "Fiscal",
         ReminderTopic::Legal => "Jurídico",
+        ReminderTopic::Connection => "Conexão",
+    }
+}
+
+/// The keys of the Connections' Reminders raised now: Amazon's client
+/// secret while its keys are stored, expired ones included.
+fn connection_reminders(connections: &Connections) -> Vec<&'static str> {
+    match connections.state(Connection::Amazon) {
+        ConnectionState::Connected | ConnectionState::Expired => vec![AMAZON_CLIENT_SECRET.key],
+        _ => Vec::new(),
     }
 }
 
@@ -83,6 +96,7 @@ impl RemindersArea {
         let sources = VolumeSources::of(cx);
         let commissions = affiliate::affiliate(cx);
         let posts = offer_posts(cx);
+        let connections = cx.try_global::<AppConnections>().map(|app| app.0.clone());
         self.reads += 1;
         let read = self.reads;
         let working = cx.background_executor().spawn(async move {
@@ -95,6 +109,9 @@ impl RemindersArea {
                     Ok(keys) => raised.extend(keys),
                     Err(error) => eprintln!("could not check the posts for the Reminder: {error}"),
                 }
+            }
+            if let Some(connections) = connections {
+                raised.extend(connection_reminders(&connections));
             }
             (outcome, reminders.showing(&raised).await)
         });

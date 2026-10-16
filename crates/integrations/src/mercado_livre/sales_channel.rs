@@ -4,8 +4,8 @@
 //! adapter implements speaks for Mercado Livre.
 
 use mascate_commerce::{
-    ChannelCategory, ChannelListing, ChannelStock, ListingStatus, OnSalesChannel, SaleFee,
-    SalesChannel, Variation,
+    ChannelCategory, ChannelListing, ChannelStock, FeeBasis, ListingStatus, OnSalesChannel,
+    SaleFee, SalesChannel, Variation,
 };
 use mascate_kernel::{ListingType, Money, Percentage, PlatformError, SalesChannelKind};
 use rust_decimal::Decimal;
@@ -106,13 +106,8 @@ impl SalesChannel for MercadoLivre {
 
     /// The percentage and fixed parts of the fee from `sale_fee_details`;
     /// without them, the whole fee as a share of the price.
-    fn sale_fee(
-        &self,
-        category: &str,
-        price: Money,
-        listing_type: ListingType,
-    ) -> Result<SaleFee, PlatformError> {
-        let found = self.listing_price(category, price, listing_type)?;
+    fn sale_fee(&self, basis: &FeeBasis, price: Money) -> Result<SaleFee, PlatformError> {
+        let found = self.listing_price(&basis.category, price, basis.listing_type)?;
         let unexpected =
             || PlatformError::Failed("Mercado Livre answered a sale fee unexpectedly".into());
         let parts = found.sale_fee_details.as_ref().and_then(|details| {

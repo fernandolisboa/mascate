@@ -1,0 +1,28 @@
+{
+  "metaSchema": {
+    "link": { "resource": "https://selling-partner-definitions-prod-iad.s3.amazonaws.com/meta-schema/v1/meta-schema.json", "verb": "GET" },
+    "checksum": "c7af9479ca7261645cea9db56c5f720d"
+  },
+  "schema": {
+    "link": { "resource": "https://selling-partner-definitions-prod-iad.s3.amazonaws.com/schema/HEADPHONES.json", "verb": "GET" },
+    "checksum": "4f9e2a1bce8d4b5aa1c0f2c3d6e7f809"
+  },
+  "requirements": "LISTING_OFFER_ONLY",
+  "requirementsEnforced": "ENFORCED",
+  "propertyGroups": {
+    "offer": {
+      "title": "Oferta",
+      "description": "Preço, quantidade e condição da oferta",
+      "propertyNames": ["condition_type", "purchasable_offer", "fulfillment_availability"]
+    }
+  },
+  "locale": "pt_BR",
+  "marketplaceIds": ["A2Q3Y263D00KWC"],
+  "productType": "HEADPHONES",
+  "displayName": "Fones de ouvido",
+  "productTypeVersion": {
+    "version": "UHqSqmb4FNUk=",
+    "latest": true,
+    "releaseCandidate": false
+  }
+}

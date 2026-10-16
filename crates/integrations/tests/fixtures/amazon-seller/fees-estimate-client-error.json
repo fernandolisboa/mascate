@@ -1,0 +1,24 @@
+{
+  "payload": {
+    "FeesEstimateResult": {
+      "Status": "ClientError",
+      "FeesEstimateIdentifier": {
+        "MarketplaceId": "A2Q3Y263D00KWC",
+        "IdType": "SellerSKU",
+        "SellerId": "A1MASCATE0SELLER",
+        "SellerInputIdentifier": "CANECA-01",
+        "IsAmazonFulfilled": false,
+        "IdValue": "CANECA-01",
+        "PriceToEstimateFees": {
+          "ListingPrice": { "CurrencyCode": "BRL", "Amount": 39.9 }
+        }
+      },
+      "Error": {
+        "Type": "Sender",
+        "Code": "InvalidParameterValue",
+        "Message": "There is an client-side error. Please verify your inputs.",
+        "Detail": []
+      }
+    }
+  }
+}
