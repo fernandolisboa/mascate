@@ -2,9 +2,11 @@
 //! login, reports demand to the catalog, the owner's listings and
 //! Promotions to commerce and their quality, questions, Reputation,
 //! Reviews, Product Ads and a category's limits and trends to marketing,
-//! publishes drafts and reads the owner's Orders (ADR 0013). Only official endpoints; it writes on the owner's
-//! click (a listing's price, its status, a draft, a confirmed answer or
-//! Promotion) and the stock that follows the app's (ADR 0017).
+//! publishes drafts, reads the owner's Orders and runs the channel's own
+//! price automation for Automatic Repricing (ADR 0013, ADR 0033). Only
+//! official endpoints; it writes on the owner's click (a listing's price,
+//! its status, a draft, a confirmed answer, Promotion or repricing) and the
+//! stock that follows the app's (ADR 0017).
 
 mod ads;
 mod answers;
@@ -16,6 +18,7 @@ mod promotions;
 mod publisher;
 mod quality;
 mod questions;
+mod repricing;
 mod reputation;
 mod sales_channel;
 mod tokens;
@@ -177,6 +180,19 @@ impl MercadoLivre {
                 .send(body)
         })?;
         Ok(())
+    }
+
+    /// The JSON answer to `PUT path` with the JSON `body`.
+    fn put_for<T: DeserializeOwned>(&self, path: &str, body: &str) -> Result<T, PlatformError> {
+        let response = self.signed(path, |bearer| {
+            self.agent
+                .put(format!("{}{path}", self.api))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Authorization", bearer)
+                .send(body)
+        })?;
+        read_json(response)
     }
 
     /// `DELETE path` with `query`; Mercado Livre's answer is not read.
@@ -465,7 +481,8 @@ fn read_json<T: DeserializeOwned>(
 /// What an unsuccessful answer to a request for `path` means.
 fn failed(response: ureq::http::Response<ureq::Body>, path: &str) -> PlatformError {
     match response.status().as_u16() {
-        400 | 403 => PlatformError::Refused(refusal(response)),
+        // 412 is how the price automation turns an item or a request down.
+        400 | 403 | 412 => PlatformError::Refused(refusal(response)),
         404 => PlatformError::NotFound,
         429 => PlatformError::RateLimited,
         status => PlatformError::Failed(format!("Mercado Livre answered {status} for {path}")),

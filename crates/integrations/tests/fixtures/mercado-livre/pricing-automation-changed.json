@@ -1,0 +1,9 @@
+{
+  "item_id": "MLB4100000001",
+  "status": "ACTIVE",
+  "item_rule": {
+    "rule_id": "INT_EXT"
+  },
+  "min_price": 70.00,
+  "max_price": 110.00
+}

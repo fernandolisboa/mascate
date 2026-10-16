@@ -1,0 +1,140 @@
+{
+  "responses": [
+    {
+      "status": {
+        "statusCode": 200,
+        "reasonPhrase": "OK"
+      },
+      "headers": {
+        "x-amzn-RequestId": "8b4b2ac1-cba6-4e0a-9c35-9f2b6a6e2b11"
+      },
+      "request": {
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "sku": "FONE-BT-001"
+      },
+      "body": {
+        "offerIdentifier": {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0FONE0001",
+          "sellerId": "A1MASCATE0SELLER",
+          "sku": "FONE-BT-001",
+          "fulfillmentType": "MFN"
+        },
+        "featuredOfferExpectedPriceResults": [
+          {
+            "featuredOfferExpectedPrice": {
+              "listingPrice": {
+                "amount": 87.35,
+                "currencyCode": "BRL"
+              }
+            },
+            "resultStatus": "VALID_FOEP",
+            "competingFeaturedOffer": {
+              "offerIdentifier": {
+                "marketplaceId": "A2Q3Y263D00KWC",
+                "asin": "B0FONE0001",
+                "sellerId": "A3OUTROVENDEDOR",
+                "fulfillmentType": "AFN"
+              },
+              "condition": "New",
+              "price": {
+                "listingPrice": {
+                  "amount": 88.9,
+                  "currencyCode": "BRL"
+                },
+                "shippingPrice": {
+                  "amount": 0,
+                  "currencyCode": "BRL"
+                }
+              }
+            },
+            "currentFeaturedOffer": {
+              "offerIdentifier": {
+                "marketplaceId": "A2Q3Y263D00KWC",
+                "asin": "B0FONE0001",
+                "sellerId": "A3OUTROVENDEDOR",
+                "fulfillmentType": "AFN"
+              },
+              "condition": "New",
+              "price": {
+                "listingPrice": {
+                  "amount": 88.9,
+                  "currencyCode": "BRL"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "status": {
+        "statusCode": 200,
+        "reasonPhrase": "OK"
+      },
+      "headers": {},
+      "request": {
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "sku": "CANECA-01"
+      },
+      "body": {
+        "offerIdentifier": {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CANECA01",
+          "sellerId": "A1MASCATE0SELLER",
+          "sku": "CANECA-01",
+          "fulfillmentType": "MFN"
+        },
+        "featuredOfferExpectedPriceResults": [
+          {
+            "resultStatus": "NO_COMPETING_OFFERS"
+          }
+        ]
+      }
+    },
+    {
+      "status": {
+        "statusCode": 200,
+        "reasonPhrase": "OK"
+      },
+      "headers": {},
+      "request": {
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "sku": "CAMISETA-P"
+      },
+      "body": {
+        "offerIdentifier": {
+          "marketplaceId": "A2Q3Y263D00KWC",
+          "asin": "B0CAMISETAP",
+          "sellerId": "A1MASCATE0SELLER",
+          "sku": "CAMISETA-P",
+          "fulfillmentType": "MFN"
+        },
+        "featuredOfferExpectedPriceResults": [
+          {
+            "resultStatus": "OFFER_NOT_ELIGIBLE"
+          }
+        ]
+      }
+    },
+    {
+      "status": {
+        "statusCode": 400,
+        "reasonPhrase": "Bad Request"
+      },
+      "headers": {},
+      "request": {
+        "marketplaceId": "A2Q3Y263D00KWC",
+        "sku": "ANTIGO-1"
+      },
+      "body": {
+        "errors": [
+          {
+            "code": "INVALID_SKU",
+            "message": "The requested SKU does not exist for the seller in the requested marketplace."
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -7,10 +7,12 @@
 //! finances, and confirms each shipment with its tracking code. Only
 //! official endpoints, with the Login with Amazon token alone (no AWS
 //! signing since 2023). A draft goes up as an offer on a product Amazon's
-//! catalog already has, found by the GTIN.
+//! catalog already has, found by the GTIN. For Automatic Repricing it tells
+//! the price at which each offer can expect to be the featured one.
 
 mod answers;
 mod billing;
+mod featured_offers;
 mod orders;
 mod publisher;
 mod sales_channel;

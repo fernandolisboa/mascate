@@ -5,7 +5,7 @@ use futures::executor::block_on;
 use mascate_affiliate::Affiliate;
 use mascate_catalog::Catalog;
 use mascate_commerce::{
-    ChannelRanking, Listings, Orders, Pricing, Promotions, PurchaseOrders, StockMirror,
+    ChannelRanking, Listings, Orders, Pricing, Promotions, PurchaseOrders, Repricing, StockMirror,
 };
 use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
@@ -46,7 +46,11 @@ pub const MODULE_MERGES: &[ModuleMerge] = &[
 ];
 
 /// Every module's flags, in the order the settings screen lists them.
-const MODULE_FLAGS: &[&[Flag]] = &[mascate_marketing::FLAGS, mascate_affiliate::FLAGS];
+const MODULE_FLAGS: &[&[Flag]] = &[
+    mascate_marketing::FLAGS,
+    mascate_affiliate::FLAGS,
+    mascate_commerce::FLAGS,
+];
 
 /// Every module's Reminders, in the order the home screen shows them.
 const MODULE_REMINDERS: &[&[Reminder]] = &[
@@ -78,6 +82,7 @@ pub struct Started {
     pub channel_ranking: Arc<ChannelRanking>,
     pub orders: Arc<Orders>,
     pub promotions: Arc<Promotions>,
+    pub repricing: Arc<Repricing>,
     pub quality: Arc<ListingQuality>,
     pub listing_copy: Arc<ListingCopy>,
     pub questions: Arc<Questions>,
@@ -289,6 +294,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let repricing = Repricing::new(
+                database.clone(),
+                inventory.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let quality = ListingQuality::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -374,6 +385,7 @@ pub fn prepare() -> Outcome {
                 channel_ranking: Arc::new(channel_ranking),
                 orders: Arc::new(orders),
                 promotions: Arc::new(promotions),
+                repricing: Arc::new(repricing),
                 quality: Arc::new(quality),
                 listing_copy: Arc::new(listing_copy),
                 questions: Arc::new(questions),

@@ -1,0 +1,6 @@
+{
+  "message": "Automation not found",
+  "error": "automation_not_found",
+  "status": 404,
+  "cause": []
+}

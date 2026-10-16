@@ -31,6 +31,7 @@ com a conta de vendedor do Fernando.
 | `transactions-701-page-1.json`, `transactions-701-page-2.json` | `GET /finances/2024-06-19/transactions` (`listTransactions`) com `relatedIdentifierName=ORDER_ID`: a primeira com `nextToken` e `breakdowns` em lista, a segunda com `breakdowns` dentro de um objeto, como em alguns exemplos | listTransactions; Finances API v2024-06-19 |
 | `transactions-empty.json` | o mesmo antes de a Amazon lançar as transações do pedido (até 48 horas) | listTransactions |
 | `error-400.json`, `error-403.json`, `error-404.json`, `error-429.json` | o formato de erro `{"errors":[{"code","message","details"}]}`: entrada inválida, token vencido, recurso inexistente e cota excedida | Error responses and schemas; Usage plans and rate limits |
+| `featured-offer-expected-price.json` | `POST /batches/products/pricing/2022-05-01/offer/featuredOfferExpectedPrice` (`getFeaturedOfferExpectedPriceBatch`, Automatic Repricing, #135): um preço esperado válido (`VALID_FOEP`), sem concorrência (`NO_COMPETING_OFFERS`, no plural, como no exemplo da página), uma oferta que não pode ficar em destaque (`OFFER_NOT_ELIGIBLE`) e um SKU que a Amazon não conhece (400 `INVALID_SKU` dentro da resposta 200) | getFeaturedOfferExpectedPriceBatch (consultada em 16/10/2026) |
 
 Inventados ou completados (conferir no regression pass):
 
@@ -56,3 +57,7 @@ Inventados ou completados (conferir no regression pass):
   `catalog-several.json`; o adapter o deixa de fora, porque a oferta precisa do tipo.
 - Se, sem o papel Direct-to-Consumer Shipping, a Amazon recusa a busca com `RECIPIENT` (403, como
   aqui) ou só omite o endereço.
+- Reprecificação (#135): se `resultStatus` sem concorrência vem no singular (a lista do esquema) ou
+  no plural (o exemplo da página); o adapter aceita os dois. Se o limite de uma chamada a cada 30
+  segundos vale para a conta do Fernando (o cabeçalho `x-amzn-RateLimit-Limit`), e se o preço
+  esperado de uma oferta em destaque já leva em conta o frete do vendedor.

@@ -17,8 +17,9 @@ use mascate_kernel::{
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
+use crate::repricing::{automated_items, record_price_change, repricing_ways};
 use crate::stock_mirror::record_stock_sent;
-use crate::{ChannelCategory, ChecklistItem, FeeBasis, OnSalesChannel, SaleFee};
+use crate::{ChannelCategory, ChecklistItem, FeeBasis, OnSalesChannel, PriceChangeReason, SaleFee};
 
 /// Where a listing stands in the Sales Channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -254,6 +255,8 @@ pub enum ListingError {
     NotACatalogOffer(RecordId),
     #[error("a price is more than zero, in the Listing's currency")]
     InvalidPrice,
+    #[error("Automatic Repricing sets the listing's price; turn it off to send one")]
+    Repriced,
     #[error("only an active listing can be paused")]
     NotActive,
     #[error("only a paused listing can be reactivated")]
@@ -411,6 +414,7 @@ impl Listings {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
         let known = read(&transaction, "AND sales_channel = ?1", params![on.code()]).await?;
+        let automated = automated_items(&transaction, on).await?;
         let mut report = ListingSync {
             read: fresh.len(),
             ..ListingSync::default()
@@ -421,9 +425,11 @@ impl Listings {
             let reported = fresh
                 .remove(&key)
                 .map(|reported| owner_pause_stands(reported, &listing.listed, zero_pause));
-            if let (Some(sent), Some(reported)) = (&listing.sent_price, &reported)
-                && reported.price == sent.price
-            {
+            let sent_shown = matches!(
+                (&listing.sent_price, &reported),
+                (Some(sent), Some(reported)) if reported.price == sent.price
+            );
+            if sent_shown {
                 transaction
                     .execute(
                         "UPDATE commerce_listings SET sent_price = NULL, price_sent_at = NULL
@@ -443,6 +449,12 @@ impl Listings {
                 }
                 Some(reported) => {
                     report.changed += 1;
+                    // A sent price the channel now shows went into the
+                    // history when it was sent.
+                    if !sent_shown {
+                        self.note_price_seen(&transaction, listing, &reported, &automated, now)
+                            .await?;
+                    }
                     write_reported(&transaction, listing.id, &reported, now).await?;
                 }
                 // Asked for, but the channel no longer has it: deleted, or a
@@ -611,27 +623,48 @@ impl Listings {
 
     /// Sends `price`, rounded to cents, to the channel as the price of the
     /// Listing and of every variation of the same listing, which share it
-    /// (ADR 0014), and keeps it once the channel takes it. A channel that
-    /// applies prices later keeps its price until a Sync shows the new one,
-    /// which waits as the Listing's sent price meanwhile. Returns those
-    /// Listings. Only the owner's own action calls this: nothing in the app
-    /// changes a price on its own.
+    /// (ADR 0014), and keeps it once the channel takes it, in the price
+    /// history too. A channel that applies prices later keeps its price
+    /// until a Sync shows the new one, which waits as the Listing's sent
+    /// price meanwhile. Returns those Listings. Only the owner's own action
+    /// calls this, and never on a listing under Automatic Repricing, which
+    /// is refused before the channel is asked.
     pub async fn change_price(
         &self,
         listing: RecordId,
         price: Money,
         channel: &dyn SalesChannel,
     ) -> Result<Vec<Listing>, ListingError> {
-        let listed = self
-            .listing_on(listing, channel.sales_channel())
-            .await?
-            .listed;
+        let asked = self.listing_on(listing, channel.sales_channel()).await?;
         let price = price.rounded();
-        if price.currency() != listed.price.currency() || price.amount() <= Decimal::ZERO {
+        if price.currency() != asked.listed.price.currency() || price.amount() <= Decimal::ZERO {
             return Err(ListingError::InvalidPrice);
         }
-        channel.set_price(&listed.id, price)?;
+        if repricing_ways(self.database.connection(), asked.channel)
+            .await?
+            .iter()
+            .any(|(item, _)| *item == asked.listed.id)
+        {
+            return Err(ListingError::Repriced);
+        }
+        self.send_price(&asked, price, channel, PriceChangeReason::Approved)
+            .await
+    }
+
+    /// Sends `price`, in whole cents, to the channel for `listing` and its
+    /// variations, and keeps it and each change in the price history with
+    /// `reason`.
+    pub(crate) async fn send_price(
+        &self,
+        listing: &Listing,
+        price: Money,
+        channel: &dyn SalesChannel,
+        reason: PriceChangeReason,
+    ) -> Result<Vec<Listing>, ListingError> {
         let on = channel.sales_channel();
+        let item = &listing.listed.id;
+        let before = self.sharing_price(on, item).await?;
+        channel.set_price(item, price)?;
         let sql = if channel.applies_price_later() {
             "UPDATE commerce_listings SET sent_price = ?1, price_sent_at = ?2, updated_at = ?2
              WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL"
@@ -640,19 +673,69 @@ impl Listings {
                  updated_at = ?2
              WHERE sales_channel = ?3 AND channel_item_id = ?4 AND deleted_at IS NULL"
         };
-        self.database
-            .connection()
+        let now = self.clock.now();
+        let connection = self.database.connect_for_transaction().await?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
+        transaction
             .execute(
                 sql,
                 params![
                     price.amount().to_string(),
-                    stored(self.clock.now()),
+                    stored(now),
                     on.code(),
-                    listed.id.clone()
+                    item.clone()
                 ],
             )
             .await?;
-        self.sharing_price(on, &listed.id).await
+        for sibling in before
+            .iter()
+            .filter(|sibling| sibling.listed.price != price)
+        {
+            record_price_change(
+                &transaction,
+                self.ids.next_id(),
+                sibling.id,
+                (sibling.listed.price, price),
+                reason,
+                now,
+            )
+            .await?;
+        }
+        transaction.commit().await?;
+        self.sharing_price(on, item).await
+    }
+
+    /// Keeps in the price history a price a Sync found changed in the
+    /// channel: by the channel's own automation on a listing it reprices,
+    /// else in the channel.
+    async fn note_price_seen(
+        &self,
+        on: &Connection,
+        listing: &Listing,
+        reported: &ChannelListing,
+        automated: &HashSet<String>,
+        now: Timestamp,
+    ) -> Result<(), ListingError> {
+        if reported.price == listing.listed.price {
+            return Ok(());
+        }
+        let reason = if automated.contains(&listing.listed.id) {
+            PriceChangeReason::ChannelAutomation
+        } else {
+            PriceChangeReason::InChannel
+        };
+        record_price_change(
+            on,
+            self.ids.next_id(),
+            listing.id,
+            (listing.listed.price, reported.price),
+            reason,
+            now,
+        )
+        .await?;
+        Ok(())
     }
 
     /// The Listing `id`, when it is on `channel`.
@@ -791,12 +874,15 @@ impl Listings {
             params![channel.code()],
         )
         .await?;
+        let automated = automated_items(&transaction, channel).await?;
         for reported in reported {
             if let Some(listing) = known
                 .iter()
                 .find(|listing| key_of(&listing.listed) == key_of(&reported))
                 && listing.listed != reported
             {
+                self.note_price_seen(&transaction, listing, &reported, &automated, now)
+                    .await?;
                 write_reported(&transaction, listing.id, &reported, now).await?;
             }
         }

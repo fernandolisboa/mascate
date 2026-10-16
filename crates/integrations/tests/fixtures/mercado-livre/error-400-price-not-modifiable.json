@@ -1,0 +1,6 @@
+{
+  "message": "Cannot modify price on items with dynamic pricing",
+  "error": "item.price.not_modifiable",
+  "status": 400,
+  "cause": []
+}

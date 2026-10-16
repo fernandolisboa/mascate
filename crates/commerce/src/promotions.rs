@@ -533,15 +533,7 @@ impl Promotions {
     /// The least margin a Promotion may leave a sale with: 10% until the
     /// owner sets another.
     pub async fn minimum_margin(&self) -> Result<Percentage, PromotionError> {
-        let row =
-            load_single_row(self.database.connection(), SETTINGS_TABLE, SETTINGS_COLUMNS).await?;
-        match row {
-            Some(row) => {
-                let margin = row.decimal_at(0)?;
-                Percentage::new(margin).map_err(|_| PromotionError::Unreadable(margin.to_string()))
-            }
-            None => Ok(Percentage::new(DEFAULT_MINIMUM_MARGIN).expect("10% is a percentage")),
-        }
+        Ok(minimum_margin(self.database.connection()).await?)
     }
 
     pub async fn save_minimum_margin(&self, margin: Percentage) -> Result<(), PromotionError> {
@@ -1153,8 +1145,18 @@ impl Promotions {
     }
 }
 
-/// The check of a Promotion that keeps the minimum margin; below it, the
-/// Promotion is refused with the check.
+/// The Minimum Margin: the floor of every Promotion and of Automatic
+/// Repricing.
+pub(crate) async fn minimum_margin(on: &Connection) -> Result<Percentage, StoredValueError> {
+    match load_single_row(on, SETTINGS_TABLE, SETTINGS_COLUMNS).await? {
+        Some(row) => {
+            let margin = row.decimal_at(0)?;
+            Percentage::new(margin).map_err(|_| StoredValueError::Unreadable(margin.to_string()))
+        }
+        None => Ok(Percentage::new(DEFAULT_MINIMUM_MARGIN).expect("10% is a percentage")),
+    }
+}
+
 /// Refuses to act through `channel` on what is on another channel.
 fn on_channel(
     kept: SalesChannelKind,
@@ -1170,6 +1172,8 @@ fn on_channel(
     Ok(())
 }
 
+/// The check of a Promotion that keeps the minimum margin; below it, the
+/// Promotion is refused with the check.
 fn holding(check: PromotionCheck) -> Result<PromotionCheck, PromotionError> {
     if check.margin.passes() {
         Ok(check)

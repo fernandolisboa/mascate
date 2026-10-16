@@ -65,6 +65,19 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         .references(&[TO_PRODUCT])
         .label(&["product_id"]),
         TableMerge::new("commerce_pricing_settings", "Opções de preço", SingleRow),
+        TableMerge::new("commerce_price_changes", "Mudança de preço", Id)
+            .references(&[TO_LISTING])
+            .label(&["listing_id", "new_price"]),
+        TableMerge::new(
+            "commerce_repricing",
+            "Reprecificação automática",
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_item_id"),
+            ])]),
+        )
+        .platform_ids(&["channel_item_id"])
+        .label(&["sales_channel", "channel_item_id"]),
         TableMerge::new(
             "commerce_orders",
             "Pedido",
