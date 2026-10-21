@@ -15,7 +15,7 @@ use crate::{instagram, pinterest, telegram};
 
 /// Whether posts of a channel of `kind` go out through the app.
 pub(crate) fn publishes(kind: ChannelKind) -> bool {
-    destination_name(kind).is_some()
+    kind.has_destination()
 }
 
 /// The destination's name, as the owner reads it.
