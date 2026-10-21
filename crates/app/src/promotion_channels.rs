@@ -5,6 +5,7 @@
 //! (ADR 0031, decision 5); Afiliação tags links with them. A Telegram
 //! channel is checked through the bot (#103): administrator, allowed to
 //! post; and has the posting times its scheduled posts go out at (#104).
+//! A Pinterest channel picks the board its Pins go to (#155).
 //! The Sales Events calendar sits between the posts and the channels (#105).
 
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_kernel::RecordId;
 use mascate_marketing::{
     CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, DestinationStanding,
-    NewPromotionChannel, PostDestination as _, PromotionChannel, PromotionChannels,
+    NewPromotionChannel, PinterestBoard, PostDestination as _, PromotionChannel, PromotionChannels,
     default_posting_times, suggested_tag,
 };
 
@@ -32,7 +33,7 @@ use crate::parts::ScreenParts;
 use crate::post_queue::{times_text, typed_times};
 use crate::sales::table_row;
 use crate::sales_events::CalendarSection;
-use crate::telegram;
+use crate::{pinterest, telegram};
 
 /// The app's Promotion Channels; absent when the database did not open.
 pub struct AppPromotionChannels(pub Arc<PromotionChannels>);
@@ -65,6 +66,8 @@ fn failure(error: &ChannelError) -> String {
                                   @ofertasdofernando) ou o id que começa com -100."
             .into(),
         ChannelError::NotTelegram => "Só um canal do Telegram tem horários de publicação.".into(),
+        ChannelError::NotPinterest => "Só um canal do Pinterest tem pasta.".into(),
+        ChannelError::BadBoard => "Escolha uma das pastas que o Pinterest listou.".into(),
         ChannelError::NotFound => "Esse canal mudou; a lista foi atualizada.".into(),
         ChannelError::Unreadable(_) | ChannelError::Sql(_) => {
             format!("Não consegui ler ou gravar os canais no banco: {error}")
@@ -80,6 +83,12 @@ fn kind_note(kind: ChannelKind) -> &'static str {
              posts deste canal saem por \"Publicar agora\" ou \"Agendar\", sempre depois da sua \
              confirmação. Use \"Conferir canal\" para ver se o bot pode publicar e \
              \"Horários\" para escolher quando os agendados saem."
+        }
+        ChannelKind::Pinterest => {
+            "Com a conta conectada em Configurações › Conexões › Pinterest, escolha em \"Pasta\" \
+             onde os Pins deste canal entram: eles saem por \"Publicar agora\", com a foto da \
+             oferta e o link de afiliado, sempre depois da sua confirmação. Enquanto o app do \
+             Pinterest estiver em Trial, só você vê os Pins."
         }
         ChannelKind::PaidSearch => {
             "As palavras-chave entram na conferência das regras de cada programa: a Shopee não \
@@ -100,6 +109,12 @@ struct TimesEditor {
     outcome: Option<Outcome>,
 }
 
+/// The boards a Pinterest channel picks from.
+struct BoardPicker {
+    channel: RecordId,
+    boards: Vec<PinterestBoard>,
+}
+
 /// A channel's post template open for editing.
 struct TemplateEditor {
     channel: PromotionChannel,
@@ -113,6 +128,9 @@ pub struct PromotionScreen {
     channels: Vec<PromotionChannel>,
     template: Option<TemplateEditor>,
     times: Option<TimesEditor>,
+    boards: Option<BoardPicker>,
+    /// The Pinterest channel whose boards are being read.
+    reading_boards: Option<RecordId>,
     name: Entity<InputState>,
     tag: Entity<InputState>,
     /// Separated by commas.
@@ -142,6 +160,8 @@ impl PromotionScreen {
             channels: Vec::new(),
             template: None,
             times: None,
+            boards: None,
+            reading_boards: None,
             name: input("Ofertas do Fernando", window, cx),
             tag: input("Vazia, sai do nome", window, cx),
             keywords: input("fone bluetooth, fone sem fio", window, cx),
@@ -641,6 +661,128 @@ impl PromotionScreen {
         cx.notify();
     }
 
+    /// Reads the boards of the Pinterest account, for `channel` to pick one.
+    fn open_boards(&mut self, channel: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pinterest) = pinterest::adapter(cx) else {
+            return;
+        };
+        self.reading_boards = Some(channel);
+        self.boards = None;
+        self.checks.remove(&channel);
+        let working = cx
+            .background_executor()
+            .spawn(async move { pinterest.boards() });
+        cx.spawn_in(window, async move |this, cx| {
+            let read = working.await;
+            let _ = this.update(cx, |this, cx| {
+                this.reading_boards = None;
+                match read {
+                    Ok(boards) if boards.is_empty() => {
+                        this.checks.insert(
+                            channel,
+                            Outcome::Failed(
+                                "A conta do Pinterest não tem pastas: crie uma no Pinterest e \
+                                 abra \"Pasta\" de novo."
+                                    .into(),
+                            ),
+                        );
+                    }
+                    Ok(boards) => this.boards = Some(BoardPicker { channel, boards }),
+                    Err(error) => {
+                        if error == mascate_kernel::PlatformError::Expired {
+                            pinterest::expired(cx);
+                        }
+                        this.checks.insert(
+                            channel,
+                            Outcome::Failed(pinterest::boards_failure(&error).into()),
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn pick_board(
+        &mut self,
+        channel: RecordId,
+        board: PinterestBoard,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.boards = None;
+        self.run(
+            window,
+            cx,
+            move |channels| async move { channels.set_pinterest_board(channel, &board).await },
+            move |this, saved: PromotionChannel, _, cx| {
+                let board = saved
+                    .pinterest_board
+                    .map_or_else(String::new, |board| board.name);
+                this.checks.insert(
+                    channel,
+                    Outcome::Done(
+                        format!("Os Pins do canal {} vão para a pasta {board}.", saved.name).into(),
+                    ),
+                );
+                Self::changed(cx);
+            },
+        );
+    }
+
+    fn render_boards(&self, picker: &BoardPicker, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let current = self
+            .channels
+            .iter()
+            .find(|channel| channel.id == picker.channel)
+            .and_then(|channel| channel.pinterest_board.as_ref())
+            .map(|board| board.id.clone());
+        let channel = picker.channel;
+        let chips = picker.boards.iter().enumerate().map(|(index, board)| {
+            let picked = board.clone();
+            let chip = Button::new(("pinterest-board", index))
+                .label(board.name.clone())
+                .small()
+                .disabled(self.busy);
+            if current.as_deref() == Some(board.id.as_str()) {
+                chip.primary()
+            } else {
+                chip.outline()
+            }
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.pick_board(channel, picked.clone(), window, cx)
+            }))
+        });
+        v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .child(
+                div()
+                    .text_sm()
+                    .child("Em qual pasta os Pins deste canal entram?"),
+            )
+            .child(h_flex().flex_wrap().gap_1().children(chips))
+            .child(
+                h_flex().child(
+                    Button::new("close-boards")
+                        .label("Fechar")
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.boards = None;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn render_channel(
         &self,
         index: usize,
@@ -660,6 +802,10 @@ impl PromotionScreen {
                 } else {
                     format!("horários {}", times_text(&channel.posting_times))
                 }
+            )),
+            ChannelKind::Pinterest => Some(channel.pinterest_board.as_ref().map_or_else(
+                || "pasta ainda não escolhida".to_owned(),
+                |board| format!("pasta {}", board.name),
             )),
             ChannelKind::PaidSearch if channel.keywords.is_empty() => {
                 Some("nenhuma palavra-chave".to_owned())
@@ -684,6 +830,15 @@ impl PromotionScreen {
                 .loading(self.checking == Some(id))
                 .disabled(self.busy || self.checking.is_some())
                 .on_click(cx.listener(move |this, _, window, cx| this.check(&checked, window, cx)))
+        });
+        let board = (channel.kind == ChannelKind::Pinterest).then(|| {
+            Button::new(("channel-board", index))
+                .label("Pasta")
+                .outline()
+                .small()
+                .loading(self.reading_boards == Some(id))
+                .disabled(self.busy || self.reading_boards.is_some())
+                .on_click(cx.listener(move |this, _, window, cx| this.open_boards(id, window, cx)))
         });
         let times = (channel.kind == ChannelKind::TelegramChannel).then(|| {
             Button::new(("channel-times", index))
@@ -725,6 +880,7 @@ impl PromotionScreen {
                 .gap_2()
                 .flex_wrap()
                 .children(check)
+                .children(board)
                 .children(times)
                 .child(
                     Button::new(("channel-template", index))
@@ -913,6 +1069,13 @@ impl Render for PromotionScreen {
             {
                 rows.push(self.render_times(editor, cx));
             }
+            if let Some(picker) = self
+                .boards
+                .as_ref()
+                .filter(|picker| picker.channel == channel.id)
+            {
+                rows.push(self.render_boards(picker, cx));
+            }
         }
         parts.content.push(self.posts.clone().into_any_element());
         parts.content.push(self.calendar.clone().into_any_element());
@@ -921,7 +1084,7 @@ impl Render for PromotionScreen {
                 .gap_3()
                 .child(kit::section_heading("Canais de divulgação"))
                 .child(div().text_sm().text_color(t.text2).child(
-                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram, TikTok, busca paga. Cada canal tem uma marcação, que vai nos links de afiliado criados em Afiliação.",
+                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram, TikTok, Pinterest, busca paga. Cada canal tem uma marcação, que vai nos links de afiliado criados em Afiliação.",
                 ))
                 .when(rows.is_empty(), |list| {
                     list.child(

@@ -3,9 +3,9 @@
 //! through the integrations module; this screen never keeps them. Each
 //! Connection also opens its own guide (#65): how to get the keys on the
 //! Platform, step by step, ending in the same fields. The Shopee seller
-//! (#129) and Magalu (#133) Connections add the login on the Platform's
-//! authorization page, whose code the owner brings back by pasting the
-//! address the browser landed on.
+//! (#129), Magalu (#133) and Pinterest (#155) Connections add the login on
+//! the Platform's authorization page, whose code the owner brings back by
+//! pasting the address the browser landed on.
 
 use std::sync::Arc;
 
@@ -16,14 +16,15 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
 use mascate_integrations::{
-    Connection, ConnectionState, Connections, Credential, ShopAuthorization, StoreAuthorization,
+    Connection, ConnectionState, Connections, Credential, PinterestAuthorization,
+    ShopAuthorization, StoreAuthorization,
 };
 use mascate_platform::Build;
 
 use crate::appearance::look;
 use crate::credential_guides::guide;
 use crate::kit;
-use crate::{magalu, shopee_seller};
+use crate::{magalu, pinterest, shopee_seller};
 
 /// Where a Platform's authorization page sends the browser back. The app has
 /// no address of its own yet (#10), so the owner copies the one the browser
@@ -49,6 +50,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Kiwify => "Kiwify",
         Connection::Eduzz => "Eduzz",
         Connection::Telegram => "Telegram",
+        Connection::Pinterest => "Pinterest",
     }
 }
 
@@ -86,6 +88,11 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
             "Bot que publica os posts de oferta nos seus canais do Telegram, sempre depois da \
              sua confirmação."
         }
+        Connection::Pinterest => {
+            "Sua conta comercial do Pinterest: os posts de oferta viram Pins numa pasta sua, \
+             sempre depois da sua confirmação. Com o acesso Trial do app, os Pins aparecem só \
+             para você, até o Pinterest aprovar o acesso Standard."
+        }
     }
 }
 
@@ -114,6 +121,8 @@ fn credential_label(credential: Credential) -> &'static str {
         "SHOPEE_PARTNER_KEY" => "Partner Key",
         "MAGALU_CLIENT_ID" => "Client ID",
         "MAGALU_CLIENT_SECRET" => "Client Secret",
+        "PINTEREST_APP_ID" => "App ID",
+        "PINTEREST_APP_SECRET" => "App secret",
         other => other,
     }
 }
@@ -132,6 +141,7 @@ fn is_identifier(credential: Credential) -> bool {
             | "AMAZON_SELLER_ID"
             | "SHOPEE_PARTNER_ID"
             | "MAGALU_CLIENT_ID"
+            | "PINTEREST_APP_ID"
     )
 }
 
@@ -140,6 +150,7 @@ fn is_identifier(credential: Credential) -> bool {
 enum BrowserLogin {
     Shopee,
     Magalu,
+    Pinterest,
 }
 
 impl BrowserLogin {
@@ -147,14 +158,17 @@ impl BrowserLogin {
         match connection {
             Connection::ShopeeSeller => Some(Self::Shopee),
             Connection::Magalu => Some(Self::Magalu),
+            Connection::Pinterest => Some(Self::Pinterest),
             _ => None,
         }
     }
 
-    fn platform(self) -> &'static str {
+    /// "Entrar na Shopee", "Entrar no Pinterest".
+    fn button(self) -> &'static str {
         match self {
-            Self::Shopee => "Shopee",
-            Self::Magalu => "Magalu",
+            Self::Shopee => "Entrar na Shopee",
+            Self::Magalu => "Entrar na Magalu",
+            Self::Pinterest => "Entrar no Pinterest",
         }
     }
 
@@ -162,6 +176,7 @@ impl BrowserLogin {
         match self {
             Self::Shopee => "https://github.com/fernandolisboa?code=…&shop_id=…",
             Self::Magalu => "https://github.com/fernandolisboa?code=…",
+            Self::Pinterest => "http://localhost/?code=…",
         }
     }
 
@@ -188,6 +203,16 @@ impl BrowserLogin {
                  github.com/fernandolisboa com um código no endereço; copie o endereço inteiro \
                  da barra do navegador e cole abaixo."
             }
+            (Self::Pinterest, true) => {
+                "Conta conectada. Para trocar de conta ou autorizar de novo, repita: Entrar no \
+                 Pinterest e colar o endereço."
+            }
+            (Self::Pinterest, false) => {
+                "Chaves salvas. Falta entrar na conta: clique em Entrar no Pinterest e autorize o \
+                 app. O navegador para em http://localhost/ com um código no endereço, numa \
+                 página que não abre; copie o endereço inteiro da barra do navegador e cole \
+                 abaixo."
+            }
         }
     }
 
@@ -201,6 +226,10 @@ impl BrowserLogin {
             Self::Magalu => {
                 "Esse endereço não tem o code que a Magalu manda. Depois de autorizar, copie o \
                  endereço inteiro da barra do navegador e cole aqui."
+            }
+            Self::Pinterest => {
+                "Esse endereço não tem o code que o Pinterest manda. Depois de autorizar, copie \
+                 o endereço inteiro da barra do navegador, http://localhost/?code=…, e cole aqui."
             }
         }
     }
@@ -382,6 +411,16 @@ impl ConnectionsSection {
                         .map_err(|error| magalu::login_failure(&error))
                 })
             }
+            BrowserLogin::Pinterest => {
+                let Some(adapter) = pinterest::adapter(cx) else {
+                    return;
+                };
+                Box::new(move || {
+                    adapter
+                        .authorization_url()
+                        .map_err(|error| pinterest::login_failure(&error))
+                })
+            }
         };
         let card = &mut self.cards[index];
         card.busy = true;
@@ -437,8 +476,25 @@ impl ConnectionsSection {
                         .map_err(|error| magalu::login_failure(&error))
                 })
             }
+            BrowserLogin::Pinterest => {
+                let (Some(authorization), Some(adapter)) = (
+                    PinterestAuthorization::from_landing(&address),
+                    pinterest::adapter(cx),
+                ) else {
+                    return self.malformed(index, login, cx);
+                };
+                Box::new(move || {
+                    adapter
+                        .authorize(&authorization)
+                        .map_err(|error| pinterest::login_failure(&error))
+                })
+            }
         };
-        self.run(index, window, cx, move |_, _| authorize());
+        self.run(index, window, cx, move |connections, connection| {
+            authorize()?;
+            connections.logged_in(connection);
+            Ok(())
+        });
     }
 
     fn malformed(&mut self, index: usize, login: BrowserLogin, cx: &mut Context<Self>) {
@@ -660,7 +716,7 @@ impl ConnectionsSection {
                         .gap_2()
                         .child(
                             Button::new(("browser-login", index))
-                                .label(format!("Entrar na {}", login.platform()))
+                                .label(login.button())
                                 .icon(IconName::ExternalLink)
                                 .outline()
                                 .small()

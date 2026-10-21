@@ -56,6 +56,7 @@ pub(crate) fn promotion(channel: &PromotionChannel) -> Promotion {
             | ChannelKind::WhatsAppGroup
             | ChannelKind::Instagram
             | ChannelKind::TikTok
+            | ChannelKind::Pinterest
             | ChannelKind::Other => Reach::OwnChannel,
         },
         keywords: channel.keywords.clone(),

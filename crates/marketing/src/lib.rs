@@ -25,7 +25,7 @@ pub use ads::{
 };
 pub use channels::{
     CHANNEL_NAME_MAX_CHARS, CHANNEL_TAG_MAX_CHARS, ChannelError, ChannelKind, NewPromotionChannel,
-    PromotionChannel, PromotionChannels, suggested_tag,
+    PinterestBoard, PromotionChannel, PromotionChannels, suggested_tag,
 };
 pub use copy::{
     BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, CopyBrief, CopyChannel, CopyError, CopyField,
@@ -34,11 +34,11 @@ pub use copy::{
 };
 pub use merge::MERGE;
 pub use offer_posts::{
-    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice, POST_BEFORE,
-    POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES,
-    PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits, PostProblem, PostStatus, SentPost,
-    TELEGRAM_LIMITS, check_post, default_template, discount, has_disclosure, post_limits,
-    price_time,
+    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice,
+    PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME,
+    POST_PRODUCT, POST_VARIABLES, PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits,
+    PostProblem, PostStatus, SentPost, TELEGRAM_LIMITS, check_post, default_template, discount,
+    has_disclosure, post_limits, price_time,
 };
 pub use performance::{
     ChannelPerformance, Comparator, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
@@ -111,6 +111,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         queue::SCHEDULE_OFFER_POSTS,
         sales_events::CREATE_SALES_EVENTS,
         sales_channels::ADD_SALES_CHANNELS,
+        channels::ADD_PINTEREST_BOARDS,
     ],
 };
 

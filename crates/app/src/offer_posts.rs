@@ -6,8 +6,9 @@
 //! from the Catalog, the price typed or the one Shopee's search gave. An
 //! Amazon price waits for its Restricted Feature; without it the post goes
 //! without a price. A post on a Telegram channel also goes out through the
-//! bot (#103), after the owner reads the final text, picture and channel
-//! and confirms; one that may have gone out waits for the owner to look.
+//! bot (#103), and one on a Pinterest channel as a Pin on its board (#155),
+//! after the owner reads the final text, picture and channel and confirms;
+//! one that may have gone out waits for the owner to look.
 //! Confirmed for a time instead, it waits in the Telegram queue (#104),
 //! listed with what is late, unconfirmed, failed or published today.
 //! Scheduling offers the dates of the coming Sales Events (#105).
@@ -45,11 +46,11 @@ use crate::appearance::look;
 use crate::catalog::{self, day_and_time};
 use crate::forms::{Outcome, day_text, input, notice};
 use crate::kit;
+use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
 use crate::sales_events::{event_date_text, sales_events};
-use crate::telegram;
 
 /// The app's Offer Posts; absent when the database did not open.
 pub struct AppOfferPosts(pub Arc<OfferPosts>);
@@ -253,11 +254,17 @@ pub(crate) fn post_failure(error: &PostError) -> String {
         }
         PostError::NoSuchChannel => "O canal deste post foi apagado em Divulgação.".into(),
         PostError::NotFound => "Esse post mudou; a lista foi atualizada.".into(),
-        PostError::NoDestination => "Só posts de um canal do Telegram saem pelo app; para os \
-                                     outros canais, copie o texto."
+        PostError::NoDestination => "Só posts de um canal do Telegram ou do Pinterest saem pelo \
+                                     app; para os outros canais, copie o texto."
             .into(),
         PostError::NoChat => "Informe o chat do canal do Telegram em Canais de divulgação, em \
                               Editar, para publicar por ele."
+            .into(),
+        PostError::NoBoard => "Escolha a pasta do canal do Pinterest em Canais de divulgação, \
+                               em Pasta, para publicar nele."
+            .into(),
+        PostError::NoQueue => "Por enquanto só posts de canal do Telegram entram na fila: \
+                               publique este agora."
             .into(),
         PostError::WrongStatus(PostStatus::Sent) => "Esse post já foi publicado.".into(),
         PostError::WrongStatus(PostStatus::Sending) => "Esse post está saindo agora.".into(),
@@ -300,12 +307,15 @@ pub(crate) fn problem_text(problem: &PostProblem) -> String {
             limit,
             caption: true,
         } => format!(
-            "Com foto, o Telegram aceita legenda de até {limit} caracteres, e o texto tem {units}. \
-             Encurte o texto ou tire a foto."
+            "Com foto, o texto vai como legenda, que aceita até {limit} caracteres, e ele tem \
+             {units}. Encurte o texto ou tire a foto."
         ),
         PostProblem::TooLong { units, limit, .. } => format!(
-            "O Telegram aceita até {limit} caracteres, e o texto tem {units}. Encurte o texto."
+            "Este canal aceita até {limit} caracteres, e o texto tem {units}. Encurte o texto."
         ),
+        PostProblem::NoImage => {
+            "Este canal só publica post com foto: escolha uma foto do produto.".into()
+        }
         PostProblem::NoDisclosure => "O texto ficou sem a identificação de publicidade (#publi). \
                                       Post de afiliado é publicidade, e o CONAR pede que isso \
                                       fique claro."
@@ -973,9 +983,18 @@ impl OfferPostsSection {
         cx.notify();
     }
 
-    /// The owner confirmed: the post goes to Telegram, once.
+    /// The owner confirmed: the post goes to its destination, once.
     fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(posts), Some(telegram)) = (offer_posts(cx), telegram::adapter(cx)) else {
+        let Some(kind) = self
+            .confirming
+            .as_ref()
+            .map(|confirming| confirming.request.kind())
+        else {
+            return;
+        };
+        let (Some(posts), Some(destination)) =
+            (offer_posts(cx), post_destinations::adapter(kind, cx))
+        else {
             return;
         };
         let Some(Confirming { request, .. }) = self.confirming.take() else {
@@ -986,7 +1005,7 @@ impl OfferPostsSection {
         self.busy = true;
         let working = cx
             .background_executor()
-            .spawn(async move { posts.publish(telegram.as_ref(), request.confirm()).await });
+            .spawn(async move { posts.publish(destination.as_ref(), request.confirm()).await });
         cx.spawn_in(window, async move |this, cx| {
             let published = working.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -1007,9 +1026,11 @@ impl OfferPostsSection {
                             }
                             (_, Some(failure)) => {
                                 if *failure == PublishFailure::Expired {
-                                    telegram::expired(cx);
+                                    post_destinations::expired(kind, cx);
                                 }
-                                Outcome::Failed(telegram::publish_failure(failure).into())
+                                Outcome::Failed(
+                                    post_destinations::publish_failure(kind, failure).into(),
+                                )
                             }
                             (_, None) => Outcome::Failed("O post não saiu.".into()),
                         }
@@ -1215,9 +1236,7 @@ impl OfferPostsSection {
     fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let request = &confirming.request;
-        let off = telegram::state(cx)
-            .as_ref()
-            .and_then(telegram::publishing_off);
+        let off = post_destinations::publishing_off(request.kind(), cx);
         let picture = match request.image() {
             Some(PostImage::File(path)) => format!(
                 "Foto: {}",
@@ -1295,7 +1314,7 @@ impl OfferPostsSection {
             .child(div().font_medium().child(format!(
                 "Agendar em {} ({})?",
                 request.channel(),
-                request.chat()
+                request.place()
             )))
             .child(choices)
             .children(events)
@@ -1374,8 +1393,16 @@ impl OfferPostsSection {
             .child(div().font_medium().child(format!(
                 "Publicar agora em {} ({})?",
                 request.channel(),
-                request.chat()
+                request.place()
             )))
+            .when(request.kind() == ChannelKind::Pinterest, |panel| {
+                panel.child(div().text_xs().text_color(t.text2).child(format!(
+                    "Pin na pasta {}, com o título \"{}\" e o link {}",
+                    request.place(),
+                    request.title(),
+                    request.link()
+                )))
+            })
             .child(div().text_xs().text_color(t.text2).child(picture))
             .child(
                 div()
@@ -1388,8 +1415,14 @@ impl OfferPostsSection {
                     .child(request.text().to_owned()),
             )
             .child(div().text_xs().text_color(t.text2).child(
-                "O post sai do jeito que está acima, uma vez, e fica no canal: o app não apaga \
-                 posts do Telegram.",
+                if request.kind() == ChannelKind::Pinterest {
+                    "O texto acima vira a descrição do Pin, uma vez, e o Pin fica na pasta: o app \
+                     não apaga Pins. Com o acesso Trial do app, o Pin aparece só para você, até o \
+                     Pinterest aprovar o acesso Standard."
+                } else {
+                    "O post sai do jeito que está acima, uma vez, e fica no canal: o app não \
+                     apaga posts do Telegram."
+                },
             ))
             .children(off.map(|why| kit::error_notice(why, cx)))
             .child(
@@ -1409,11 +1442,12 @@ impl OfferPostsSection {
             .into_any_element()
     }
 
-    /// Whether the post `channel` names goes out through the bot.
-    fn on_telegram(&self, channel: RecordId) -> bool {
+    /// The kind of the channel `channel` names, while it exists.
+    fn kind_of(&self, channel: RecordId) -> Option<ChannelKind> {
         self.channels
             .iter()
-            .any(|known| known.id == channel && known.kind == ChannelKind::TelegramChannel)
+            .find(|known| known.id == channel)
+            .map(|known| known.kind)
     }
 
     /// Puts the photo on the clipboard, read off the UI thread.
@@ -1494,10 +1528,12 @@ impl OfferPostsSection {
             (PostStatus::Unconfirmed, _) => "não confirmado".to_owned(),
             (PostStatus::Failed, _) => "não publicado".to_owned(),
         };
-        let telegram = self.on_telegram(post.draft.channel);
+        let kind = self.kind_of(post.draft.channel);
+        let telegram = kind == Some(ChannelKind::TelegramChannel);
+        let publishes = kind.is_some_and(post_destinations::publishes);
         let (opened, copying, id) = (post.clone(), post.clone(), post.id);
         let again = matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed);
-        let publish = (telegram && post.status.publishable()).then(|| {
+        let publish = (publishes && post.status.publishable()).then(|| {
             Button::new(("publish-post", index))
                 .label(if again {
                     "Publicar de novo"
@@ -1563,9 +1599,12 @@ impl OfferPostsSection {
             .as_ref()
             .and_then(|sent| sent.link.clone())
             .map(|link| {
+                let name = kind
+                    .and_then(post_destinations::destination_name)
+                    .unwrap_or("canal");
                 kit::external_link(
                     format!("open-sent-post-{index}"),
-                    "Abrir no Telegram",
+                    format!("Abrir no {name}"),
                     link,
                     cx,
                 )
@@ -1575,7 +1614,10 @@ impl OfferPostsSection {
             .as_ref()
             .filter(|_| matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed))
             .map(|failure| {
-                let text = telegram::publish_failure(failure);
+                let text = post_destinations::publish_failure(
+                    kind.unwrap_or(ChannelKind::TelegramChannel),
+                    failure,
+                );
                 if failure.may_have_gone_out() {
                     kit::info_notice(text, cx)
                 } else {
@@ -1738,10 +1780,9 @@ impl OfferPostsSection {
         let t = look(cx).tokens;
         let (problems, rules) = editor.problems(cx);
         let blocked = problems.iter().any(PostProblem::blocks);
-        let on_telegram = editor
-            .channel
-            .as_ref()
-            .is_some_and(|channel| channel.kind == ChannelKind::TelegramChannel);
+        let kind = editor.channel.as_ref().map(|channel| channel.kind);
+        let on_telegram = kind == Some(ChannelKind::TelegramChannel);
+        let publishes = kind.is_some_and(post_destinations::publishes);
         let channel = editor.channel.as_ref().map_or_else(
             || "canal apagado".to_owned(),
             |channel| channel.name.clone(),
@@ -1938,7 +1979,7 @@ impl OfferPostsSection {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .children(on_telegram.then(|| {
+                    .children(publishes.then(|| {
                         Button::new("publish-post-now")
                             .label("Publicar agora")
                             .primary()
@@ -1966,7 +2007,7 @@ impl OfferPostsSection {
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.copy_editing(window, cx)),
                             );
-                        if on_telegram {
+                        if publishes {
                             copy.outline()
                         } else {
                             copy.primary()
@@ -2115,7 +2156,7 @@ impl Render for OfferPostsSection {
                     h_flex()
                         .gap_3()
                         .items_center()
-                        .child(kit::section_heading("Fila do Telegram"))
+                        .child(kit::section_heading("Fila de publicação"))
                         .child(if paused {
                             kit::tag("publicação pausada", t.text2, cx)
                         } else {
@@ -2177,7 +2218,8 @@ impl Render for OfferPostsSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "Um post por link de afiliado, com o modelo do canal: o app preenche produto, \
                  preço, desconto e link, e põe \"#publi · link de afiliado\" no fim. Edite, confira \
-                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram.",
+                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram \
+                 ou do Pinterest.",
             ))
             .children(self.picking.then(|| self.render_picker(cx)))
             .children(editing)

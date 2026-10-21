@@ -7,8 +7,6 @@
 //! API has no idempotency key: only a 429, which publishes nothing, is
 //! tried again, after the `retry_after` it asks for.
 
-use std::io::ErrorKind;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +20,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::posting::{Photo, never_sent, read_photo};
 use crate::retry::{Pause, ThreadPause};
 
 /// Telegram's Bot API, unless a test points elsewhere.
@@ -249,7 +248,7 @@ impl PostDestination for Telegram {
                 "sendPhoto",
                 multipart(
                     &[("chat_id", post.chat()), ("caption", post.text())],
-                    &read_photo(path)?,
+                    &read_photo(path, "Telegram", MAX_PHOTO_BYTES)?,
                 ),
             ),
         };
@@ -274,33 +273,6 @@ enum Refusal {
     Failed(PublishFailure),
 }
 
-/// Whether ureq failed before any of the request left: the address did
-/// not resolve, the connection or the TLS handshake failed.
-fn never_sent(error: &ureq::Error) -> bool {
-    if let ureq::Error::Io(error) = error {
-        return matches!(
-            error.kind(),
-            ErrorKind::ConnectionRefused
-                | ErrorKind::HostUnreachable
-                | ErrorKind::NetworkUnreachable
-                | ErrorKind::AddrNotAvailable
-                | ErrorKind::PermissionDenied
-        );
-    }
-    matches!(
-        error,
-        ureq::Error::HostNotFound
-            | ureq::Error::ConnectionFailed
-            | ureq::Error::Timeout(ureq::Timeout::Resolve | ureq::Timeout::Connect)
-            | ureq::Error::BadUri(_)
-            | ureq::Error::RequireHttpsOnly(_)
-            | ureq::Error::InvalidProxyUrl
-            | ureq::Error::ConnectProxyFailed(_)
-            | ureq::Error::Tls(_)
-            | ureq::Error::TlsRequired
-    )
-}
-
 /// `text` without the bot token, which is part of every URL.
 fn hidden(text: String, token: &Secret) -> String {
     text.replace(token.expose(), "<token>")
@@ -313,51 +285,6 @@ fn chat_id(chat: &str) -> Value {
         Ok(id) => json!(id),
         Err(_) => json!(chat),
     }
-}
-
-/// A photo read for upload.
-struct Photo {
-    name: String,
-    content_type: &'static str,
-    bytes: Vec<u8>,
-}
-
-/// The photo at `path`, if Telegram takes it: JPG or PNG, up to
-/// [`MAX_PHOTO_BYTES`]. Nothing has been sent when it fails.
-fn read_photo(path: &Path) -> Result<Photo, PublishFailure> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase);
-    let content_type = match extension.as_deref() {
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("png") => "image/png",
-        _ => {
-            return Err(PublishFailure::NotSent(
-                "o Telegram só recebe foto em JPG ou PNG".into(),
-            ));
-        }
-    };
-    let unreadable = |error: std::io::Error| {
-        PublishFailure::NotSent(format!("não consegui ler a foto: {error}"))
-    };
-    if std::fs::metadata(path).map_err(unreadable)?.len() > MAX_PHOTO_BYTES {
-        return Err(PublishFailure::NotSent(
-            "a foto passa de 10 MB, o maior arquivo que o Telegram recebe".into(),
-        ));
-    }
-    let bytes = std::fs::read(path).map_err(unreadable)?;
-    // Quotes and line breaks would end the part's header early.
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "foto".into())
-        .replace(['"', '\\', '\r', '\n'], "_");
-    Ok(Photo {
-        name,
-        content_type,
-        bytes,
-    })
 }
 
 /// A `multipart/form-data` body with `fields` and `photo` as the `photo`

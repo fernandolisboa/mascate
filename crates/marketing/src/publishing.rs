@@ -7,6 +7,7 @@
 use mascate_kernel::{PlatformError, RecordId, Timestamp};
 use mascate_platform::Migration;
 
+use crate::channels::ChannelKind;
 use crate::offer_posts::{PostImage, PostStatus};
 
 pub(crate) const PUBLISH_OFFER_POSTS: Migration = Migration {
@@ -148,8 +149,18 @@ pub trait PostDestination: Send + Sync {
 #[must_use = "a post goes nowhere until confirmed and passed to OfferPosts::publish"]
 pub struct PublishRequest {
     pub(crate) post: RecordId,
+    /// The kind of the Promotion Channel, which names its destination.
+    pub(crate) kind: ChannelKind,
     pub(crate) channel: String,
+    /// The destination's address: the Telegram chat or the board's id.
     pub(crate) chat: String,
+    /// Where it goes, as the owner reads it: the chat or the board's name.
+    pub(crate) place: String,
+    /// The product's name, cut to the destination's title limit.
+    pub(crate) title: String,
+    /// The Affiliate Link, whole, for a destination that takes a link
+    /// beside the text.
+    pub(crate) link: String,
     pub(crate) text: String,
     pub(crate) image: Option<PostImage>,
     pub(crate) prepared_status: PostStatus,
@@ -173,9 +184,31 @@ impl PublishRequest {
         &self.channel
     }
 
-    /// The destination's chat: `@name` or a `-100…` id.
+    /// The Promotion Channel's kind, which picks the destination.
+    pub fn kind(&self) -> ChannelKind {
+        self.kind
+    }
+
+    /// The destination's address: a Telegram chat, `@name` or a `-100…`
+    /// id, or a Pinterest board's id.
     pub fn chat(&self) -> &str {
         &self.chat
+    }
+
+    /// Where the post goes, as the owner reads it: the chat, or the board's
+    /// name.
+    pub fn place(&self) -> &str {
+        &self.place
+    }
+
+    /// The title of a post that has one: the product's name, cut to fit.
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// The Affiliate Link the post promotes, whole.
+    pub fn link(&self) -> &str {
+        &self.link
     }
 
     /// The owner read the post and where it goes, and confirmed it.
@@ -202,6 +235,14 @@ impl ConfirmedPost {
 
     pub fn chat(&self) -> &str {
         &self.request.chat
+    }
+
+    pub fn title(&self) -> &str {
+        &self.request.title
+    }
+
+    pub fn link(&self) -> &str {
+        &self.request.link
     }
 
     pub(crate) fn request(&self) -> &PublishRequest {
