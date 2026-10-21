@@ -1,0 +1,10 @@
+{
+  "access_token": "pina_MASCATE_segundo_acesso_0123456789",
+  "refresh_token": "pinr_MASCATE_segundo_refresh_0123456789",
+  "response_type": "refresh_token",
+  "token_type": "bearer",
+  "expires_in": 2592000,
+  "refresh_token_expires_in": 5184000,
+  "refresh_token_expires_at": 1766232000,
+  "scope": "boards:read boards:write pins:read pins:write"
+}

@@ -1589,6 +1589,9 @@ mod tests {
                 let kept = channels.channels().await.unwrap();
                 assert_eq!(kept.len(), 1, "{name}");
                 assert_eq!(kept[0].default_tag, "exemplo", "{name}");
+                assert_eq!(kept[0].kind, ChannelKind::TelegramChannel, "{name}");
+                // The board arrived with Pinterest; older channels have none.
+                assert_eq!(kept[0].pinterest_board, None, "{name}");
                 let created = affiliate
                     .create_link(&sample_link(program.id, kept[0].id), &SampleTagger)
                     .await

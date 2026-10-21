@@ -31,6 +31,8 @@ pub enum Connection {
     ShopeeSeller,
     /// The owner's Magalu store, a Sales Channel.
     Magalu,
+    /// The owner's Pinterest account, where Offer Posts go as Pins.
+    Pinterest,
 }
 
 /// How a credential reaches the store.
@@ -58,7 +60,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 11] = [
+    pub const ALL: [Connection; 12] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -70,6 +72,7 @@ impl Connection {
         Connection::Amazon,
         Connection::ShopeeSeller,
         Connection::Magalu,
+        Connection::Pinterest,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -141,6 +144,16 @@ impl Connection {
                 entry: CredentialEntry::Login,
             },
         ];
+        // The app's keys come from Pinterest's developer page; the first
+        // refresh token, from the owner's login on Pinterest's page.
+        const PINTEREST: &[Credential] = &[
+            pasted("PINTEREST_APP_ID"),
+            pasted("PINTEREST_APP_SECRET"),
+            Credential {
+                name: "PINTEREST_REFRESH_TOKEN",
+                entry: CredentialEntry::Login,
+            },
+        ];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -153,6 +166,7 @@ impl Connection {
             Connection::Amazon => AMAZON,
             Connection::ShopeeSeller => SHOPEE_SELLER,
             Connection::Magalu => MAGALU,
+            Connection::Pinterest => PINTEREST,
         }
     }
 
@@ -246,6 +260,12 @@ impl Connections {
     /// the owner saves new ones or removes it.
     pub fn mark_expired(&self, connection: Connection) {
         self.expired_set().insert(connection);
+    }
+
+    /// Notes that the owner logged in to the Platform again: the
+    /// Connection no longer reads [`ConnectionState::Expired`].
+    pub fn logged_in(&self, connection: Connection) {
+        self.expired_set().remove(&connection);
     }
 
     fn is_expired(&self, connection: Connection) -> bool {

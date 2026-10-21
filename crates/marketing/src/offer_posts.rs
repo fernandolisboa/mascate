@@ -3,7 +3,8 @@
 //! edited by the owner. The Marketing reads neither the Affiliate nor the
 //! Catalog: the caller hands over the facts of the offer. The owner copies
 //! the text, or publishes the post on a Telegram channel after confirming
-//! it (#103, `publishing`), now or at a time of its queue (#104, `queue`).
+//! it (#103, `publishing`), now or at a time of its queue (#104, `queue`),
+//! or as a Pin on a Pinterest board, now (#155).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,12 +103,19 @@ pub const PRICE_NOTICE: &str = "Os preços e a disponibilidade dos produtos est�
 /// Days a post copied without the disclosure keeps the Reminder up.
 pub const DISCLOSURE_WINDOW_DAYS: i64 = 30;
 
-/// The longest text and photo caption a destination takes, in UTF-16 code
-/// units, the way Telegram counts.
+/// What a destination takes. Lengths are in UTF-16 code units, the way
+/// Telegram counts; a destination counting characters takes at least as
+/// many.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PostLimits {
     pub text: usize,
+    /// The text's limit when it goes with a photo.
     pub caption: usize,
+    /// The longest title, in characters, where a post has one: the
+    /// product's name, cut to fit.
+    pub title: Option<usize>,
+    /// Nothing goes out without a photo.
+    pub needs_image: bool,
 }
 
 /// Telegram's Bot API: `sendMessage` up to 4096, `sendPhoto`'s caption up
@@ -115,12 +123,24 @@ pub struct PostLimits {
 pub const TELEGRAM_LIMITS: PostLimits = PostLimits {
     text: 4096,
     caption: 1024,
+    title: None,
+    needs_image: false,
+};
+
+/// Pinterest's API v5: a Pin is a photo with a title up to 100 and a
+/// description up to 800.
+pub const PINTEREST_LIMITS: PostLimits = PostLimits {
+    text: 800,
+    caption: 800,
+    title: Some(100),
+    needs_image: true,
 };
 
 /// What a channel of `kind` takes; `None` where the app knows no limit.
 pub fn post_limits(kind: ChannelKind) -> Option<PostLimits> {
     match kind {
         ChannelKind::TelegramChannel => Some(TELEGRAM_LIMITS),
+        ChannelKind::Pinterest => Some(PINTEREST_LIMITS),
         ChannelKind::WhatsAppGroup
         | ChannelKind::Instagram
         | ChannelKind::TikTok
@@ -138,7 +158,7 @@ pub fn default_template(kind: ChannelKind) -> &'static str {
             "🔥 {produto}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n📉 {desconto} de \
              desconto\n\n👉 {link}"
         }
-        ChannelKind::Instagram | ChannelKind::TikTok => {
+        ChannelKind::Instagram | ChannelKind::TikTok | ChannelKind::Pinterest => {
             "{produto}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n{desconto} de \
              desconto\n\nLink: {link}"
         }
@@ -362,9 +382,11 @@ pub enum PostProblem {
     TooLong {
         units: usize,
         limit: usize,
-        /// The limit is the photo caption's.
+        /// The limit is the photo caption's, shorter than the text's.
         caption: bool,
     },
+    /// The destination takes no post without a photo.
+    NoImage,
     /// The advertising disclosure was taken out.
     NoDisclosure,
     /// The price lost the date and time its Program asks for.
@@ -379,7 +401,10 @@ pub enum PostProblem {
 impl PostProblem {
     /// Whether the post cannot be saved with it.
     pub fn blocks(&self) -> bool {
-        matches!(self, PostProblem::NoLink | PostProblem::TooLong { .. })
+        matches!(
+            self,
+            PostProblem::NoLink | PostProblem::TooLong { .. } | PostProblem::NoImage
+        )
     }
 }
 
@@ -394,15 +419,21 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
         problems.push(PostProblem::NoLink);
     }
     if let Some(limits) = limits {
-        let caption = facts.image.is_some();
-        let limit = if caption { limits.caption } else { limits.text };
+        let limit = if facts.image.is_some() {
+            limits.caption
+        } else {
+            limits.text
+        };
         let units = text.encode_utf16().count();
         if units > limit {
             problems.push(PostProblem::TooLong {
                 units,
                 limit,
-                caption,
+                caption: limit < limits.text,
             });
+        }
+        if limits.needs_image && facts.image.is_none() {
+            problems.push(PostProblem::NoImage);
         }
     }
     if !has_disclosure(text) {
@@ -526,6 +557,10 @@ pub enum PostError {
     NoDestination,
     #[error("the Telegram channel has no chat yet")]
     NoChat,
+    #[error("the Pinterest channel has no board yet")]
+    NoBoard,
+    #[error("only a Telegram channel's posts wait in a queue")]
+    NoQueue,
     #[error("the post is {0:?}, which does not allow it")]
     WrongStatus(PostStatus),
     #[error("the post changed since it was confirmed")]
@@ -817,11 +852,13 @@ impl OfferPosts {
     }
 
     /// Checks the saved post `id` for its destination: what comes back
-    /// carries the final text, the picture and the chat for the owner to
-    /// read and confirm. Only a post on a Telegram channel with its chat,
-    /// [`PostStatus::publishable`], with nothing blocking it and with a
-    /// price its Program still keeps gets one, so a text over the
-    /// destination's limits never reaches it.
+    /// carries the final text, the picture and where it goes for the owner
+    /// to read and confirm. Only a post on a Telegram channel with its chat
+    /// or a Pinterest channel with its board, [`PostStatus::publishable`],
+    /// with nothing blocking it and with a price its Program still keeps
+    /// gets one, so a text over the destination's limits never reaches it.
+    /// The link that goes beside the post, where the destination takes
+    /// one, is the post's Affiliate Link as it is.
     pub async fn prepare(&self, id: RecordId) -> Result<PublishRequest, PostError> {
         let post = self.post(id).await?;
         if !post.status.publishable() {
@@ -831,23 +868,44 @@ impl OfferPosts {
             return Err(PostError::OldPrice);
         }
         let channel = self.channels.channel(post.draft.channel).await?;
-        if channel.kind != ChannelKind::TelegramChannel {
-            return Err(PostError::NoDestination);
-        }
-        let chat = channel.telegram_chat.clone().ok_or(PostError::NoChat)?;
-        let blocking: Vec<PostProblem> = check_post(&post.draft, post_limits(channel.kind))
+        let (chat, place) = match channel.kind {
+            ChannelKind::TelegramChannel => {
+                let chat = channel.telegram_chat.clone().ok_or(PostError::NoChat)?;
+                (chat.clone(), chat)
+            }
+            ChannelKind::Pinterest => {
+                let board = channel.pinterest_board.clone().ok_or(PostError::NoBoard)?;
+                (board.id, board.name)
+            }
+            ChannelKind::WhatsAppGroup
+            | ChannelKind::Instagram
+            | ChannelKind::TikTok
+            | ChannelKind::PaidSearch
+            | ChannelKind::Other => return Err(PostError::NoDestination),
+        };
+        let limits = post_limits(channel.kind);
+        let blocking: Vec<PostProblem> = check_post(&post.draft, limits)
             .into_iter()
             .filter(PostProblem::blocks)
             .collect();
         if !blocking.is_empty() {
             return Err(PostError::Blocked(blocking));
         }
+        let facts = post.draft.facts;
+        let title = match limits.and_then(|limits| limits.title) {
+            Some(max) => cut_title(&facts.product, max),
+            None => facts.product.trim().to_owned(),
+        };
         Ok(PublishRequest {
             post: post.id,
+            kind: channel.kind,
             channel: channel.name,
             chat,
+            place,
+            title,
+            link: facts.link.trim().to_owned(),
             text: post.draft.text,
-            image: post.draft.facts.image,
+            image: facts.image,
             prepared_status: post.status,
             prepared_at: post.updated_at,
         })
@@ -1009,6 +1067,21 @@ impl OfferPosts {
             None => Vec::new(),
         })
     }
+}
+
+/// `product` within `max` characters: whole when it fits, else cut at the
+/// last space that leaves room for `…`.
+fn cut_title(product: &str, max: usize) -> String {
+    let product = product.split_whitespace().collect::<Vec<_>>().join(" ");
+    if product.chars().count() <= max {
+        return product;
+    }
+    let room: String = product.chars().take(max.saturating_sub(1)).collect();
+    let kept = match room.rfind(' ') {
+        Some(space) if space > 0 => &room[..space],
+        _ => room.as_str(),
+    };
+    format!("{}…", kept.trim_end())
 }
 
 /// `draft` as the 14 columns from `channel_id` to `forbidden_contacts`.

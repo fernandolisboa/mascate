@@ -5,6 +5,7 @@ mod amazon_crawler;
 mod amazon_earnings;
 mod answers;
 mod anthropic;
+mod base64;
 mod connections;
 mod crawler;
 mod eduzz;
@@ -12,6 +13,7 @@ mod escaped;
 mod hotmart;
 mod hotmart_crawler;
 mod kiwify;
+mod landing;
 mod link_tags;
 mod magalu;
 mod magalu_crawler;
@@ -19,6 +21,8 @@ mod mercado_livre;
 mod mercado_livre_crawler;
 mod monetizze;
 mod pictures;
+mod pinterest;
+mod posting;
 mod retry;
 mod shopee_affiliate;
 mod shopee_seller;
@@ -59,6 +63,12 @@ pub use mercado_livre_crawler::{
     LISTING_URL as MERCADO_LIVRE_LISTING_URL, MERCADO_LIVRE_CRAWLER, MercadoLivreCrawler,
 };
 pub use monetizze::{API_URL as MONETIZZE_API_URL, LINKS as MONETIZZE_LINKS, Monetizze};
+pub use pinterest::{
+    API_URL as PINTEREST_API_URL, LOGIN_URL as PINTEREST_LOGIN_URL,
+    MAX_PHOTO_BYTES as PINTEREST_MAX_PHOTO_BYTES, Pinterest, PinterestAuthorization,
+    REDIRECT as PINTEREST_REDIRECT, SANDBOX_URL as PINTEREST_SANDBOX_URL,
+    SCOPES as PINTEREST_SCOPES,
+};
 pub use retry::{Pause, ThreadPause};
 pub use shopee_affiliate::{API_URL as SHOPEE_AFFILIATE_API_URL, ShopeeAffiliates};
 pub use shopee_seller::{

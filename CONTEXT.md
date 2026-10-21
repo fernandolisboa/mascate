@@ -187,7 +187,7 @@ Lugar onde o Fernando divulga produtos ou links (grupo de WhatsApp, canal do Tel
 _Avoid_: canal (sozinho), rede
 
 **Offer Post**:
-Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel, com identificação de publicidade. Só é publicado (no Telegram) quando o Fernando confirma, na hora ou agendado, e sai no máximo uma vez.
+Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel, com identificação de publicidade. Só é publicado (no Telegram ou no Pinterest) quando o Fernando confirma, na hora ou agendado, e sai no máximo uma vez.
 _Avoid_: post, copy (sozinho), anúncio
 
 **Listing Copy**:

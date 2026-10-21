@@ -335,6 +335,39 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Pinterest => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "A API do Pinterest pede uma conta comercial, que é de graça: se a sua \
+                     for pessoal, converta em Configurações › Configurações da conta. Depois, \
+                     entre no portal de desenvolvedores com ela e abra My apps.",
+                        "Abrir o portal do Pinterest",
+                        "https://developers.pinterest.com/apps/",
+                    ),
+                    step(
+                        "Clique em Connect app, dê o nome Mascate, uma descrição curta e o site \
+                     https://github.com/fernandolisboa/mascate, e peça o acesso Trial. O \
+                     Pinterest analisa o pedido e avisa por e-mail.",
+                    ),
+                    // The app has no address of its own (#10): the browser
+                    // stops at localhost and the owner copies the address.
+                    step(
+                        "Com o acesso aprovado, abra o app em My apps e, em Redirect URIs, \
+                     cadastre http://localhost/ exatamente assim, com a barra no fim.",
+                    ),
+                    step("Copie o App ID e o App secret do app (o secret aparece em Show)."),
+                ],
+                then: Some(
+                    "Depois de salvar, clique em Entrar no Pinterest, autorize o app e cole o \
+                 endereço em que o navegador parou: http://localhost/?code=…, numa página que \
+                 não abre, e é assim mesmo. O app renova o login sozinho. Com o acesso Trial, \
+                 os Pins aparecem só para você; para todos verem, peça o acesso Standard em My \
+                 apps, com um vídeo do app criando um Pin.",
+                ),
+            };
+            GUIDE
+        }
         Connection::Eduzz => {
             const GUIDE: Guide = Guide {
                 steps: &[
@@ -420,6 +453,7 @@ mod tests {
             Connection::Kiwify => &["dashboard.kiwify.com.br"],
             Connection::Eduzz => &["console.eduzz.com"],
             Connection::Telegram => &["t.me"],
+            Connection::Pinterest => &["developers.pinterest.com"],
         }
     }
 
@@ -433,7 +467,10 @@ mod tests {
             | Connection::Kiwify
             | Connection::Eduzz
             | Connection::Telegram => 2,
-            Connection::Amazon | Connection::ShopeeSeller | Connection::Magalu => 3,
+            Connection::Amazon
+            | Connection::ShopeeSeller
+            | Connection::Magalu
+            | Connection::Pinterest => 3,
         }
     }
 

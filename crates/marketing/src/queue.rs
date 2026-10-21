@@ -16,6 +16,7 @@ use mascate_platform::{
     Database, Migration, StoredRow as _, load_single_row, save_single_row, stored,
 };
 
+use crate::channels::ChannelKind;
 use crate::offer_posts::{
     OfferFacts, OfferPost, OfferPosts, POST_QUERY, PostError, PostStatus, post_from,
 };
@@ -261,13 +262,17 @@ impl OfferPosts {
     /// confirmation is the owner's consent for the post to go out then, as
     /// it is, on its own. Only a post still as the owner read it, at a
     /// time after now that no other post of the channel holds and before
-    /// its price expires.
+    /// its price expires. Only a Telegram channel's posts wait in the
+    /// queue so far.
     pub async fn schedule(
         &self,
         post: ConfirmedPost,
         when: PostTime,
     ) -> Result<OfferPost, PostError> {
         let request = post.request();
+        if request.kind != ChannelKind::TelegramChannel {
+            return Err(PostError::NoQueue);
+        }
         let saved = self.post(request.post).await?;
         if saved.status != request.prepared_status || saved.updated_at != request.prepared_at {
             return Err(PostError::Changed);

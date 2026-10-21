@@ -43,6 +43,8 @@ mod orders;
 mod palette;
 mod parts;
 mod payouts;
+mod pinterest;
+mod post_destinations;
 mod post_queue;
 mod preferences;
 mod pricing;
@@ -86,7 +88,7 @@ use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
     HOTMART_LINKS, Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
-    ShopeeAffiliates, ShopeeSeller, Telegram,
+    Pinterest, ShopeeAffiliates, ShopeeSeller, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -108,6 +110,7 @@ use crate::magalu::AppMagalu;
 use crate::mercado_livre::AppMercadoLivre;
 use crate::offer_posts::AppOfferPosts;
 use crate::orders::AppOrders;
+use crate::pinterest::AppPinterest;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
 use crate::promotion_channels::AppPromotionChannels;
@@ -208,6 +211,14 @@ fn main() {
     let magalu = Arc::new(Magalu::new(
         &magalu_api,
         &magalu_id,
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
+    let (pinterest_api, pinterest_login) = pinterest::urls(Build::CURRENT, &process_environment());
+    let pinterest = Arc::new(Pinterest::new(
+        &pinterest_api,
+        &pinterest_login,
         &user_agent,
         secrets.clone(),
         Arc::new(SystemClock),
@@ -341,6 +352,7 @@ fn main() {
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));
+            cx.set_global(AppPinterest(pinterest));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),
