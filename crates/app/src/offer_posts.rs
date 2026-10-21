@@ -9,8 +9,9 @@
 //! bot (#103), and one on a Pinterest channel as a Pin on its board (#155),
 //! after the owner reads the final text, picture and channel and confirms;
 //! one that may have gone out waits for the owner to look.
-//! Confirmed for a time instead, it waits in the Telegram queue (#104),
-//! listed with what is late, unconfirmed, failed or published today.
+//! Confirmed for a time instead, it waits in the queue (#104, and on every
+//! destination since #157), listed with what is late, unconfirmed, failed
+//! or published today and with any destination at its limit.
 //! Scheduling offers the dates of the coming Sales Events (#105).
 
 use std::path::{Path, PathBuf};
@@ -33,10 +34,10 @@ use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
-    ChannelKind, Contact, LATE_AFTER_MINUTES, OfferFacts, OfferPost, OfferPosts, OfferPrice,
-    PRICE_KEEPS_HOURS, PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus,
-    PostTime, PromotionChannel, PublishFailure, PublishRequest, UpcomingEvent, check_post,
-    post_limits,
+    ChannelKind, Contact, DestinationLimit, INSTAGRAM_POSTS_PER_DAY, LATE_AFTER_MINUTES,
+    OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, PRICE_KEEPS_HOURS,
+    PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus, PostTime,
+    PromotionChannel, PublishFailure, PublishRequest, UpcomingEvent, check_post, post_limits,
 };
 use mascate_platform::Flag;
 
@@ -263,9 +264,6 @@ pub(crate) fn post_failure(error: &PostError) -> String {
             .into(),
         PostError::NoBoard => "Escolha a pasta do canal do Pinterest em Canais de divulgação, \
                                em Pasta, para publicar nele."
-            .into(),
-        PostError::NoQueue => "Por enquanto só posts de canal do Telegram entram na fila: \
-                               publique este agora."
             .into(),
         PostError::WrongStatus(PostStatus::Sent) => "Esse post já foi publicado.".into(),
         PostError::WrongStatus(PostStatus::Sending) => "Esse post está saindo agora.".into(),
@@ -1390,11 +1388,14 @@ impl OfferPostsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.raised)
-            .child(div().font_medium().child(format!(
-                "Agendar em {} ({})?",
-                request.channel(),
-                request.place()
-            )))
+            .child(
+                div()
+                    .font_medium()
+                    .child(format!("Agendar {}?", where_it_goes(request))),
+            )
+            .children(
+                pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
+            )
             .child(choices)
             .children(events)
             .when(choice.next_free.is_none(), |panel| {
@@ -1430,9 +1431,13 @@ impl OfferPostsSection {
             )
             .child(div().text_xs().text_color(t.text2).child(format!(
                 "Na hora marcada o post sai sozinho, uma vez, do jeito que está acima, com o app \
-                 aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos com o app \
-                 fechado, ele espera você. Editar o post tira ele da fila."
+                 aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos sem ele \
+                 sair, ele espera você. Editar o post tira ele da fila."
             )))
+            .children(
+                limit_note(request.kind())
+                    .map(|note| div().text_xs().text_color(t.text2).child(note)),
+            )
             .children(off.map(|why| {
                 kit::info_notice(format!("{why} Enquanto isso, o post agendado não sai."), cx)
             }))
@@ -1469,28 +1474,14 @@ impl OfferPostsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.raised)
-            .child(div().font_medium().child(
-                if request.kind() == ChannelKind::Instagram {
-                    format!(
-                        "Publicar agora em {}, na conta do Instagram conectada?",
-                        request.channel()
-                    )
-                } else {
-                    format!(
-                        "Publicar agora em {} ({})?",
-                        request.channel(),
-                        request.place()
-                    )
-                },
-            ))
-            .when(request.kind() == ChannelKind::Pinterest, |panel| {
-                panel.child(div().text_xs().text_color(t.text2).child(format!(
-                    "Pin na pasta {}, com o título \"{}\" e o link {}",
-                    request.place(),
-                    request.title(),
-                    request.link()
-                )))
-            })
+            .child(
+                div()
+                    .font_medium()
+                    .child(format!("Publicar agora {}?", where_it_goes(request))),
+            )
+            .children(
+                pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
+            )
             .child(div().text_xs().text_color(t.text2).child(picture))
             .child(
                 div()
@@ -1619,7 +1610,6 @@ impl OfferPostsSection {
             (PostStatus::Failed, _) => "não publicado".to_owned(),
         };
         let kind = self.kind_of(post.draft.channel);
-        let telegram = kind == Some(ChannelKind::TelegramChannel);
         let publishes = kind.is_some_and(post_destinations::publishes);
         let (opened, copying, id) = (post.clone(), post.clone(), post.id);
         let again = matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed);
@@ -1637,23 +1627,22 @@ impl OfferPostsSection {
                     cx.listener(move |this, _, window, cx| this.prepare(id, false, window, cx)),
                 )
         });
-        let schedule = (telegram
-            && post.status.publishable()
-            && post.status != PostStatus::Unconfirmed)
-            .then(|| {
-                Button::new(("schedule-post", index))
-                    .label(if post.status.queued() {
-                        "Reagendar"
-                    } else {
-                        "Agendar"
-                    })
-                    .outline()
-                    .small()
-                    .disabled(self.busy || self.confirming.is_some())
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.prepare(id, true, window, cx)),
-                    )
-            });
+        let schedule =
+            (publishes && post.status.publishable() && post.status != PostStatus::Unconfirmed)
+                .then(|| {
+                    Button::new(("schedule-post", index))
+                        .label(if post.status.queued() {
+                            "Reagendar"
+                        } else {
+                            "Agendar"
+                        })
+                        .outline()
+                        .small()
+                        .disabled(self.busy || self.confirming.is_some())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.prepare(id, true, window, cx)
+                        }))
+                });
         let unschedule = post.status.queued().then(|| {
             Button::new(("unschedule-post", index))
                 .label("Tirar da fila")
@@ -1664,8 +1653,9 @@ impl OfferPostsSection {
         });
         let waiting = match post.status {
             PostStatus::Late => Some(format!(
-                "A hora passou de {LATE_AFTER_MINUTES} minutos com o app fechado, e oferta e \
-                 preço podem ter mudado: publique agora ou reagende."
+                "A hora passou de {LATE_AFTER_MINUTES} minutos sem o post sair (app fechado, \
+                 publicação pausada, conexão fora do ar ou limite do destino), e oferta e preço \
+                 podem ter mudado: publique agora ou reagende."
             )),
             PostStatus::PriceExpired => Some(format!(
                 "O preço foi visto há mais de {PRICE_KEEPS_HOURS} horas, mais do que {} deixa \
@@ -1800,6 +1790,7 @@ impl OfferPostsSection {
         table_row(&t)
             .flex_wrap()
             .child(kit::tag(facts.platform.clone(), t.text2, cx))
+            .children(kind.map(|kind| kit::tag(kind.name(), t.text2, cx)))
             .child(
                 v_flex()
                     .flex_1()
@@ -1890,7 +1881,6 @@ impl OfferPostsSection {
         let blocked = problems.iter().any(PostProblem::blocks);
         let unpublishable = problems.iter().any(PostProblem::blocks_publishing);
         let kind = editor.channel.as_ref().map(|channel| channel.kind);
-        let on_telegram = kind == Some(ChannelKind::TelegramChannel);
         let publishes = kind.is_some_and(post_destinations::publishes);
         let channel = editor.channel.as_ref().map_or_else(
             || "canal apagado".to_owned(),
@@ -2101,7 +2091,7 @@ impl OfferPostsSection {
                                 this.confirm_editing(false, window, cx)
                             }))
                     }))
-                    .children(on_telegram.then(|| {
+                    .children(publishes.then(|| {
                         Button::new("schedule-post-editing")
                             .label("Agendar")
                             .outline()
@@ -2185,6 +2175,53 @@ fn cancel_confirmation(cx: &mut Context<OfferPostsSection>) -> Button {
         }))
 }
 
+/// Where a confirmed post goes, as the confirmation names it: "em Canal
+/// (@chat)", or the connected account on Instagram.
+fn where_it_goes(request: &PublishRequest) -> String {
+    if request.kind() == ChannelKind::Instagram {
+        format!("em {}, na conta do Instagram conectada", request.channel())
+    } else {
+        format!("em {} ({})", request.channel(), request.place())
+    }
+}
+
+/// What a Pin carries besides the text and the photo.
+fn pin_detail(request: &PublishRequest) -> Option<String> {
+    (request.kind() == ChannelKind::Pinterest).then(|| {
+        format!(
+            "Pin na pasta {}, com o título \"{}\" e o link {}",
+            request.place(),
+            request.title(),
+            request.link()
+        )
+    })
+}
+
+/// How the destination of `kind` limits the posts the queue sends it.
+fn limit_note(kind: ChannelKind) -> Option<String> {
+    match kind {
+        ChannelKind::Instagram => Some(format!(
+            "O Instagram aceita até {INSTAGRAM_POSTS_PER_DAY} posts pelo app em 24 horas: com a \
+             cota usada, o post espera na fila, sem chamar o Instagram, até abrir espaço."
+        )),
+        ChannelKind::Pinterest => Some(format!(
+            "O app cria até {PINTEREST_POSTS_PER_DAY} Pins em 24 horas, dentro do limite do \
+             Pinterest; no limite, ou com o Pinterest pedindo para esperar, o Pin espera na fila."
+        )),
+        _ => None,
+    }
+}
+
+/// A destination at its limit, as the queue tells it.
+fn limit_text(limit: &DestinationLimit) -> String {
+    let name = post_destinations::destination_name(limit.kind).unwrap_or("O canal");
+    format!(
+        "{name} está no limite de posts: os agendados para ele esperam na fila, sem chamar o \
+         {name}, até {}. Os que passarem de {LATE_AFTER_MINUTES} minutos da hora esperam você.",
+        post_time(limit.until)
+    )
+}
+
 /// The picture `editor` has picked, as a post keeps it.
 fn picture_of(editor: &Editor, cx: &App) -> Option<PostImage> {
     match &editor.picture {
@@ -2255,13 +2292,13 @@ impl Render for OfferPostsSection {
             index += 1;
         }
         // A deleted channel's posts still show where they stand.
-        let on_telegram = !groups.is_empty()
+        let queues = !groups.is_empty()
             || self
                 .channels
                 .iter()
-                .any(|channel| channel.kind == ChannelKind::TelegramChannel);
+                .any(|channel| channel.kind.has_destination());
         let paused = queue.paused;
-        let queue_block = on_telegram.then(|| {
+        let queue_block = queues.then(|| {
             v_flex()
                 .gap_2()
                 .child(
@@ -2290,18 +2327,24 @@ impl Render for OfferPostsSection {
                         ),
                 )
                 .child(div().text_sm().text_color(t.text2).child(format!(
-                    "Um post agendado sai sozinho na hora, com o app aberto ou na bandeja, um por \
-                     vez e com alguns segundos entre dois posts do mesmo canal. Se a hora passar de \
-                     {LATE_AFTER_MINUTES} minutos com o app fechado, ele espera você. Pausada, a fila \
+                    "Um post agendado sai sozinho na hora pelo Telegram, Instagram ou Pinterest, \
+                     com o app aberto ou na bandeja, um por vez e com alguns segundos entre dois \
+                     posts do mesmo chat ou da mesma conta. O Instagram e o Pinterest têm limite \
+                     de posts por dia: no limite, o post espera na fila. Se a hora passar de \
+                     {LATE_AFTER_MINUTES} minutos sem ele sair, ele espera você. Pausada, a fila \
                      não publica nada."
                 )))
+                .children(
+                    queue
+                        .limited
+                        .iter()
+                        .map(|limit| kit::info_notice(limit_text(limit), cx)),
+                )
                 .when(groups.is_empty(), |block| {
-                    block.child(
-                        div()
-                            .text_sm()
-                            .text_color(t.text2)
-                            .child("Nada na fila: use Agendar num post de canal do Telegram."),
-                    )
+                    block.child(div().text_sm().text_color(t.text2).child(
+                        "Nada na fila: use Agendar num post de canal do Telegram, do Instagram ou \
+                         do Pinterest.",
+                    ))
                 })
                 .children(groups)
         });

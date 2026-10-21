@@ -13,8 +13,8 @@ use mascate_kernel::{Clock, PlatformError, RecordId};
 use mascate_marketing::{
     ChannelError, ChannelKind, ConfirmedPost, DestinationCheck, MIGRATIONS, NewPromotionChannel,
     OfferFacts, OfferPosts, PINTEREST_LIMITS, PinterestBoard, PostDestination, PostError,
-    PostImage, PostProblem, PostStatus, PostTime, PromotionChannel, PromotionChannels,
-    PublishFailure, PublishedPost, SentPost, check_post, post_limits,
+    PostImage, PostProblem, PostStatus, PromotionChannel, PromotionChannels, PublishFailure,
+    PublishedPost, SentPost, check_post, post_limits,
 };
 use mascate_platform::{Database, migrate};
 
@@ -420,26 +420,5 @@ fn a_pin_that_may_have_gone_out_is_unconfirmed_and_never_sent_again_alone() {
             Some(PublishFailure::Unconfirmed("timeout".into()))
         );
         assert_eq!(board.calls().len(), 1);
-    });
-}
-
-#[test]
-fn a_pinterest_post_does_not_wait_in_the_queue_yet() {
-    block_on(async {
-        let f = Fixture::new().await;
-        let channel = f.on_board().await;
-        let draft = f.posts.draft(&facts(), &channel).await.unwrap();
-        let post = f.posts.create(&draft).await.unwrap();
-        let request = f.posts.prepare(post.id).await.unwrap();
-        let at = f.clock.now() + TimeDelta::hours(2);
-
-        assert!(matches!(
-            f.posts.schedule(request.confirm(), PostTime::At(at)).await,
-            Err(PostError::NoQueue)
-        ));
-        assert_eq!(
-            f.posts.post(post.id).await.unwrap().status,
-            PostStatus::Draft
-        );
     });
 }

@@ -4,8 +4,9 @@
 //! the template its posts start from. The channels live in the Marketing
 //! (ADR 0031, decision 5); Afiliação tags links with them. A Telegram
 //! channel is checked through the bot (#103): administrator, allowed to
-//! post; and has the posting times its scheduled posts go out at (#104).
-//! A Pinterest channel picks the board its Pins go to (#155).
+//! post. A Pinterest channel picks the board its Pins go to (#155). Every
+//! channel the app posts to has the posting times its scheduled posts go
+//! out at (#104, #157).
 //! The Sales Events calendar sits between the posts and the channels (#105).
 
 use std::collections::HashMap;
@@ -65,7 +66,9 @@ fn failure(error: &ChannelError) -> String {
         ChannelError::BadChat => "O chat do Telegram é o @nome público do canal (como \
                                   @ofertasdofernando) ou o id que começa com -100."
             .into(),
-        ChannelError::NotTelegram => "Só um canal do Telegram tem horários de publicação.".into(),
+        ChannelError::NoDestination => "Só um canal do Telegram, do Instagram ou do Pinterest tem \
+                                        horários de publicação."
+            .into(),
         ChannelError::NotPinterest => "Só um canal do Pinterest tem pasta.".into(),
         ChannelError::BadBoard => "Escolha uma das pastas que o Pinterest listou.".into(),
         ChannelError::NotFound => "Esse canal mudou; a lista foi atualizada.".into(),
@@ -86,23 +89,29 @@ fn kind_note(kind: ChannelKind) -> &'static str {
         }
         ChannelKind::Pinterest => {
             "Com a conta conectada em Configurações › Conexões › Pinterest, escolha em \"Pasta\" \
-             onde os Pins deste canal entram: eles saem por \"Publicar agora\", com a foto da \
-             oferta e o link de afiliado, sempre depois da sua confirmação. Enquanto o app do \
-             Pinterest estiver em Trial, só você vê os Pins."
+             onde os Pins deste canal entram: eles saem por \"Publicar agora\" ou \"Agendar\", \
+             com a foto da oferta e o link de afiliado, sempre depois da sua confirmação. Use \
+             \"Horários\" para escolher quando os agendados saem. Enquanto o app do Pinterest \
+             estiver em Trial, só você vê os Pins."
+        }
+        ChannelKind::Instagram => {
+            "Com o token da conta em Configurações › Conexões › Instagram, os posts deste canal \
+             saem na conta conectada por \"Publicar agora\" ou \"Agendar\", sempre depois da \
+             sua confirmação, com uma foto que já está na internet. Use \"Horários\" para \
+             escolher quando os agendados saem."
         }
         ChannelKind::PaidSearch => {
             "As palavras-chave entram na conferência das regras de cada programa: a Shopee não \
              aceita link em busca paga, e marcas como amazon, shopee ou hotmart ficam \
              bloqueadas."
         }
-        ChannelKind::WhatsAppGroup
-        | ChannelKind::Instagram
-        | ChannelKind::TikTok
-        | ChannelKind::Other => "Um canal ou grupo seu, onde você posta de graça.",
+        ChannelKind::WhatsAppGroup | ChannelKind::TikTok | ChannelKind::Other => {
+            "Um canal ou grupo seu, onde você posta de graça."
+        }
     }
 }
 
-/// A Telegram channel's posting times open for editing.
+/// A channel's posting times open for editing.
 struct TimesEditor {
     channel: RecordId,
     text: Entity<InputState>,
@@ -790,23 +799,27 @@ impl PromotionScreen {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
+        let times = if channel.posting_times.is_empty() {
+            "sem horários de publicação".to_owned()
+        } else {
+            format!("horários {}", times_text(&channel.posting_times))
+        };
         let detail = match channel.kind {
             ChannelKind::TelegramChannel => Some(format!(
-                "{} · {}",
+                "{} · {times}",
                 channel.telegram_chat.clone().map_or_else(
                     || "chat ainda não informado".to_owned(),
                     |chat| format!("chat {chat}"),
                 ),
-                if channel.posting_times.is_empty() {
-                    "sem horários de publicação".to_owned()
-                } else {
-                    format!("horários {}", times_text(&channel.posting_times))
-                }
             )),
-            ChannelKind::Pinterest => Some(channel.pinterest_board.as_ref().map_or_else(
-                || "pasta ainda não escolhida".to_owned(),
-                |board| format!("pasta {}", board.name),
+            ChannelKind::Pinterest => Some(format!(
+                "{} · {times}",
+                channel.pinterest_board.as_ref().map_or_else(
+                    || "pasta ainda não escolhida".to_owned(),
+                    |board| format!("pasta {}", board.name),
+                ),
             )),
+            ChannelKind::Instagram => Some(format!("conta conectada · {times}")),
             ChannelKind::PaidSearch if channel.keywords.is_empty() => {
                 Some("nenhuma palavra-chave".to_owned())
             }
@@ -840,7 +853,7 @@ impl PromotionScreen {
                 .disabled(self.busy || self.reading_boards.is_some())
                 .on_click(cx.listener(move |this, _, window, cx| this.open_boards(id, window, cx)))
         });
-        let times = (channel.kind == ChannelKind::TelegramChannel).then(|| {
+        let times = channel.kind.has_destination().then(|| {
             Button::new(("channel-times", index))
                 .label("Horários")
                 .outline()
