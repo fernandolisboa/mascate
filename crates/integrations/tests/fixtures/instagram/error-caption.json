@@ -1,0 +1,10 @@
+{
+  "error": {
+    "message": "Invalid parameter",
+    "type": "OAuthException",
+    "code": 100,
+    "error_subcode": 2207040,
+    "error_user_msg": "Cannot use more than 20 tags per created media.",
+    "fbtrace_id": "AxyzMascate100"
+  }
+}

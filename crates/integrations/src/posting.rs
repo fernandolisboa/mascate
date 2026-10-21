@@ -5,7 +5,20 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
+use mascate_kernel::PlatformError;
 use mascate_marketing::PublishFailure;
+
+/// A failure before the post's request left, getting the login or reading
+/// what the destination needs first: nothing went out.
+pub(crate) fn before_sending(error: PlatformError) -> PublishFailure {
+    match error {
+        PlatformError::NotConnected => PublishFailure::NotConnected,
+        PlatformError::Expired => PublishFailure::Expired,
+        PlatformError::RateLimited => PublishFailure::RateLimited,
+        PlatformError::Refused(why) | PlatformError::Failed(why) => PublishFailure::NotSent(why),
+        PlatformError::NotFound => PublishFailure::NotSent(error.to_string()),
+    }
+}
 
 /// Whether ureq failed before any of the request left: the address did
 /// not resolve, the connection or the TLS handshake failed.

@@ -4,7 +4,8 @@
 //! Catalog: the caller hands over the facts of the offer. The owner copies
 //! the text, or publishes the post on a Telegram channel after confirming
 //! it (#103, `publishing`), now or at a time of its queue (#104, `queue`),
-//! or as a Pin on a Pinterest board, now (#155).
+//! as a Pin on a Pinterest board, now (#155), or on the connected Instagram
+//! account, now (#156).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use libsql::{Value, params};
 use mascate_kernel::{
-    Clock, IdGenerator, Money, Percentage, Record, RecordId, Timestamp, brasilia,
+    Clock, IdGenerator, Money, Percentage, PlatformError, Record, RecordId, Timestamp, brasilia,
 };
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -20,7 +21,7 @@ use rust_decimal::{Decimal, RoundingStrategy};
 use crate::AD_DISCLOSURE;
 use crate::channels::{ChannelError, ChannelKind, PromotionChannel, PromotionChannels};
 use crate::publishing::{
-    ConfirmedPost, PostDestination, PublishFailure, PublishRequest, PublishedPost,
+    ConfirmedPost, PostDestination, PostFate, PublishFailure, PublishRequest, PublishedPost,
 };
 use crate::queue::price_fresh_at;
 use crate::replies::{Contact, contacts_in, unknown_variable};
@@ -116,6 +117,13 @@ pub struct PostLimits {
     pub title: Option<usize>,
     /// Nothing goes out without a photo.
     pub needs_image: bool,
+    /// The destination fetches the photo from an address on the internet,
+    /// so one from the Product's folder cannot go.
+    pub web_image_only: bool,
+    /// The most hashtags the text may carry.
+    pub hashtags: Option<usize>,
+    /// The most `@` mentions the text may carry.
+    pub mentions: Option<usize>,
 }
 
 /// Telegram's Bot API: `sendMessage` up to 4096, `sendPhoto`'s caption up
@@ -125,6 +133,9 @@ pub const TELEGRAM_LIMITS: PostLimits = PostLimits {
     caption: 1024,
     title: None,
     needs_image: false,
+    web_image_only: false,
+    hashtags: None,
+    mentions: None,
 };
 
 /// Pinterest's API v5: a Pin is a photo with a title up to 100 and a
@@ -134,6 +145,22 @@ pub const PINTEREST_LIMITS: PostLimits = PostLimits {
     caption: 800,
     title: Some(100),
     needs_image: true,
+    web_image_only: false,
+    hashtags: None,
+    mentions: None,
+};
+
+/// Instagram's content publishing: a photo post only, the photo fetched
+/// from a public address, with a caption up to 2,200 characters, 30
+/// hashtags and 20 mentions.
+pub const INSTAGRAM_LIMITS: PostLimits = PostLimits {
+    text: 2200,
+    caption: 2200,
+    title: None,
+    needs_image: true,
+    web_image_only: true,
+    hashtags: Some(30),
+    mentions: Some(20),
 };
 
 /// What a channel of `kind` takes; `None` where the app knows no limit.
@@ -141,8 +168,8 @@ pub fn post_limits(kind: ChannelKind) -> Option<PostLimits> {
     match kind {
         ChannelKind::TelegramChannel => Some(TELEGRAM_LIMITS),
         ChannelKind::Pinterest => Some(PINTEREST_LIMITS),
+        ChannelKind::Instagram => Some(INSTAGRAM_LIMITS),
         ChannelKind::WhatsAppGroup
-        | ChannelKind::Instagram
         | ChannelKind::TikTok
         | ChannelKind::PaidSearch
         | ChannelKind::Other => None,
@@ -372,8 +399,11 @@ pub struct OfferPost {
     pub updated_at: Timestamp,
 }
 
-/// Something wrong with a post. Only the link and the length block it;
-/// the rest the owner reads and decides.
+/// Something wrong with a post. What the destination would refuse blocks
+/// it: the link, the length, a missing photo, the hashtags and mentions.
+/// A photo the destination cannot fetch blocks only publishing, so the owner
+/// can still copy the post and share it by hand. The rest the owner reads
+/// and decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostProblem {
     /// The text lost the affiliate link.
@@ -387,6 +417,13 @@ pub enum PostProblem {
     },
     /// The destination takes no post without a photo.
     NoImage,
+    /// The photo is in the Product's folder, and the destination only
+    /// fetches one from the internet.
+    FolderPhoto,
+    /// More hashtags than the destination takes.
+    TooManyHashtags { count: usize, limit: usize },
+    /// More `@` mentions than the destination takes.
+    TooManyMentions { count: usize, limit: usize },
     /// The advertising disclosure was taken out.
     NoDisclosure,
     /// The price lost the date and time its Program asks for.
@@ -403,8 +440,17 @@ impl PostProblem {
     pub fn blocks(&self) -> bool {
         matches!(
             self,
-            PostProblem::NoLink | PostProblem::TooLong { .. } | PostProblem::NoImage
+            PostProblem::NoLink
+                | PostProblem::TooLong { .. }
+                | PostProblem::NoImage
+                | PostProblem::TooManyHashtags { .. }
+                | PostProblem::TooManyMentions { .. }
         )
+    }
+
+    /// Whether the post cannot go out through the app with it.
+    pub fn blocks_publishing(&self) -> bool {
+        self.blocks() || *self == PostProblem::FolderPhoto
     }
 }
 
@@ -418,6 +464,13 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
     if link.is_empty() || !text.contains(link) {
         problems.push(PostProblem::NoLink);
     }
+    // The link itself is not a contact, and its digits are no phone; nor
+    // are a `#` or an `@` in it a hashtag or a mention.
+    let unlinked = if link.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(link, " ")
+    };
     if let Some(limits) = limits {
         let limit = if facts.image.is_some() {
             limits.caption
@@ -435,6 +488,23 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
         if limits.needs_image && facts.image.is_none() {
             problems.push(PostProblem::NoImage);
         }
+        if limits.web_image_only && matches!(facts.image, Some(PostImage::File(_))) {
+            problems.push(PostProblem::FolderPhoto);
+        }
+        let hashtags = marked_words(&unlinked, '#');
+        if let Some(limit) = limits.hashtags.filter(|&limit| hashtags > limit) {
+            problems.push(PostProblem::TooManyHashtags {
+                count: hashtags,
+                limit,
+            });
+        }
+        let mentions = marked_words(&unlinked, '@');
+        if let Some(limit) = limits.mentions.filter(|&limit| mentions > limit) {
+            problems.push(PostProblem::TooManyMentions {
+                count: mentions,
+                limit,
+            });
+        }
     }
     if !has_disclosure(text) {
         problems.push(PostProblem::NoDisclosure);
@@ -450,12 +520,6 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
             problems.push(PostProblem::NoPriceNotice);
         }
     }
-    // The link itself is not a contact, and its digits are no phone.
-    let unlinked = if link.is_empty() {
-        text.to_owned()
-    } else {
-        text.replace(link, " ")
-    };
     problems.extend(
         contacts_in(&unlinked)
             .into_iter()
@@ -463,6 +527,25 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
             .map(PostProblem::Contact),
     );
     problems
+}
+
+/// How many words in `text` start with `mark` and something after it: a
+/// `#tag` or an `@name`, never one inside a word, as in an e-mail address.
+fn marked_words(text: &str, mark: char) -> usize {
+    let mut count = 0;
+    let mut previous: Option<char> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let starts_word = previous.is_none_or(|before| !before.is_alphanumeric() && before != '_');
+        let named = chars
+            .peek()
+            .is_some_and(|next| next.is_alphanumeric() || *next == '_');
+        if c == mark && starts_word && named {
+            count += 1;
+        }
+        previous = Some(c);
+    }
+    count
 }
 
 fn shows_price(text: &str, price: &OfferPrice) -> bool {
@@ -573,6 +656,8 @@ pub enum PostError {
     NoPostingTimes,
     #[error("the price would be older than its Program keeps one")]
     OldPrice,
+    #[error("the destination could not say what became of the post: {0}")]
+    FateUnread(PlatformError),
     #[error("the posts hold a value this app cannot read: {0}")]
     Unreadable(String),
     #[error(transparent)]
@@ -853,10 +938,12 @@ impl OfferPosts {
 
     /// Checks the saved post `id` for its destination: what comes back
     /// carries the final text, the picture and where it goes for the owner
-    /// to read and confirm. Only a post on a Telegram channel with its chat
-    /// or a Pinterest channel with its board, [`PostStatus::publishable`],
+    /// to read and confirm. Only a post on a Telegram channel with its chat,
+    /// a Pinterest channel with its board or an Instagram channel,
+    /// [`PostStatus::publishable`],
     /// with nothing blocking it and with a price its Program still keeps
     /// gets one, so a text over the destination's limits never reaches it.
+    /// A post on an Instagram channel goes to the connected account.
     /// The link that goes beside the post, where the destination takes
     /// one, is the post's Affiliate Link as it is.
     pub async fn prepare(&self, id: RecordId) -> Result<PublishRequest, PostError> {
@@ -877,8 +964,8 @@ impl OfferPosts {
                 let board = channel.pinterest_board.clone().ok_or(PostError::NoBoard)?;
                 (board.id, board.name)
             }
+            ChannelKind::Instagram => (String::new(), channel.name.clone()),
             ChannelKind::WhatsAppGroup
-            | ChannelKind::Instagram
             | ChannelKind::TikTok
             | ChannelKind::PaidSearch
             | ChannelKind::Other => return Err(PostError::NoDestination),
@@ -886,7 +973,7 @@ impl OfferPosts {
         let limits = post_limits(channel.kind);
         let blocking: Vec<PostProblem> = check_post(&post.draft, limits)
             .into_iter()
-            .filter(PostProblem::blocks)
+            .filter(PostProblem::blocks_publishing)
             .collect();
         if !blocking.is_empty() {
             return Err(PostError::Blocked(blocking));
@@ -913,15 +1000,16 @@ impl OfferPosts {
 
     /// Publishes the post the owner confirmed, once. It is marked
     /// [`PostStatus::Sending`] before the destination is called, and only
-    /// if it is still as the owner read it; then [`PostStatus::Sent`],
-    /// [`PostStatus::Failed`] when nothing went out, or
-    /// [`PostStatus::Unconfirmed`] when it may have, which nothing sends
+    /// if it is still as the owner read it; what a destination publishing
+    /// in two steps readied is kept on it before the second step. Then
+    /// [`PostStatus::Sent`], [`PostStatus::Failed`] when nothing went out,
+    /// or [`PostStatus::Unconfirmed`] when it may have, which nothing sends
     /// again on its own. A post that may have gone out without the
     /// disclosure raises [`AD_DISCLOSURE`], as a copied one does.
     pub async fn publish(
         &self,
         destination: &dyn PostDestination,
-        post: ConfirmedPost,
+        mut post: ConfirmedPost,
     ) -> Result<OfferPost, PostError> {
         let request = post.request();
         let claimed = self
@@ -929,7 +1017,8 @@ impl OfferPosts {
             .connection()
             .execute(
                 "UPDATE marketing_offer_posts
-                 SET status = ?1, failure = NULL, failure_detail = NULL, updated_at = ?2
+                 SET status = ?1, failure = NULL, failure_detail = NULL, message_id = NULL,
+                     updated_at = ?2
                  WHERE id = ?3 AND deleted_at IS NULL AND status = ?4 AND updated_at = ?5",
                 params![
                     PostStatus::Sending.code(),
@@ -943,7 +1032,22 @@ impl OfferPosts {
         if claimed == 0 {
             return Err(PostError::Changed);
         }
-        let published = destination.publish(&post);
+        let published = match destination.stage(&post) {
+            Ok(staged) => {
+                if let Some(reference) = &staged {
+                    self.database
+                        .connection()
+                        .execute(
+                            "UPDATE marketing_offer_posts SET message_id = ?1 WHERE id = ?2",
+                            params![reference.clone(), post.request().post.to_string()],
+                        )
+                        .await?;
+                }
+                post.staged = staged;
+                destination.publish(&post)
+            }
+            Err(failure) => Err(failure),
+        };
         let request = post.request();
         let now = stored(self.clock.now());
         let undisclosed = (!has_disclosure(&request.text)).then(|| now.clone());
@@ -994,6 +1098,91 @@ impl OfferPosts {
             }
         }
         self.post(request.post).await
+    }
+
+    /// Asks the destination what became of the [`PostStatus::Unconfirmed`]
+    /// post `id`, by what it readied before publishing: one it published
+    /// becomes [`PostStatus::Sent`], with its link; one that never went out
+    /// becomes [`PostStatus::Failed`], for the owner to send again or not.
+    /// When the destination cannot say, or readied nothing for the post,
+    /// the post stays as it was. Nothing is sent.
+    pub async fn check_fate(
+        &self,
+        destination: &dyn PostDestination,
+        id: RecordId,
+    ) -> Result<OfferPost, PostError> {
+        let post = self.post(id).await?;
+        if post.status != PostStatus::Unconfirmed {
+            return Err(PostError::WrongStatus(post.status));
+        }
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT message_id FROM marketing_offer_posts WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .await?;
+        let reference: Option<String> = match rows.next().await? {
+            Some(row) => row.get(0)?,
+            None => None,
+        };
+        let Some(reference) = reference else {
+            return Ok(post);
+        };
+        let now = stored(self.clock.now());
+        let changed = match destination
+            .fate(&reference)
+            .map_err(PostError::FateUnread)?
+        {
+            PostFate::Unknown => return Ok(post),
+            PostFate::Published(PublishedPost { message_id, link }) => {
+                let undisclosed = (!has_disclosure(&post.draft.text)).then(|| now.clone());
+                self.database
+                    .connection()
+                    .execute(
+                        "UPDATE marketing_offer_posts
+                         SET status = ?1, sent_at = ?2, message_id = ?3, post_link = ?4,
+                             failure = NULL, failure_detail = NULL, updated_at = ?2,
+                             undisclosed_copied_at = coalesce(?5, undisclosed_copied_at)
+                         WHERE id = ?6 AND status = ?7 AND updated_at = ?8",
+                        params![
+                            PostStatus::Sent.code(),
+                            now,
+                            message_id,
+                            link,
+                            undisclosed,
+                            id.to_string(),
+                            PostStatus::Unconfirmed.code(),
+                            stored(post.updated_at)
+                        ],
+                    )
+                    .await?
+            }
+            PostFate::NotPublished => {
+                self.database
+                    .connection()
+                    .execute(
+                        "UPDATE marketing_offer_posts
+                         SET status = ?1, failure = ?2, failure_detail = NULL, message_id = NULL,
+                             updated_at = ?3
+                         WHERE id = ?4 AND status = ?5 AND updated_at = ?6",
+                        params![
+                            PostStatus::Failed.code(),
+                            PublishFailure::NotPublished.code(),
+                            now,
+                            id.to_string(),
+                            PostStatus::Unconfirmed.code(),
+                            stored(post.updated_at)
+                        ],
+                    )
+                    .await?
+            }
+        };
+        if changed == 0 {
+            return Err(PostError::Changed);
+        }
+        self.post(id).await
     }
 
     /// The owner found the [`PostStatus::Unconfirmed`] post in the channel.

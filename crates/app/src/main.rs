@@ -24,6 +24,7 @@ mod forms;
 mod found_offers;
 mod home;
 mod hotmart;
+mod instagram;
 mod kit;
 mod kiwify;
 mod layout;
@@ -87,8 +88,8 @@ use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
-    HOTMART_LINKS, Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
-    Pinterest, ShopeeAffiliates, ShopeeSeller, Telegram,
+    HOTMART_LINKS, Hotmart, Instagram, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre,
+    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -104,6 +105,7 @@ use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
 use crate::crawlers::{AppCrawlers, CrawledSite};
 use crate::finance::AppSalesVolume;
+use crate::instagram::AppInstagram;
 use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
 use crate::magalu::AppMagalu;
@@ -219,6 +221,12 @@ fn main() {
     let pinterest = Arc::new(Pinterest::new(
         &pinterest_api,
         &pinterest_login,
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
+    let instagram = Arc::new(Instagram::new(
+        &instagram::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
         secrets.clone(),
         Arc::new(SystemClock),
@@ -353,6 +361,7 @@ fn main() {
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));
             cx.set_global(AppPinterest(pinterest));
+            cx.set_global(AppInstagram(instagram));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),
