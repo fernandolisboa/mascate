@@ -14,9 +14,9 @@ use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Clock, Currency, Money, Pause, PlatformError, RecordId, Timestamp, brasilia};
 use mascate_marketing::{
     CHAT_SPACING, ChannelError, ChannelKind, ConfirmedPost, DestinationCheck, MIGRATIONS,
-    NewPromotionChannel, OfferFacts, OfferPost, OfferPosts, OfferPrice, PostDestination, PostError,
-    PostStatus, PostTime, PromotionChannel, PromotionChannels, PublishFailure, PublishedPost,
-    default_posting_times, next_free_time,
+    NewPromotionChannel, OfferFacts, OfferPost, OfferPosts, OfferPrice, PostDestination,
+    PostDestinations, PostError, PostStatus, PostTime, PromotionChannel, PromotionChannels,
+    PublishFailure, PublishedPost, default_posting_times, next_free_time,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -38,17 +38,18 @@ fn time(hour: u32, minute: u32) -> NaiveTime {
 }
 
 /// Publishes whatever it gets, answering each call with the next scripted
-/// outcome or, past the script, a sent post.
-#[derive(Default)]
+/// outcome or, past the script, a sent post. Its clones share the script
+/// and the calls.
+#[derive(Clone, Default)]
 struct Recorder {
-    answers: Mutex<VecDeque<Result<PublishedPost, PublishFailure>>>,
-    calls: Mutex<Vec<(String, String)>>,
+    answers: Arc<Mutex<VecDeque<Result<PublishedPost, PublishFailure>>>>,
+    calls: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Recorder {
     fn answering(answers: Vec<Result<PublishedPost, PublishFailure>>) -> Self {
         Self {
-            answers: Mutex::new(answers.into()),
+            answers: Arc::new(Mutex::new(answers.into())),
             ..Self::default()
         }
     }
@@ -162,8 +163,14 @@ impl Fixture {
         self.clock.advance(at - self.clock.now());
     }
 
+    /// A turn of the queue with `destination` as Telegram.
     async fn send_due(&self, destination: &Recorder) -> mascate_marketing::QueueRound {
-        self.posts.send_due(destination, &self.pause).await.unwrap()
+        let destinations = PostDestinations::default()
+            .with(ChannelKind::TelegramChannel, Arc::new(destination.clone()));
+        self.posts
+            .send_due(&destinations, &self.pause)
+            .await
+            .unwrap()
     }
 }
 
@@ -575,7 +582,7 @@ fn what_may_have_gone_out_or_the_login_refused_stops_there() {
 
         f.set_clock(brt(14, 12, 2));
         let round = f.send_due(&destination).await;
-        assert!(round.expired);
+        assert_eq!(round.expired, vec![ChannelKind::TelegramChannel]);
         assert_eq!(f.status(unsure.id).await, PostStatus::Unconfirmed);
         assert_eq!(f.status(refused.id).await, PostStatus::Failed);
         assert_eq!(f.status(waiting.id).await, PostStatus::Scheduled);
@@ -688,7 +695,7 @@ fn a_telegram_channel_keeps_its_own_posting_times() {
             f.channels
                 .set_posting_times(whatsapp.id, &[time(8, 0)])
                 .await,
-            Err(ChannelError::NotTelegram)
+            Err(ChannelError::NoDestination)
         ));
     });
 }

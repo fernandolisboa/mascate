@@ -57,8 +57,10 @@ pub use questions::{
     QuestionError, QuestionStatus, QuestionSync, Questions, SentAnswer,
 };
 pub use queue::{
-    CHAT_SPACING, LATE_AFTER_MINUTES, PRICE_KEEPS_HOURS, PostQueue, PostTime, QueueRound,
-    default_posting_times, next_free_time,
+    CHAT_SPACING, DestinationLimit, INSTAGRAM_POSTS_PER_DAY, LATE_AFTER_MINUTES,
+    PINTEREST_POSTS_PER_DAY, PRICE_KEEPS_HOURS, PostDestinations, PostQueue, PostTime,
+    QUOTA_RECHECK_MINUTES, QueueRound, RATE_LIMIT_WAIT_MINUTES, default_posting_times,
+    next_free_time,
 };
 pub use replies::{
     ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,

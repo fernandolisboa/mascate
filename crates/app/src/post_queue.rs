@@ -1,17 +1,17 @@
-//! The Telegram queue as the app runs it (#104): a turn every minute, for as
-//! long as the app runs, window open or not, the first one at start. A
-//! turn sends the Offer Posts due while the Telegram Connection is up, and
-//! always sets aside, for the owner, what is late or has an expired price.
+//! The posting queue as the app runs it (#104, #157): a turn every minute,
+//! for as long as the app runs, window open or not, the first one at start.
+//! A turn sends the Offer Posts due through each destination whose
+//! Connection is up, and always sets aside, for the owner, what is late or
+//! has an expired price.
 
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use gpui_kit::{App, BorrowAppContext as _};
-use mascate_integrations::ConnectionState;
 use mascate_kernel::{ThreadPause, Timestamp, brasilia};
 
 use crate::offer_posts::{PostChanges, offer_posts};
-use crate::telegram;
+use crate::post_destinations;
 
 /// How often the queue looks for due posts.
 const EVERY: Duration = Duration::from_secs(60);
@@ -26,35 +26,27 @@ pub fn start(cx: &mut App) {
         loop {
             let turn = cx.update(|cx| {
                 let posts = offer_posts(cx)?;
-                let destination = telegram::adapter(cx)
-                    .filter(|_| telegram::state(cx) == Some(ConnectionState::Connected));
-                Some(cx.background_executor().spawn(async move {
-                    match destination {
-                        Some(telegram) => posts
-                            .send_due(telegram.as_ref(), &ThreadPause)
-                            .await
-                            .map(|round| {
-                                for (post, error) in &round.skipped {
-                                    eprintln!("the queue could not publish post {post}: {error}");
-                                }
-                                (round.held > 0 || !round.posts.is_empty(), round.expired)
-                            }),
-                        None => posts.hold_back().await.map(|held| (held > 0, false)),
-                    }
-                }))
+                let destinations = post_destinations::connected(cx);
+                Some(
+                    cx.background_executor()
+                        .spawn(async move { posts.send_due(&destinations, &ThreadPause).await }),
+                )
             });
             if let Some(turn) = turn {
                 let outcome = turn.await;
                 cx.update(|cx| match outcome {
-                    Ok((changed, expired)) => {
-                        if expired {
-                            telegram::expired(cx);
+                    Ok(round) => {
+                        for (post, error) in &round.skipped {
+                            eprintln!("the queue could not publish post {post}: {error}");
                         }
-                        if changed {
+                        for &kind in &round.expired {
+                            post_destinations::expired(kind, cx);
+                        }
+                        if round.held > 0 || !round.posts.is_empty() || !round.limited.is_empty() {
                             cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
                         }
                     }
-                    Err(error) => eprintln!("the Telegram queue failed: {error}"),
+                    Err(error) => eprintln!("the posting queue failed: {error}"),
                 });
             }
             executor.timer(EVERY).await;

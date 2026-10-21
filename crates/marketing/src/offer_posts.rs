@@ -7,8 +7,9 @@
 //! as a Pin on a Pinterest board, now (#155), or on the connected Instagram
 //! account, now (#156).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::TimeDelta;
 use libsql::{Value, params};
@@ -642,8 +643,6 @@ pub enum PostError {
     NoChat,
     #[error("the Pinterest channel has no board yet")]
     NoBoard,
-    #[error("only a Telegram channel's posts wait in a queue")]
-    NoQueue,
     #[error("the post is {0:?}, which does not allow it")]
     WrongStatus(PostStatus),
     #[error("the post changed since it was confirmed")]
@@ -697,6 +696,10 @@ pub struct OfferPosts {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) ids: Arc<dyn IdGenerator>,
     pub(crate) channels: PromotionChannels,
+    /// Until when the queue leaves each destination alone, since it last
+    /// said its quota was used or asked to wait. Kept in memory only: after
+    /// a restart, one request learns it again.
+    pub(crate) holds: Mutex<HashMap<ChannelKind, Timestamp>>,
 }
 
 impl OfferPosts {
@@ -706,6 +709,7 @@ impl OfferPosts {
             database,
             clock,
             ids,
+            holds: Mutex::default(),
         }
     }
 

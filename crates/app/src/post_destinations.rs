@@ -1,12 +1,13 @@
 //! Where an Offer Post goes out through the app, by its Promotion Channel's
-//! kind: Telegram (#103), Pinterest (#155) or Instagram (#156). Each
-//! destination has its adapter, its Connection and its own words for what
-//! went wrong.
+//! kind: Telegram (#103), Pinterest (#155) or Instagram (#156), now or from
+//! the queue (#157). Each destination has its adapter, its Connection and
+//! its own words for what went wrong.
 
 use std::sync::Arc;
 
 use gpui_kit::App;
-use mascate_marketing::{ChannelKind, PostDestination, PublishFailure};
+use mascate_integrations::ConnectionState;
+use mascate_marketing::{ChannelKind, PostDestination, PostDestinations, PublishFailure};
 
 use mascate_kernel::PlatformError;
 
@@ -14,7 +15,7 @@ use crate::{instagram, pinterest, telegram};
 
 /// Whether posts of a channel of `kind` go out through the app.
 pub(crate) fn publishes(kind: ChannelKind) -> bool {
-    destination_name(kind).is_some()
+    kind.has_destination()
 }
 
 /// The destination's name, as the owner reads it.
@@ -46,19 +47,35 @@ pub(crate) fn adapter(kind: ChannelKind, cx: &App) -> Option<Arc<dyn PostDestina
     }
 }
 
+/// The destinations the queue posts to: those whose Connection is up.
+pub(crate) fn connected(cx: &App) -> PostDestinations {
+    ChannelKind::ALL
+        .into_iter()
+        .filter(|&kind| state(kind, cx) == Some(ConnectionState::Connected))
+        .filter_map(|kind| adapter(kind, cx).map(|adapter| (kind, adapter)))
+        .fold(
+            PostDestinations::default(),
+            |destinations, (kind, adapter)| destinations.with(kind, adapter),
+        )
+}
+
+fn state(kind: ChannelKind, cx: &App) -> Option<ConnectionState> {
+    match kind {
+        ChannelKind::TelegramChannel => telegram::state(cx),
+        ChannelKind::Pinterest => pinterest::state(cx),
+        ChannelKind::Instagram => instagram::state(cx),
+        _ => None,
+    }
+}
+
 /// Why posts of a channel of `kind` cannot go out now; `None` while its
 /// Connection is up.
 pub(crate) fn publishing_off(kind: ChannelKind, cx: &App) -> Option<&'static str> {
+    let state = state(kind, cx)?;
     match kind {
-        ChannelKind::TelegramChannel => telegram::state(cx)
-            .as_ref()
-            .and_then(telegram::publishing_off),
-        ChannelKind::Pinterest => pinterest::state(cx)
-            .as_ref()
-            .and_then(pinterest::publishing_off),
-        ChannelKind::Instagram => instagram::state(cx)
-            .as_ref()
-            .and_then(instagram::publishing_off),
+        ChannelKind::TelegramChannel => telegram::publishing_off(&state),
+        ChannelKind::Pinterest => pinterest::publishing_off(&state),
+        ChannelKind::Instagram => instagram::publishing_off(&state),
         _ => None,
     }
 }
