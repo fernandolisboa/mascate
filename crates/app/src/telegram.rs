@@ -118,6 +118,11 @@ pub fn publish_failure(failure: &PublishFailure) -> String {
              novo daqui a alguns minutos."
                 .into()
         }
+        PublishFailure::QuotaUsed => {
+            "Nada saiu: o Telegram já recebeu o máximo de posts que deixa por agora. Publique \
+             de novo mais tarde."
+                .into()
+        }
         PublishFailure::NotSent(why) => format!("Nada saiu: {why}."),
         PublishFailure::Unconfirmed(why) => format!(
             "O post pode ter saído: o pedido chegou ao Telegram, mas a resposta não ({why}). \
@@ -126,5 +131,8 @@ pub fn publish_failure(failure: &PublishFailure) -> String {
         PublishFailure::Interrupted => "O post pode ter saído: o app fechou enquanto ele era \
                                         enviado. Confira o canal antes de publicar de novo."
             .into(),
+        PublishFailure::NotPublished => {
+            "O Telegram confirmou que este post não saiu. Publique de novo quando quiser.".into()
+        }
     }
 }

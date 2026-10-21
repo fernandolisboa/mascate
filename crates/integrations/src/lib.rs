@@ -12,6 +12,7 @@ mod eduzz;
 mod escaped;
 mod hotmart;
 mod hotmart_crawler;
+mod instagram;
 mod kiwify;
 mod landing;
 mod link_tags;
@@ -48,6 +49,9 @@ pub use hotmart::{
 pub use hotmart_crawler::{
     HOTMART_CATEGORIES, HOTMART_CRAWLER, HotmartCrawler,
     MARKETPLACE_URL as HOTMART_MARKETPLACE_URL, MarketplaceCategory,
+};
+pub use instagram::{
+    API_URL as INSTAGRAM_API_URL, Instagram, InstagramAccount, TOKEN_DAYS as INSTAGRAM_TOKEN_DAYS,
 };
 pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify, LINKS as KIWIFY_LINKS};
 pub use link_tags::UrlTagger;

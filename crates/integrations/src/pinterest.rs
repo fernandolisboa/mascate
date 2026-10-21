@@ -32,7 +32,7 @@ use serde_json::json;
 use crate::answers::https_link;
 use crate::base64::encoded;
 use crate::escaped::escaped;
-use crate::posting::{never_sent, read_photo};
+use crate::posting::{before_sending, never_sent, read_photo};
 use crate::retry::{Attempt, PAST_A_MINUTE, Pause, ThreadPause, retrying};
 use crate::single_use_tokens::{Fresh, Tokens};
 use answers::{BoardAnswer, BoardsPage, ErrorAnswer, PinAnswer, TokenAnswer};
@@ -429,17 +429,6 @@ impl PostDestination for Pinterest {
                 }
             }
         }
-    }
-}
-
-/// A failure getting the login, before the Pin's request left.
-fn before_sending(error: PlatformError) -> PublishFailure {
-    match error {
-        PlatformError::NotConnected => PublishFailure::NotConnected,
-        PlatformError::Expired => PublishFailure::Expired,
-        PlatformError::RateLimited => PublishFailure::RateLimited,
-        PlatformError::Refused(why) | PlatformError::Failed(why) => PublishFailure::NotSent(why),
-        PlatformError::NotFound => PublishFailure::NotSent(error.to_string()),
     }
 }
 

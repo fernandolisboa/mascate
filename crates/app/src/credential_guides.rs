@@ -421,6 +421,45 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Instagram => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step(
+                        "O Instagram só publica pela API numa conta profissional, comercial ou \
+                     de criador de conteúdo, que é de graça: no app do Instagram, abra \
+                     Configurações › Tipo de conta e ferramentas › Mudar para conta \
+                     profissional.",
+                    ),
+                    // Development mode with the owner as the app's tester needs
+                    // no App Review (ADR 0035, decision 5).
+                    step_at(
+                        "Entre no Meta for Developers com a sua conta do Facebook, clique em \
+                     Criar app, escolha o caso de uso de gerenciar mensagens e conteúdo no \
+                     Instagram e dê o nome Mascate. O app fica em modo de desenvolvimento, só \
+                     para você, sem análise da Meta.",
+                        "Abrir o Meta for Developers",
+                        "https://developers.facebook.com/apps/",
+                    ),
+                    step(
+                        "No app, abra a API do Instagram com login do Instagram e, em Gerar \
+                     tokens de acesso, adicione a sua conta do Instagram. Se pedir, aceite o \
+                     convite de testador no Instagram, em Configurações › Apps e sites.",
+                    ),
+                    step(
+                        "Clique em Gerar token ao lado da conta, entre no Instagram e autorize \
+                     ver o perfil e publicar conteúdo. Copie o token que aparece: ele vale 60 \
+                     dias e quem o tem posta na sua conta, então não mande para ninguém.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, o app renova o token sozinho quando faltar menos de 30 \
+                 dias, sempre que falar com o Instagram. Vai ao Instagram só a foto da \
+                 plataforma, que já está na internet; post com foto da pasta do produto você \
+                 copia e posta à mão. O link na legenda não é clicável no Instagram.",
+                ),
+            };
+            GUIDE
+        }
     }
 }
 
@@ -454,6 +493,7 @@ mod tests {
             Connection::Eduzz => &["console.eduzz.com"],
             Connection::Telegram => &["t.me"],
             Connection::Pinterest => &["developers.pinterest.com"],
+            Connection::Instagram => &["developers.facebook.com"],
         }
     }
 
@@ -470,7 +510,8 @@ mod tests {
             Connection::Amazon
             | Connection::ShopeeSeller
             | Connection::Magalu
-            | Connection::Pinterest => 3,
+            | Connection::Pinterest
+            | Connection::Instagram => 3,
         }
     }
 

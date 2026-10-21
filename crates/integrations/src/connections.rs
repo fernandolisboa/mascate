@@ -33,6 +33,9 @@ pub enum Connection {
     Magalu,
     /// The owner's Pinterest account, where Offer Posts go as Pins.
     Pinterest,
+    /// The owner's professional Instagram account, where Offer Posts go as
+    /// photo posts.
+    Instagram,
 }
 
 /// How a credential reaches the store.
@@ -60,7 +63,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 12] = [
+    pub const ALL: [Connection; 13] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -73,6 +76,7 @@ impl Connection {
         Connection::ShopeeSeller,
         Connection::Magalu,
         Connection::Pinterest,
+        Connection::Instagram,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -154,6 +158,9 @@ impl Connection {
                 entry: CredentialEntry::Login,
             },
         ];
+        // The Meta app dashboard generates the token: no client secret and
+        // no login page. The app renews it and keeps its term beside it.
+        const INSTAGRAM: &[Credential] = &[pasted("INSTAGRAM_ACCESS_TOKEN")];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -167,6 +174,7 @@ impl Connection {
             Connection::ShopeeSeller => SHOPEE_SELLER,
             Connection::Magalu => MAGALU,
             Connection::Pinterest => PINTEREST,
+            Connection::Instagram => INSTAGRAM,
         }
     }
 

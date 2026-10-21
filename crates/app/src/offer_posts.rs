@@ -31,7 +31,7 @@ use mascate_affiliate::{
 };
 use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
-use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
+use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
     ChannelKind, Contact, LATE_AFTER_MINUTES, OfferFacts, OfferPost, OfferPosts, OfferPrice,
     PRICE_KEEPS_HOURS, PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus,
@@ -254,8 +254,9 @@ pub(crate) fn post_failure(error: &PostError) -> String {
         }
         PostError::NoSuchChannel => "O canal deste post foi apagado em Divulgação.".into(),
         PostError::NotFound => "Esse post mudou; a lista foi atualizada.".into(),
-        PostError::NoDestination => "Só posts de um canal do Telegram ou do Pinterest saem pelo \
-                                     app; para os outros canais, copie o texto."
+        PostError::NoDestination => "Só posts de um canal do Telegram, do Pinterest ou do \
+                                     Instagram saem pelo app; para os outros canais, copie o \
+                                     texto."
             .into(),
         PostError::NoChat => "Informe o chat do canal do Telegram em Canais de divulgação, em \
                               Editar, para publicar por ele."
@@ -290,11 +291,17 @@ pub(crate) fn post_failure(error: &PostError) -> String {
                                       hora, ou defina os horários do canal em Canais de \
                                       divulgação."
             .into(),
+        PostError::FateUnread(why) => format!("Não consegui conferir o post: {why}"),
         PostError::Unreadable(_) | PostError::Sql(_) => {
             format!("Não consegui ler ou gravar os posts no banco: {error}")
         }
     }
 }
+
+/// What happens to an Instagram post's text, said before it goes out.
+const INSTAGRAM_CAPTION: &str = "O texto vira a legenda do post, uma vez, e o post fica na sua \
+                                 conta: o app não apaga posts. No Instagram o link na legenda \
+                                 não é clicável: quem vê precisa copiar e colar no navegador.";
 
 /// A problem of the post, as the owner reads it.
 pub(crate) fn problem_text(problem: &PostProblem) -> String {
@@ -316,6 +323,19 @@ pub(crate) fn problem_text(problem: &PostProblem) -> String {
         PostProblem::NoImage => {
             "Este canal só publica post com foto: escolha uma foto do produto.".into()
         }
+        PostProblem::FolderPhoto => "O Instagram busca a foto num endereço da internet, e esta \
+                                     está na pasta do produto: escolha a foto da plataforma \
+                                     (Link da imagem) para publicar pelo app, ou copie o texto e \
+                                     poste à mão com esta foto."
+            .into(),
+        PostProblem::TooManyHashtags { count, limit } => format!(
+            "O texto tem {count} hashtags, e o Instagram aceita até {limit}, contando o #publi. \
+             Tire algumas."
+        ),
+        PostProblem::TooManyMentions { count, limit } => format!(
+            "O texto marca {count} perfis com @, e o Instagram aceita até {limit}. Tire algumas \
+             marcações."
+        ),
         PostProblem::NoDisclosure => "O texto ficou sem a identificação de publicidade (#publi). \
                                       Post de afiliado é publicidade, e o CONAR pede que isso \
                                       fique claro."
@@ -1070,6 +1090,65 @@ impl OfferPostsSection {
         cx.notify();
     }
 
+    /// Asks the destination what became of the unconfirmed post `id`.
+    fn check_fate(
+        &mut self,
+        id: RecordId,
+        kind: ChannelKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(posts), Some(destination)) =
+            (offer_posts(cx), post_destinations::adapter(kind, cx))
+        else {
+            return;
+        };
+        self.busy = true;
+        self.outcome = None;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.check_fate(destination.as_ref(), id).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let checked = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                let name = post_destinations::destination_name(kind).unwrap_or("canal");
+                this.outcome = Some(match checked {
+                    Ok(post) => match post.status {
+                        PostStatus::Sent => {
+                            Outcome::Done(format!("O {name} confirmou: o post saiu.").into())
+                        }
+                        PostStatus::Failed => Outcome::Done(
+                            format!(
+                                "O {name} confirmou que o post não saiu. Publique de novo quando \
+                                 quiser."
+                            )
+                            .into(),
+                        ),
+                        _ => Outcome::Failed(
+                            format!(
+                                "O {name} ainda não sabe dizer se o post saiu. Confira o perfil \
+                                 ou tente de novo daqui a pouco."
+                            )
+                            .into(),
+                        ),
+                    },
+                    Err(PostError::FateUnread(error)) => {
+                        if error == PlatformError::Expired {
+                            post_destinations::expired(kind, cx);
+                        }
+                        Outcome::Failed(post_destinations::fate_failure(kind, &error).into())
+                    }
+                    Err(error) => Outcome::Failed(post_failure(&error).into()),
+                });
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// The owner confirmed the post for the time picked: it waits in the
     /// queue. A time the queue refuses keeps the confirmation open to pick
     /// another.
@@ -1390,11 +1469,20 @@ impl OfferPostsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.raised)
-            .child(div().font_medium().child(format!(
-                "Publicar agora em {} ({})?",
-                request.channel(),
-                request.place()
-            )))
+            .child(div().font_medium().child(
+                if request.kind() == ChannelKind::Instagram {
+                    format!(
+                        "Publicar agora em {}, na conta do Instagram conectada?",
+                        request.channel()
+                    )
+                } else {
+                    format!(
+                        "Publicar agora em {} ({})?",
+                        request.channel(),
+                        request.place()
+                    )
+                },
+            ))
             .when(request.kind() == ChannelKind::Pinterest, |panel| {
                 panel.child(div().text_xs().text_color(t.text2).child(format!(
                     "Pin na pasta {}, com o título \"{}\" e o link {}",
@@ -1414,16 +1502,18 @@ impl OfferPostsSection {
                     .text_sm()
                     .child(request.text().to_owned()),
             )
-            .child(div().text_xs().text_color(t.text2).child(
-                if request.kind() == ChannelKind::Pinterest {
+            .child(div().text_xs().text_color(t.text2).child(match request.kind() {
+                ChannelKind::Pinterest => {
                     "O texto acima vira a descrição do Pin, uma vez, e o Pin fica na pasta: o app \
                      não apaga Pins. Com o acesso Trial do app, o Pin aparece só para você, até o \
                      Pinterest aprovar o acesso Standard."
-                } else {
+                }
+                ChannelKind::Instagram => INSTAGRAM_CAPTION,
+                _ => {
                     "O post sai do jeito que está acima, uma vez, e fica no canal: o app não \
                      apaga posts do Telegram."
-                },
-            ))
+                }
+            }))
             .children(off.map(|why| kit::error_notice(why, cx)))
             .child(
                 h_flex()
@@ -1584,6 +1674,23 @@ impl OfferPostsSection {
             )),
             _ => None,
         };
+        let check = kind
+            .filter(|&kind| {
+                post.status == PostStatus::Unconfirmed && post_destinations::checks_fate(kind)
+            })
+            .map(|kind| {
+                let name = post_destinations::destination_name(kind).unwrap_or("canal");
+                Button::new(("check-post-fate", index))
+                    .label(format!("Conferir no {name}"))
+                    .primary()
+                    .small()
+                    .disabled(self.busy)
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.check_fate(id, kind, window, cx)
+                        }),
+                    )
+            });
         let mark = (post.status == PostStatus::Unconfirmed).then(|| {
             Button::new(("mark-post-published", index))
                 .label("Marcar como publicado")
@@ -1653,6 +1760,7 @@ impl OfferPostsSection {
                 .gap_2()
                 .flex_wrap()
                 .children(open_sent)
+                .children(check)
                 .children(mark)
                 .children(publish)
                 .children(schedule)
@@ -1780,6 +1888,7 @@ impl OfferPostsSection {
         let t = look(cx).tokens;
         let (problems, rules) = editor.problems(cx);
         let blocked = problems.iter().any(PostProblem::blocks);
+        let unpublishable = problems.iter().any(PostProblem::blocks_publishing);
         let kind = editor.channel.as_ref().map(|channel| channel.kind);
         let on_telegram = kind == Some(ChannelKind::TelegramChannel);
         let publishes = kind.is_some_and(post_destinations::publishes);
@@ -1960,7 +2069,7 @@ impl OfferPostsSection {
                         .gap_1()
                         .children(problems.iter().map(|problem| {
                             let text = problem_text(problem);
-                            if problem.blocks() {
+                            if problem.blocks_publishing() {
                                 kit::error_notice(text, cx).into_any_element()
                             } else {
                                 kit::info_notice(text, cx).into_any_element()
@@ -1974,6 +2083,9 @@ impl OfferPostsSection {
                 )
             })
             .children(queued.map(|text| kit::info_notice(text, cx)))
+            .when(kind == Some(ChannelKind::Instagram), |editor| {
+                editor.child(kit::info_notice(INSTAGRAM_CAPTION, cx))
+            })
             .children(editor.form.as_ref().map(|outcome| notice(outcome, cx)))
             .child(
                 h_flex()
@@ -1984,7 +2096,7 @@ impl OfferPostsSection {
                             .label("Publicar agora")
                             .primary()
                             .small()
-                            .disabled(self.busy || blocked || self.confirming.is_some())
+                            .disabled(self.busy || unpublishable || self.confirming.is_some())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.confirm_editing(false, window, cx)
                             }))
@@ -2218,8 +2330,8 @@ impl Render for OfferPostsSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "Um post por link de afiliado, com o modelo do canal: o app preenche produto, \
                  preço, desconto e link, e põe \"#publi · link de afiliado\" no fim. Edite, confira \
-                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram \
-                 ou do Pinterest.",
+                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram, \
+                 do Pinterest ou do Instagram.",
             ))
             .children(self.picking.then(|| self.render_picker(cx)))
             .children(editing)

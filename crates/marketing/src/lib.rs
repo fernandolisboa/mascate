@@ -34,19 +34,19 @@ pub use copy::{
 };
 pub use merge::MERGE;
 pub use offer_posts::{
-    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice,
-    PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME,
-    POST_PRODUCT, POST_VARIABLES, PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits,
-    PostProblem, PostStatus, SentPost, TELEGRAM_LIMITS, check_post, default_template, discount,
-    has_disclosure, post_limits, price_time,
+    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, INSTAGRAM_LIMITS, OfferFacts, OfferPost, OfferPosts,
+    OfferPrice, PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PRICE,
+    POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES, PRICE_NOTICE, PostDraft, PostError, PostImage,
+    PostLimits, PostProblem, PostStatus, SentPost, TELEGRAM_LIMITS, check_post, default_template,
+    discount, has_disclosure, post_limits, price_time,
 };
 pub use performance::{
     ChannelPerformance, Comparator, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
     PerformanceRating, ShopPerformance,
 };
 pub use publishing::{
-    ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PublishFailure,
-    PublishRequest, PublishedPost,
+    ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PostFate,
+    PublishFailure, PublishRequest, PublishedPost,
 };
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,

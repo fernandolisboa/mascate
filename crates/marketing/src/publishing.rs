@@ -2,7 +2,11 @@
 //! destination behind a port a Platform's adapter implements (ADR 0013),
 //! reached only with a post the owner confirmed, the way answers to buyers
 //! are (ADR 0022). The destination has no idempotency key, so a post whose
-//! fate is unknown is never sent again on its own.
+//! fate is unknown is never sent again on its own. A destination that
+//! publishes in two steps, as Instagram does (#156, ADR 0035 decision 6),
+//! readies the post first; the Marketing keeps what it readied on the post
+//! before publishing, so the destination can later say what became of a post
+//! whose answer never came.
 
 use mascate_kernel::{PlatformError, RecordId, Timestamp};
 use mascate_platform::Migration;
@@ -66,10 +70,14 @@ pub enum PublishFailure {
     /// The destination kept asking to wait; nothing was published.
     #[error("the destination asked to wait and kept asking")]
     RateLimited,
-    /// The request never went out: the destination could not be reached,
-    /// or the photo could not be read.
+    /// Nothing went out: the request never left, the photo could not be
+    /// read, or the destination failed before it published anything.
     #[error("the post did not go out: {0}")]
     NotSent(String),
+    /// The destination's quota of posts for its period is used; nothing
+    /// went out.
+    #[error("the destination's quota of posts is used")]
+    QuotaUsed,
     /// The request went out and no answer says what happened: a timeout, a
     /// dropped connection or the destination failing on its side. The
     /// post may be in the channel.
@@ -79,6 +87,10 @@ pub enum PublishFailure {
     /// reports it, on the next start.
     #[error("the app closed while the post was on its way")]
     Interrupted,
+    /// Asked after the post was left unconfirmed, the destination said it
+    /// never went out.
+    #[error("the destination says the post never went out")]
+    NotPublished,
 }
 
 impl PublishFailure {
@@ -98,8 +110,10 @@ impl PublishFailure {
             PublishFailure::Refused(_) => "refused",
             PublishFailure::RateLimited => "rate_limited",
             PublishFailure::NotSent(_) => "not_sent",
+            PublishFailure::QuotaUsed => "quota_used",
             PublishFailure::Unconfirmed(_) => "unconfirmed",
             PublishFailure::Interrupted => "interrupted",
+            PublishFailure::NotPublished => "not_published",
         }
     }
 
@@ -111,7 +125,9 @@ impl PublishFailure {
             PublishFailure::NotConnected
             | PublishFailure::Expired
             | PublishFailure::RateLimited
-            | PublishFailure::Interrupted => None,
+            | PublishFailure::QuotaUsed
+            | PublishFailure::Interrupted
+            | PublishFailure::NotPublished => None,
         }
     }
 
@@ -123,11 +139,25 @@ impl PublishFailure {
             "refused" => PublishFailure::Refused(detail),
             "rate_limited" => PublishFailure::RateLimited,
             "not_sent" => PublishFailure::NotSent(detail),
+            "quota_used" => PublishFailure::QuotaUsed,
             "unconfirmed" => PublishFailure::Unconfirmed(detail),
             "interrupted" => PublishFailure::Interrupted,
+            "not_published" => PublishFailure::NotPublished,
             _ => return None,
         })
     }
+}
+
+/// What became of a post whose destination's answer never came, as the
+/// destination tells it later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostFate {
+    Published(PublishedPost),
+    /// It never went out and never will on its own: the owner may send it
+    /// again.
+    NotPublished,
+    /// The destination cannot say.
+    Unknown,
 }
 
 /// Where Offer Posts go out, as a Platform's adapter reaches it. Calls
@@ -136,9 +166,24 @@ pub trait PostDestination: Send + Sync {
     /// Whether the app can post in `chat`.
     fn check(&self, chat: &str) -> Result<DestinationCheck, PlatformError>;
 
+    /// Readies the post on the destination's side without publishing it,
+    /// for a destination that publishes in two steps. The reference it
+    /// returns is kept on the post before [`PostDestination::publish`] runs
+    /// with it in [`ConfirmedPost::staged`]. Nothing is in the channel when
+    /// this fails. A destination publishing in one step readies nothing.
+    fn stage(&self, _post: &ConfirmedPost) -> Result<Option<String>, PublishFailure> {
+        Ok(None)
+    }
+
     /// Publishes the post the owner confirmed, once: only a wait the
     /// destination guarantees published nothing is tried again.
     fn publish(&self, post: &ConfirmedPost) -> Result<PublishedPost, PublishFailure>;
+
+    /// What became of the post [`PostDestination::stage`] readied as
+    /// `reference`. A destination that readies nothing cannot say.
+    fn fate(&self, _reference: &str) -> Result<PostFate, PlatformError> {
+        Ok(PostFate::Unknown)
+    }
 }
 
 /// A post checked and ready for its destination, waiting for the owner to
@@ -152,9 +197,11 @@ pub struct PublishRequest {
     /// The kind of the Promotion Channel, which names its destination.
     pub(crate) kind: ChannelKind,
     pub(crate) channel: String,
-    /// The destination's address: the Telegram chat or the board's id.
+    /// The destination's address: the Telegram chat or the board's id;
+    /// empty on Instagram, where the post goes to the connected account.
     pub(crate) chat: String,
-    /// Where it goes, as the owner reads it: the chat or the board's name.
+    /// Where it goes, as the owner reads it: the chat, the board's name, or
+    /// the channel's name on Instagram.
     pub(crate) place: String,
     /// The product's name, cut to the destination's title limit.
     pub(crate) title: String,
@@ -190,7 +237,7 @@ impl PublishRequest {
     }
 
     /// The destination's address: a Telegram chat, `@name` or a `-100…`
-    /// id, or a Pinterest board's id.
+    /// id, or a Pinterest board's id; empty on Instagram.
     pub fn chat(&self) -> &str {
         &self.chat
     }
@@ -213,7 +260,10 @@ impl PublishRequest {
 
     /// The owner read the post and where it goes, and confirmed it.
     pub fn confirm(self) -> ConfirmedPost {
-        ConfirmedPost { request: self }
+        ConfirmedPost {
+            request: self,
+            staged: None,
+        }
     }
 }
 
@@ -222,6 +272,8 @@ impl PublishRequest {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConfirmedPost {
     request: PublishRequest,
+    /// What the destination readied, once it has.
+    pub(crate) staged: Option<String>,
 }
 
 impl ConfirmedPost {
@@ -243,6 +295,11 @@ impl ConfirmedPost {
 
     pub fn link(&self) -> &str {
         &self.request.link
+    }
+
+    /// The reference [`PostDestination::stage`] returned, kept on the post.
+    pub fn staged(&self) -> Option<&str> {
+        self.staged.as_deref()
     }
 
     pub(crate) fn request(&self) -> &PublishRequest {

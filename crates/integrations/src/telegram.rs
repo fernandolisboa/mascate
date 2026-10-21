@@ -223,12 +223,14 @@ impl PostDestination for Telegram {
         checked().map_err(|failure| match failure {
             PublishFailure::NotConnected => PlatformError::NotConnected,
             PublishFailure::Expired => PlatformError::Expired,
-            PublishFailure::RateLimited => PlatformError::RateLimited,
+            PublishFailure::RateLimited | PublishFailure::QuotaUsed => PlatformError::RateLimited,
             PublishFailure::Refused(why) => PlatformError::Refused(why),
             PublishFailure::NotSent(why) | PublishFailure::Unconfirmed(why) => {
                 PlatformError::Failed(why)
             }
-            PublishFailure::Interrupted => PlatformError::Failed(failure.to_string()),
+            PublishFailure::Interrupted | PublishFailure::NotPublished => {
+                PlatformError::Failed(failure.to_string())
+            }
         })
     }
 

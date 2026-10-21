@@ -16,15 +16,16 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
 use mascate_integrations::{
-    Connection, ConnectionState, Connections, Credential, PinterestAuthorization,
+    Connection, ConnectionState, Connections, Credential, Instagram, PinterestAuthorization,
     ShopAuthorization, StoreAuthorization,
 };
+use mascate_kernel::Timestamp;
 use mascate_platform::Build;
 
 use crate::appearance::look;
 use crate::credential_guides::guide;
 use crate::kit;
-use crate::{magalu, pinterest, shopee_seller};
+use crate::{instagram, magalu, pinterest, shopee_seller};
 
 /// Where a Platform's authorization page sends the browser back. The app has
 /// no address of its own yet (#10), so the owner copies the one the browser
@@ -51,6 +52,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Eduzz => "Eduzz",
         Connection::Telegram => "Telegram",
         Connection::Pinterest => "Pinterest",
+        Connection::Instagram => "Instagram",
     }
 }
 
@@ -93,6 +95,10 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
              sempre depois da sua confirmação. Com o acesso Trial do app, os Pins aparecem só \
              para você, até o Pinterest aprovar o acesso Standard."
         }
+        Connection::Instagram => {
+            "Sua conta profissional do Instagram: os posts de oferta saem nela, com a foto da \
+             plataforma, sempre depois da sua confirmação."
+        }
     }
 }
 
@@ -123,6 +129,7 @@ fn credential_label(credential: Credential) -> &'static str {
         "MAGALU_CLIENT_SECRET" => "Client Secret",
         "PINTEREST_APP_ID" => "App ID",
         "PINTEREST_APP_SECRET" => "App secret",
+        "INSTAGRAM_ACCESS_TOKEN" => "Token de acesso",
         other => other,
     }
 }
@@ -242,15 +249,26 @@ struct Snapshot {
     state: ConnectionState,
     /// Per pasted credential, in order: whether it is stored.
     stored: Vec<bool>,
+    /// Until when a pasted token lasts, on a Connection that knows it.
+    valid_until: Option<Timestamp>,
 }
 
-fn snapshot(connections: &Connections, connection: Connection) -> Snapshot {
+fn snapshot(
+    connections: &Connections,
+    connection: Connection,
+    instagram: Option<&Instagram>,
+) -> Snapshot {
+    let valid_until = match (connection, instagram) {
+        (Connection::Instagram, Some(instagram)) => instagram.valid_until().ok().flatten(),
+        _ => None,
+    };
     Snapshot {
         state: connections.state(connection),
         stored: connection
             .pasted_credentials()
             .map(|credential| connections.has_credential(credential.name).unwrap_or(false))
             .collect(),
+        valid_until,
     }
 }
 
@@ -271,6 +289,8 @@ struct Card {
 
 pub struct ConnectionsSection {
     connections: Arc<Connections>,
+    /// Keeps the term of the token the owner pastes.
+    instagram: Option<Arc<Instagram>>,
     cards: Vec<Card>,
     /// The card whose guide is open in place of the list.
     guide: Option<usize>,
@@ -306,6 +326,7 @@ impl ConnectionsSection {
             .collect();
         let mut section = Self {
             connections,
+            instagram: instagram::adapter(cx),
             cards,
             guide: None,
         };
@@ -373,6 +394,7 @@ impl ConnectionsSection {
             cx.notify();
             return;
         }
+        let instagram = self.instagram.clone();
         self.run(index, window, cx, move |connections, connection| {
             let values: Vec<(&str, &str)> = values
                 .iter()
@@ -380,7 +402,15 @@ impl ConnectionsSection {
                 .collect();
             connections
                 .save(connection, &values)
-                .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}"))
+                .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}"))?;
+            match (connection, instagram) {
+                // The dashboard's token lasts 60 days from when it was made,
+                // which is about when the owner pastes it.
+                (Connection::Instagram, Some(instagram)) => instagram
+                    .token_pasted()
+                    .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}")),
+                _ => Ok(()),
+            }
         });
     }
 
@@ -527,9 +557,13 @@ impl ConnectionsSection {
         card.confirming_removal = false;
         card.error = None;
         let connections = self.connections.clone();
+        let instagram = self.instagram.clone();
         let writing = cx.background_executor().spawn(async move {
             let outcome = write(&connections, connection);
-            (outcome, snapshot(&connections, connection))
+            (
+                outcome,
+                snapshot(&connections, connection, instagram.as_deref()),
+            )
         });
         cx.spawn_in(window, async move |this, cx| {
             let (outcome, snapshot) = writing.await;
@@ -785,6 +819,15 @@ impl ConnectionsSection {
                 ))
             })
             .children(self.browser_login(index, cx))
+            .children(card.snapshot.as_ref().and_then(|snapshot| {
+                let connected = snapshot.state == ConnectionState::Connected;
+                snapshot.valid_until.filter(|_| connected).map(|until| {
+                    div()
+                        .text_xs()
+                        .text_color(t.text2)
+                        .child(instagram::valid_until_text(until))
+                })
+            }))
             .children(self.problems(index, cx))
             .child(self.actions(index, cx))
             .into_any_element()
