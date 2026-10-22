@@ -27,6 +27,7 @@ mod posting;
 mod retry;
 mod shopee_affiliate;
 mod shopee_seller;
+mod short_io;
 mod single_use_tokens;
 mod spreadsheet;
 mod telegram;
@@ -79,6 +80,7 @@ pub use shopee_seller::{
     API_URL as SHOPEE_SELLER_API_URL, SANDBOX_URL as SHOPEE_SELLER_SANDBOX_URL, ShopAuthorization,
     ShopeeSeller,
 };
+pub use short_io::{API_URL as SHORT_IO_API_URL, ShortIo};
 pub use telegram::{
     API_URL as TELEGRAM_API_URL, MAX_PHOTO_BYTES as TELEGRAM_MAX_PHOTO_BYTES, Telegram,
 };

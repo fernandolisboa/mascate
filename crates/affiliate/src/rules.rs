@@ -13,6 +13,7 @@ use mascate_kernel::{RecordId, Timestamp, folded_words};
 use mascate_platform::{Flag, FlagKind, Migration, Phase, StoredRow, stored};
 
 use crate::commissions::{Affiliate, AffiliateError, platform_at};
+use crate::short_links::short_link_flag;
 use crate::source::AffiliatePlatform;
 
 pub(crate) const ADD_PROMOTION_RULES: Migration = Migration {
@@ -166,10 +167,12 @@ impl PromotionRules {
                 brand_keywords: vec!["hotmart".into()],
                 ..unread
             },
+            AffiliatePlatform::MercadoLivre => {
+                unread.with(Practice::Shortener, Standing::Forbidden)
+            }
             AffiliatePlatform::Kiwify
             | AffiliatePlatform::Eduzz
             | AffiliatePlatform::Monetizze
-            | AffiliatePlatform::MercadoLivre
             | AffiliatePlatform::Magalu
             | AffiliatePlatform::Other => unread,
         }
@@ -413,7 +416,8 @@ impl Affiliate {
 
     /// The guard before a promotion of `program`: fails with the flag's
     /// reason when it needs a Restricted Feature that is off (a Shopee link
-    /// or a brand keyword in paid search, a typed Amazon price); otherwise
+    /// or a brand keyword in paid search, a typed Amazon price, a Short Link
+    /// on Amazon, Shopee or Mercado Livre); otherwise
     /// gives every rule it breaks or may break, the Restricted Features
     /// turned on included, for the owner to read.
     pub async fn ensure_allowed(
@@ -445,6 +449,10 @@ fn restricted_features(program: &Program, promotion: &Promotion) -> Vec<Flag> {
         (program.platform == AffiliatePlatform::Amazon
             && promotion.price.is_some_and(|price| price.typed))
         .then_some(AMAZON_TYPED_PRICE),
+        promotion
+            .shortened
+            .then(|| short_link_flag(program.platform))
+            .flatten(),
     ]
     .into_iter()
     .flatten()

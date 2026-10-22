@@ -1,0 +1,22 @@
+{
+  "originalURL": "https://go.hotmart.com/X12345678A?src=telegram",
+  "path": "0000000b",
+  "idString": "lnk_4kZq_2bXm9Tq7hR1",
+  "id": "lnk_4kZq_2bXm9Tq7hR1",
+  "shortURL": "https://mascate.short.gy/0000000b",
+  "secureShortURL": "https://mascate.short.gy/0000000b",
+  "title": null,
+  "tags": [],
+  "createdAt": "2026-10-22T12:00:00.000Z",
+  "updatedAt": "2026-10-22T12:00:00.000Z",
+  "DomainId": 1234567,
+  "OwnerId": 7654321,
+  "FolderId": null,
+  "redirectType": null,
+  "hasPassword": false,
+  "source": "api",
+  "archived": false,
+  "cloaking": false,
+  "duplicate": false,
+  "success": true
+}

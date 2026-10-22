@@ -86,6 +86,13 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         ])
         .label(&["product", "channel_id"]),
         TableMerge::new(
+            "affiliate_short_links",
+            "Link curto",
+            Keys(&[UniqueKey::live(&[Column("link_id")])]),
+        )
+        .references(&[Reference::to("link_id", "affiliate_links")])
+        .label(&["short"]),
+        TableMerge::new(
             "affiliate_syncs",
             "Sync de afiliado",
             Keys(&[UniqueKey::live(&[Column("platform")])]),

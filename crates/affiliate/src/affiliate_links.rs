@@ -67,6 +67,8 @@ pub struct AffiliateLink {
     pub pasted: String,
     /// What the owner shares.
     pub tagged: String,
+    /// The Short Link in front of `tagged`, when the owner shortened it.
+    pub short: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -83,9 +85,10 @@ pub struct CreatedLink {
 
 const LINK_QUERY: &str =
     "SELECT l.id, p.id, p.platform, p.name, l.product, l.channel_id, l.tag, l.pasted, l.tagged,
-         l.created_at
+         l.created_at, s.short
      FROM affiliate_links l
      JOIN affiliate_programs p ON p.id = l.program_id
+     LEFT JOIN affiliate_short_links s ON s.link_id = l.id AND s.deleted_at IS NULL
      WHERE l.deleted_at IS NULL";
 
 impl Affiliate {
@@ -113,6 +116,21 @@ impl Affiliate {
                 ))
         });
         Ok(links)
+    }
+
+    pub async fn link(&self, link: RecordId) -> Result<AffiliateLink, AffiliateError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                &format!("{LINK_QUERY} AND l.id = ?1"),
+                params![link.to_string()],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => link_from(&row),
+            None => Err(AffiliateError::NoSuchLink),
+        }
     }
 
     /// Tags the pasted link for the channel through `tagger`, after the
@@ -219,6 +237,7 @@ impl Affiliate {
                 tag: tag.to_owned(),
                 pasted: new.pasted.trim().to_owned(),
                 tagged,
+                short: None,
                 created_at: now,
             },
             warnings,
@@ -330,5 +349,6 @@ fn link_from(row: &libsql::Row) -> Result<AffiliateLink, AffiliateError> {
         pasted: row.get(7)?,
         tagged: row.get(8)?,
         created_at: row.time_at(9)?,
+        short: row.get(10)?,
     })
 }

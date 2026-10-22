@@ -460,6 +460,41 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::ShortIo => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    // The free plan counts each link's clicks by API; Dub and
+                    // Bitly do not (ADR 0035, decision 8).
+                    step_at(
+                        "Crie uma conta grátis no Short.io. O plano grátis dá um domínio \
+                     *.short.gy, até 1.000 links e conta os cliques de cada um.",
+                        "Abrir o Short.io",
+                        "https://app.short.io/",
+                    ),
+                    step(
+                        "No primeiro acesso, escolha o domínio grátis, como mascate.short.gy. É \
+                     o endereço que aparece nos seus links curtos; copie-o.",
+                    ),
+                    step_at(
+                        "No painel, abra Integrations and API e clique em Create API key. Deixe \
+                     Public key desligado, para a chave ser secreta, restrinja-a ao seu \
+                     domínio e clique em Create.",
+                        "Ver como criar a chave",
+                        "https://developers.short.io/docs/creating-an-api-key",
+                    ),
+                    step(
+                        "Copie a chave na hora: o Short.io não mostra de novo. Quem tem a chave \
+                     cria links no seu domínio, então não mande para ninguém.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, use Encurtar num link de Afiliação › Links de afiliado. \
+                 Links da Amazon, da Shopee e do Mercado Livre não são encurtados: os termos \
+                 deles proíbem, e cada um tem a sua funcionalidade restrita, desligada.",
+                ),
+            };
+            GUIDE
+        }
     }
 }
 
@@ -494,6 +529,7 @@ mod tests {
             Connection::Telegram => &["t.me"],
             Connection::Pinterest => &["developers.pinterest.com"],
             Connection::Instagram => &["developers.facebook.com"],
+            Connection::ShortIo => &["app.short.io", "developers.short.io"],
         }
     }
 
@@ -511,7 +547,8 @@ mod tests {
             | Connection::ShopeeSeller
             | Connection::Magalu
             | Connection::Pinterest
-            | Connection::Instagram => 3,
+            | Connection::Instagram
+            | Connection::ShortIo => 3,
         }
     }
 

@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, Practice, Program, PromotionRules, RuleWarning,
-    ShownPrice, Standing,
+    ShownPrice, Standing, short_link_flag,
 };
 use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
@@ -170,6 +170,15 @@ pub(crate) fn forbidden_contacts(rules: &PromotionRules) -> Vec<Contact> {
     .collect()
 }
 
+/// The Short Link a post on `channel` carries in place of the whole link,
+/// when the link has one. Pinterest takes only the whole link: it blocks
+/// some shorteners and links that redirect (ADR 0035, decision 7).
+fn short_link_for(link: &AffiliateLink, channel: &PromotionChannel) -> Option<String> {
+    link.short
+        .clone()
+        .filter(|_| channel.kind != ChannelKind::Pinterest)
+}
+
 /// A price for a post, and whether the owner typed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GivenPrice {
@@ -202,22 +211,31 @@ pub(crate) async fn gather(
         typed: given.typed,
         seen_at: Some(given.price.seen_at),
     });
-    let (price, warnings, refused) = match affiliate.ensure_allowed(offer.program.id, &asked).await
-    {
-        Ok(warnings) => (price, warnings, None),
-        Err(AffiliateError::Restricted(flag)) if asked.price.is_some() => {
-            asked.price = None;
-            let warnings = affiliate
-                .ensure_allowed(offer.program.id, &asked)
-                .await
-                .map_err(|error| failure(&error))?;
-            (None, warnings, Some(flag))
+    let mut short = short_link_for(&offer.link, channel);
+    asked.shortened = short.is_some();
+    let mut refused = None;
+    let warnings = loop {
+        match affiliate.ensure_allowed(offer.program.id, &asked).await {
+            Ok(warnings) => break warnings,
+            // The Short Link's Restricted Feature was turned off after it
+            // was made: the post goes with the whole link.
+            Err(AffiliateError::Restricted(flag))
+                if asked.shortened && short_link_flag(offer.program.platform) == Some(flag) =>
+            {
+                short = None;
+                asked.shortened = false;
+            }
+            Err(AffiliateError::Restricted(flag)) if asked.price.is_some() => {
+                asked.price = None;
+                refused = Some(flag);
+            }
+            Err(error) => return Err(failure(&error)),
         }
-        Err(error) => return Err(failure(&error)),
     };
+    let price = price.filter(|_| refused.is_none());
     let facts = OfferFacts {
         link_id: offer.link.id,
-        link: offer.link.tagged.clone(),
+        link: short.unwrap_or_else(|| offer.link.tagged.clone()),
         product: offer.product.clone(),
         platform: offer.program.platform.name().to_owned(),
         price: price.map(|given| given.price),
@@ -574,7 +592,8 @@ impl OfferPostsSection {
                         };
                         let facts = OfferFacts {
                             link_id: offer.link.id,
-                            link: offer.link.tagged.clone(),
+                            link: short_link_for(&offer.link, &channel)
+                                .unwrap_or_else(|| offer.link.tagged.clone()),
                             product: offer.product.clone(),
                             platform: offer.program.platform.name().to_owned(),
                             price: None,
@@ -2393,8 +2412,8 @@ impl Render for OfferPostsSection {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AMAZON_TYPED_PRICE, AffiliatePlatform, CommissionStatus, LinkTagger, ManualCommission,
-        NewAffiliateLink, Promotion, TagRefusal,
+        AMAZON_SHORT_LINK, AMAZON_TYPED_PRICE, AffiliatePlatform, CommissionStatus, LinkShortener,
+        LinkTagger, ManualCommission, NewAffiliateLink, Promotion, Shortened, TagRefusal,
     };
     use mascate_kernel::{SystemClock, Timestamp, UuidV7Generator};
     use mascate_marketing::{
@@ -2405,15 +2424,26 @@ mod tests {
     use super::*;
     use crate::startup::MODULE_MIGRATIONS;
 
-    struct AmazonTagger;
+    struct Tagger(AffiliatePlatform);
 
-    impl LinkTagger for AmazonTagger {
+    impl LinkTagger for Tagger {
         fn platform(&self) -> AffiliatePlatform {
-            AffiliatePlatform::Amazon
+            self.0
         }
 
         fn tag(&self, link: &str, tag: &str) -> Result<String, TagRefusal> {
             Ok(format!("{link}?tag={tag}"))
+        }
+    }
+
+    struct Shortener;
+
+    impl LinkShortener for Shortener {
+        fn shorten(&self, _: &str, path: &str) -> Result<Shortened, PlatformError> {
+            Ok(Shortened {
+                url: format!("https://mascate.short.gy/{path}"),
+                key: path.to_owned(),
+            })
         }
     }
 
@@ -2427,6 +2457,11 @@ mod tests {
     }
 
     async fn amazon() -> Fixture {
+        promoting(AffiliatePlatform::Amazon, ChannelKind::TelegramChannel).await
+    }
+
+    /// A link of a `platform` Program for a channel of `kind`.
+    async fn promoting(platform: AffiliatePlatform, kind: ChannelKind) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let database = Arc::new(
             Database::open(&dir.path().join("mascate.db"))
@@ -2440,7 +2475,7 @@ mod tests {
         let affiliate = Affiliate::new(database.clone(), clock.clone(), ids.clone());
         let commission = affiliate
             .record_manual(ManualCommission {
-                platform: AffiliatePlatform::Amazon,
+                platform,
                 program: String::new(),
                 product: "Kindle".into(),
                 sold_at: Utc::now(),
@@ -2452,7 +2487,7 @@ mod tests {
         let channel = PromotionChannels::new(database.clone(), clock.clone(), ids.clone())
             .create(&NewPromotionChannel {
                 name: "Ofertas".into(),
-                kind: ChannelKind::TelegramChannel,
+                kind,
                 default_tag: "ofertas".into(),
                 keywords: Vec::new(),
                 telegram_chat: None,
@@ -2469,7 +2504,7 @@ mod tests {
                     tag: "mascate-tg-20".into(),
                     promotion: Promotion::default(),
                 },
-                &AmazonTagger,
+                &Tagger(platform),
             )
             .await
             .unwrap()
@@ -2553,6 +2588,99 @@ mod tests {
             assert!(on.draft.text.contains("R$ 149,90"));
             assert!(on.draft.text.contains(&price_time(seen_at)));
             assert!(on.draft.text.contains(PRICE_NOTICE));
+        });
+    }
+
+    impl Fixture {
+        /// Gives the link its Short Link and reads the offer again.
+        async fn shortened(mut self) -> Self {
+            let link = self
+                .affiliate
+                .shorten(self.offer.link.id, &Shortener)
+                .await
+                .unwrap()
+                .link;
+            self.offer = read_offer(&self.affiliate, None, link).await.unwrap();
+            self
+        }
+
+        async fn text(&self) -> String {
+            gather(
+                &self.affiliate,
+                &self.posts,
+                &self.offer,
+                &self.channel,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .draft
+            .text
+        }
+    }
+
+    #[test]
+    fn a_telegram_post_carries_the_short_link_and_a_pinterest_one_the_whole_link() {
+        futures::executor::block_on(async {
+            let telegram = promoting(AffiliatePlatform::Hotmart, ChannelKind::TelegramChannel)
+                .await
+                .shortened()
+                .await;
+            let short = telegram.offer.link.short.clone().unwrap();
+            let posted = gather(
+                &telegram.affiliate,
+                &telegram.posts,
+                &telegram.offer,
+                &telegram.channel,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(posted.draft.facts.link, short);
+            assert!(posted.draft.text.contains(&short), "{}", posted.draft.text);
+            assert!(
+                !posted.draft.text.contains("?tag="),
+                "{}",
+                posted.draft.text
+            );
+
+            let pinterest = promoting(AffiliatePlatform::Hotmart, ChannelKind::Pinterest)
+                .await
+                .shortened()
+                .await;
+            let tagged = pinterest.offer.link.tagged.clone();
+            let text = pinterest.text().await;
+            assert!(text.contains(&tagged), "{text}");
+            assert!(!text.contains("short.gy"), "{text}");
+        });
+    }
+
+    #[test]
+    fn a_short_link_whose_flag_was_turned_off_gives_way_to_the_whole_link() {
+        futures::executor::block_on(async {
+            let f = amazon().await;
+            f.flags
+                .turn_on(
+                    f.flags
+                        .request_turn_on(AMAZON_SHORT_LINK.key)
+                        .unwrap()
+                        .confirm("teste"),
+                )
+                .await
+                .unwrap();
+            let f = f.shortened().await;
+            assert!(f.text().await.contains("short.gy"));
+
+            f.flags
+                .turn_off(AMAZON_SHORT_LINK.key, "teste")
+                .await
+                .unwrap();
+            let text = f.text().await;
+
+            assert!(text.contains("?tag=mascate-tg-20"), "{text}");
+            assert!(!text.contains("short.gy"), "{text}");
         });
     }
 
