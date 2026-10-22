@@ -1,6 +1,7 @@
 //! Affiliate: Programs, Affiliate Links, Conversions, Commissions and Payouts.
 
 mod affiliate_links;
+mod clicks;
 mod commissions;
 mod links;
 mod merge;
@@ -13,6 +14,7 @@ mod tagging;
 mod totals;
 
 pub use affiliate_links::{AffiliateLink, CreatedLink, NewAffiliateLink, TAG_MAX_CHARS};
+pub use clicks::{CLICKS_SETTLE_DAYS, ClickGroup, ClickReport, ClicksRead, DayClicks, LinkClicks};
 pub use commissions::{
     Affiliate, AffiliateError, AffiliateSync, Commission, CommissionFilter, INCOME_WINDOW_DAYS,
     LastSync, ManualCommission, Reading, Recorded, StatusChange,
@@ -48,6 +50,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         rules::ADD_PROMOTION_RULES,
         affiliate_links::CREATE_AFFILIATE_LINKS,
         short_links::CREATE_SHORT_LINKS,
+        clicks::CREATE_LINK_CLICKS,
     ],
 };
 

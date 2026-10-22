@@ -235,6 +235,7 @@ fn main() {
     ));
     let short_io = Arc::new(ShortIo::new(
         &short_io::api_url(Build::CURRENT, &process_environment()),
+        &short_io::statistics_url(Build::CURRENT, &process_environment()),
         &user_agent,
         secrets.clone(),
     ));

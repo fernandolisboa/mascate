@@ -1,0 +1,14 @@
+{
+  "totalClicks": 7,
+  "humanClicks": 7,
+  "clickStatistics": {
+    "datasets": [
+      {
+        "data": [
+          { "x": "2026-10-21", "y": "2" },
+          { "x": "2026-10-22", "y": 5 }
+        ]
+      }
+    ]
+  }
+}

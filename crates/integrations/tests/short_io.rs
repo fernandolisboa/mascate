@@ -1,17 +1,18 @@
 //! Short.io's adapter against the fake server, with answers written from
 //! its documentation (see the fixtures' README): the request it sends, the
-//! link it keeps, its retries and refusals, and the affiliate module's
-//! Short Links end to end on a real temporary database.
+//! link it keeps, its retries and refusals, the clicks it reads day by day,
+//! and the affiliate module's Short Links and clicks end to end on a real
+//! temporary database.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{TimeDelta, TimeZone, Utc};
+use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_affiliate::{
-    AMAZON_SHORT_LINK, Affiliate, AffiliateError, AffiliatePlatform, CommissionStatus,
-    LinkShortener, LinkTagger, MIGRATIONS, NewAffiliateLink, Promotion, ReportedConversion,
-    ReportedProgram, Shortened, TagRefusal,
+    AMAZON_SHORT_LINK, Affiliate, AffiliateError, AffiliatePlatform, ClicksRead, CommissionStatus,
+    DayClicks, LinkShortener, LinkTagger, MIGRATIONS, NewAffiliateLink, Promotion,
+    ReportedConversion, ReportedProgram, Shortened, TagRefusal,
 };
 use mascate_integrations::{Pause, ShortIo};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -22,6 +23,8 @@ use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
 const LINKS: &str = "/links";
+const STATISTICS: &str = "/statistics/link/lnk_4kZq_2bXm9Tq7hR1";
+const LINK_KEY: &str = "lnk_4kZq_2bXm9Tq7hR1";
 const KEY: &str = "sk_test_4kZq2bXm";
 const HOTMART_LINK: &str = "https://go.hotmart.com/X12345678A?src=telegram";
 
@@ -69,7 +72,8 @@ fn setup_with_domain(domain: &str) -> Setup {
         .write("SHORT_IO_DOMAIN", &Secret::new(domain))
         .unwrap();
     let pauses = Arc::new(RecordedPauses::default());
-    let short_io = ShortIo::new(server.url(), "Mascate/test", store).with_pause(pauses.clone());
+    let short_io =
+        ShortIo::new(server.url(), server.url(), "Mascate/test", store).with_pause(pauses.clone());
     Setup {
         server,
         pauses,
@@ -162,7 +166,7 @@ fn without_the_key_or_the_domain_nothing_is_asked() {
         if let Some(name) = stored {
             store.write(name, &Secret::new("x.short.gy")).unwrap();
         }
-        let short_io = ShortIo::new(server.url(), "Mascate/test", store);
+        let short_io = ShortIo::new(server.url(), server.url(), "Mascate/test", store);
 
         assert_eq!(
             short_io.shorten(HOTMART_LINK, "0000000b"),
@@ -402,5 +406,200 @@ fn a_key_refused_while_shortening_keeps_no_short_link() {
             Err(AffiliateError::Platform(PlatformError::Expired))
         ));
         assert_eq!(affiliate.link(link).await.unwrap().short, None);
+    });
+}
+
+fn day(d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 10, d).unwrap()
+}
+
+fn statistics_asked(server: &FakeHttpServer) -> usize {
+    server
+        .requests()
+        .iter()
+        .filter(|path| path.starts_with(STATISTICS))
+        .count()
+}
+
+#[test]
+fn the_clicks_come_day_by_day_in_brasilia() {
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 200, fixture("link-statistics.json"));
+
+    let clicks = s.short_io.clicks(LINK_KEY, day(20)..=day(22)).unwrap();
+
+    assert_eq!(
+        clicks,
+        vec![
+            DayClicks {
+                day: day(20),
+                clicks: 4
+            },
+            DayClicks {
+                day: day(21),
+                clicks: 0
+            },
+            DayClicks {
+                day: day(22),
+                clicks: 9
+            },
+        ]
+    );
+    let sent = &s.server.received()[0];
+    assert_eq!(sent.method, "GET");
+    assert_eq!(sent.authorization.as_deref(), Some(KEY));
+    assert_eq!(
+        sent.path,
+        format!(
+            "{STATISTICS}?period=custom&startDate=2026-10-20&endDate=2026-10-23\
+             &tz=America%2FSao_Paulo&clicksChartInterval=day&skipTops=true"
+        )
+    );
+}
+
+#[test]
+fn a_chart_dated_by_day_or_counted_in_text_reads_the_same() {
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 200, fixture("link-statistics-by-date.json"));
+
+    let clicks = s.short_io.clicks(LINK_KEY, day(21)..=day(22)).unwrap();
+
+    assert_eq!(
+        clicks,
+        vec![
+            DayClicks {
+                day: day(21),
+                clicks: 2
+            },
+            DayClicks {
+                day: day(22),
+                clicks: 5
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_chart_without_points_has_no_days() {
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 200, fixture("link-statistics-empty.json"));
+
+    assert_eq!(s.short_io.clicks(LINK_KEY, day(22)..=day(22)), Ok(vec![]));
+}
+
+#[test]
+fn a_link_short_io_no_longer_has_is_not_found() {
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 404, fixture("error-404.json"));
+
+    assert_eq!(
+        s.short_io.clicks(LINK_KEY, day(22)..=day(22)),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(statistics_asked(&s.server), 1);
+}
+
+#[test]
+fn the_clicks_follow_the_same_retries_and_refusals_as_shortening() {
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 401, fixture("error-401.json"));
+    assert_eq!(
+        s.short_io.clicks(LINK_KEY, day(22)..=day(22)),
+        Err(PlatformError::Expired)
+    );
+
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 429, fixture("error-429.json"));
+    assert_eq!(
+        s.short_io.clicks(LINK_KEY, day(22)..=day(22)),
+        Err(PlatformError::RateLimited)
+    );
+    assert_eq!(s.pauses.seconds(), [1, 2, 4]);
+    assert_eq!(statistics_asked(&s.server), 4);
+
+    let s = setup();
+    s.server.serve_any_query(STATISTICS, 503, "");
+    s.server.then_serve(
+        &format!("{STATISTICS}?*"),
+        200,
+        fixture("link-statistics.json"),
+    );
+    assert_eq!(
+        s.short_io
+            .clicks(LINK_KEY, day(20)..=day(22))
+            .unwrap()
+            .len(),
+        3
+    );
+
+    let s = setup();
+    s.server
+        .serve_any_query(STATISTICS, 403, fixture("error-403.json"));
+    assert_eq!(
+        s.short_io.clicks(LINK_KEY, day(22)..=day(22)),
+        Err(PlatformError::Refused(
+            "API key has no access to domain mascate.short.gy".into()
+        ))
+    );
+}
+
+#[test]
+fn without_the_key_no_clicks_are_asked() {
+    let server = FakeHttpServer::start();
+    let short_io = ShortIo::new(
+        server.url(),
+        server.url(),
+        "Mascate/test",
+        Arc::new(MemorySecretStore::default()),
+    );
+
+    assert_eq!(
+        short_io.clicks(LINK_KEY, day(22)..=day(22)),
+        Err(PlatformError::NotConnected)
+    );
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn reading_the_clicks_through_short_io_twice_keeps_the_same_days() {
+    block_on(async {
+        let s = setup();
+        s.server.serve(LINKS, 200, fixture("link.json"));
+        s.server
+            .serve_any_query(STATISTICS, 200, fixture("link-statistics.json"));
+        let dir = tempfile::tempdir().unwrap();
+        let (affiliate, link) = affiliate_with_link(&dir, AffiliatePlatform::Hotmart).await;
+        affiliate.shorten(link, &s.short_io).await.unwrap();
+
+        let first = affiliate.read_clicks(&s.short_io).await.unwrap();
+        let again = affiliate.read_clicks(&s.short_io).await.unwrap();
+
+        // The Short Link is from 22/10: the days before it are not asked.
+        assert_eq!(
+            first,
+            ClicksRead {
+                links: 1,
+                changed: 1,
+                gone: 0
+            }
+        );
+        assert_eq!(again.changed, 0);
+        let ever = Utc.timestamp_opt(0, 0).unwrap()..Utc.timestamp_opt(4_000_000_000, 0).unwrap();
+        let clicks = affiliate.link_clicks(ever).await.unwrap();
+        assert_eq!(clicks.len(), 1);
+        assert_eq!(clicks[0].clicks, 9);
+        assert!(
+            s.server
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with(STATISTICS))
+                .all(|path| path.contains("startDate=2026-10-22&endDate=2026-10-23"))
+        );
     });
 }

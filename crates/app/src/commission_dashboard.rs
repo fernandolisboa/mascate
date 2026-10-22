@@ -4,7 +4,9 @@
 //! amount. Reversals show in red and stay out of what was earned; cancelled
 //! sales never count. The sums are Affiliate's (`CommissionReport`); the
 //! screen hands over the period's Commissions and the channels it read from
-//! the Marketing, which name the channel groups.
+//! the Marketing, which name the channel groups. Below them, the clicks on
+//! Short Links by link and by channel, beside the Commissions they brought
+//! (#159; `ClickReport`).
 
 use std::collections::HashMap;
 
@@ -13,12 +15,15 @@ use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Hsla, Window, div, px};
 use mascate_affiliate::{
-    Commission, CommissionGroup, CommissionReport, CurrencyTotals, GroupOrder,
+    AffiliateLink, ClickGroup, ClickReport, Commission, CommissionGroup, CommissionReport,
+    CurrencyTotals, GroupOrder, LinkClicks,
 };
-use mascate_kernel::RecordId;
+use mascate_kernel::{RecordId, Timestamp};
 use mascate_marketing::PromotionChannel;
+use rust_decimal::RoundingStrategy;
 
 use crate::appearance::{Tokens, look};
+use crate::catalog::day_and_time;
 use crate::kit;
 use crate::sales::{money_cell, table_row};
 
@@ -60,9 +65,43 @@ const ORDERS: [(GroupOrder, &str); 4] = [
     (GroupOrder::Name, "Nome"),
 ];
 
+/// What the clicks are gathered by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ClickGrouping {
+    #[default]
+    Channel,
+    Link,
+}
+
+impl ClickGrouping {
+    const ALL: [ClickGrouping; 2] = [ClickGrouping::Channel, ClickGrouping::Link];
+
+    fn name(self) -> &'static str {
+        match self {
+            ClickGrouping::Channel => "Canal",
+            ClickGrouping::Link => "Link",
+        }
+    }
+}
+
+/// The period's clicks on Short Links, as the screen read them.
+#[derive(Default)]
+pub struct Clicks {
+    pub links: Vec<LinkClicks>,
+    /// The live Affiliate Links, to name each link.
+    pub affiliate_links: Vec<AffiliateLink>,
+    /// When the clicks were last read through.
+    pub read_at: Option<Timestamp>,
+}
+
 #[derive(Default)]
 pub struct CommissionDashboard {
     commissions: Vec<Commission>,
+    clicks: Clicks,
+    /// Each live Affiliate Link's name: its product and Platform.
+    link_names: HashMap<RecordId, String>,
+    click_grouping: ClickGrouping,
+    click_report: ClickReport,
     /// Each live Promotion Channel's name; `None` until the Marketing
     /// answered.
     channels: Option<HashMap<RecordId, String>>,
@@ -78,8 +117,21 @@ impl CommissionDashboard {
         &mut self,
         commissions: Vec<Commission>,
         channels: Option<Vec<PromotionChannel>>,
+        clicks: Clicks,
         cx: &mut Context<Self>,
     ) {
+        self.click_report = ClickReport::of(&clicks.links, &commissions);
+        self.link_names = clicks
+            .affiliate_links
+            .iter()
+            .map(|link| {
+                (
+                    link.id,
+                    format!("{} · {}", link.product, link.program.platform.name()),
+                )
+            })
+            .collect();
+        self.clicks = clicks;
         self.commissions = commissions;
         if let Some(channels) = channels {
             self.channels = Some(
@@ -111,6 +163,77 @@ impl CommissionDashboard {
                 .unwrap_or_else(|| "Canal apagado".into()),
             None => "Canal (nome não lido)".into(),
         }
+    }
+
+    fn link_name(&self, id: RecordId) -> String {
+        self.link_names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| "Link apagado".into())
+    }
+
+    fn group_clicks(&mut self, grouping: ClickGrouping, cx: &mut Context<Self>) {
+        self.click_grouping = grouping;
+        cx.notify();
+    }
+
+    fn render_clicks(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let groupings = ClickGrouping::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(at, grouping)| {
+                let button = Button::new(("click-grouping", at))
+                    .label(grouping.name())
+                    .small();
+                let button = if self.click_grouping == grouping {
+                    button.primary()
+                } else {
+                    button.ghost()
+                };
+                button.on_click(cx.listener(move |this, _, _, cx| this.group_clicks(grouping, cx)))
+            });
+        let rows: Vec<AnyElement> = match self.click_grouping {
+            ClickGrouping::Channel => self
+                .click_report
+                .by_channel
+                .iter()
+                .map(|group| click_row(self.channel_name(group.of), group, &t))
+                .collect(),
+            ClickGrouping::Link => self
+                .click_report
+                .by_link
+                .iter()
+                .map(|group| click_row(self.link_name(group.of), group, &t))
+                .collect(),
+        };
+        let read = match self.clicks.read_at {
+            Some(at) => format!("Cliques lidos do Short.io em {}.", day_and_time(at)),
+            None => "Os cliques ainda não foram lidos do Short.io.".into(),
+        };
+        v_flex()
+            .gap_3()
+            .child(kit::section_heading("Cliques nos links curtos"))
+            .child(h_flex().gap_1().children(groupings))
+            .child(
+                h_flex()
+                    .gap_3()
+                    .px_3()
+                    .text_xs()
+                    .text_color(t.text2)
+                    .child(div().flex_1().child(self.click_grouping.name()))
+                    .child(money_cell("Cliques"))
+                    .child(money_cell("Comissões"))
+                    .child(money_cell("Cliques por comissão")),
+            )
+            .children(rows)
+            .child(div().text_xs().text_color(t.text2).child(format!(
+                "{read} Contam só os cliques no link curto, lidos a cada hora com as comissões; \
+                 um link sem link curto fica fora, e o Pinterest recebe o link inteiro. \
+                 Comissões são as vendas que vieram pelo link depois que ele ganhou o link \
+                 curto, as canceladas fora."
+            )))
+            .into_any_element()
     }
 
     fn group(&mut self, grouping: Grouping, cx: &mut Context<Self>) {
@@ -284,6 +407,34 @@ fn row<K>(name: String, group: &CommissionGroup<K>, t: &Tokens) -> AnyElement {
         .into_any_element()
 }
 
+fn click_row<K>(name: String, group: &ClickGroup<K>, t: &Tokens) -> AnyElement {
+    table_row(t)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .font_medium()
+                .child(name),
+        )
+        .child(money_cell(group.clicks.to_string()).font_semibold())
+        .child(money_cell(group.commissions.to_string()))
+        .child(money_cell(clicks_per_commission_text(group)))
+        .into_any_element()
+}
+
+/// `12,5`, or a dash before the first Commission.
+fn clicks_per_commission_text<K>(group: &ClickGroup<K>) -> String {
+    match group.clicks_per_commission() {
+        Some(ratio) => ratio
+            .round_dp_with_strategy(1, RoundingStrategy::MidpointAwayFromZero)
+            .normalize()
+            .to_string()
+            .replace('.', ","),
+        None => "–".into(),
+    }
+}
+
 fn reversed_ink(totals: &CurrencyTotals, t: &Tokens) -> Hsla {
     if totals.reversed.amount().is_zero() {
         t.text
@@ -316,13 +467,39 @@ fn figure(label: String, text: String, ink: Hsla, t: &Tokens) -> AnyElement {
 
 impl Render for CommissionDashboard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.reports.is_empty() {
+        let clicked = !self.click_report.by_link.is_empty();
+        if self.reports.is_empty() && !clicked {
             return div().into_any_element();
         }
         v_flex()
             .gap_5()
-            .child(self.render_totals(cx))
-            .child(self.render_groups(cx))
+            .when(!self.reports.is_empty(), |dashboard| {
+                dashboard
+                    .child(self.render_totals(cx))
+                    .child(self.render_groups(cx))
+            })
+            .when(clicked, |dashboard| dashboard.child(self.render_clicks(cx)))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn group(clicks: u64, commissions: usize) -> ClickGroup<()> {
+        ClickGroup {
+            of: (),
+            clicks,
+            commissions,
+        }
+    }
+
+    #[test]
+    fn clicks_per_commission_reads_with_one_decimal_or_a_dash() {
+        assert_eq!(clicks_per_commission_text(&group(25, 2)), "12,5");
+        assert_eq!(clicks_per_commission_text(&group(40, 2)), "20");
+        assert_eq!(clicks_per_commission_text(&group(10, 3)), "3,3");
+        assert_eq!(clicks_per_commission_text(&group(7, 0)), "–");
     }
 }

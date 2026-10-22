@@ -2445,6 +2445,14 @@ mod tests {
                 key: path.to_owned(),
             })
         }
+
+        fn clicks(
+            &self,
+            _: &str,
+            _: std::ops::RangeInclusive<chrono::NaiveDate>,
+        ) -> Result<Vec<mascate_affiliate::DayClicks>, PlatformError> {
+            Ok(Vec::new())
+        }
     }
 
     struct Fixture {
