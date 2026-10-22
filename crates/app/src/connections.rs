@@ -53,6 +53,7 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Telegram => "Telegram",
         Connection::Pinterest => "Pinterest",
         Connection::Instagram => "Instagram",
+        Connection::ShortIo => "Short.io",
     }
 }
 
@@ -99,6 +100,11 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
             "Sua conta profissional do Instagram: os posts de oferta saem nela, com a foto da \
              plataforma, sempre depois da sua confirmação."
         }
+        Connection::ShortIo => {
+            "Links curtos dos seus links de afiliado, no seu domínio do Short.io, que conta os \
+             cliques de cada um. Nunca para links da Amazon, da Shopee e do Mercado Livre, cujos \
+             termos proíbem encurtar, salvo se você ligar a funcionalidade restrita."
+        }
     }
 }
 
@@ -130,6 +136,8 @@ fn credential_label(credential: Credential) -> &'static str {
         "PINTEREST_APP_ID" => "App ID",
         "PINTEREST_APP_SECRET" => "App secret",
         "INSTAGRAM_ACCESS_TOKEN" => "Token de acesso",
+        "SHORT_IO_API_KEY" => "Chave secreta da API",
+        "SHORT_IO_DOMAIN" => "Domínio",
         other => other,
     }
 }
@@ -149,6 +157,7 @@ fn is_identifier(credential: Credential) -> bool {
             | "SHOPEE_PARTNER_ID"
             | "MAGALU_CLIENT_ID"
             | "PINTEREST_APP_ID"
+            | "SHORT_IO_DOMAIN"
     )
 }
 

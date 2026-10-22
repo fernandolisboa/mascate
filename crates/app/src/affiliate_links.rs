@@ -4,7 +4,8 @@
 //! channel's marking (or, on Amazon, the tracking id the owner created for
 //! it). Shopee's link is the short link its API gives (#100). The Program's
 //! rules are checked first: what only warns is shown, a Restricted Feature
-//! that is off refuses (ADR 0031).
+//! that is off refuses (ADR 0031). "Encurtar" gives a link its Short Link
+//! through Short.io (#158, ADR 0035).
 
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform, CreatedLink, LinkTagger,
     NewAffiliateLink, Program, PromotedProduct, Promotion, Reach, ReportedProgram, RuleWarning,
 };
-use mascate_kernel::RecordId;
+use mascate_kernel::{PlatformError, RecordId};
 use mascate_marketing::{ChannelKind, PromotionChannel};
 
 use crate::affiliate::{affiliate, failure};
@@ -31,6 +32,7 @@ use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::{practice_name, standing_name};
 use crate::sales::table_row;
 use crate::shopee;
+use crate::short_io;
 
 /// The Platforms whose links the app tags, each through its adapter. Each
 /// Platform's slice adds its tagger here.
@@ -172,6 +174,8 @@ pub struct AffiliateLinksSection {
     channel: Option<RecordId>,
     /// What the last link created breaks or may break.
     warnings: Vec<String>,
+    /// What the last Short Link breaks or may break.
+    short_warnings: Vec<String>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
@@ -201,6 +205,7 @@ impl AffiliateLinksSection {
             tracking_id: input("mascate-tg-20", window, cx),
             channel: None,
             warnings: Vec::new(),
+            short_warnings: Vec::new(),
             busy: false,
             reads: 0,
             form: None,
@@ -415,11 +420,36 @@ impl AffiliateLinksSection {
         );
     }
 
-    fn copy(&mut self, link: &AffiliateLink, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(link.tagged.clone()));
-        self.outcome = Some(Outcome::Done(
-            format!("Link de {} copiado.", link.product).into(),
-        ));
+    /// Gives the link its Short Link through Short.io, after its Program's
+    /// rules.
+    fn shorten(&mut self, link: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(shortener) = short_io::adapter(cx) else {
+            return;
+        };
+        self.outcome = None;
+        self.short_warnings.clear();
+        self.run(
+            window,
+            cx,
+            move |affiliate| async move { Ok(affiliate.shorten(link, shortener.as_ref()).await) },
+            |this, shortened, _, cx| match shortened {
+                Ok(shortened) => {
+                    this.short_warnings = shortened.warnings.iter().map(warning_text).collect();
+                    this.outcome = Some(Outcome::Done(short_io::shortened_text(&shortened).into()));
+                }
+                Err(error) => {
+                    if matches!(error, AffiliateError::Platform(PlatformError::Expired)) {
+                        short_io::expired(cx);
+                    }
+                    this.outcome = Some(Outcome::Failed(short_io::shorten_failure(&error).into()));
+                }
+            },
+        );
+    }
+
+    fn copy(&mut self, product: &str, link: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(link));
+        self.outcome = Some(Outcome::Done(format!("Link de {product} copiado.").into()));
         cx.notify();
     }
 
@@ -440,8 +470,26 @@ impl AffiliateLinksSection {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
-        let copied = link.clone();
+        let (product, tagged) = (link.product.clone(), link.tagged.clone());
         let id = link.id;
+        let short_action = match &link.short {
+            Some(short) => {
+                let (product, short) = (link.product.clone(), short.clone());
+                Button::new(("copy-short-link", index))
+                    .label("Copiar curto")
+                    .outline()
+                    .small()
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.copy(&product, short.clone(), cx)),
+                    )
+            }
+            None => Button::new(("shorten-link", index))
+                .label("Encurtar")
+                .outline()
+                .small()
+                .disabled(self.busy)
+                .on_click(cx.listener(move |this, _, window, cx| this.shorten(id, window, cx))),
+        };
         table_row(&t)
             .flex_wrap()
             .ml_6()
@@ -460,7 +508,14 @@ impl AffiliateLinksSection {
                             .text_color(t.text2)
                             .truncate()
                             .child(link.tagged.clone()),
-                    ),
+                    )
+                    .children(link.short.as_ref().map(|short| {
+                        div()
+                            .text_xs()
+                            .text_color(t.accent_text)
+                            .truncate()
+                            .child(format!("curto: {short}"))
+                    })),
             )
             .child(kit::tag(
                 format!("marcação {}", link.tag),
@@ -472,8 +527,11 @@ impl AffiliateLinksSection {
                     .label("Copiar")
                     .outline()
                     .small()
-                    .on_click(cx.listener(move |this, _, _, cx| this.copy(&copied, cx))),
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.copy(&product, tagged.clone(), cx)),
+                    ),
             )
+            .child(short_action)
             .child(
                 Button::new(("post-link", index))
                     .label("Criar post")
@@ -768,6 +826,11 @@ impl Render for AffiliateLinksSection {
                  a própria Shopee devolve o link curto já marcado.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(
+                self.short_warnings
+                    .iter()
+                    .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
+            )
             .when(rows.is_empty(), |section| {
                 section.child(div().text_sm().text_color(t.text2).child(
                     "Nenhum programa da Hotmart, Kiwify, Monetizze, Eduzz ou Amazon ainda: eles \

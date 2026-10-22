@@ -72,6 +72,7 @@ mod shell;
 mod shopee;
 mod shopee_search;
 mod shopee_seller;
+mod short_io;
 mod span;
 mod startup;
 mod stock;
@@ -89,7 +90,7 @@ use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
     HOTMART_LINKS, Hotmart, Instagram, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre,
-    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, Telegram,
+    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, ShortIo, Telegram,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -129,6 +130,7 @@ use crate::sales_events::AppSalesEvents;
 use crate::shell::Shell;
 use crate::shopee::AppShopee;
 use crate::shopee_seller::AppShopeeSeller;
+use crate::short_io::AppShortIo;
 use crate::stock::AppInventory;
 use crate::stock_mirror::AppStockMirror;
 use crate::telegram::AppTelegram;
@@ -230,6 +232,11 @@ fn main() {
         &user_agent,
         secrets.clone(),
         Arc::new(SystemClock),
+    ));
+    let short_io = Arc::new(ShortIo::new(
+        &short_io::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
     ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
@@ -362,6 +369,7 @@ fn main() {
             cx.set_global(AppTelegram(telegram.clone()));
             cx.set_global(AppPinterest(pinterest));
             cx.set_global(AppInstagram(instagram));
+            cx.set_global(AppShortIo(short_io));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),

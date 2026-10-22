@@ -7,6 +7,7 @@ mod merge;
 mod payouts;
 mod report;
 mod rules;
+mod short_links;
 mod source;
 mod tagging;
 mod totals;
@@ -23,6 +24,10 @@ pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use rules::{
     AMAZON_TYPED_PRICE, BRAND_KEYWORDS, Practice, Program, Promotion, PromotionRules, Reach,
     RuleWarning, SHOPEE_PAID_SEARCH, ShownPrice, Standing,
+};
+pub use short_links::{
+    AMAZON_SHORT_LINK, LinkShortener, MERCADO_LIVRE_SHORT_LINK, SHOPEE_SHORT_LINK, Shortened,
+    ShortenedLink, short_link_flag,
 };
 pub use source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedPayout,
@@ -42,11 +47,20 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         links::CREATE_PRODUCT_LINKS,
         rules::ADD_PROMOTION_RULES,
         affiliate_links::CREATE_AFFILIATE_LINKS,
+        short_links::CREATE_SHORT_LINKS,
     ],
 };
 
-/// This module's flags: the phase-2 Restricted Features (ADR 0031).
-pub const FLAGS: &[Flag] = &[SHOPEE_PAID_SEARCH, BRAND_KEYWORDS, AMAZON_TYPED_PRICE];
+/// This module's flags: the phase-2 Restricted Features (ADR 0031) and the
+/// Short Links the terms forbid (ADR 0035).
+pub const FLAGS: &[Flag] = &[
+    SHOPEE_PAID_SEARCH,
+    BRAND_KEYWORDS,
+    AMAZON_TYPED_PRICE,
+    AMAZON_SHORT_LINK,
+    SHOPEE_SHORT_LINK,
+    MERCADO_LIVRE_SHORT_LINK,
+];
 
 pub const COMMISSION_INCOME: Reminder = Reminder {
     key: "affiliate.commission_income",

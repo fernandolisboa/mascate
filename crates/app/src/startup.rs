@@ -467,8 +467,9 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, LinkTagger, ManualCommission,
-        ManualPayout, NewAffiliateLink, Practice, Promotion, PromotionRules, Standing, TagRefusal,
+        AffiliatePlatform, CommissionFilter, CommissionStatus, LinkShortener, LinkTagger,
+        MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink, Practice,
+        Promotion, PromotionRules, Shortened, Standing, TagRefusal,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -755,8 +756,10 @@ mod tests {
         }
     }
 
+    /// Spelled out, so a change to Mercado Livre's defaults never changes
+    /// what the samples stored.
     fn sample_rules() -> PromotionRules {
-        let mut rules = PromotionRules::defaults(AffiliatePlatform::MercadoLivre)
+        let mut rules = PromotionRules::all(Standing::Unknown)
             .with(Practice::PaidSearch, Standing::Forbidden)
             .with(Practice::BoostedPosts, Standing::Allowed);
         rules.brand_keywords = vec!["mercado livre".into()];
@@ -794,6 +797,20 @@ mod tests {
 
         fn tag(&self, link: &str, tag: &str) -> Result<String, TagRefusal> {
             Ok(format!("{link}?tag={tag}"))
+        }
+    }
+
+    const SAMPLE_SHORT_LINK: &str = "https://exemplo.short.gy/exemplo1";
+
+    /// Shortens every link to the same sample Short Link.
+    struct SampleShortener;
+
+    impl LinkShortener for SampleShortener {
+        fn shorten(&self, _: &str, _: &str) -> Result<Shortened, PlatformError> {
+            Ok(Shortened {
+                url: SAMPLE_SHORT_LINK.into(),
+                key: "lnk_exemplo".into(),
+            })
         }
     }
 
@@ -1049,6 +1066,16 @@ mod tests {
                 .await
                 .unwrap()
                 .link;
+            flags
+                .turn_on(
+                    flags
+                        .request_turn_on(MERCADO_LIVRE_SHORT_LINK.key)
+                        .unwrap()
+                        .confirm("sample"),
+                )
+                .await
+                .unwrap();
+            affiliate.shorten(link.id, &SampleShortener).await.unwrap();
             let posts = OfferPosts::new(database.clone(), clock.clone(), ids.clone());
             posts
                 .set_template(channel.id, SAMPLE_POST_TEMPLATE)
@@ -1601,6 +1628,26 @@ mod tests {
                     "{name}"
                 );
                 assert_eq!(affiliate.links().await.unwrap().len(), 1, "{name}");
+                // Short Links arrived after 0.4.0; the sample's Program is on
+                // Mercado Livre, whose terms forbid a shortener.
+                flags
+                    .turn_on(
+                        flags
+                            .request_turn_on(MERCADO_LIVRE_SHORT_LINK.key)
+                            .unwrap()
+                            .confirm("sample"),
+                    )
+                    .await
+                    .unwrap();
+                let shortened = affiliate
+                    .shorten(created.link.id, &SampleShortener)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    shortened.link.short.as_deref(),
+                    Some(SAMPLE_SHORT_LINK),
+                    "{name}"
+                );
                 // Offer Posts arrived after 0.2.0 too.
                 let posts = OfferPosts::new(
                     database.clone(),

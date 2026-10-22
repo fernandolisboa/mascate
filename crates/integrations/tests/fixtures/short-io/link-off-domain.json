@@ -1,0 +1,10 @@
+{
+  "originalURL": "https://go.hotmart.com/X12345678A?src=telegram",
+  "path": "0000000b",
+  "idString": "lnk_4kZq_2bXm9Tq7hR1",
+  "id": "lnk_4kZq_2bXm9Tq7hR1",
+  "shortURL": "http://elsewhere.example/0000000b",
+  "secureShortURL": "https://elsewhere.example/0000000b",
+  "duplicate": false,
+  "success": true
+}
