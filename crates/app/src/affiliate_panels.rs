@@ -22,7 +22,7 @@ use mascate_integrations::{
 use mascate_kernel::PlatformError;
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
 
-use crate::affiliate::{affiliate, failure, recorded_text};
+use crate::affiliate::{CommissionSyncs, affiliate, failure, recorded_text};
 use crate::appearance::look;
 use crate::forms::{Outcome, notice};
 use crate::kit;
@@ -322,7 +322,12 @@ impl AffiliatePanelsSection {
         let t = look(cx).tokens;
         let shown = &self.shown[index];
         let site = &panels.sites[shown.site];
-        let busy = self.busy == Some(shown.site);
+        // The hourly Sync may be reading this panel already.
+        let syncing = cx
+            .try_global::<CommissionSyncs>()
+            .is_some_and(|syncs| syncs.running);
+        let busy = self.busy == Some(shown.site) || syncing;
+        let working = self.busy.is_some() || syncing;
         let can_open = shown.state != PanelState::NoBrowser;
         let can_read = can_open && shown.state != PanelState::NeverLoggedIn;
         let state = state_text(site, shown.state);
@@ -381,7 +386,7 @@ impl AffiliatePanelsSection {
                                 .icon(IconName::ExternalLink)
                                 .outline()
                                 .small()
-                                .disabled(self.busy.is_some())
+                                .disabled(working)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.log_in(index, window, cx)
                                 })),
@@ -394,7 +399,7 @@ impl AffiliatePanelsSection {
                                     .primary()
                                     .small()
                                     .loading(busy)
-                                    .disabled(self.busy.is_some())
+                                    .disabled(working)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.read(index, window, cx)
                                     })),
