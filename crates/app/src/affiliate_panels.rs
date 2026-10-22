@@ -16,8 +16,9 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, EventEmitter, Global, Window, div};
 use mascate_affiliate::AffiliateError;
 use mascate_integrations::{
-    AffiliatePanel, BrowserSession, MERCADO_LIVRE_AFFILIATE_PANEL,
-    MERCADO_LIVRE_AFFILIATE_PANEL_URL, MercadoLivreAffiliatePanel, PanelState,
+    AffiliatePanel, BrowserSession, MAGALU_AFFILIATE_PANEL, MAGALU_AFFILIATE_PANEL_URL,
+    MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL, MagaluAffiliatePanel,
+    MercadoLivreAffiliatePanel, PanelState,
 };
 use mascate_kernel::PlatformError;
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
@@ -65,7 +66,10 @@ pub struct PanelSite {
 impl PanelSite {
     /// Every panel, in the order Afiliação shows them.
     pub fn all(build: Build, environment: &Environment) -> Vec<Self> {
-        vec![Self::mercado_livre(build, environment)]
+        vec![
+            Self::mercado_livre(build, environment),
+            Self::magalu(build, environment),
+        ]
     }
 
     /// Mercado Livre's affiliate panel or, in a development build only,
@@ -82,6 +86,23 @@ impl PanelSite {
             )
             .unwrap_or_else(|| MERCADO_LIVRE_AFFILIATE_PANEL_URL.to_owned()),
             build: |url, browser| Arc::new(MercadoLivreAffiliatePanel::new(url, browser)),
+            built: OnceLock::new(),
+        }
+    }
+
+    /// The Parceiro Magalu panel or, in a development build only, the URL
+    /// in `MASCATE_MAGALU_AFFILIATE_PANEL_URL`, a local fake page.
+    pub fn magalu(build: Build, environment: &Environment) -> Self {
+        Self {
+            of: "da Magalu",
+            flag: MAGALU_AFFILIATE_PANEL,
+            url: crate::mercado_livre::local_fake(
+                build,
+                environment,
+                "MASCATE_MAGALU_AFFILIATE_PANEL_URL",
+            )
+            .unwrap_or_else(|| MAGALU_AFFILIATE_PANEL_URL.to_owned()),
+            build: |url, browser| Arc::new(MagaluAffiliatePanel::new(url, browser)),
             built: OnceLock::new(),
         }
     }
@@ -470,24 +491,40 @@ mod tests {
                 browser: Arc::new(BrowserSession::new(None, profile.clone())),
                 sites: PanelSite::all(Build::Release, &nowhere()),
             };
+            let shown = |on: &[(&PanelSite, Arc<dyn AffiliatePanel>)]| {
+                on.iter()
+                    .map(|(site, panel)| (site.of, panel.state()))
+                    .collect::<Vec<_>>()
+            };
 
-            let off = panels.on(&flags).await.unwrap().len();
-            let site = &panels.sites[0];
-            assert!(site.built.get().is_none());
-            let request = flags.request_turn_on(site.flag.key).unwrap();
+            let off = shown(&panels.on(&flags).await.unwrap());
+            let request = flags.request_turn_on(MAGALU_AFFILIATE_PANEL.key).unwrap();
             flags.turn_on(request.confirm("fernando")).await.unwrap();
-            let on = panels.on(&flags).await.unwrap();
+            let magalu_on = shown(&panels.on(&flags).await.unwrap());
+            let built = |site: usize| panels.sites[site].built.get().is_some();
+            let built_with_magalu_on = (built(0), built(1));
+            let request = flags
+                .request_turn_on(MERCADO_LIVRE_AFFILIATE_PANEL.key)
+                .unwrap();
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let both_on = shown(&panels.on(&flags).await.unwrap());
 
-            assert_eq!(off, 0);
-            assert_eq!(on.len(), 1);
-            assert_eq!(on[0].0.of, "do Mercado Livre");
-            assert_eq!(on[0].1.state(), PanelState::NoBrowser);
+            assert!(off.is_empty());
+            assert_eq!(built_with_magalu_on, (false, true));
+            assert_eq!(magalu_on, [("da Magalu", PanelState::NoBrowser)]);
+            assert_eq!(
+                both_on,
+                [
+                    ("do Mercado Livre", PanelState::NoBrowser),
+                    ("da Magalu", PanelState::NoBrowser),
+                ]
+            );
             assert!(!profile.exists());
         });
     }
 
     #[test]
-    fn the_mercado_livre_panel_is_the_real_one_unless_a_development_build_points_elsewhere() {
+    fn each_panel_is_the_real_one_unless_a_development_build_points_elsewhere() {
         let release = PanelSite::mercado_livre(Build::Release, &nowhere());
         let development = PanelSite::mercado_livre(
             Build::Development,
@@ -503,6 +540,9 @@ mod tests {
             "integrations.mercado_livre_affiliate_panel"
         );
         assert_eq!(development.url, "http://127.0.0.1:8160/afiliados");
+        let magalu = PanelSite::magalu(Build::Release, &nowhere());
+        assert_eq!(magalu.url, "https://www.magazinevoce.com.br/painel");
+        assert_eq!(magalu.flag.key, "integrations.magalu_affiliate_panel");
         assert_eq!(
             profile_folder(PathBuf::from("dados")),
             PathBuf::from("dados").join("navegador")

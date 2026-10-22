@@ -1,0 +1,23 @@
+{
+  "url": "https://www.magazinevoce.com.br/painel/vendas",
+  "tables": [
+    {
+      "headers": ["Vendas realizadas", "Vendas aprovadas", "Comissões pendentes", "Comissões liberadas"],
+      "rows": [["6", "4", "R$ 18,40", "R$ 52,69"]]
+    },
+    {
+      "headers": ["Data do pedido", "Pedido", "Produto", "Quantidade", "Valor", "Comissão", "Status"],
+      "rows": [
+        ["19/10/2026 20:14", "1491507293822611", "Smart TV 50\" 4K Samsung Crystal UHD", "1", "R$ 2.299,00", "R$ 18,40", "Aguardando aprovação"],
+        ["11/10/2026 10:02", "1491507293700342", "Liquidificador Philips Walita 1200W", "1", "R$ 279,90", "R$ 13,99", "Aprovada"],
+        ["03/10/2026 08:45", "1491507293600173", "Jogo de Panelas Tramontina 5 Peças", "1", "R$ 349,90", "R$ 17,50", "Liberada"],
+        ["27/09/2026 19:30", "1491507293500984", "Fritadeira Elétrica Mondial 4L", "1", "R$ 399,00", "R$ 19,95", "Paga"],
+        ["22/09/2026 13:12", "1491507293400415", "Ventilador Arno 40cm", "1", "R$ 229,90", "R$ 6,90", "Cancelada"],
+        ["15/09/2026 09:00", "1491507293300556", "Cafeteira Nespresso Essenza Mini", "1", "R$ 449,00", "R$ 13,47", "Devolvida"],
+        ["10/09/2026 17:40", "1491507293200667", "Fone de Ouvido JBL Tune 520BT", "1", "R$ 249,90", "R$ 7,50", "Paga"],
+        ["10/09/2026 17:40", "1491507293200667", "Capa para Fone JBL", "2", "R$ 39,80", "R$ 1,19", "Paga"],
+        ["", "", "Total", "", "R$ 4.296,40", "R$ 98,90", ""]
+      ]
+    }
+  ]
+}

@@ -463,16 +463,17 @@ impl AffiliateScreen {
             cx.subscribe_in(&span, window, |this, _, _: &SpanChanged, window, cx| {
                 this.refresh(window, cx)
             }),
+            // A first read brings its Program and its products along.
             cx.subscribe_in(&panels, window, |this, _, _: &PanelRead, window, cx| {
                 cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
-                this.read_commissions(window, cx)
+                this.refresh(window, cx)
             }),
             cx.subscribe_in(
                 &import,
                 window,
                 |this, _, _: &CommissionsImported, window, cx| {
                     cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
-                    this.read_commissions(window, cx)
+                    this.refresh(window, cx)
                 },
             ),
             // A link moves Commissions between Products on the sheet and the
