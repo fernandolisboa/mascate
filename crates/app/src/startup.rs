@@ -474,9 +474,9 @@ mod tests {
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
-        ChannelStock, FeeBasis, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
-        OnSalesChannel, PromotionKind, PromotionPlan, PromotionStatus, PurchaseOrderStatus,
-        Receiving, SaleFee, SalesChannel,
+        ChannelStock, FeeBasis, Listing, ListingStatus, NewPurchaseLine, NewPurchaseOrder,
+        OfferToJoin, OnSalesChannel, PriceChangeReason, PromotionKind, PromotionPlan,
+        PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
@@ -487,9 +487,9 @@ mod tests {
         AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
         ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
         CopySettings, DateRule, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PostStatus, PostTime,
-        QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor, ReputationSource,
-        Score, default_posting_times,
+        NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PinterestBoard, PostStatus,
+        PostTime, QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor,
+        ReputationSource, Score, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -528,22 +528,59 @@ mod tests {
         }
     }
 
-    /// A Sales Channel with the sample listing only.
-    struct SampleChannel;
+    /// What 0.5.0 saves: the sample Product listed on Shopee too, its price
+    /// then lowered by the owner.
+    fn sample_shopee_listing() -> ChannelListing {
+        ChannelListing {
+            id: "22000000001".into(),
+            variation: None,
+            title: "Produto de exemplo".into(),
+            price: Money::new(64.into(), Currency::Brl),
+            available_quantity: 0,
+            status: ListingStatus::Paused,
+            link: Some("https://shopee.com.br/product/1/22000000001".into()),
+            listing_type: None,
+            category: Some("100001".into()),
+            seller_sku: Some(SAMPLE_SKU.into()),
+        }
+    }
+
+    fn sample_shopee_price() -> Money {
+        Money::new(62.into(), Currency::Brl)
+    }
+
+    /// A Sales Channel with its sample listing only.
+    #[derive(Clone, Copy)]
+    enum SampleChannel {
+        MercadoLivre,
+        Shopee,
+    }
+
+    impl SampleChannel {
+        fn listing(self) -> ChannelListing {
+            match self {
+                SampleChannel::MercadoLivre => sample_listing(),
+                SampleChannel::Shopee => sample_shopee_listing(),
+            }
+        }
+    }
 
     impl OnSalesChannel for SampleChannel {
         fn sales_channel(&self) -> SalesChannelKind {
-            SalesChannelKind::MercadoLivre
+            match self {
+                SampleChannel::MercadoLivre => SalesChannelKind::MercadoLivre,
+                SampleChannel::Shopee => SalesChannelKind::Shopee,
+            }
         }
     }
 
     impl SalesChannel for SampleChannel {
         fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
-            Ok(vec![sample_listing().id])
+            Ok(vec![self.listing().id])
         }
 
         fn listings(&self, _: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
-            Ok(vec![sample_listing()])
+            Ok(vec![self.listing()])
         }
 
         fn sale_fee(&self, _: &FeeBasis, _: Money) -> Result<SaleFee, PlatformError> {
@@ -551,7 +588,7 @@ mod tests {
         }
 
         fn set_price(&self, _: &str, _: Money) -> Result<(), PlatformError> {
-            Err(PlatformError::NotFound)
+            Ok(())
         }
 
         fn set_stock(&self, _: &str, _: &[ChannelStock]) -> Result<(), PlatformError> {
@@ -773,6 +810,24 @@ mod tests {
             default_tag: "exemplo".into(),
             keywords: Vec::new(),
             telegram_chat: Some("@canaldeexemplo".into()),
+        }
+    }
+
+    /// What 0.5.0 saves: a Pinterest channel with its board picked.
+    fn sample_pinterest_channel() -> NewPromotionChannel {
+        NewPromotionChannel {
+            name: "Pinterest de exemplo".into(),
+            kind: ChannelKind::Pinterest,
+            default_tag: "pinterest".into(),
+            keywords: Vec::new(),
+            telegram_chat: None,
+        }
+    }
+
+    fn sample_board() -> PinterestBoard {
+        PinterestBoard {
+            id: "987654321012345678".into(),
+            name: "Achados da semana".into(),
         }
     }
 
@@ -1023,9 +1078,18 @@ mod tests {
                 .await
                 .unwrap();
             let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
-            listings.sync(&SampleChannel).await.unwrap();
+            listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
             let listing = listings.listings().await.unwrap().remove(0);
             listings.link(listing.id, product.id).await.unwrap();
+            listings.sync(&SampleChannel::Shopee).await.unwrap();
+            let shopee = listing_on(&listings, SalesChannelKind::Shopee)
+                .await
+                .unwrap();
+            listings.link(shopee.id, product.id).await.unwrap();
+            listings
+                .change_price(shopee.id, sample_shopee_price(), &SampleChannel::Shopee)
+                .await
+                .unwrap();
             ListingQuality::new(database.clone(), clock.clone(), ids.clone())
                 .sync(&SampleQuality, &[sample_listing().id])
                 .await
@@ -1069,6 +1133,11 @@ mod tests {
             let channel = channels.create(&sample_channel()).await.unwrap();
             let channel = channels
                 .set_posting_times(channel.id, &sample_posting_times())
+                .await
+                .unwrap();
+            let pinterest = channels.create(&sample_pinterest_channel()).await.unwrap();
+            channels
+                .set_pinterest_board(pinterest.id, &sample_board())
                 .await
                 .unwrap();
             affiliate
@@ -1148,6 +1217,16 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    /// The sample's Listing on `channel`, when it has one.
+    async fn listing_on(listings: &Listings, channel: SalesChannelKind) -> Option<Listing> {
+        listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.channel == channel)
     }
 
     /// What 0.4.0 saves: a Merge Import of another computer's copy of the
@@ -1322,17 +1401,51 @@ mod tests {
                 );
                 // Listings arrived in 0.2.0, like the catalog.
                 if Version::parse(released) >= Version::parse("0.2.0") {
-                    let listing = listings.listings().await.unwrap().remove(0);
+                    let listing = listing_on(&listings, SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap_or_else(|| panic!("{name}"));
                     assert_eq!(listing.listed, sample_listing(), "{name}");
-                    assert_eq!(listing.channel, SalesChannelKind::MercadoLivre, "{name}");
                     let product = products
                         .iter()
                         .find(|product| product.sku.as_str() == SAMPLE_SKU)
                         .unwrap_or_else(|| panic!("{name}"));
                     assert_eq!(listing.product, Some(product.id), "{name}");
                 }
-                listings.sync(&SampleChannel).await.unwrap();
-                assert_eq!(listings.listings().await.unwrap().len(), 1, "{name}");
+                listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
+                // Sales Channels besides Mercado Livre and the price history
+                // arrived in 0.5.0: the Shopee listing keeps its Product and
+                // the price the owner approved.
+                let since_0_5_0 = Version::parse(released) >= Version::parse("0.5.0");
+                let shopee = listing_on(&listings, SalesChannelKind::Shopee).await;
+                if since_0_5_0 {
+                    let shopee = shopee.unwrap_or_else(|| panic!("{name}"));
+                    let product = products
+                        .iter()
+                        .find(|product| product.sku.as_str() == SAMPLE_SKU)
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(shopee.product, Some(product.id), "{name}");
+                    assert_eq!(shopee.listed.price, sample_shopee_price(), "{name}");
+                    let history = Repricing::new(
+                        database.clone(),
+                        inventory.clone(),
+                        Arc::new(SystemClock),
+                        Arc::new(UuidV7Generator),
+                    )
+                    .price_history(shopee.id)
+                    .await
+                    .unwrap();
+                    assert_eq!(history.len(), 1, "{name}");
+                    assert_eq!(history[0].reason, PriceChangeReason::Approved, "{name}");
+                    assert_eq!(history[0].old, sample_shopee_listing().price, "{name}");
+                    assert_eq!(history[0].new, sample_shopee_price(), "{name}");
+                } else {
+                    assert!(shopee.is_none(), "{name}");
+                }
+                assert_eq!(
+                    listings.listings().await.unwrap().len(),
+                    1 + usize::from(since_0_5_0),
+                    "{name}"
+                );
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.
@@ -1533,7 +1646,7 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                listings.sync(&SampleChannel).await.unwrap();
+                listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
                 assert_eq!(
                     listings
                         .category_names(SalesChannelKind::MercadoLivre)
@@ -1628,7 +1741,25 @@ mod tests {
                 if channels.channels().await.unwrap().is_empty() {
                     channels.create(&sample_channel()).await.unwrap();
                 }
-                let kept = channels.channels().await.unwrap();
+                let (pinterest, kept): (Vec<_>, Vec<_>) = channels
+                    .channels()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .partition(|channel| channel.kind == ChannelKind::Pinterest);
+                // Pinterest channels arrived in 0.5.0, with the board the
+                // owner picked.
+                if since_0_5_0 {
+                    assert_eq!(pinterest.len(), 1, "{name}");
+                    assert_eq!(
+                        pinterest[0].default_tag,
+                        sample_pinterest_channel().default_tag,
+                        "{name}"
+                    );
+                    assert_eq!(pinterest[0].pinterest_board, Some(sample_board()), "{name}");
+                } else {
+                    assert!(pinterest.is_empty(), "{name}");
+                }
                 assert_eq!(kept.len(), 1, "{name}");
                 assert_eq!(kept[0].default_tag, "exemplo", "{name}");
                 assert_eq!(kept[0].kind, ChannelKind::TelegramChannel, "{name}");
@@ -1643,8 +1774,32 @@ mod tests {
                     "{name}"
                 );
                 assert_eq!(affiliate.links().await.unwrap().len(), 1, "{name}");
-                // Short Links arrived after 0.4.0; the sample's Program is on
-                // Mercado Livre, whose terms forbid a shortener.
+                // Short Links and their clicks arrived in 0.5.0; the sample's
+                // Program is on Mercado Livre, whose terms forbid a shortener.
+                assert_eq!(
+                    created.link.short.as_deref(),
+                    since_0_5_0.then_some(SAMPLE_SHORT_LINK),
+                    "{name}"
+                );
+                let ever = chrono::DateTime::<chrono::Utc>::MIN_UTC
+                    ..chrono::DateTime::<chrono::Utc>::MAX_UTC;
+                let saved: Vec<u64> = affiliate
+                    .link_clicks(ever.clone())
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|link| link.clicks)
+                    .collect();
+                let saved_clicks = if since_0_5_0 { SAMPLE_CLICKS } else { 0 };
+                assert_eq!(
+                    saved,
+                    if since_0_5_0 {
+                        vec![SAMPLE_CLICKS]
+                    } else {
+                        vec![]
+                    },
+                    "{name}"
+                );
                 flags
                     .turn_on(
                         flags
@@ -1663,17 +1818,16 @@ mod tests {
                     Some(SAMPLE_SHORT_LINK),
                     "{name}"
                 );
-                // Clicks arrived after 0.4.0 too.
                 affiliate.read_clicks(&SampleShortener).await.unwrap();
-                let clicks = affiliate
-                    .link_clicks(
-                        chrono::DateTime::<chrono::Utc>::MIN_UTC
-                            ..chrono::DateTime::<chrono::Utc>::MAX_UTC,
-                    )
-                    .await
-                    .unwrap();
+                let clicks = affiliate.link_clicks(ever).await.unwrap();
                 assert_eq!(clicks.len(), 1, "{name}");
-                assert_eq!(clicks[0].clicks, SAMPLE_CLICKS, "{name}");
+                // The read adds today's clicks; a sample written today
+                // already has them.
+                let read_today = clicks[0].clicks - saved_clicks;
+                assert!(
+                    read_today == SAMPLE_CLICKS || since_0_5_0 && read_today == 0,
+                    "{name}"
+                );
                 // Offer Posts arrived after 0.2.0 too.
                 let posts = OfferPosts::new(
                     database.clone(),
