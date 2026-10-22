@@ -19,6 +19,7 @@ mod kiwify;
 mod landing;
 mod link_tags;
 mod magalu;
+mod magalu_affiliate_panel;
 mod magalu_crawler;
 mod mercado_livre;
 mod mercado_livre_affiliate_panel;
@@ -64,6 +65,9 @@ pub use link_tags::UrlTagger;
 pub use magalu::{
     API_URL as MAGALU_API_URL, ID_URL as MAGALU_ID_URL, Magalu, SANDBOX_URL as MAGALU_SANDBOX_URL,
     SCOPES as MAGALU_SCOPES, StoreAuthorization,
+};
+pub use magalu_affiliate_panel::{
+    MAGALU_AFFILIATE_PANEL, MagaluAffiliatePanel, PANEL_URL as MAGALU_AFFILIATE_PANEL_URL,
 };
 pub use magalu_crawler::{MAGALU_CRAWLER, MagaluCrawler, SEARCH_URL as MAGALU_SEARCH_URL};
 pub use mercado_livre::{
@@ -149,4 +153,5 @@ pub const FLAGS: &[Flag] = &[
     MAGALU_CRAWLER,
     HOTMART_CRAWLER,
     MERCADO_LIVRE_AFFILIATE_PANEL,
+    MAGALU_AFFILIATE_PANEL,
 ];

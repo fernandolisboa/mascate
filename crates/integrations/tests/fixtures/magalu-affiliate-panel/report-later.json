@@ -1,0 +1,12 @@
+{
+  "url": "https://www.magazinevoce.com.br/painel/vendas",
+  "tables": [
+    {
+      "headers": ["Data do pedido", "Pedido", "Produto", "Quantidade", "Valor", "Comissão", "Status"],
+      "rows": [
+        ["19/10/2026 20:14", "1491507293822611", "Smart TV 50\" 4K Samsung Crystal UHD", "1", "R$ 2.299,00", "R$ 18,40", "Aprovada"],
+        ["11/10/2026 10:02", "1491507293700342", "Liquidificador Philips Walita 1200W", "1", "R$ 279,90", "R$ 13,99", "Paga"]
+      ]
+    }
+  ]
+}
