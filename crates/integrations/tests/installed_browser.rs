@@ -5,6 +5,7 @@
 //! installed_browser -- --ignored`.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use mascate_integrations::{BrowserSession, TABLES_SCRIPT, installed_browser};
 use serde_json::{Value, json};
@@ -55,4 +56,59 @@ fn the_installed_browser_opens_a_page_reads_its_tables_and_closes() {
         .read(&url, "document.title", &|_: &Value| true)
         .unwrap();
     assert_eq!(again, json!("Relatório"));
+}
+
+#[test]
+#[ignore = "needs Edge, Chrome or Chromium installed and a display"]
+fn a_login_window_the_owner_closes_takes_its_browser_along_and_the_next_reading_starts_another() {
+    let program = installed_browser(&|name| std::env::var(name).ok())
+        .expect("Edge, Chrome or Chromium installed");
+    let folder = tempfile::tempdir().unwrap();
+    let page = folder.path().join("painel.html");
+    std::fs::write(&page, "<!doctype html><title>Painel</title>").unwrap();
+    let profile = folder.path().join("perfil");
+    let browser = BrowserSession::new(Some(program), profile.clone());
+    let url = format!("file://{}", page.display());
+
+    browser.open_window(&url).unwrap();
+    // The owner closes the window: its only tab.
+    let port_file = std::fs::read_to_string(profile.join("DevToolsActivePort")).unwrap();
+    let endpoint = format!("http://127.0.0.1:{}", port_file.lines().next().unwrap());
+    let tabs = || -> Vec<Value> {
+        serde_json::from_str(
+            &ureq::get(format!("{endpoint}/json/list"))
+                .call()
+                .unwrap()
+                .body_mut()
+                .read_to_string()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !tabs().iter().any(|tab| tab["type"] == "page") {
+        assert!(
+            Instant::now() < deadline,
+            "the window never showed its page"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    for tab in tabs().iter().filter(|tab| tab["type"] == "page") {
+        ureq::get(format!(
+            "{endpoint}/json/close/{}",
+            tab["id"].as_str().unwrap()
+        ))
+        .call()
+        .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while ureq::get(format!("{endpoint}/json/version")).call().is_ok() {
+        assert!(Instant::now() < deadline, "the browser outlived its window");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    let title = browser
+        .read(&url, "document.title", &|_: &Value| true)
+        .unwrap();
+    assert_eq!(title, json!("Painel"));
 }

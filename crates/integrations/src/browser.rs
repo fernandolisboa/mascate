@@ -29,6 +29,8 @@ const READ_ATTEMPTS: u32 = 30;
 /// How long a browser has to start listening, checked this often.
 const START_STEP: Duration = Duration::from_millis(250);
 const START_ATTEMPTS: u32 = 120;
+/// How often the owner's window is checked for being closed.
+const WINDOW_CHECK: Duration = Duration::from_secs(2);
 /// How long a browser asked to close has before it is stopped.
 const CLOSE_ATTEMPTS: u32 = 20;
 /// The file a browser started on port 0 writes in its profile: the port,
@@ -149,7 +151,9 @@ impl BrowserSession {
         if let Some(headless) = running.take() {
             self.close(headless);
         }
-        *running = Some(self.launch(true, url)?);
+        let window = self.launch(true, url)?;
+        close_once_the_window_closes(window.endpoint.clone(), window.browser.clone());
+        *running = Some(window);
         Ok(())
     }
 
@@ -316,6 +320,45 @@ fn forget_closed(running: &mut Option<Running>) {
     {
         *running = None;
     }
+}
+
+/// A browser started for its debugger keeps running when the owner closes
+/// its last window. This closes it once no page is left, so it does not
+/// stay open in the background: it ends with the browser.
+fn close_once_the_window_closes(endpoint: String, browser: String) {
+    std::thread::spawn(move || {
+        let mut seen_a_page = false;
+        loop {
+            std::thread::sleep(WINDOW_CHECK);
+            let Some(pages) = pages(&endpoint) else {
+                return;
+            };
+            if pages > 0 {
+                seen_a_page = true;
+            } else if seen_a_page {
+                if let Ok(mut browser) = Tab::connect(&browser) {
+                    let _ = browser.send("Browser.close", json!({}));
+                }
+                return;
+            }
+        }
+    });
+}
+
+/// How many pages the browser has open; `None` once it stops answering.
+fn pages(endpoint: &str) -> Option<usize> {
+    let mut response = http_agent(endpoint, "Mascate", COMMAND_WAIT)
+        .get(format!("{endpoint}/json/list"))
+        .call()
+        .ok()?;
+    let targets: Vec<Value> =
+        serde_json::from_str(&response.body_mut().read_to_string().ok()?).ok()?;
+    Some(
+        targets
+            .iter()
+            .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+            .count(),
+    )
 }
 
 /// The port and the browser's WebSocket path, once the browser wrote both.
