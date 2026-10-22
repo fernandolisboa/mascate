@@ -823,7 +823,9 @@ impl Render for AffiliateLinksSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "Cole o link de afiliado de um produto e escolha o canal: o app acrescenta a \
                  marcação do canal, que volta em cada venda e liga a comissão a ele. Na Shopee, \
-                 a própria Shopee devolve o link curto já marcado.",
+                 a própria Shopee devolve o link curto já marcado. \"Encurtar\" cria um link curto \
+                 no seu domínio do Short.io, que conta os cliques; os termos da Amazon, da Shopee \
+                 e do Mercado Livre proíbem encurtar.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
             .children(
