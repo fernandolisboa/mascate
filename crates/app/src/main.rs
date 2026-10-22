@@ -4,6 +4,7 @@
 mod ads;
 mod affiliate;
 mod affiliate_links;
+mod affiliate_panels;
 mod amazon;
 mod amazon_import;
 mod appearance;
@@ -90,17 +91,18 @@ use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
     HOTMART_LINKS, Hotmart, Instagram, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre,
-    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, ShortIo, Telegram,
+    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, ShortIo, Telegram, installed_browser,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
-    Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
-    secret_store_for, system_user,
+    Build, Finish, SystemSecretStore, default_database_path, process_environment,
+    run_installer_after_exit, secret_store_for, system_user,
 };
 
 use crate::ads::AppProductAds;
 use crate::affiliate::{AppAffiliate, CommissionSources};
 use crate::affiliate_links::LinkTaggers;
+use crate::affiliate_panels::{AppAffiliatePanels, PanelSite, Panels};
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -262,6 +264,19 @@ fn main() {
         engine: Arc::new(Crawler::new(&user_agent, Arc::new(SystemClock))),
         sites: CrawledSite::all(Build::CURRENT, &process_environment()),
     };
+    // The browser opens nothing until a panel whose flag is on reads, on a
+    // profile beside the database.
+    let affiliate_panels = default_database_path()
+        .and_then(|database| database.parent().map(std::path::Path::to_path_buf))
+        .map(|data| {
+            AppAffiliatePanels(Arc::new(Panels {
+                browser: Arc::new(mascate_integrations::BrowserSession::new(
+                    installed_browser(&*process_environment()),
+                    affiliate_panels::profile_folder(data),
+                )),
+                sites: PanelSite::all(Build::CURRENT, &process_environment()),
+            }))
+        });
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())
         .into();
@@ -418,6 +433,9 @@ fn main() {
                 cx.set_global(AppSalesEvents(started.sales_events.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
                 cx.set_global(crawlers);
+                if let Some(affiliate_panels) = affiliate_panels {
+                    cx.set_global(affiliate_panels);
+                }
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));
                 cx.set_global(AppPricing(started.pricing.clone()));

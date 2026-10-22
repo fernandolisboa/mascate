@@ -35,8 +35,10 @@ use mascate_affiliate::{
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 use mascate_marketing::PromotionChannel;
+use mascate_platform::Flags;
 
 use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection};
+use crate::affiliate_panels::{self, AffiliatePanelsSection, PanelRead, Panels};
 use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{NO_DATABASE, day, day_and_time};
@@ -50,6 +52,7 @@ use crate::payouts::{PayoutsChanged, PayoutsSection};
 use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSection};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::PromotionRulesSection;
+use crate::restricted::AppFlags;
 use crate::sales::day_start;
 use crate::short_io;
 use crate::span::{SpanChanged, SpanPicker};
@@ -148,6 +151,8 @@ pub fn sync_now(cx: &mut App) -> Option<Task<SyncRound>> {
         return None;
     }
     let sources = sources(cx);
+    let panels = affiliate_panels::panels(cx);
+    let flags = cx.try_global::<AppFlags>().map(|app| app.flags.clone());
     let connections = cx.global::<AppConnections>().0.clone();
     let shortener = short_io::adapter(cx)
         .filter(|_| connections.state(Connection::ShortIo) == ConnectionState::Connected);
@@ -165,6 +170,9 @@ pub fn sync_now(cx: &mut App) -> Option<Task<SyncRound>> {
             };
             outcomes.push(SyncOutcome { platform, result });
         }
+        if let (Some(panels), Some(flags)) = (panels, flags) {
+            outcomes.extend(panel_outcomes(&affiliate, &panels, &flags).await);
+        }
         let clicks = match shortener {
             Some(shortener) => match affiliate.read_clicks(shortener.as_ref()).await {
                 Err(AffiliateError::Platform(PlatformError::NotConnected)) => None,
@@ -174,6 +182,37 @@ pub fn sync_now(cx: &mut App) -> Option<Task<SyncRound>> {
         };
         SyncRound { outcomes, clicks }
     }))
+}
+
+/// Each panel that is on and can be read, read; one waiting for the owner
+/// (no browser, a login) is left for its section to show.
+async fn panel_outcomes(affiliate: &Affiliate, panels: &Panels, flags: &Flags) -> Vec<SyncOutcome> {
+    let on = match panels.on(flags).await {
+        Ok(on) => on,
+        Err(error) => {
+            return vec![SyncOutcome {
+                platform: AffiliatePlatform::MercadoLivre,
+                result: Err(format!(
+                    "Não consegui ler as funcionalidades restritas para ler os painéis: {error}"
+                )),
+            }];
+        }
+    };
+    let mut outcomes = Vec::new();
+    for (site, panel) in on {
+        if !panel.state().can_read() {
+            continue;
+        }
+        let result = match affiliate.sync(panel.as_ref()).await {
+            Err(AffiliateError::Platform(PlatformError::NotConnected)) => continue,
+            synced => synced.map_err(|error| affiliate_panels::failure_text(site, &error)),
+        };
+        outcomes.push(SyncOutcome {
+            platform: panel.platform(),
+            result,
+        });
+    }
+    outcomes
 }
 
 /// Tells the screen and the income Reminder that a Sync ran.
@@ -259,7 +298,7 @@ fn synced_text(round: &SyncRound) -> String {
 }
 
 /// "nada novo", "2 novas e 1 mudou de status".
-fn recorded_text(recorded: &Recorded) -> String {
+pub(crate) fn recorded_text(recorded: &Recorded) -> String {
     let added = match recorded.added {
         0 => None,
         1 => Some("1 nova".to_owned()),
@@ -389,6 +428,7 @@ pub struct AffiliateScreen {
     links: Entity<ProductLinksSection>,
     pub(crate) affiliate_links: Entity<AffiliateLinksSection>,
     rules: Entity<PromotionRulesSection>,
+    panels: Entity<AffiliatePanelsSection>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -403,6 +443,7 @@ impl AffiliateScreen {
         let links = cx.new(|cx| ProductLinksSection::new(window, cx));
         let affiliate_links = cx.new(|cx| AffiliateLinksSection::new(window, cx));
         let rules = cx.new(|cx| PromotionRulesSection::new(window, cx));
+        let panels = cx.new(|_| AffiliatePanelsSection::default());
         let subscriptions = vec![
             // A Sync in the background brings Commissions this screen has not read.
             cx.observe_global_in::<CommissionSyncs>(window, Self::refresh),
@@ -421,6 +462,10 @@ impl AffiliateScreen {
             ),
             cx.subscribe_in(&span, window, |this, _, _: &SpanChanged, window, cx| {
                 this.refresh(window, cx)
+            }),
+            cx.subscribe_in(&panels, window, |this, _, _: &PanelRead, window, cx| {
+                cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+                this.read_commissions(window, cx)
             }),
             cx.subscribe_in(
                 &import,
@@ -477,6 +522,7 @@ impl AffiliateScreen {
             links,
             affiliate_links,
             rules,
+            panels,
             _subscriptions: subscriptions,
         };
         screen.refresh(window, cx);
@@ -494,6 +540,8 @@ impl AffiliateScreen {
         self.affiliate_links
             .update(cx, |links, cx| links.refresh(window, cx));
         self.rules.update(cx, |rules, cx| rules.refresh(window, cx));
+        self.panels
+            .update(cx, |panels, cx| panels.refresh(window, cx));
     }
 
     fn read_commissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -518,10 +566,12 @@ impl AffiliateScreen {
         };
         let channels = promotion_channels(cx);
         let sold = self.span.read(cx).during();
-        let platforms: Vec<AffiliatePlatform> = sources(cx)
+        let mut platforms: Vec<AffiliatePlatform> = sources(cx)
             .iter()
             .map(|(_, source)| source.platform())
             .collect();
+        let panels = affiliate_panels::panels(cx);
+        let flags = cx.try_global::<AppFlags>().map(|app| app.flags.clone());
         self.reads += 1;
         let read = self.reads;
         self.busy = true;
@@ -534,6 +584,13 @@ impl AffiliateScreen {
                         sold: sold.clone(),
                     })
                     .await?;
+                if let (Some(panels), Some(flags)) = (panels, flags) {
+                    // A panel's flag that cannot be read leaves it out of
+                    // the line; its section says why.
+                    for (_, panel) in panels.on(&flags).await.unwrap_or_default() {
+                        platforms.push(panel.platform());
+                    }
+                }
                 let mut synced = Vec::new();
                 for platform in platforms {
                     synced.push((platform, affiliate.last_sync(platform).await?));
@@ -1322,6 +1379,7 @@ impl Render for AffiliateScreen {
             .content
             .push(self.affiliate_links.clone().into_any_element());
         parts.content.push(self.rules.clone().into_any_element());
+        parts.content.push(self.panels.clone().into_any_element());
         parts.content.push(self.import.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());
