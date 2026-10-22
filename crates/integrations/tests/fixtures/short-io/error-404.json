@@ -1,0 +1,6 @@
+{
+  "code": "NOT_FOUND",
+  "message": "Link not found",
+  "success": false,
+  "statusCode": 404
+}

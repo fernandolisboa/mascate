@@ -144,6 +144,10 @@ pub struct Commission {
     /// marking match the tracking (#101). Read on each query, so a sale
     /// recorded before its link was created joins the channel once it is.
     pub channel: Option<RecordId>,
+    /// The live Affiliate Link of its Program that carries the tracking
+    /// (#159): the one of the same product, or the only one with that
+    /// marking. Read on each query, like the channel.
+    pub link: Option<RecordId>,
 }
 
 /// A Conversion as a Platform last reported it.
@@ -906,7 +910,15 @@ pub(crate) const COMMISSION_QUERY: &str =
          (SELECT l.channel_id FROM affiliate_links l
           JOIN affiliate_programs q ON q.id = l.program_id
           WHERE q.platform = v.platform AND l.tag = lower(trim(v.tracking))
-          LIMIT 1)
+          LIMIT 1),
+         coalesce(
+             (SELECT l.id FROM affiliate_links l
+              WHERE l.program_id = v.program_id AND l.tag = lower(trim(v.tracking))
+                  AND lower(trim(l.product)) = lower(trim(v.product)) AND l.deleted_at IS NULL
+              LIMIT 1),
+             (SELECT CASE WHEN count(*) = 1 THEN min(l.id) END FROM affiliate_links l
+              WHERE l.program_id = v.program_id AND l.tag = lower(trim(v.tracking))
+                  AND l.deleted_at IS NULL))
      FROM affiliate_commissions c
      JOIN affiliate_conversions v ON v.id = c.conversion_id
      JOIN affiliate_programs p ON p.id = v.program_id
@@ -931,6 +943,7 @@ pub(crate) fn commission_from(row: &libsql::Row) -> Result<Commission, Affiliate
         payout: row.optional_id_at(13)?,
         linked_product: row.optional_id_at(14)?,
         channel: row.optional_id_at(15)?,
+        link: row.optional_id_at(16)?,
     })
 }
 

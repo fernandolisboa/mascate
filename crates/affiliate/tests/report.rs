@@ -390,6 +390,7 @@ fn any_commission() -> impl Strategy<Value = Commission> {
                     payout: None,
                     linked_product: None,
                     channel: channel.map(RecordId::from_u128),
+                    link: None,
                 }
             },
         )

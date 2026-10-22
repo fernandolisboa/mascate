@@ -5,11 +5,15 @@
 //! The Platforms whose terms forbid a shortener refuse it while their
 //! Restricted Feature is off.
 
+use std::ops::RangeInclusive;
+
+use chrono::NaiveDate;
 use libsql::{TransactionBehavior, params};
 use mascate_kernel::{PlatformError, RecordId};
 use mascate_platform::{Flag, FlagKind, Migration, Phase, stored};
 
 use crate::affiliate_links::AffiliateLink;
+use crate::clicks::DayClicks;
 use crate::commissions::{Affiliate, AffiliateError};
 use crate::rules::{Promotion, RuleWarning};
 use crate::source::AffiliatePlatform;
@@ -94,11 +98,20 @@ pub struct Shortened {
     pub key: String,
 }
 
-/// How an external shortener shortens a link on the owner's domain.
+/// How an external shortener shortens a link on the owner's domain and
+/// counts its clicks.
 pub trait LinkShortener: Send + Sync {
     /// The Short Link at `path` that leads to `link`. The same link and
     /// path give back the same Short Link.
     fn shorten(&self, link: &str, path: &str) -> Result<Shortened, PlatformError>;
+
+    /// The clicks on the Short Link the shortener calls `key`, on each of
+    /// `days` of Brasília; `NotFound` when the shortener no longer has it.
+    fn clicks(
+        &self,
+        key: &str,
+        days: RangeInclusive<NaiveDate>,
+    ) -> Result<Vec<DayClicks>, PlatformError>;
 }
 
 /// What shortening a link gave.

@@ -467,9 +467,9 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, LinkShortener, LinkTagger,
-        MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink, Practice,
-        Promotion, PromotionRules, Shortened, Standing, TagRefusal,
+        AffiliatePlatform, CommissionFilter, CommissionStatus, DayClicks, LinkShortener,
+        LinkTagger, MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink,
+        Practice, Promotion, PromotionRules, Shortened, Standing, TagRefusal,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -812,7 +812,21 @@ mod tests {
                 key: "lnk_exemplo".into(),
             })
         }
+
+        /// Three clicks on the last day asked.
+        fn clicks(
+            &self,
+            _: &str,
+            days: std::ops::RangeInclusive<chrono::NaiveDate>,
+        ) -> Result<Vec<DayClicks>, PlatformError> {
+            Ok(vec![DayClicks {
+                day: *days.end(),
+                clicks: SAMPLE_CLICKS,
+            }])
+        }
     }
+
+    const SAMPLE_CLICKS: u64 = 3;
 
     const SAMPLE_POST_TEMPLATE: &str = "{produto} por {preco}\n{link}";
 
@@ -1076,6 +1090,7 @@ mod tests {
                 .await
                 .unwrap();
             affiliate.shorten(link.id, &SampleShortener).await.unwrap();
+            affiliate.read_clicks(&SampleShortener).await.unwrap();
             let posts = OfferPosts::new(database.clone(), clock.clone(), ids.clone());
             posts
                 .set_template(channel.id, SAMPLE_POST_TEMPLATE)
@@ -1648,6 +1663,17 @@ mod tests {
                     Some(SAMPLE_SHORT_LINK),
                     "{name}"
                 );
+                // Clicks arrived after 0.4.0 too.
+                affiliate.read_clicks(&SampleShortener).await.unwrap();
+                let clicks = affiliate
+                    .link_clicks(
+                        chrono::DateTime::<chrono::Utc>::MIN_UTC
+                            ..chrono::DateTime::<chrono::Utc>::MAX_UTC,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(clicks.len(), 1, "{name}");
+                assert_eq!(clicks[0].clicks, SAMPLE_CLICKS, "{name}");
                 // Offer Posts arrived after 0.2.0 too.
                 let posts = OfferPosts::new(
                     database.clone(),

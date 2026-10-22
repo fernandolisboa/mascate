@@ -4,15 +4,16 @@
 //! while their Restricted Feature is off, and the shortener's failures
 //! keeping nothing.
 
+use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
-use chrono::{TimeDelta, TimeZone, Utc};
+use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_affiliate::{
     AMAZON_SHORT_LINK, Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform,
-    CommissionStatus, FLAGS, LinkShortener, LinkTagger, MERCADO_LIVRE_SHORT_LINK, MIGRATIONS,
-    NewAffiliateLink, Practice, Promotion, PromotionRules, ReportedConversion, ReportedProgram,
-    RuleWarning, SHOPEE_SHORT_LINK, Shortened, Standing, TagRefusal,
+    CommissionStatus, DayClicks, FLAGS, LinkShortener, LinkTagger, MERCADO_LIVRE_SHORT_LINK,
+    MIGRATIONS, NewAffiliateLink, Practice, Promotion, PromotionRules, ReportedConversion,
+    ReportedProgram, RuleWarning, SHOPEE_SHORT_LINK, Shortened, Standing, TagRefusal,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp};
@@ -70,6 +71,14 @@ impl LinkShortener for FakeShortener {
             url: format!("https://mascate.short.gy/{path}"),
             key: format!("lnk_{path}"),
         })
+    }
+
+    fn clicks(
+        &self,
+        _: &str,
+        _: RangeInclusive<NaiveDate>,
+    ) -> Result<Vec<DayClicks>, PlatformError> {
+        Ok(Vec::new())
     }
 }
 
