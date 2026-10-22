@@ -98,8 +98,8 @@ pub struct Clicks {
 pub struct CommissionDashboard {
     commissions: Vec<Commission>,
     clicks: Clicks,
-    /// Each live Affiliate Link's name: its product and Platform.
-    link_names: HashMap<RecordId, String>,
+    /// Each live Affiliate Link's product and Promotion Channel.
+    link_names: HashMap<RecordId, (String, RecordId)>,
     click_grouping: ClickGrouping,
     click_report: ClickReport,
     /// Each live Promotion Channel's name; `None` until the Marketing
@@ -124,12 +124,7 @@ impl CommissionDashboard {
         self.link_names = clicks
             .affiliate_links
             .iter()
-            .map(|link| {
-                (
-                    link.id,
-                    format!("{} · {}", link.product, link.program.platform.name()),
-                )
-            })
+            .map(|link| (link.id, (link.product.clone(), link.channel)))
             .collect();
         self.clicks = clicks;
         self.commissions = commissions;
@@ -165,11 +160,13 @@ impl CommissionDashboard {
         }
     }
 
+    /// "Curso de Fotografia · Ofertas no Telegram": a product has a link per
+    /// channel.
     fn link_name(&self, id: RecordId) -> String {
-        self.link_names
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| "Link apagado".into())
+        match self.link_names.get(&id) {
+            Some((product, channel)) => format!("{product} · {}", self.channel_name(*channel)),
+            None => "Link apagado".into(),
+        }
     }
 
     fn group_clicks(&mut self, grouping: ClickGrouping, cx: &mut Context<Self>) {
