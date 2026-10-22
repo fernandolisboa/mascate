@@ -1,11 +1,13 @@
 //! Integrations: one adapter per Platform, publishing normalized data to the other modules.
 
+mod affiliate_panel;
 mod amazon;
 mod amazon_crawler;
 mod amazon_earnings;
 mod answers;
 mod anthropic;
 mod base64;
+mod browser;
 mod connections;
 mod crawler;
 mod eduzz;
@@ -19,6 +21,7 @@ mod link_tags;
 mod magalu;
 mod magalu_crawler;
 mod mercado_livre;
+mod mercado_livre_affiliate_panel;
 mod mercado_livre_crawler;
 mod monetizze;
 mod pictures;
@@ -32,6 +35,7 @@ mod single_use_tokens;
 mod spreadsheet;
 mod telegram;
 
+pub use affiliate_panel::{AffiliatePanel, PanelState, TABLES_SCRIPT};
 pub use amazon::{API_URL as AMAZON_API_URL, AUTH_URL as AMAZON_AUTH_URL, Amazon};
 pub use amazon_crawler::{AMAZON_CRAWLER, AmazonCrawler, SEARCH_URL as AMAZON_SEARCH_URL};
 pub use amazon_earnings::{
@@ -39,6 +43,7 @@ pub use amazon_earnings::{
     ReportError, SkippedRow, read_earnings_report,
 };
 pub use anthropic::{API_URL as ANTHROPIC_API_URL, Anthropic};
+pub use browser::{BrowserSession, installed_browser};
 pub use connections::{
     Connection, ConnectionError, ConnectionState, Connections, Credential, CredentialEntry,
 };
@@ -63,6 +68,10 @@ pub use magalu::{
 pub use magalu_crawler::{MAGALU_CRAWLER, MagaluCrawler, SEARCH_URL as MAGALU_SEARCH_URL};
 pub use mercado_livre::{
     API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
+};
+pub use mercado_livre_affiliate_panel::{
+    MERCADO_LIVRE_AFFILIATE_PANEL, MercadoLivreAffiliatePanel,
+    PANEL_URL as MERCADO_LIVRE_AFFILIATE_PANEL_URL,
 };
 pub use mercado_livre_crawler::{
     LISTING_URL as MERCADO_LIVRE_LISTING_URL, MERCADO_LIVRE_CRAWLER, MercadoLivreCrawler,
@@ -139,4 +148,5 @@ pub const FLAGS: &[Flag] = &[
     AMAZON_CRAWLER,
     MAGALU_CRAWLER,
     HOTMART_CRAWLER,
+    MERCADO_LIVRE_AFFILIATE_PANEL,
 ];

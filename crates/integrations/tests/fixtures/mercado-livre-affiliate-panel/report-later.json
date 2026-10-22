@@ -1,0 +1,12 @@
+{
+  "url": "https://www.mercadolivre.com.br/afiliados/relatorios",
+  "tables": [
+    {
+      "headers": ["Data da venda", "ID da venda", "Produto", "Valor da venda", "Comissão", "Status", "Etiqueta"],
+      "rows": [
+        ["18/10/2026 14:32", "2000009876543210", "Fone de Ouvido Bluetooth JBL Tune 520BT", "R$ 249,90", "R$ 12,50", "Aprovada", "telegram-ofertas"],
+        ["12/10/2026 09:05", "2000009876500001", "Air Fryer Mondial 4L", "R$ 399,00", "R$ 31,92", "Paga", ""]
+      ]
+    }
+  ]
+}

@@ -50,6 +50,12 @@ const BLOCKING_PATHS: [&str; 6] = [
     "verification",
     "verify",
 ];
+/// Whether `path`, in lower case, leads to a login or to a check of who is
+/// asking.
+pub(crate) fn asks_who_is_there(path: &str) -> bool {
+    BLOCKING_PATHS.iter().any(|word| path.contains(word))
+}
+
 /// Marks of a captcha or a check of who is asking on a page, in lower
 /// case: answered 200, or 503 as Amazon's robot check is.
 const BLOCKING_PAGES: [&str; 8] = [
@@ -356,7 +362,7 @@ impl Crawler {
                     .next()
                     .unwrap_or_default()
                     .to_ascii_lowercase();
-                Ok(if BLOCKING_PATHS.iter().any(|word| path.contains(word)) {
+                Ok(if asks_who_is_there(&path) {
                     Reply::Blocked("mandou para o login ou para uma verificação".into())
                 } else {
                     Reply::Moved(location.to_owned())
