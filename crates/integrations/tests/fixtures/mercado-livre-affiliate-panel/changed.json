@@ -1,0 +1,9 @@
+{
+  "url": "https://www.mercadolivre.com.br/afiliados/relatorios",
+  "tables": [
+    {
+      "headers": ["Quando", "Código", "O que", "Quanto"],
+      "rows": [["18/10/2026", "2000009876543210", "Fone de Ouvido", "R$ 12,50"]]
+    }
+  ]
+}

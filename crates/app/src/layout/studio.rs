@@ -1,10 +1,12 @@
-//! Studio (#41): denser, after pro tools. Top tabs, a compact header and a
-//! status bar.
+//! Studio (#41): denser, after pro tools. Top tabs, each area folded into a
+//! menu, a compact header and a status bar.
 
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::{Icon, Side, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, div, px};
 
@@ -53,17 +55,82 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
             .child(place.name())
             .on_click(move |_, window, cx| pick(place, window, cx))
     };
+    // Sixteen places as tabs need more than a window's width, so each area
+    // folds into a menu of its places; the one holding the current place
+    // shows as picked. Only the unnamed first area stays as tabs.
+    let area = |ix: usize, name: &'static str, places: &'static [Place]| {
+        let pick = Rc::clone(&nav.on_pick);
+        let current = nav.current;
+        let menu = Button::new(("area", ix))
+            .ghost()
+            .small()
+            .label(name)
+            .dropdown_caret(true)
+            .dropdown_menu(move |menu, _, _| {
+                // On the left each place keeps its icon; the check goes right.
+                places
+                    .iter()
+                    .fold(menu.check_side(Side::Right), |menu, &place| {
+                        let pick = Rc::clone(&pick);
+                        menu.item(
+                            PopupMenuItem::new(place.name())
+                                .icon(Icon::new(place.icon()))
+                                .checked(place == current)
+                                .on_click(move |_, window, cx| pick(place, window, cx)),
+                        )
+                    })
+            });
+        // Framed as a picked tab while it holds the current place.
+        div()
+            .rounded(t.radius)
+            .border(t.border_width)
+            .map(|frame| {
+                if places.contains(&current) {
+                    frame.bg(t.raised).border_color(t.border_strong)
+                } else {
+                    frame.border_color(gpui_kit::transparent_black())
+                }
+            })
+            .child(menu)
+            .into_any_element()
+    };
+    let entries = Place::GROUPS
+        .iter()
+        .enumerate()
+        .flat_map(|(ix, group)| match group.name {
+            Some(name) => vec![area(ix, name, group.places)],
+            None => group
+                .places
+                .iter()
+                .map(|place| tab(*place).into_any_element())
+                .collect(),
+        });
     h_flex()
         .flex_none()
-        .h(px(42.))
+        .w_full()
+        .min_h(px(42.))
         .px_3()
+        .py(px(6.))
         .gap_1()
+        .items_start()
         .bg(t.surface)
         .border_b(t.border_width)
         .border_color(t.border)
-        .children(Place::MAIN.map(tab))
-        .child(div().flex_1())
-        .children(Place::PINNED.map(tab))
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .flex_wrap()
+                .gap_1()
+                .items_center()
+                .children(entries),
+        )
+        .child(
+            h_flex()
+                .flex_none()
+                .gap_1()
+                .children(Place::PINNED.map(tab)),
+        )
         .into_any_element()
 }
 

@@ -146,6 +146,10 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 100. Como Fernando, quero um encurtador próprio com contagem de cliques, desligado para links Amazon e Shopee, para medir cliques onde é permitido.
 101. Como Fernando, quero importar outro banco do Mascate com Merge Import e ver o relatório de conflitos, para juntar dados de duas máquinas.
 102. Como Fernando, quero escolher nas configurações um modo de sincronização entre máquinas (réplica gerenciada, local-first com relay, backend próprio), para usar em mais de um computador e, no futuro, consultar pelo celular.
+103. Como Fernando, quero que o custo do Product Ads e do Shopee Ads entre na margem de cada venda, para saber se o anúncio pago se paga em todo canal.
+104. Como Fernando, quero criar, pausar e ajustar campanhas do Product Ads no app, com o ROAS alvo sugerido pelo ROAS de equilíbrio e um teto de orçamento, para gastar com anúncio sem sair da conta da margem.
+105. Como Fernando, quero pôr, mover e pausar anúncios nas campanhas e ver a sugestão de pausar o que dá prejuízo, para cortar o gasto que não volta.
+106. Como Fernando, quero que a IA escreva a chamada dos Offer Posts, com preço, link e #publi ainda vindos do app, para postar com um texto melhor sem risco de errar o preço.
 
 ## Implementation Decisions
 
@@ -219,7 +223,7 @@ Prior art: o repositório ainda não tem código; esses padrões serão estabele
 - Multiusuário e multi-tenant.
 - Emissão de NF-e, Mercado Envios Flex e Full (exigem NF-e) enquanto não houver CNPJ; ficam como Reminder.
 - Compra automática na Shopee ou no ML como comprador (não existe API); a Purchase Order é registrada à mão.
-- Gestão de campanhas de Google Ads, Meta Ads e Product Ads (só leitura de custo), blog/SEO, e-mail marketing, TikTok por API, WhatsApp Cloud API, geração de vídeo, CRM e remarketing.
+- Gestão de campanhas de Google Ads e Meta Ads (o Product Ads é gerido pelo app desde a fase 3, ADR 0036), blog/SEO, e-mail marketing, TikTok por API, WhatsApp Cloud API, geração de vídeo, CRM e remarketing.
 - Autocompra pelo próprio link de afiliado (não é construída nem atrás de flag).
 
 ## Further Notes

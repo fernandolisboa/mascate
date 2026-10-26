@@ -1,5 +1,5 @@
 //! Finance as the screens share it (#28): the sales volume limit, the
-//! Reminder it raises and the setting in Configurações › Finanças. The
+//! Reminder it raises and the setting in Configurações › Vendas › Finanças. The
 //! sales come from Commerce and the rule from Finance (ADR 0026).
 
 use std::sync::Arc;
@@ -91,7 +91,7 @@ pub(crate) async fn raised_reminders(sources: Option<VolumeSources>) -> Vec<&'st
     }
 }
 
-/// Configurações › Finanças: the sales limit for the formalization
+/// Configurações › Vendas › Finanças: the sales limit for the formalization
 /// Reminder.
 pub struct FinanceSection {
     limit: Entity<InputState>,

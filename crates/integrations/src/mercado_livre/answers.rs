@@ -788,15 +788,34 @@ pub(super) struct AdsSearchAnswer<T> {
     pub paging: Option<Paging>,
 }
 
-/// A Product Ads campaign.
+/// A Product Ads campaign, as the search lists it and a create or change
+/// answers it.
 #[derive(Deserialize)]
 pub(super) struct AdCampaignAnswer {
     pub id: Number,
     pub name: Option<String>,
     pub status: Option<String>,
+    pub budget: Option<Number>,
+    pub currency_id: Option<String>,
+    pub strategy: Option<String>,
+    pub roas_target: Option<Number>,
 }
 
-/// An ad, with its metrics in the dates asked.
+/// An Ad Group, with its metrics in the dates asked: a listing (`ITEM`), a
+/// family of User Product variations (`FAMILY`) or a catalog product
+/// (`CATALOG`), whose id is `ad_group_external_id`.
+#[derive(Deserialize)]
+pub(super) struct AdGroupAnswer {
+    pub id: Number,
+    pub ad_group_type: Option<String>,
+    pub ad_group_external_id: Option<String>,
+    pub campaign_id: Option<Number>,
+    pub status: Option<String>,
+    pub title: Option<String>,
+    pub metrics: Option<AdMetricsAnswer>,
+}
+
+/// An ad of an Ad Group, with its metrics in the dates asked.
 #[derive(Deserialize)]
 pub(super) struct AdAnswer {
     pub item_id: String,

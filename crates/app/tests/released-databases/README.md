@@ -12,3 +12,6 @@ atual, com Backup antes, e confere que o que o dono salvou continua lá.
   Offer Posts na fila do Telegram (pausada) e o calendário de Sales Events.
 - `0.4.0.db`: o Merge Import, com uma mesclagem já vista de uma cópia do outro computador
   que trouxe um Fornecedor e perdeu o conflito da alíquota de imposto.
+- `0.5.0.db`: os canais de venda novos e a fase 3, com o Produto anunciado também na Shopee
+  com o preço baixado pelo dono, um canal do Pinterest com a pasta escolhida e o link curto
+  do Affiliate Link com os seus cliques.

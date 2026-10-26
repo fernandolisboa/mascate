@@ -113,7 +113,28 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         )
         .platform_ids(&["channel_item_id", "channel_campaign_id"])
         .label(&["channel_item_id", "day"]),
-        TableMerge::new("marketing_ads_syncs", "Sync de Product Ads", SingleRow),
+        TableMerge::new(
+            "marketing_ad_groups",
+            "Ad Group de Product Ads",
+            Keys(&[UniqueKey::live(&[
+                Column("sales_channel"),
+                Column("channel_ad_group_id"),
+                Column("channel_item_id"),
+            ])]),
+        )
+        .platform_ids(&[
+            "channel_ad_group_id",
+            "channel_item_id",
+            "channel_campaign_id",
+        ])
+        .label(&["channel_ad_group_id", "channel_item_id"]),
+        TableMerge::new(
+            "marketing_ads_syncs",
+            "Sync de Product Ads",
+            Keys(&[UniqueKey::live(&[Column("sales_channel")])]),
+        )
+        .label(&["sales_channel"]),
+        TableMerge::new("marketing_ads_settings", "Opções de Product Ads", SingleRow),
         TableMerge::new("marketing_copy_settings", "Opções de texto", SingleRow),
         TableMerge::new(
             "marketing_promotion_channels",

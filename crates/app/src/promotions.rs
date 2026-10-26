@@ -1829,8 +1829,8 @@ fn minimum_rule(minimum: Percentage, channel: SalesChannelKind) -> String {
     };
     format!(
         "Margem mínima: {}. Nenhuma promoção passa se uma unidade vendida no menor \
-         preço{after_coupon} ficar com margem abaixo dela. Mude em Configurações › Preços e \
-         margens.",
+         preço{after_coupon} ficar com margem abaixo dela. Mude em Configurações › Vendas › \
+         Preços e margens.",
         minimum.to_pt_br()
     )
 }

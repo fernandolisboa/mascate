@@ -3,9 +3,9 @@
 //! through the integrations module; this screen never keeps them. Each
 //! Connection also opens its own guide (#65): how to get the keys on the
 //! Platform, step by step, ending in the same fields. The Shopee seller
-//! (#129) and Magalu (#133) Connections add the login on the Platform's
-//! authorization page, whose code the owner brings back by pasting the
-//! address the browser landed on.
+//! (#129), Magalu (#133) and Pinterest (#155) Connections add the login on
+//! the Platform's authorization page, whose code the owner brings back by
+//! pasting the address the browser landed on.
 
 use std::sync::Arc;
 
@@ -16,14 +16,16 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
 use mascate_integrations::{
-    Connection, ConnectionState, Connections, Credential, ShopAuthorization, StoreAuthorization,
+    Connection, ConnectionState, Connections, Credential, Instagram, PinterestAuthorization,
+    ShopAuthorization, StoreAuthorization,
 };
+use mascate_kernel::Timestamp;
 use mascate_platform::Build;
 
 use crate::appearance::look;
 use crate::credential_guides::guide;
 use crate::kit;
-use crate::{magalu, shopee_seller};
+use crate::{instagram, magalu, pinterest, shopee_seller};
 
 /// Where a Platform's authorization page sends the browser back. The app has
 /// no address of its own yet (#10), so the owner copies the one the browser
@@ -49,6 +51,9 @@ pub(crate) fn connection_name(connection: Connection) -> &'static str {
         Connection::Kiwify => "Kiwify",
         Connection::Eduzz => "Eduzz",
         Connection::Telegram => "Telegram",
+        Connection::Pinterest => "Pinterest",
+        Connection::Instagram => "Instagram",
+        Connection::ShortIo => "Short.io",
     }
 }
 
@@ -70,7 +75,9 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
             "Open API de afiliados: busca de ofertas. Sem credenciais, fica aguardando \
              aprovação e a descoberta usa o cadastro manual de ofertas."
         }
-        Connection::Anthropic => "Títulos e descrições de anúncio gerados como rascunho.",
+        Connection::Anthropic => {
+            "Títulos e descrições de anúncio e chamadas de post gerados como rascunho."
+        }
         Connection::Hotmart | Connection::Monetizze => {
             "Comissões de afiliado: vendas, status, estornos e cancelamentos, lidos a cada hora."
         }
@@ -85,6 +92,20 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
         Connection::Telegram => {
             "Bot que publica os posts de oferta nos seus canais do Telegram, sempre depois da \
              sua confirmação."
+        }
+        Connection::Pinterest => {
+            "Sua conta comercial do Pinterest: os posts de oferta viram Pins numa pasta sua, \
+             sempre depois da sua confirmação. Com o acesso Trial do app, os Pins aparecem só \
+             para você, até o Pinterest aprovar o acesso Standard."
+        }
+        Connection::Instagram => {
+            "Sua conta profissional do Instagram: os posts de oferta saem nela, com a foto da \
+             plataforma, sempre depois da sua confirmação."
+        }
+        Connection::ShortIo => {
+            "Links curtos dos seus links de afiliado, no seu domínio do Short.io, que conta os \
+             cliques de cada um. Nunca para links da Amazon, da Shopee e do Mercado Livre, cujos \
+             termos proíbem encurtar, salvo se você ligar a funcionalidade restrita."
         }
     }
 }
@@ -114,6 +135,11 @@ fn credential_label(credential: Credential) -> &'static str {
         "SHOPEE_PARTNER_KEY" => "Partner Key",
         "MAGALU_CLIENT_ID" => "Client ID",
         "MAGALU_CLIENT_SECRET" => "Client Secret",
+        "PINTEREST_APP_ID" => "App ID",
+        "PINTEREST_APP_SECRET" => "App secret",
+        "INSTAGRAM_ACCESS_TOKEN" => "Token de acesso",
+        "SHORT_IO_API_KEY" => "Chave secreta da API",
+        "SHORT_IO_DOMAIN" => "Domínio",
         other => other,
     }
 }
@@ -132,6 +158,8 @@ fn is_identifier(credential: Credential) -> bool {
             | "AMAZON_SELLER_ID"
             | "SHOPEE_PARTNER_ID"
             | "MAGALU_CLIENT_ID"
+            | "PINTEREST_APP_ID"
+            | "SHORT_IO_DOMAIN"
     )
 }
 
@@ -140,6 +168,7 @@ fn is_identifier(credential: Credential) -> bool {
 enum BrowserLogin {
     Shopee,
     Magalu,
+    Pinterest,
 }
 
 impl BrowserLogin {
@@ -147,14 +176,17 @@ impl BrowserLogin {
         match connection {
             Connection::ShopeeSeller => Some(Self::Shopee),
             Connection::Magalu => Some(Self::Magalu),
+            Connection::Pinterest => Some(Self::Pinterest),
             _ => None,
         }
     }
 
-    fn platform(self) -> &'static str {
+    /// "Entrar na Shopee", "Entrar no Pinterest".
+    fn button(self) -> &'static str {
         match self {
-            Self::Shopee => "Shopee",
-            Self::Magalu => "Magalu",
+            Self::Shopee => "Entrar na Shopee",
+            Self::Magalu => "Entrar na Magalu",
+            Self::Pinterest => "Entrar no Pinterest",
         }
     }
 
@@ -162,6 +194,7 @@ impl BrowserLogin {
         match self {
             Self::Shopee => "https://github.com/fernandolisboa?code=…&shop_id=…",
             Self::Magalu => "https://github.com/fernandolisboa?code=…",
+            Self::Pinterest => "http://localhost/?code=…",
         }
     }
 
@@ -188,6 +221,16 @@ impl BrowserLogin {
                  github.com/fernandolisboa com um código no endereço; copie o endereço inteiro \
                  da barra do navegador e cole abaixo."
             }
+            (Self::Pinterest, true) => {
+                "Conta conectada. Para trocar de conta ou autorizar de novo, repita: Entrar no \
+                 Pinterest e colar o endereço."
+            }
+            (Self::Pinterest, false) => {
+                "Chaves salvas. Falta entrar na conta: clique em Entrar no Pinterest e autorize o \
+                 app. O navegador para em http://localhost/ com um código no endereço, numa \
+                 página que não abre; copie o endereço inteiro da barra do navegador e cole \
+                 abaixo."
+            }
         }
     }
 
@@ -202,6 +245,10 @@ impl BrowserLogin {
                 "Esse endereço não tem o code que a Magalu manda. Depois de autorizar, copie o \
                  endereço inteiro da barra do navegador e cole aqui."
             }
+            Self::Pinterest => {
+                "Esse endereço não tem o code que o Pinterest manda. Depois de autorizar, copie \
+                 o endereço inteiro da barra do navegador, http://localhost/?code=…, e cole aqui."
+            }
         }
     }
 }
@@ -213,15 +260,26 @@ struct Snapshot {
     state: ConnectionState,
     /// Per pasted credential, in order: whether it is stored.
     stored: Vec<bool>,
+    /// Until when a pasted token lasts, on a Connection that knows it.
+    valid_until: Option<Timestamp>,
 }
 
-fn snapshot(connections: &Connections, connection: Connection) -> Snapshot {
+fn snapshot(
+    connections: &Connections,
+    connection: Connection,
+    instagram: Option<&Instagram>,
+) -> Snapshot {
+    let valid_until = match (connection, instagram) {
+        (Connection::Instagram, Some(instagram)) => instagram.valid_until().ok().flatten(),
+        _ => None,
+    };
     Snapshot {
         state: connections.state(connection),
         stored: connection
             .pasted_credentials()
             .map(|credential| connections.has_credential(credential.name).unwrap_or(false))
             .collect(),
+        valid_until,
     }
 }
 
@@ -242,6 +300,8 @@ struct Card {
 
 pub struct ConnectionsSection {
     connections: Arc<Connections>,
+    /// Keeps the term of the token the owner pastes.
+    instagram: Option<Arc<Instagram>>,
     cards: Vec<Card>,
     /// The card whose guide is open in place of the list.
     guide: Option<usize>,
@@ -277,6 +337,7 @@ impl ConnectionsSection {
             .collect();
         let mut section = Self {
             connections,
+            instagram: instagram::adapter(cx),
             cards,
             guide: None,
         };
@@ -344,6 +405,7 @@ impl ConnectionsSection {
             cx.notify();
             return;
         }
+        let instagram = self.instagram.clone();
         self.run(index, window, cx, move |connections, connection| {
             let values: Vec<(&str, &str)> = values
                 .iter()
@@ -351,7 +413,15 @@ impl ConnectionsSection {
                 .collect();
             connections
                 .save(connection, &values)
-                .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}"))
+                .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}"))?;
+            match (connection, instagram) {
+                // The dashboard's token lasts 60 days from when it was made,
+                // which is about when the owner pastes it.
+                (Connection::Instagram, Some(instagram)) => instagram
+                    .token_pasted()
+                    .map_err(|error| format!("Não consegui salvar no cofre do sistema: {error}")),
+                _ => Ok(()),
+            }
         });
     }
 
@@ -380,6 +450,16 @@ impl ConnectionsSection {
                     adapter
                         .authorization_url(LOGIN_REDIRECT)
                         .map_err(|error| magalu::login_failure(&error))
+                })
+            }
+            BrowserLogin::Pinterest => {
+                let Some(adapter) = pinterest::adapter(cx) else {
+                    return;
+                };
+                Box::new(move || {
+                    adapter
+                        .authorization_url()
+                        .map_err(|error| pinterest::login_failure(&error))
                 })
             }
         };
@@ -437,8 +517,25 @@ impl ConnectionsSection {
                         .map_err(|error| magalu::login_failure(&error))
                 })
             }
+            BrowserLogin::Pinterest => {
+                let (Some(authorization), Some(adapter)) = (
+                    PinterestAuthorization::from_landing(&address),
+                    pinterest::adapter(cx),
+                ) else {
+                    return self.malformed(index, login, cx);
+                };
+                Box::new(move || {
+                    adapter
+                        .authorize(&authorization)
+                        .map_err(|error| pinterest::login_failure(&error))
+                })
+            }
         };
-        self.run(index, window, cx, move |_, _| authorize());
+        self.run(index, window, cx, move |connections, connection| {
+            authorize()?;
+            connections.logged_in(connection);
+            Ok(())
+        });
     }
 
     fn malformed(&mut self, index: usize, login: BrowserLogin, cx: &mut Context<Self>) {
@@ -471,9 +568,13 @@ impl ConnectionsSection {
         card.confirming_removal = false;
         card.error = None;
         let connections = self.connections.clone();
+        let instagram = self.instagram.clone();
         let writing = cx.background_executor().spawn(async move {
             let outcome = write(&connections, connection);
-            (outcome, snapshot(&connections, connection))
+            (
+                outcome,
+                snapshot(&connections, connection, instagram.as_deref()),
+            )
         });
         cx.spawn_in(window, async move |this, cx| {
             let (outcome, snapshot) = writing.await;
@@ -660,7 +761,7 @@ impl ConnectionsSection {
                         .gap_2()
                         .child(
                             Button::new(("browser-login", index))
-                                .label(format!("Entrar na {}", login.platform()))
+                                .label(login.button())
                                 .icon(IconName::ExternalLink)
                                 .outline()
                                 .small()
@@ -729,6 +830,15 @@ impl ConnectionsSection {
                 ))
             })
             .children(self.browser_login(index, cx))
+            .children(card.snapshot.as_ref().and_then(|snapshot| {
+                let connected = snapshot.state == ConnectionState::Connected;
+                snapshot.valid_until.filter(|_| connected).map(|until| {
+                    div()
+                        .text_xs()
+                        .text_color(t.text2)
+                        .child(instagram::valid_until_text(until))
+                })
+            }))
             .children(self.problems(index, cx))
             .child(self.actions(index, cx))
             .into_any_element()

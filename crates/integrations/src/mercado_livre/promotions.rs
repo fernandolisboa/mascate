@@ -12,11 +12,11 @@ use mascate_commerce::{
 use mascate_kernel::{Currency, Money, Percentage, PlatformError, channel_day};
 use serde_json::Value;
 
-use super::MercadoLivre;
 use super::answers::{
     ItemPromotionAnswer, SellerPromotionAnswer, SellerPromotionsAnswer, UserAnswer, decimal, time,
 };
 use super::sales_channel::path_id;
+use super::{MercadoLivre, number, text};
 
 const APP_VERSION: (&str, &str) = ("app_version", "v2");
 
@@ -85,15 +85,6 @@ fn promotion_id(id: &str) -> Result<&str, PlatformError> {
     } else {
         Err(PlatformError::NotFound)
     }
-}
-
-/// An amount in reais as JSON, rounded to cents as the channel takes it.
-fn number(money: Money) -> String {
-    money.rounded().amount().to_string()
-}
-
-fn text(value: &str) -> String {
-    Value::String(value.to_owned()).to_string()
 }
 
 fn money(number: &Option<serde_json::Number>) -> Option<Money> {

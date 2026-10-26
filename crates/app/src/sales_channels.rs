@@ -1,7 +1,7 @@
 //! The Sales Channels the owner sells on (ADR 0033), each behind its
 //! Connection with the ports its adapter offers. Each channel's slice adds
 //! its adapter here, as each Platform's does to `CommissionSources`.
-//! Configurações › Vendas sets the order of the channels.
+//! Configurações › Vendas › Canais de venda sets the order of the channels.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use mascate_commerce::{
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
-use mascate_marketing::QualitySource;
+use mascate_marketing::{ChannelAds, QualitySource};
 
 use crate::appearance::look;
 use crate::connections::AppConnections;
@@ -46,6 +46,9 @@ pub struct ChannelPorts {
     pub quality: Option<Arc<dyn QualitySource>>,
     /// The owner's Promotions; absent where the channel offers none.
     pub promotions: Option<Arc<dyn ChannelPromotions>>,
+    /// What the owner's ads cost (#27, #183); absent where the channel
+    /// has no ads API.
+    pub ads: Option<Arc<dyn ChannelAds>>,
 }
 
 /// The port a Sales Channel reprices through (#135).
@@ -329,7 +332,7 @@ impl ChannelFilter {
     }
 }
 
-/// Configurações › Vendas: the order of the Sales Channels, first to last.
+/// Configurações › Vendas › Canais de venda: the order of the Sales Channels, first to last.
 pub struct ChannelRankingSection {
     /// `None` until the first read finishes.
     ranking: Option<Vec<SalesChannelKind>>,

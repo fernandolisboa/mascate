@@ -2,9 +2,11 @@
 //! top, and the margin of one Order Fee by Fee, which Pedidos shows in each
 //! Order too. Fees come from Mercado Livre's billing after each Order Sync;
 //! until it bills an Order, its margin shows as provisional. The rules live
-//! in Commerce (ADR 0020). Product Ads (#27) take their share of each sale
-//! and, while the Reputation unlocks them, show each Product's ROAS against
-//! its break-even (ADR 0025).
+//! in Commerce (ADR 0020). Product Ads (#27) and Shopee Ads (#183) take
+//! their share of each sale on their channel and show each Product's ROAS
+//! against its break-even there (ADR 0025): Mercado Livre's while the
+//! Reputation unlocks them, Shopee's once Shopee lets the shop's ads be
+//! read.
 
 use std::ops::Range;
 
@@ -12,20 +14,20 @@ use chrono::{Datelike, Local, Months, NaiveDate, TimeZone, Utc};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Div, Hsla, SharedString, Subscription, Window, div, px};
+use gpui_kit::{AnyElement, App, Div, Entity, Hsla, SharedString, Subscription, Window, div, px};
 use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesPeriod, SalesSummary};
+use mascate_integrations::ConnectionState;
 use mascate_kernel::{Currency, Margin, Money, SalesChannelKind, Timestamp};
 use mascate_marketing::{AdMetrics, AdsReport, AdsSyncState, ProductRoas, SellerTool};
 
-use crate::ads::{self, AdsSyncs, ReportSources};
+use crate::ad_campaigns::AdCampaignsPanel;
+use crate::ad_groups::AdGroupsPanel;
+use crate::ads::{self, AdsSyncs};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
-use crate::connections::AppConnections;
 use crate::forms::{Outcome, notice};
 use crate::kit;
 use crate::layout;
-use crate::listings::listings;
-use crate::mercado_livre;
 use crate::orders::{self, OrderSyncs, sold_text};
 use crate::parts::ScreenParts;
 use crate::pricing;
@@ -77,10 +79,13 @@ impl Period {
     }
 }
 
-/// What the Product Ads section shows.
+/// What one channel's part of the Product Ads section shows.
 enum AdsView {
     /// The Reputation does not unlock Product Ads, or was never read.
     Locked,
+    /// The channel has no ads account for the owner, or lets no app read
+    /// it, as of the last Sync at that time.
+    NoAccount(Timestamp),
     Reading,
     Read {
         report: AdsReport,
@@ -89,17 +94,25 @@ enum AdsView {
     Failed(String),
 }
 
+/// Whether a channel's ads show, as one read of the screen finds them.
+enum AdsShown {
+    Locked,
+    Synced(Option<AdsSyncState>),
+}
+
 /// What one read of the screen brings.
 struct Snapshot {
     sold: SalesPeriod,
-    ads_unlocked: bool,
-    last_ads_sync: Option<AdsSyncState>,
+    /// Each channel with ads that shows, in the app's order.
+    ads: Vec<(SalesChannelKind, AdsShown)>,
 }
 
 pub struct SalesScreen {
     period: Period,
     sold: SalesPeriod,
-    ads: AdsView,
+    ads: Vec<(SalesChannelKind, AdsView)>,
+    campaigns: Entity<AdCampaignsPanel>,
+    ad_groups: Entity<AdGroupsPanel>,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -107,7 +120,7 @@ pub struct SalesScreen {
 }
 
 impl SalesScreen {
-    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Each Order Sync brings new Orders and, after it, their Fees; each
         // Sync of Product Ads, what the ads cost.
         let subscriptions = vec![
@@ -120,7 +133,9 @@ impl SalesScreen {
                 sales: Vec::new(),
                 unplaced_ads: Vec::new(),
             },
-            ads: AdsView::Locked,
+            ads: Vec::new(),
+            campaigns: cx.new(|cx| AdCampaignsPanel::new(window, cx)),
+            ad_groups: cx.new(|cx| AdGroupsPanel::new(window, cx)),
             reads: 0,
             outcome: None,
             _subscriptions: subscriptions,
@@ -137,6 +152,9 @@ impl SalesScreen {
         };
         let product_ads = ads::product_ads(cx);
         let reputation = reputation(cx);
+        let ad_channels = sales_channels::reach(cx)
+            .only(|channel| channel.ads.is_some())
+            .states();
         let sold = self.period.range(Local::now().date_naive());
         self.reads += 1;
         let read = self.reads;
@@ -146,24 +164,37 @@ impl SalesScreen {
                 .await
                 .map_err(|e| format!("Não consegui ler a alíquota de imposto: {e}"))?;
             let ad_costs = ads::costs(product_ads.as_deref()).await?;
-            let ads_unlocked = match &reputation {
+            let ml_unlocked = match &reputation {
                 Some(reputation) => ads::unlocked(reputation).await? == Some(true),
                 None => false,
             };
-            let last_ads_sync = match &product_ads {
-                Some(product_ads) => product_ads
-                    .last_sync()
-                    .await
-                    .map_err(|e| ads::failure(&e))?,
-                None => None,
-            };
+            let mut shown = Vec::new();
+            for (kind, state) in ad_channels {
+                let last_sync = match &product_ads {
+                    Some(product_ads) => product_ads
+                        .last_sync(kind)
+                        .await
+                        .map_err(|e| ads::channel_failure(kind, &e))?,
+                    None => None,
+                };
+                // Mercado Livre explains its lock; another channel shows
+                // once connected or read.
+                let view = match kind {
+                    SalesChannelKind::MercadoLivre if !ml_unlocked => AdsShown::Locked,
+                    SalesChannelKind::MercadoLivre => AdsShown::Synced(last_sync),
+                    _ if state == ConnectionState::Connected || last_sync.is_some() => {
+                        AdsShown::Synced(last_sync)
+                    }
+                    _ => continue,
+                };
+                shown.push((kind, view));
+            }
             Ok::<_, String>(Snapshot {
                 sold: orders
                     .sales(tax, sold, &ad_costs)
                     .await
                     .map_err(|e| orders::failure(&e))?,
-                ads_unlocked,
-                last_ads_sync,
+                ads: shown,
             })
         });
         cx.spawn(async move |this, cx| {
@@ -176,11 +207,7 @@ impl SalesScreen {
                     Ok(snapshot) => {
                         this.sold = snapshot.sold;
                         this.outcome = None;
-                        if snapshot.ads_unlocked {
-                            this.read_ads(snapshot.last_ads_sync, cx);
-                        } else {
-                            this.ads = AdsView::Locked;
-                        }
+                        this.show_ads(snapshot.ads, cx);
                     }
                     Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
                 }
@@ -190,36 +217,44 @@ impl SalesScreen {
         .detach();
     }
 
-    /// Sums up the period's Product Ads by campaign and by Product, each
-    /// against its break-even on Mercado Livre's sale fees.
-    fn read_ads(&mut self, last_sync: Option<AdsSyncState>, cx: &mut Context<Self>) {
-        let (Some(ads), Some(listings), Some(catalog), Some(pricing), Some(taxes)) = (
-            ads::product_ads(cx),
-            listings(cx),
-            catalog::catalog(cx),
-            pricing::pricing(cx),
-            pricing::taxes(cx),
-        ) else {
+    /// Shows each channel's ads as `shown`, reading the report of those
+    /// with an account; a report already on screen stays until the new
+    /// one arrives.
+    fn show_ads(&mut self, shown: Vec<(SalesChannelKind, AdsShown)>, cx: &mut Context<Self>) {
+        let mut before = std::mem::take(&mut self.ads);
+        for (kind, shown) in shown {
+            let kept = before
+                .iter()
+                .position(|(was, _)| *was == kind)
+                .map(|at| before.remove(at).1);
+            let view = match shown {
+                AdsShown::Locked => AdsView::Locked,
+                AdsShown::Synced(Some(last)) if !last.account => AdsView::NoAccount(last.at),
+                AdsShown::Synced(last_sync) => {
+                    self.read_ads(kind, last_sync, cx);
+                    match kept {
+                        Some(read @ AdsView::Read { .. }) => read,
+                        _ => AdsView::Reading,
+                    }
+                }
+            };
+            self.ads.push((kind, view));
+        }
+    }
+
+    /// Sums up the period's ads on `kind` by campaign and by Product, each
+    /// against its break-even on the channel's sale fees.
+    fn read_ads(
+        &mut self,
+        kind: SalesChannelKind,
+        last_sync: Option<AdsSyncState>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(sources) = ads::report_sources(cx, kind) else {
             return;
-        };
-        let connected = cx
-            .global::<AppConnections>()
-            .0
-            .state(mascate_integrations::Connection::MercadoLivre)
-            == mascate_integrations::ConnectionState::Connected;
-        let sources = ReportSources {
-            ads,
-            listings,
-            catalog,
-            pricing,
-            taxes,
-            channel: mercado_livre::adapter(cx).filter(|_| connected),
         };
         let during = self.period.range(Local::now().date_naive());
         let read = self.reads;
-        if !matches!(self.ads, AdsView::Read { .. }) {
-            self.ads = AdsView::Reading;
-        }
         let working = cx
             .background_executor()
             .spawn(async move { ads::report(&sources, during).await });
@@ -229,7 +264,20 @@ impl SalesScreen {
                 if this.reads != read {
                     return;
                 }
-                this.ads = match report {
+                if let (SalesChannelKind::MercadoLivre, Ok(report)) = (kind, &report) {
+                    let suggested = report
+                        .products
+                        .iter()
+                        .filter(|product| product.suggests_pausing())
+                        .flat_map(|product| product.listings.iter().cloned())
+                        .collect();
+                    this.ad_groups
+                        .update(cx, |panel, cx| panel.suggest(suggested, cx));
+                }
+                let Some((_, view)) = this.ads.iter_mut().find(|(was, _)| *was == kind) else {
+                    return;
+                };
+                *view = match report {
                     Ok(report) => AdsView::Read { report, last_sync },
                     Err(error) => AdsView::Failed(error),
                 };
@@ -426,56 +474,74 @@ impl SalesScreen {
 }
 
 impl SalesScreen {
-    /// Product Ads in the period: hidden, with why, until the Reputation
-    /// unlocks them; then each Product's ROAS against its break-even, and
-    /// each campaign.
-    fn render_ads(&self, cx: &App) -> AnyElement {
+    /// The ads of each channel in the period: Mercado Livre's hidden, with
+    /// why, until the Reputation unlocks them, and a channel's without an
+    /// account with how to get one; then each Product's ROAS against its
+    /// break-even, and each campaign.
+    fn render_ads(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let note = |text: String| div().text_sm().text_color(t.text2).child(text);
-        let body = match &self.ads {
-            AdsView::Locked => note(format!(
-                "O Product Ads libera com {}. Até lá esta seção fica oculta; quando a reputação \
-                 chegar lá, ela mostra o custo, as vendas atribuídas e o ROAS de cada produto, e \
-                 o custo entra na margem de cada venda. Acompanhe em Reputação.",
-                SellerTool::ProductAds.requirement()
-            ))
-            .into_any_element(),
-            AdsView::Reading => {
-                note("Calculando o ROAS de cada produto…".into()).into_any_element()
-            }
-            AdsView::Failed(error) => kit::error_notice(error.clone(), cx).into_any_element(),
-            AdsView::Read { report, last_sync } => self.render_report(report, *last_sync, cx),
-        };
-        v_flex()
-            .gap_3()
-            .child(kit::section_heading("Product Ads"))
-            .child(body)
-            .into_any_element()
+        let mut section = v_flex().gap_3().child(kit::section_heading("Product Ads"));
+        for (kind, view) in &self.ads {
+            let body = match view {
+                AdsView::Locked => note(format!(
+                    "O Product Ads libera com {}. Até lá esta parte fica oculta; quando a \
+                     reputação chegar lá, ela mostra o custo, as vendas atribuídas e o ROAS de \
+                     cada produto, e o custo entra na margem de cada venda. Acompanhe em \
+                     Reputação.",
+                    SellerTool::ProductAds.requirement()
+                ))
+                .into_any_element(),
+                AdsView::NoAccount(at) => note(no_account(*kind, *at)).into_any_element(),
+                AdsView::Reading => {
+                    note("Calculando o ROAS de cada produto…".into()).into_any_element()
+                }
+                AdsView::Failed(error) => kit::error_notice(error.clone(), cx).into_any_element(),
+                AdsView::Read { report, last_sync } => {
+                    self.render_report(*kind, report, *last_sync, cx)
+                }
+            };
+            section = section.child(
+                v_flex()
+                    .gap_2()
+                    .child(div().font_medium().child(kind.name()))
+                    .child(body),
+            );
+        }
+        section.into_any_element()
     }
 
     fn render_report(
         &self,
+        kind: SalesChannelKind,
         report: &AdsReport,
         last_sync: Option<AdsSyncState>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
         let read = match last_sync {
-            Some(last) if !last.account => format!(
-                "O Mercado Livre não tem uma conta de Product Ads para você (lido em {}). \
-                 Campanhas se criam no painel do Mercado Livre.",
-                catalog::day_and_time(last.at)
-            ),
             Some(last) => format!(
-                "Lido uma vez por dia, até ontem; último Sync: {}. Campanhas se criam e mudam no \
-                 painel do Mercado Livre.",
+                "Lido uma vez por dia, até ontem; último Sync: {}.",
                 catalog::day_and_time(last.at)
             ),
-            None => "O Product Ads é lido uma vez por dia depois do Sync de pedidos.".into(),
+            None => format!(
+                "Os anúncios {} são lidos uma vez por dia depois do Sync de pedidos.",
+                sales_channels::of_channel(kind)
+            ),
         };
         let mut column = v_flex()
             .gap_3()
             .child(div().text_sm().text_color(t.text2).child(read));
+        // Campaigns and their ads are managed on Mercado Livre, with the
+        // account a Sync found.
+        let managed =
+            kind == SalesChannelKind::MercadoLivre && last_sync.is_some_and(|last| last.account);
+        let campaigns = managed.then(|| {
+            v_flex()
+                .gap_4()
+                .child(self.campaigns.clone())
+                .child(self.ad_groups.clone())
+        });
         let Some(total) = &report.total else {
             return column
                 .child(
@@ -484,6 +550,7 @@ impl SalesScreen {
                         .text_color(t.text2)
                         .child("Nenhum anúncio patrocinado com custo neste período."),
                 )
+                .children(campaigns)
                 .into_any_element();
         };
         column = column.child(
@@ -491,6 +558,9 @@ impl SalesScreen {
                 .text_sm()
                 .child(format!("No período: {}.", metrics_text(total))),
         );
+        // The suggested pauses get a column of their own, so the figures
+        // stay under their headings.
+        let pausing = managed && report.products.iter().any(ProductRoas::suggests_pausing);
         let header = h_flex()
             .gap_3()
             .px_3()
@@ -501,16 +571,32 @@ impl SalesScreen {
             .child(money_cell("Vendas atribuídas"))
             .child(money_cell("ROAS real"))
             .child(money_cell("ROAS de equilíbrio"))
-            .child(margin_cell().child(""));
-        let products = report.products.iter().map(|row| product_row(row, &t, cx));
+            .child(margin_cell().child(""))
+            .children(pausing.then(action_cell));
+        let products: Vec<AnyElement> = report
+            .products
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let pause = pausing.then(|| {
+                    let listings = row.listings.clone();
+                    action_cell().children(row.suggests_pausing().then(|| {
+                        Button::new(("pause-losing-ad", index))
+                            .label("Pausar anúncio")
+                            .outline()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.ad_groups
+                                    .update(cx, |panel, cx| panel.pause_any(&listings, cx))
+                            }))
+                    }))
+                });
+                product_row(row, pause, &t, cx)
+            })
+            .collect();
         column = column
             .child(v_flex().gap_2().child(header).children(products))
-            .child(div().text_xs().text_color(t.text2).child(
-                "ROAS real: vendas atribuídas pelo Mercado Livre (diretas e indiretas, como no \
-                     painel) para cada real investido. ROAS de equilíbrio: 1 ÷ a margem antes de \
-                     Ads, ao preço de hoje, na variação de menor margem; abaixo dele o anúncio dá \
-                     prejuízo.",
-            ));
+            .child(div().text_xs().text_color(t.text2).child(roas_note(kind)));
         if !report.campaigns.is_empty() {
             let header = h_flex()
                 .gap_3()
@@ -536,12 +622,57 @@ impl SalesScreen {
             });
             column = column.child(v_flex().gap_2().child(header).children(rows));
         }
-        column.into_any_element()
+        column.children(campaigns).into_any_element()
     }
 }
 
-/// One Product's ads, marked when they lose money.
-fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
+/// Why `kind` shows no ads, as its Sync at `at` found, and how to change
+/// it.
+fn no_account(kind: SalesChannelKind, at: Timestamp) -> String {
+    let read = catalog::day_and_time(at);
+    match kind {
+        SalesChannelKind::Shopee => format!(
+            "A Shopee não libera a API de Ads para a sua loja (lido em {read}). Para o custo do \
+             Shopee Ads entrar na margem das vendas da Shopee, peça ao suporte da Shopee, pela \
+             Central do Vendedor, a permissão de Ads da Open Platform para o seu app (o do \
+             Partner ID em Configurações › Conexões). Liberada a permissão, o app lê o custo \
+             uma vez por dia."
+        ),
+        _ => format!(
+            "{} não tem uma conta de Product Ads para você (lido em {read}). Ative o Product \
+             Ads em Minha conta › Publicidade {} para criar campanhas aqui.",
+            sales_channels::opening(kind),
+            sales_channels::on(kind)
+        ),
+    }
+}
+
+/// How the report's ROAS reads on `kind`.
+fn roas_note(kind: SalesChannelKind) -> String {
+    let attributed = match kind {
+        SalesChannelKind::Shopee => {
+            "vendas atribuídas pela Shopee (do produto e de outros da loja, até 7 dias depois do \
+             clique, como no painel)"
+        }
+        _ => "vendas atribuídas pelo Mercado Livre (diretas e indiretas, como no painel)",
+    };
+    let split = match kind {
+        SalesChannelKind::Shopee => {
+            " A Shopee informa o custo por campanha: o de uma campanha com vários produtos é \
+             dividido igualmente entre eles."
+        }
+        _ => "",
+    };
+    format!(
+        "ROAS real: {attributed} para cada real investido. ROAS de equilíbrio: 1 ÷ a margem \
+         antes de Ads, ao preço de hoje, na variação de menor margem; abaixo dele o anúncio dá \
+         prejuízo.{split}"
+    )
+}
+
+/// One Product's ads, marked when they lose money, with the suggested
+/// pause when they lose enough to judge.
+fn product_row(row: &ProductRoas, pause: Option<Div>, t: &Tokens, cx: &App) -> AnyElement {
     let (verdict, ink) = if row.loses() {
         ("dá prejuízo", t.danger)
     } else if row.break_even.is_none() {
@@ -576,6 +707,7 @@ fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
                 .justify_end()
                 .child(kit::tag(verdict, ink, cx)),
         )
+        .children(pause)
         .into_any_element()
 }
 
@@ -782,6 +914,11 @@ pub(crate) fn money_cell(text: impl Into<SharedString>) -> Div {
 
 pub(crate) fn margin_cell() -> Div {
     div().w(px(150.)).flex_none().text_right()
+}
+
+/// Room for a row's suggested action.
+fn action_cell() -> Div {
+    div().w(px(140.)).flex_none().flex().justify_end()
 }
 
 #[cfg(test)]

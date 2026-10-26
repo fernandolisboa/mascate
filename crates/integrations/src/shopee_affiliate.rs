@@ -23,7 +23,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
-use crate::answers::{numeric_id, read_json};
+use crate::answers::{https_link, numeric_id, page_on, read_json};
 use crate::retry::{Attempt, Backoff, Pause, ThreadPause, retrying};
 
 /// Shopee Brasil's endpoint, unless a test points elsewhere.
@@ -389,8 +389,8 @@ impl ProductNode {
             title: self.product_name,
             link,
             image: self.image_url.as_deref().and_then(https_link),
-            price,
-            highest_price,
+            price: Some(price),
+            highest_price: Some(highest_price),
             sales: self.sales,
             commission: rate(self.commission_rate.as_deref()),
             rating: stars(self.rating_star.as_deref()),
@@ -436,19 +436,7 @@ fn number(id: &str) -> bool {
 /// `link`, when it opens a page of Shopee Brasil over HTTPS: the app opens
 /// these links, so one from an answer must never point anywhere else.
 fn shopee_page(link: &str) -> Option<String> {
-    let rest = link.trim().strip_prefix("https://")?;
-    let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
-    (host == "shopee.com.br" || host.ends_with(".shopee.com.br")).then(|| link.trim().to_owned())
-}
-
-/// A picture's address, when it is plain HTTPS: it may be opened or
-/// posted as it is.
-fn https_link(link: &str) -> Option<String> {
-    let link = link.trim();
-    let rest = link.strip_prefix("https://")?;
-    let host = rest.split(['/', '?', '#']).next()?;
-    (!host.is_empty() && !host.contains('@') && !link.contains(char::is_whitespace))
-        .then(|| link.to_owned())
+    page_on(link, "shopee.com.br")
 }
 
 /// The page of the shop `id`; `productOfferV2` brings no link to it.

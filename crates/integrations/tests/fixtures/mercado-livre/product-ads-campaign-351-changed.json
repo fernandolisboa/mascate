@@ -1,0 +1,14 @@
+{
+  "id": 351,
+  "name": "Fones",
+  "status": "active",
+  "currency_id": "BRL",
+  "last_updated": "2026-10-26T11:32:20.882-03:00",
+  "date_created": "2026-09-01T10:00:00.000-03:00",
+  "strategy": "PROFITABILITY",
+  "acos_target": 22.73,
+  "channel": "marketplace",
+  "advertiser_id": 8823,
+  "budget": 35.5,
+  "roas_target": 4.4
+}

@@ -164,6 +164,10 @@ _Avoid_: parceria, afiliação (sozinho)
 Link de afiliado de um Program para um produto, com marcação do Promotion Channel onde foi divulgado. A marcação é única por Platform e volta na Conversion, o que liga cada Commission ao seu canal.
 _Avoid_: link rastreado, URL, tracking link
 
+**Short Link**:
+Link curto que redireciona para um Affiliate Link, criado por um encurtador externo, que conta os cliques por dia. Nunca existe para Platform cujos termos proíbem encurtar (Amazon, Shopee, Mercado Livre) sem a Restricted Feature ligada.
+_Avoid_: link encurtado, URL curta, encurtador (para o link)
+
 **Conversion**:
 Venda atribuída a um Affiliate Link, informada pela Platform.
 _Avoid_: venda (sozinho), pedido
@@ -183,8 +187,12 @@ Lugar onde o Fernando divulga produtos ou links (grupo de WhatsApp, canal do Tel
 _Avoid_: canal (sozinho), rede
 
 **Offer Post**:
-Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel, com identificação de publicidade. Só é publicado (no Telegram) quando o Fernando confirma, na hora ou agendado, e sai no máximo uma vez.
+Texto e imagem gerados pelo app para divulgar um produto num Promotion Channel, com identificação de publicidade. Só é publicado (no Telegram, no Pinterest ou no Instagram) quando o Fernando confirma, na hora ou agendado, e sai no máximo uma vez.
 _Avoid_: post, copy (sozinho), anúncio
+
+**Pitch**:
+Frase curta que vende o produto num Offer Post, na variável `{chamada}` do modelo, escrita pela IA ou à mão. Nunca traz preço, desconto, link ou contato: isso vem dos fatos do post. Na tela, "chamada".
+_Avoid_: copy (sozinho), gancho, slogan
 
 **Listing Copy**:
 Título e descrição de um Listing gerados como rascunho para o Fernando editar.
@@ -227,8 +235,24 @@ Conferência que bloqueia uma Promotion quando a margem de uma unidade, no pior 
 _Avoid_: trava (no código), validação de preço
 
 **Product Ads**:
-Anúncio pago do Mercado Livre que destaca um Listing nas buscas, pago por clique. O app só lê: o custo, as vendas atribuídas, os cliques e as impressões de cada anúncio por dia, uma vez por dia. O custo de um Listing num mês entra na Realized Margin dos Orders dele nesse mês, dividido pelo valor de cada venda; o de um mês sem venda fica à parte no resumo. Exige a Reputation que libera Product Ads; sem ela, a seção fica escondida.
+Anúncio pago do Mercado Livre que destaca um Listing nas buscas, pago por clique. O app lê o custo, as vendas atribuídas, os cliques e as impressões de cada anúncio por dia, uma vez por dia, e muda Ad Campaigns e anúncios só quando o Fernando confirma; o custo do Shopee Ads entra do mesmo jeito, só lido, depois que a Shopee libera a API de Ads para a loja; a Shopee informa o custo por campanha, e o de uma campanha com vários produtos é dividido igualmente entre os Listings dela. O custo de um Listing num mês entra na Realized Margin dos Orders dele nesse mês, no mesmo Sales Channel, dividido pelo valor de cada venda; o de um mês sem venda fica à parte no resumo. No Mercado Livre exige a Reputation que libera Product Ads; sem ela, a parte do Mercado Livre fica escondida.
 _Avoid_: Ads (sozinho, no código), anúncio patrocinado, publicidade
+
+**Ad Campaign**:
+Campanha do Product Ads que agrupa anúncios com um orçamento diário, uma estratégia (rentabilidade, crescimento ou visibilidade) e um Target ROAS. O app cria, pausa, ativa e muda uma Ad Campaign só depois da confirmação do Fernando.
+_Avoid_: campanha (sozinho, é também a Promotion do vendedor), campaign
+
+**Ad Group**:
+Unidade que o Mercado Livre anuncia numa Ad Campaign: um Listing, uma família de variações de User Products ou um produto de catálogo. O app lê as métricas do dia por Ad Group e divide uma família ou um produto de catálogo nos Listings dele, então o custo e as vendas continuam por Listing. O app põe, move, pausa e tira um Ad Group de uma campanha só depois da confirmação do Fernando; uma família ou um produto de catálogo vai inteiro, e a confirmação lista os Listings dele. Um Product que gastou pelo menos R$ 20,00 no período com ROAS abaixo do Break-even ROAS ganha a sugestão "Pausar anúncio"; o app nunca pausa sozinho.
+_Avoid_: grupo de anúncios (no código), agrupador
+
+**Target ROAS**:
+ROAS que uma Ad Campaign pede ao Sales Channel, de 1x a 35x: alvo alto vende menos com mais lucro por venda, alvo baixo vende mais. O app sugere o maior Break-even ROAS dos Products da campanha; abaixo dele, pede uma segunda confirmação. Na tela, "ROAS alvo".
+_Avoid_: ROAS de equilíbrio (é outra coisa), ACOS
+
+**Maximum Daily Budget**:
+Maior orçamento diário que o app aceita enviar a uma Ad Campaign; R$ 50,00 até o Fernando mudar em Configurações. Protege de um valor digitado errado; o Sales Channel ainda pode gastar até o dobro num dia usando a sobra de dias anteriores.
+_Avoid_: limite de gasto, teto (no código)
 
 **ROAS**:
 Vendas atribuídas pelo Sales Channel a um anúncio de Product Ads, diretas e indiretas, para cada real investido nele: 4,25x é R$ 4,25 vendidos por R$ 1 de custo.

@@ -79,16 +79,26 @@ pub trait CopyChannel: Send + Sync {
     fn trends(&self, category: &str) -> Result<Vec<String>, PlatformError>;
 }
 
+/// What a request asks the writer for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyShape {
+    /// A Listing's title and description.
+    Listing,
+    /// An Offer Post's Pitch: one text.
+    Pitch,
+}
+
 /// One request to the writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyRequest {
     /// The model that writes, as the owner set it.
     pub model: String,
-    /// [`COPY_INSTRUCTIONS`].
+    /// [`COPY_INSTRUCTIONS`] or [`crate::PITCH_INSTRUCTIONS`].
     pub instructions: String,
-    /// The Product's data, the limits and, on a second attempt, what was
-    /// wrong with the first.
+    /// The data, the limits and, on a second attempt, what was wrong with
+    /// the first.
     pub prompt: String,
+    pub shape: CopyShape,
 }
 
 /// A title and a description as the writer answered them.
@@ -98,9 +108,22 @@ pub struct WrittenCopy {
     pub description: String,
 }
 
-/// A language model that writes Listing Copy. Calls block on the network.
+/// What the writer answered, in the shape it was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Written {
+    Listing(WrittenCopy),
+    Pitch(String),
+}
+
+/// A language model that writes Listing Copy and Pitches. Calls block on
+/// the network.
 pub trait CopyWriter: Send + Sync {
-    fn write(&self, request: &CopyRequest) -> Result<WrittenCopy, PlatformError>;
+    fn write(&self, request: &CopyRequest) -> Result<Written, PlatformError>;
+}
+
+/// The writer answered in another shape than the request's.
+pub(crate) fn other_shape() -> PlatformError {
+    PlatformError::Failed("the writer answered in another shape than the one asked".into())
 }
 
 /// One attribute of the draft's category with the value it has.
@@ -283,17 +306,7 @@ impl ListingCopy {
 
     /// The model the owner chose, or [`DEFAULT_COPY_MODEL`].
     pub async fn settings(&self) -> Result<CopySettings, CopyError> {
-        let row =
-            load_single_row(self.database.connection(), SETTINGS_TABLE, SETTINGS_COLUMNS).await?;
-        let settings = match row {
-            Some(row) => CopySettings { model: row.get(0)? },
-            None => CopySettings::default(),
-        };
-        Ok(if settings.is_valid() {
-            settings
-        } else {
-            CopySettings::default()
-        })
+        Ok(copy_settings(&self.database).await?)
     }
 
     /// Keeps `settings`, the model name trimmed.
@@ -340,18 +353,14 @@ impl ListingCopy {
             model,
             instructions: COPY_INSTRUCTIONS.into(),
             prompt: prompt(brief, &rules, &trends),
+            shape: CopyShape::Listing,
         };
-        let mut copy = tidy(writer.write(&request).map_err(CopyError::Writer)?);
+        let mut copy = tidy(listing(writer, &request)?);
         let first = check_copy(&copy, &rules);
         let mut title_cut = false;
         if !first.is_empty() {
-            request.prompt = format!(
-                "{}\n\nUma versão anterior foi recusada porque {}. Escreva de novo, corrigindo \
-                 isso.",
-                request.prompt,
-                describe(&first)
-            );
-            copy = tidy(writer.write(&request).map_err(CopyError::Writer)?);
+            request.prompt = asked_again(&request.prompt, &describe(&first));
+            copy = tidy(listing(writer, &request)?);
             if copy.title.chars().count() > rules.max_title_chars {
                 copy.title = cut_at_word(&copy.title, rules.max_title_chars);
                 title_cut = true;
@@ -377,17 +386,51 @@ impl ListingCopy {
     }
 }
 
+/// The model the owner chose for writing with AI, or [`DEFAULT_COPY_MODEL`].
+pub(crate) async fn copy_settings(database: &Database) -> Result<CopySettings, libsql::Error> {
+    let row = load_single_row(database.connection(), SETTINGS_TABLE, SETTINGS_COLUMNS).await?;
+    let settings = match row {
+        Some(row) => CopySettings { model: row.get(0)? },
+        None => CopySettings::default(),
+    };
+    Ok(if settings.is_valid() {
+        settings
+    } else {
+        CopySettings::default()
+    })
+}
+
+/// `text` as it goes between the data's tags: without angle brackets, so
+/// nothing in it closes the tag, on one line with single spaces.
+pub(crate) fn as_data(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '<' | '>'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `prompt` asked once more, saying `why` the first answer was refused.
+pub(crate) fn asked_again(prompt: &str, why: &str) -> String {
+    format!(
+        "{prompt}\n\nUma versão anterior foi recusada porque {why}. Escreva de novo, corrigindo \
+         isso."
+    )
+}
+
+/// The title and the description `writer` answers `request` with.
+fn listing(writer: &dyn CopyWriter, request: &CopyRequest) -> Result<WrittenCopy, CopyError> {
+    match writer.write(request) {
+        Ok(Written::Listing(copy)) => Ok(copy),
+        Ok(Written::Pitch(_)) => Err(CopyError::Writer(other_shape())),
+        Err(error) => Err(CopyError::Writer(error)),
+    }
+}
+
 /// The request's data, between the tags the instructions name. Angle
 /// brackets are dropped from the data, so nothing in it closes the tag.
 fn prompt(brief: &CopyBrief, rules: &CategoryRules, trends: &[String]) -> String {
-    let clean = |text: &str| -> String {
-        text.chars()
-            .filter(|c| !matches!(c, '<' | '>'))
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
     let mut lines = vec![
         "Escreva o título e a descrição do anúncio deste produto.".to_owned(),
         format!(
@@ -397,12 +440,12 @@ fn prompt(brief: &CopyBrief, rules: &CategoryRules, trends: &[String]) -> String
         ),
         String::new(),
         "<dados>".into(),
-        format!("Produto: {}", clean(&brief.product)),
+        format!("Produto: {}", as_data(&brief.product)),
         format!(
             "Categoria no Mercado Livre: {}",
-            clean(&brief.category_name)
+            as_data(&brief.category_name)
         ),
-        format!("Condição: {}", clean(&brief.condition)),
+        format!("Condição: {}", as_data(&brief.condition)),
     ];
     let mut list = |heading: &str, items: Vec<String>| {
         let items: Vec<String> = items.into_iter().filter(|item| !item.is_empty()).collect();
@@ -413,7 +456,7 @@ fn prompt(brief: &CopyBrief, rules: &CategoryRules, trends: &[String]) -> String
     };
     list(
         "Como os fornecedores chamam o produto:",
-        unique(brief.offers.iter().map(|offer| clean(offer)).collect()),
+        unique(brief.offers.iter().map(|offer| as_data(offer)).collect()),
     );
     list(
         "Ficha técnica:",
@@ -421,12 +464,18 @@ fn prompt(brief: &CopyBrief, rules: &CategoryRules, trends: &[String]) -> String
             .attributes
             .iter()
             .filter(|attribute| !attribute.value.trim().is_empty())
-            .map(|attribute| format!("{}: {}", clean(&attribute.name), clean(&attribute.value)))
+            .map(|attribute| {
+                format!(
+                    "{}: {}",
+                    as_data(&attribute.name),
+                    as_data(&attribute.value)
+                )
+            })
             .collect(),
     );
     list(
         "Termos em alta na categoria:",
-        trends.iter().map(|trend| clean(trend)).collect(),
+        trends.iter().map(|trend| as_data(trend)).collect(),
     );
     lines.push("</dados>".into());
     lines.join("\n")

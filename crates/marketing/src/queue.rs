@@ -1,12 +1,18 @@
-//! The Telegram queue (#104, ADR 0031 decision 8): an Offer Post the owner
+//! The posting queue (#104, ADR 0031 decision 8): an Offer Post the owner
 //! confirmed for a time goes out on its own then, while the app is open or
-//! in the tray. Each Telegram channel has its posting times on Brasília's
-//! clock; "the next free time" is the first of them no other post of the
-//! channel holds. Nothing old goes out: a post whose time passed with the
-//! app closed, or whose price got older than its Program keeps one, waits
-//! for the owner. Paused, the queue sends nothing.
+//! in the tray. Every channel the app posts to has its posting times on
+//! Brasília's clock (#157, ADR 0035); "the next free time" is the first of
+//! them no other post of the channel holds. Nothing old goes out: a post
+//! whose time passed with the app closed, or whose price got older than its
+//! Program keeps one, waits for the owner. Paused, the queue sends nothing.
+//! Each destination takes posts at its own pace: a few seconds apart in a
+//! Telegram chat or an account, and no more in any 24 hours than
+//! Instagram's publishing quota or Pinterest's write limit allow. A
+//! destination at its limit is left alone, without a request, and its
+//! posts wait in the queue.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use chrono::{NaiveTime, TimeDelta, Timelike};
@@ -16,6 +22,7 @@ use mascate_platform::{
     Database, Migration, StoredRow as _, load_single_row, save_single_row, stored,
 };
 
+use crate::channels::ChannelKind;
 use crate::offer_posts::{
     OfferFacts, OfferPost, OfferPosts, POST_QUERY, PostError, PostStatus, post_from,
 };
@@ -53,6 +60,56 @@ pub const PRICE_KEEPS_HOURS: i64 = 24;
 /// The wait between two posts to the same chat; Telegram takes about one
 /// message a second per chat.
 pub const CHAT_SPACING: Duration = Duration::from_secs(5);
+
+/// Posts Instagram publishes through the API for an account in any 24
+/// hours. Meta's pages say 50 in one place and 100 in another; the lower
+/// one holds, and the adapter still reads the account's own quota before
+/// each post.
+pub const INSTAGRAM_POSTS_PER_DAY: usize = 50;
+
+/// Pins the app creates in any 24 hours, within the daily write limit of a
+/// Pinterest app with Trial access.
+pub const PINTEREST_POSTS_PER_DAY: usize = 300;
+
+/// How long the queue leaves a destination alone after it said its quota
+/// was used, when the posts the app sent do not say when it frees.
+pub const QUOTA_RECHECK_MINUTES: i64 = 60;
+
+/// How long the queue leaves a destination alone after it kept asking to
+/// wait.
+pub const RATE_LIMIT_WAIT_MINUTES: i64 = 15;
+
+/// How fast a destination takes posts.
+#[derive(Debug, Clone, Copy)]
+struct Pace {
+    /// The wait between two posts to the same place.
+    spacing: Duration,
+    /// Whether the place is each chat, as on Telegram, or the whole account.
+    per_chat: bool,
+    /// The most posts in any 24 hours, when the destination limits them.
+    per_day: Option<usize>,
+}
+
+fn pace(kind: ChannelKind) -> Option<Pace> {
+    let account = |per_day| Pace {
+        spacing: CHAT_SPACING,
+        per_chat: false,
+        per_day: Some(per_day),
+    };
+    match kind {
+        ChannelKind::TelegramChannel => Some(Pace {
+            spacing: CHAT_SPACING,
+            per_chat: true,
+            per_day: None,
+        }),
+        ChannelKind::Instagram => Some(account(INSTAGRAM_POSTS_PER_DAY)),
+        ChannelKind::Pinterest => Some(account(PINTEREST_POSTS_PER_DAY)),
+        ChannelKind::WhatsAppGroup
+        | ChannelKind::TikTok
+        | ChannelKind::PaidSearch
+        | ChannelKind::Other => None,
+    }
+}
 
 /// The posting times a Telegram channel starts with, on Brasília's clock.
 pub fn default_posting_times() -> Vec<NaiveTime> {
@@ -166,18 +223,46 @@ pub enum PostTime {
     At(Timestamp),
 }
 
+/// The destinations the queue reaches, by the kind of channel each serves.
+/// The posts of a kind without one, its Connection down, wait.
+#[derive(Clone, Default)]
+pub struct PostDestinations(HashMap<ChannelKind, Arc<dyn PostDestination>>);
+
+impl PostDestinations {
+    pub fn with(mut self, kind: ChannelKind, destination: Arc<dyn PostDestination>) -> Self {
+        self.0.insert(kind, destination);
+        self
+    }
+
+    fn get(&self, kind: ChannelKind) -> Option<&dyn PostDestination> {
+        self.0.get(&kind).map(Arc::as_ref)
+    }
+}
+
+/// A destination at its limit, and when it takes posts again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DestinationLimit {
+    /// The kind of channel the destination serves.
+    pub kind: ChannelKind,
+    pub until: Timestamp,
+}
+
 /// What one turn of the queue did.
 #[derive(Debug, Default)]
 pub struct QueueRound {
-    /// The posts it handed to the destination, as they ended up.
+    /// The posts it handed to a destination, as they ended up.
     pub posts: Vec<OfferPost>,
     /// How many posts it found late or with an expired price, to wait for
     /// the owner.
     pub held: u64,
     /// The queue was paused, so nothing went out.
     pub paused: bool,
-    /// The destination refused the login: the rest wait for the next turn.
-    pub expired: bool,
+    /// The destinations that refused the login: their posts wait for the
+    /// next turn.
+    pub expired: Vec<ChannelKind>,
+    /// The destinations at their limit with posts due: those posts stay in
+    /// the queue, and go out once the limit frees if not late by then.
+    pub limited: Vec<DestinationLimit>,
     /// The due posts that could not go out, and why; each tries again on
     /// the next turn until it is late.
     pub skipped: Vec<(RecordId, PostError)>,
@@ -196,6 +281,8 @@ pub struct PostQueue {
     pub failed: Vec<OfferPost>,
     /// Published today, on Brasília's clock, the latest first.
     pub published_today: Vec<OfferPost>,
+    /// The destinations at their limit now.
+    pub limited: Vec<DestinationLimit>,
 }
 
 impl PostQueue {
@@ -259,9 +346,9 @@ impl OfferPosts {
 
     /// Puts the post the owner confirmed in the queue for `when`: the
     /// confirmation is the owner's consent for the post to go out then, as
-    /// it is, on its own. Only a post still as the owner read it, at a
-    /// time after now that no other post of the channel holds and before
-    /// its price expires.
+    /// it is, on its own, through its channel's destination. Only a post
+    /// still as the owner read it, at a time after now that no other post
+    /// of the channel holds and before its price expires.
     pub async fn schedule(
         &self,
         post: ConfirmedPost,
@@ -411,13 +498,17 @@ impl OfferPosts {
     }
 
     /// One turn of the queue: holds back what is late or has an expired
-    /// price, then, unless paused, publishes the due posts one at a time,
-    /// [`CHAT_SPACING`] apart in the same chat. A post that changed since
-    /// it was read is left alone; one that may have gone out is never sent
-    /// again on its own.
+    /// price, then, unless paused, publishes the due posts in schedule
+    /// order, one at a time, each through its channel's destination at
+    /// that destination's pace. A post that changed since it was read is
+    /// left alone; one that may have gone out is never sent again on its
+    /// own. A destination without a Connection, at its limit or refusing
+    /// the login gets no more posts this turn; one that turns a post away
+    /// for its quota or asks to wait, which publishes nothing, gets the
+    /// post back in the queue and is left alone for a while.
     pub async fn send_due(
         &self,
-        destination: &dyn PostDestination,
+        destinations: &PostDestinations,
         pause: &dyn Pause,
     ) -> Result<QueueRound, PostError> {
         let mut round = QueueRound {
@@ -428,7 +519,8 @@ impl OfferPosts {
         if round.paused {
             return Ok(round);
         }
-        let mut chats: HashSet<String> = HashSet::new();
+        let mut places: HashSet<(ChannelKind, String)> = HashSet::new();
+        let mut stopped: HashSet<ChannelKind> = HashSet::new();
         for post in self.due(self.clock.now()).await? {
             let request = match self.prepare(post.id).await {
                 // Changed since it was read: it is not the post that was due.
@@ -445,27 +537,149 @@ impl OfferPosts {
                     continue;
                 }
             };
-            if !chats.insert(request.chat().to_owned()) {
-                pause.pause(CHAT_SPACING);
+            let kind = request.kind;
+            if stopped.contains(&kind) {
+                continue;
+            }
+            let (Some(destination), Some(pace)) = (destinations.get(kind), pace(kind)) else {
+                stopped.insert(kind);
+                continue;
+            };
+            if let Some(until) = self.limited_until(kind, self.clock.now()).await? {
+                round.limited.push(DestinationLimit { kind, until });
+                stopped.insert(kind);
+                continue;
+            }
+            let chat = if pace.per_chat { request.chat() } else { "" };
+            if !places.insert((kind, chat.to_owned())) {
+                pause.pause(pace.spacing);
             }
             if self.queue_paused().await? {
                 round.paused = true;
                 break;
             }
-            match self.publish(destination, request.confirm()).await {
-                Ok(published) => {
-                    let expired = published.failure == Some(PublishFailure::Expired);
-                    round.posts.push(published);
-                    if expired {
-                        round.expired = true;
-                        break;
-                    }
-                }
+            let published = match self.publish(destination, request.confirm()).await {
+                Ok(published) => published,
                 Err(PostError::Changed) => continue,
-                Err(error) => round.skipped.push((post.id, error)),
+                Err(error) => {
+                    round.skipped.push((post.id, error));
+                    continue;
+                }
+            };
+            let wait = match &published.failure {
+                Some(PublishFailure::Expired) => {
+                    round.expired.push(kind);
+                    stopped.insert(kind);
+                    None
+                }
+                Some(PublishFailure::QuotaUsed) => Some(QUOTA_RECHECK_MINUTES),
+                Some(PublishFailure::RateLimited) => Some(RATE_LIMIT_WAIT_MINUTES),
+                _ => None,
+            };
+            match wait {
+                Some(minutes) => {
+                    let until = self.clock.now() + TimeDelta::minutes(minutes);
+                    self.hold(kind, until);
+                    round.posts.push(self.requeue(published.id).await?);
+                    round.limited.push(DestinationLimit { kind, until });
+                    stopped.insert(kind);
+                }
+                None => round.posts.push(published),
             }
         }
         Ok(round)
+    }
+
+    /// Puts back in the queue, at its time, a post its destination turned
+    /// away without publishing anything.
+    async fn requeue(&self, id: RecordId) -> Result<OfferPost, PostError> {
+        self.database
+            .connection()
+            .execute(
+                "UPDATE marketing_offer_posts
+                 SET status = ?1, failure = NULL, failure_detail = NULL, message_id = NULL,
+                     updated_at = ?2
+                 WHERE id = ?3 AND status = ?4 AND scheduled_at IS NOT NULL",
+                params![
+                    PostStatus::Scheduled.code(),
+                    stored(self.clock.now()),
+                    id.to_string(),
+                    PostStatus::Failed.code()
+                ],
+            )
+            .await?;
+        self.post(id).await
+    }
+
+    /// Leaves the destination of `kind` alone until `until`.
+    fn hold(&self, kind: ChannelKind, until: Timestamp) {
+        let mut holds = self.holds.lock().unwrap_or_else(PoisonError::into_inner);
+        let held = holds.entry(kind).or_insert(until);
+        *held = (*held).max(until);
+    }
+
+    /// When the destination of `kind` takes posts again, if it is at its
+    /// limit at `now`: the posts the app sent through it in the last 24
+    /// hours fill its daily limit, or it turned a post away a moment ago.
+    async fn limited_until(
+        &self,
+        kind: ChannelKind,
+        now: Timestamp,
+    ) -> Result<Option<Timestamp>, PostError> {
+        let held = self
+            .holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&kind)
+            .copied()
+            .filter(|until| *until > now);
+        let counted = match pace(kind).and_then(|pace| pace.per_day) {
+            Some(per_day) => {
+                let sent = self.sent_within_a_day(kind, now).await?;
+                // The limit frees when the oldest post that keeps it full
+                // turns a day old.
+                sent.len()
+                    .checked_sub(per_day)
+                    .map(|oldest| sent[oldest] + TimeDelta::hours(24))
+            }
+            None => None,
+        };
+        Ok(held.max(counted))
+    }
+
+    /// When each post through a channel of `kind` that went out, or may
+    /// have, in the 24 hours before `now` left, earliest first. A post or
+    /// channel deleted since still counts: the destination counted it.
+    async fn sent_within_a_day(
+        &self,
+        kind: ChannelKind,
+        now: Timestamp,
+    ) -> Result<Vec<Timestamp>, PostError> {
+        let mut rows = self
+            .database
+            .connection()
+            .query(
+                "SELECT coalesce(post.sent_at, post.updated_at) AS left_at
+                 FROM marketing_offer_posts post
+                 JOIN marketing_promotion_channels channel ON channel.id = post.channel_id
+                 WHERE channel.kind = ?1
+                     AND ((post.status = ?2 AND post.sent_at > ?3)
+                         OR (post.status IN (?4, ?5) AND post.updated_at > ?3))
+                 ORDER BY left_at",
+                params![
+                    kind.code(),
+                    PostStatus::Sent.code(),
+                    stored(now - TimeDelta::hours(24)),
+                    PostStatus::Unconfirmed.code(),
+                    PostStatus::Sending.code()
+                ],
+            )
+            .await?;
+        let mut sent = Vec::new();
+        while let Some(row) = rows.next().await? {
+            sent.push(row.time_at(0)?);
+        }
+        Ok(sent)
     }
 
     /// The queue's lists now.
@@ -501,6 +715,12 @@ impl OfferPosts {
         queue
             .published_today
             .sort_by_key(|post| std::cmp::Reverse(post.sent.as_ref().map(|sent| sent.at)));
+        let now = self.clock.now();
+        for kind in ChannelKind::ALL {
+            if let Some(until) = self.limited_until(kind, now).await? {
+                queue.limited.push(DestinationLimit { kind, until });
+            }
+        }
         Ok(queue)
     }
 

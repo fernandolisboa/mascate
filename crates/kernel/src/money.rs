@@ -54,7 +54,7 @@ pub struct Money {
 }
 
 impl Money {
-    pub fn new(amount: Decimal, currency: Currency) -> Self {
+    pub const fn new(amount: Decimal, currency: Currency) -> Self {
         Self { amount, currency }
     }
 

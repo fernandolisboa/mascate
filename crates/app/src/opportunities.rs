@@ -558,7 +558,7 @@ impl OpportunitiesScreen {
                 "A tarifa vem do Mercado Livre para a categoria e o preço; sem ela, vale a \
                  tarifa estimada. O frete estimado entra a partir de R$ 79,00, quando o frete \
                  grátis é obrigatório, e vale também para a sugestão de preço dos anúncios. O \
-                 imposto ({}) vem de Configurações › Preços e margens.",
+                 imposto ({}) vem de Configurações › Vendas › Preços e margens.",
                 self.tax.to_pt_br()
             )))
             .child(

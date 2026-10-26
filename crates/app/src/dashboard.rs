@@ -616,7 +616,7 @@ impl DashboardScreen {
     fn render_volume(&self, volume: &VolumeCheck, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
         let text = format!(
-            "Vendas dos últimos 12 meses: {} de um limite de {} (Configurações › Finanças).",
+            "Vendas dos últimos 12 meses: {} de um limite de {} (Configurações › Vendas › Finanças).",
             volume.sold.to_pt_br(),
             volume.limit.to_pt_br()
         );

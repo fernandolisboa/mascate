@@ -9,9 +9,10 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_affiliate::{
-    AMAZON_TYPED_PRICE, Affiliate, AffiliateError, AffiliatePlatform, BRAND_KEYWORDS,
-    CommissionStatus, FLAGS, MIGRATIONS, Practice, Program, Promotion, PromotionRules, Reach,
-    ReportedConversion, ReportedProgram, RuleWarning, SHOPEE_PAID_SEARCH, ShownPrice, Standing,
+    AMAZON_SHORT_LINK, AMAZON_TYPED_PRICE, Affiliate, AffiliateError, AffiliatePlatform,
+    BRAND_KEYWORDS, CommissionStatus, FLAGS, MERCADO_LIVRE_SHORT_LINK, MIGRATIONS, Practice,
+    Program, Promotion, PromotionRules, Reach, ReportedConversion, ReportedProgram, RuleWarning,
+    SHOPEE_PAID_SEARCH, SHOPEE_SHORT_LINK, ShownPrice, Standing,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, Timestamp};
@@ -724,19 +725,37 @@ fn a_restricted_feature_turned_on_is_allowed_and_still_warns() {
 }
 
 #[test]
-fn the_three_restricted_features_are_declared_for_phase_two() {
+fn the_restricted_features_are_declared_for_their_phases() {
     assert_eq!(
         FLAGS,
-        [SHOPEE_PAID_SEARCH, BRAND_KEYWORDS, AMAZON_TYPED_PRICE]
+        [
+            SHOPEE_PAID_SEARCH,
+            BRAND_KEYWORDS,
+            AMAZON_TYPED_PRICE,
+            AMAZON_SHORT_LINK,
+            SHOPEE_SHORT_LINK,
+            MERCADO_LIVRE_SHORT_LINK,
+        ]
     );
-    for flag in FLAGS {
+    for (at, flag) in FLAGS.iter().enumerate() {
         assert!(flag.key.starts_with("affiliate."), "{}", flag.key);
         assert_eq!(flag.kind, FlagKind::RestrictedFeature, "{}", flag.key);
-        assert_eq!(flag.phase, Phase::Two, "{}", flag.key);
+        let phase = if at < 3 { Phase::Two } else { Phase::Three };
+        assert_eq!(flag.phase, phase, "{}", flag.key);
         assert!(!flag.reason.trim().is_empty(), "{}", flag.key);
         assert!(!flag.risk.trim().is_empty(), "{}", flag.key);
     }
     assert!(Registry::new(&[FLAGS]).is_ok());
+}
+
+#[test]
+fn mercado_livre_forbids_a_shortener_by_default() {
+    let mercado_livre = PromotionRules::defaults(AffiliatePlatform::MercadoLivre);
+
+    assert_eq!(
+        mercado_livre,
+        PromotionRules::all(Standing::Unknown).with(Practice::Shortener, Standing::Forbidden)
+    );
 }
 
 fn any_reach() -> impl Strategy<Value = Reach> {

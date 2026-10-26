@@ -49,4 +49,12 @@ Qualidade e Promoções (#136), da referência das APIs `account_health`, `disco
 - `add-discount-item.json`, `add-discount-item-refused.json`, `delete-discount-item.json`: `POST` de `add_discount_item` (aceito, e recusado em `error_list` com a resposta de sucesso) e `delete_discount_item`.
 - `item-promotion.json`, `item-promotion-none.json`: `GET /api/v2/product/get_item_promotion` de um item com um desconto da loja em dois modelos e uma campanha da Shopee, e de um item sem promoção. O valor exato de `promotion_type` de um desconto da loja não está na documentação: o adapter reconhece o desconto pelo id.
 
+Shopee Ads (#183), da referência da API `ads` (v2.ads) lida em 26/10/2026, sem conta real: a API de Ads pede uma permissão que o suporte da Shopee libera para a loja. A regression pass da fase 3 (#116) grava as respostas de verdade.
+
+- `ads-campaign-ids.json`, `ads-campaign-ids-page-1.json`, `ads-campaign-ids-page-2.json`: `GET /api/v2/ads/get_product_level_campaign_id_list` (`ad_type=all`) com três campanhas, e as mesmas em duas páginas por `offset` e `has_next_page`.
+- `ads-campaign-settings.json`: `GET /api/v2/ads/get_product_level_campaign_setting_info` (`info_type_list=1,3,4`): uma campanha manual de um produto com ROAS alvo, uma de seleção automática com dois produtos em `auto_product_ads_info` e `item_id_list` vazio, e uma pausada.
+- `ads-daily-performance-2026-10-03.json`, `ads-daily-performance-empty.json`: `GET /api/v2/ads/get_product_campaign_daily_performance` de 03-10-2026 a 04-10-2026 (a Shopee recusa início igual ao fim), com o dia seguinte junto, e sem campanha. A `response` é uma lista, e as datas vêm em `DD-MM-AAAA`.
+- `ads-permission-denied.json`: o envelope `error_permission_denied` de uma loja sem a permissão de Ads.
+- `ads-rate-limit.json`: o envelope `ads.rate_limit.exceed_shop_api`.
+
 Os ids seguem o exemplo da documentação (partner 2001887, loja 14701711); os itens são inventados.

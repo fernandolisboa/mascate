@@ -472,6 +472,16 @@ impl DemandSource for MercadoLivre {
     }
 }
 
+/// An amount as JSON, rounded to its minor unit as the channel takes it.
+fn number(money: Money) -> String {
+    money.rounded().amount().to_string()
+}
+
+/// A JSON string.
+fn text(value: &str) -> String {
+    serde_json::Value::String(value.to_owned()).to_string()
+}
+
 fn read_json<T: DeserializeOwned>(
     response: ureq::http::Response<ureq::Body>,
 ) -> Result<T, PlatformError> {

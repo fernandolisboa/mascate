@@ -1,0 +1,45 @@
+{
+  "paging": {
+    "offset": 0,
+    "total": 1,
+    "limit": 50
+  },
+  "results": [
+    {
+      "item_id": "MLB4100000006",
+      "campaign_id": 352,
+      "ad_group_id": 1406300005,
+      "price": 89.9,
+      "price_usd": 0.0,
+      "title": "Carregador Turbo 20 W",
+      "status": "active",
+      "has_discount": false,
+      "catalog_listing": true,
+      "logistic_type": "drop_off",
+      "listing_type_id": "gold_special",
+      "domain_id": "MLB-CELLPHONE_CHARGERS",
+      "date_created": "2026-09-01T13:05:00Z",
+      "buy_box_winner": true,
+      "channel": "marketplace",
+      "advertiser_id": 8823,
+      "original_advertiser_id": 8823,
+      "condition": "new",
+      "metrics": {
+        "clicks": 0,
+        "prints": 15,
+        "cost": 0.0,
+        "cpc": 0.0,
+        "ctr": 0.0,
+        "direct_amount": 0.0,
+        "indirect_amount": 89.9,
+        "total_amount": 89.9,
+        "direct_units_quantity": 0,
+        "indirect_units_quantity": 1,
+        "units_quantity": 1,
+        "acos": 0.0,
+        "roas": 0.0
+      },
+      "status_raw": "A"
+    }
+  ]
+}

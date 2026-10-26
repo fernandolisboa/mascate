@@ -1,0 +1,22 @@
+{
+  "url": "https://www.mercadolivre.com.br/afiliados/relatorios",
+  "tables": [
+    {
+      "headers": ["Cliques", "Vendas", "Comissões pendentes", "Comissões confirmadas"],
+      "rows": [["1.284", "7", "R$ 12,50", "R$ 36,71"]]
+    },
+    {
+      "headers": ["Data da venda", "ID da venda", "Produto", "Valor da venda", "Comissão", "Status", "Etiqueta"],
+      "rows": [
+        ["18/10/2026 14:32", "2000009876543210", "Fone de Ouvido Bluetooth JBL Tune 520BT", "R$ 249,90", "R$ 12,50", "Pendente", "telegram-ofertas"],
+        ["12/10/2026 09:05", "2000009876500001", "Air Fryer Mondial 4L", "R$ 399,00", "R$ 31,92", "Aprovada", ""],
+        ["02/10/2026 21:40", "2000009876400002", "Kit 3 Cuecas Boxer", "R$ 59,90", "R$ 4,79", "Paga", "instagram"],
+        ["28/09/2026 11:15", "2000009876300003", "Smartwatch D20", "R$ 89,90", "R$ 7,19", "Cancelada", ""],
+        ["25/09/2026 16:00", "2000009876200004", "Mochila para Notebook", "R$ 1.149,00", "R$ 91,92", "Devolvida", ""],
+        ["20/09/2026 10:00", "2000009876100005", "Capinha iPhone 15", "R$ 29,90", "R$ 2,39", "Aprovada", ""],
+        ["20/09/2026 10:00", "2000009876100005", "Película iPhone 15", "R$ 19,90", "R$ 1,59", "Aprovada", ""],
+        ["", "", "Total", "R$ 1.998,40", "R$ 152,30", "", ""]
+      ]
+    }
+  ]
+}

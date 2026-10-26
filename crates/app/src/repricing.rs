@@ -609,7 +609,7 @@ impl RepricingPanel {
                     })),
             )
             .child(div().text_xs().text_color(t.text2).child(
-                "O mínimo precisa manter a margem mínima de Configurações › Preços e margens \
+                "O mínimo precisa manter a margem mínima de Configurações › Vendas › Preços e margens \
                  depois da tarifa, do frete, do imposto e do custo médio.",
             ))
             .into_any_element()

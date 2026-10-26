@@ -335,6 +335,39 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Pinterest => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step_at(
+                        "A API do Pinterest pede uma conta comercial, que é de graça: se a sua \
+                     for pessoal, converta em Configurações › Configurações da conta. Depois, \
+                     entre no portal de desenvolvedores com ela e abra My apps.",
+                        "Abrir o portal do Pinterest",
+                        "https://developers.pinterest.com/apps/",
+                    ),
+                    step(
+                        "Clique em Connect app, dê o nome Mascate, uma descrição curta e o site \
+                     https://github.com/fernandolisboa/mascate, e peça o acesso Trial. O \
+                     Pinterest analisa o pedido e avisa por e-mail.",
+                    ),
+                    // The app has no address of its own (#10): the browser
+                    // stops at localhost and the owner copies the address.
+                    step(
+                        "Com o acesso aprovado, abra o app em My apps e, em Redirect URIs, \
+                     cadastre http://localhost/ exatamente assim, com a barra no fim.",
+                    ),
+                    step("Copie o App ID e o App secret do app (o secret aparece em Show)."),
+                ],
+                then: Some(
+                    "Depois de salvar, clique em Entrar no Pinterest, autorize o app e cole o \
+                 endereço em que o navegador parou: http://localhost/?code=…, numa página que \
+                 não abre, e é assim mesmo. O app renova o login sozinho. Com o acesso Trial, \
+                 os Pins aparecem só para você; para todos verem, peça o acesso Standard em My \
+                 apps, com um vídeo do app criando um Pin.",
+                ),
+            };
+            GUIDE
+        }
         Connection::Eduzz => {
             const GUIDE: Guide = Guide {
                 steps: &[
@@ -388,6 +421,80 @@ pub fn guide(connection: Connection) -> Guide {
             };
             GUIDE
         }
+        Connection::Instagram => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    step(
+                        "O Instagram só publica pela API numa conta profissional, comercial ou \
+                     de criador de conteúdo, que é de graça: no app do Instagram, abra \
+                     Configurações › Tipo de conta e ferramentas › Mudar para conta \
+                     profissional.",
+                    ),
+                    // Development mode with the owner as the app's tester needs
+                    // no App Review (ADR 0035, decision 5).
+                    step_at(
+                        "Entre no Meta for Developers com a sua conta do Facebook, clique em \
+                     Criar app, escolha o caso de uso de gerenciar mensagens e conteúdo no \
+                     Instagram e dê o nome Mascate. O app fica em modo de desenvolvimento, só \
+                     para você, sem análise da Meta.",
+                        "Abrir o Meta for Developers",
+                        "https://developers.facebook.com/apps/",
+                    ),
+                    step(
+                        "No app, abra a API do Instagram com login do Instagram e, em Gerar \
+                     tokens de acesso, adicione a sua conta do Instagram. Se pedir, aceite o \
+                     convite de testador no Instagram, em Configurações › Apps e sites.",
+                    ),
+                    step(
+                        "Clique em Gerar token ao lado da conta, entre no Instagram e autorize \
+                     ver o perfil e publicar conteúdo. Copie o token que aparece: ele vale 60 \
+                     dias e quem o tem posta na sua conta, então não mande para ninguém.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, o app renova o token sozinho quando faltar menos de 30 \
+                 dias, sempre que falar com o Instagram. Vai ao Instagram só a foto da \
+                 plataforma, que já está na internet; post com foto da pasta do produto você \
+                 copia e posta à mão. O link na legenda não é clicável no Instagram.",
+                ),
+            };
+            GUIDE
+        }
+        Connection::ShortIo => {
+            const GUIDE: Guide = Guide {
+                steps: &[
+                    // The free plan counts each link's clicks by API; Dub and
+                    // Bitly do not (ADR 0035, decision 8).
+                    step_at(
+                        "Crie uma conta grátis no Short.io. O plano grátis dá um domínio \
+                     *.short.gy, até 1.000 links e conta os cliques de cada um.",
+                        "Abrir o Short.io",
+                        "https://app.short.io/",
+                    ),
+                    step(
+                        "No primeiro acesso, escolha o domínio grátis, como mascate.short.gy. É \
+                     o endereço que aparece nos seus links curtos; copie-o.",
+                    ),
+                    step_at(
+                        "No painel, abra Integrations and API e clique em Create API key. Deixe \
+                     Public key desligado, para a chave ser secreta, restrinja-a ao seu \
+                     domínio e clique em Create.",
+                        "Ver como criar a chave",
+                        "https://developers.short.io/docs/creating-an-api-key",
+                    ),
+                    step(
+                        "Copie a chave na hora: o Short.io não mostra de novo. Quem tem a chave \
+                     cria links no seu domínio, então não mande para ninguém.",
+                    ),
+                ],
+                then: Some(
+                    "Depois de salvar, use Encurtar num link de Afiliação › Links de afiliado. \
+                 Links da Amazon, da Shopee e do Mercado Livre não são encurtados: os termos \
+                 deles proíbem, e cada um tem a sua funcionalidade restrita, desligada.",
+                ),
+            };
+            GUIDE
+        }
     }
 }
 
@@ -420,6 +527,9 @@ mod tests {
             Connection::Kiwify => &["dashboard.kiwify.com.br"],
             Connection::Eduzz => &["console.eduzz.com"],
             Connection::Telegram => &["t.me"],
+            Connection::Pinterest => &["developers.pinterest.com"],
+            Connection::Instagram => &["developers.facebook.com"],
+            Connection::ShortIo => &["app.short.io", "developers.short.io"],
         }
     }
 
@@ -433,7 +543,12 @@ mod tests {
             | Connection::Kiwify
             | Connection::Eduzz
             | Connection::Telegram => 2,
-            Connection::Amazon | Connection::ShopeeSeller | Connection::Magalu => 3,
+            Connection::Amazon
+            | Connection::ShopeeSeller
+            | Connection::Magalu
+            | Connection::Pinterest
+            | Connection::Instagram
+            | Connection::ShortIo => 3,
         }
     }
 

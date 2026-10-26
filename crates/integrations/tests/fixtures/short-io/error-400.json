@@ -1,0 +1,6 @@
+{
+  "code": "INVALID_URL",
+  "message": "originalURL must be a valid URL",
+  "success": false,
+  "statusCode": 400
+}

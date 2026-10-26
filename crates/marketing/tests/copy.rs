@@ -11,7 +11,7 @@ use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_marketing::{
     BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, Contact, CopyBrief, CopyChannel, CopyError,
     CopyField, CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, ListingCopy,
-    MIGRATIONS, WrittenCopy, check_copy,
+    MIGRATIONS, Written, WrittenCopy, check_copy,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -99,7 +99,7 @@ impl FakeWriter {
 }
 
 impl CopyWriter for FakeWriter {
-    fn write(&self, request: &CopyRequest) -> Result<WrittenCopy, PlatformError> {
+    fn write(&self, request: &CopyRequest) -> Result<Written, PlatformError> {
         self.requests.lock().unwrap().push(request.clone());
         let mut answers = self.answers.lock().unwrap();
         if answers.len() > 1 {
@@ -107,6 +107,7 @@ impl CopyWriter for FakeWriter {
         } else {
             answers[0].clone()
         }
+        .map(Written::Listing)
     }
 }
 

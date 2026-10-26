@@ -1,0 +1,6 @@
+{
+  "message": "User does not have permission to manage campaigns",
+  "error": "forbidden",
+  "status": 403,
+  "cause": []
+}

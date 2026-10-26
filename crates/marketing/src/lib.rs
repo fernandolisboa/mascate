@@ -1,14 +1,18 @@
-//! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost, Listing Copy,
-//! Promotion Channels and Offer Posts, published through a destination's port
+//! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost
+//! and Ad Campaigns, Listing Copy,
+//! Promotion Channels and Offer Posts with their Pitch, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
+mod ad_groups;
 mod ads;
+mod campaigns;
 mod channels;
 mod copy;
 mod merge;
 mod offer_posts;
 mod performance;
+mod pitch;
 mod publishing;
 mod quality;
 mod questions;
@@ -18,35 +22,47 @@ mod reputation;
 mod sales_channels;
 mod sales_events;
 
+pub use ad_groups::{
+    AdChange, AdChangeKind, AdGroupKind, AdRequest, AdState, AdStatus, ChannelAdGroup, ConfirmedAd,
+};
 pub use ads::{
-    ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
-    AdsSync, AdsSyncState, AdvertisedListing, CampaignAds, CampaignStatus, ChannelAd, ChannelAds,
-    ChannelCampaign, ProductAds, ProductRoas,
+    ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics,
+    AdsError, AdsReport, AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds,
+    CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
+};
+pub use campaigns::{
+    AdCampaigns, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct, CampaignRequest,
+    CampaignStrategy, ChannelAdCampaigns, ConfirmedCampaign, DAILY_BUDGETS_IN_A_MONTH,
+    DEFAULT_MAXIMUM_DAILY_BUDGET, LossToAccept, MAX_TARGET_ROAS, MIN_TARGET_ROAS,
+    MOST_DAILY_BUDGETS_IN_A_DAY, suggested_target,
 };
 pub use channels::{
     CHANNEL_NAME_MAX_CHARS, CHANNEL_TAG_MAX_CHARS, ChannelError, ChannelKind, NewPromotionChannel,
-    PromotionChannel, PromotionChannels, suggested_tag,
+    PinterestBoard, PromotionChannel, PromotionChannels, suggested_tag,
 };
 pub use copy::{
     BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, CopyBrief, CopyChannel, CopyError, CopyField,
-    CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, GeneratedCopy,
-    ListingCopy, MODEL_MAX_CHARS, WrittenCopy, check_copy,
+    CopyProblem, CopyRequest, CopySettings, CopyShape, CopyWriter, DEFAULT_COPY_MODEL,
+    GeneratedCopy, ListingCopy, MODEL_MAX_CHARS, Written, WrittenCopy, check_copy,
 };
 pub use merge::MERGE;
 pub use offer_posts::{
-    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, OfferFacts, OfferPost, OfferPosts, OfferPrice, POST_BEFORE,
-    POST_DISCOUNT, POST_LINK, POST_PRICE, POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES,
-    PRICE_NOTICE, PostDraft, PostError, PostImage, PostLimits, PostProblem, PostStatus, SentPost,
-    TELEGRAM_LIMITS, check_post, default_template, discount, has_disclosure, post_limits,
-    price_time,
+    DISCLOSURE, DISCLOSURE_WINDOW_DAYS, INSTAGRAM_LIMITS, OfferFacts, OfferPost, OfferPosts,
+    OfferPrice, PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PITCH, POST_PRICE,
+    POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES, PRICE_NOTICE, PostDraft, PostError, PostImage,
+    PostLimits, PostProblem, PostStatus, SentPost, TELEGRAM_LIMITS, check_post, default_template,
+    discount, has_disclosure, post_limits, price_time,
 };
 pub use performance::{
     ChannelPerformance, Comparator, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
     PerformanceRating, ShopPerformance,
 };
+pub use pitch::{
+    PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, PitchError, PitchProblem, PitchedDraft, check_pitch,
+};
 pub use publishing::{
-    ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PublishFailure,
-    PublishRequest, PublishedPost,
+    ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PostFate,
+    PublishFailure, PublishRequest, PublishedPost,
 };
 pub use quality::{
     ActionKind, ChannelQuality, IMPACT_DAYS, ListedItem, ListingQuality, QualityAction,
@@ -57,8 +73,10 @@ pub use questions::{
     QuestionError, QuestionStatus, QuestionSync, Questions, SentAnswer,
 };
 pub use queue::{
-    CHAT_SPACING, LATE_AFTER_MINUTES, PRICE_KEEPS_HOURS, PostQueue, PostTime, QueueRound,
-    default_posting_times, next_free_time,
+    CHAT_SPACING, DestinationLimit, INSTAGRAM_POSTS_PER_DAY, LATE_AFTER_MINUTES,
+    PINTEREST_POSTS_PER_DAY, PRICE_KEEPS_HOURS, PostDestinations, PostQueue, PostTime,
+    QUOTA_RECHECK_MINUTES, QueueRound, RATE_LIMIT_WAIT_MINUTES, default_posting_times,
+    next_free_time,
 };
 pub use replies::{
     ANSWER_MAX_CHARS, Contact, DEADLINE_VARIABLE, MAX_DISPATCH_DAYS, NewReplyTemplate,
@@ -111,6 +129,10 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         queue::SCHEDULE_OFFER_POSTS,
         sales_events::CREATE_SALES_EVENTS,
         sales_channels::ADD_SALES_CHANNELS,
+        channels::ADD_PINTEREST_BOARDS,
+        campaigns::MANAGE_AD_CAMPAIGNS,
+        ad_groups::KEEP_AD_GROUPS,
+        ads::SYNC_ADS_BY_CHANNEL,
     ],
 };
 

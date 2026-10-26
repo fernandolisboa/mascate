@@ -1,6 +1,6 @@
-//! Listing Copy as the draft and the settings use it (#17): the Claude
-//! API's adapter, where it points, the model the owner picks, and how the
-//! failures read in Portuguese.
+//! Listing Copy as the draft and the settings use it (#17), and the Pitch
+//! of an Offer Post (#182): the Claude API's adapter, where it points, the
+//! model the owner picks, and how the failures read in Portuguese.
 
 use std::sync::Arc;
 
@@ -42,18 +42,20 @@ pub fn api_url(build: Build, environment: &Environment) -> String {
 }
 
 /// Why writing with AI is off while the Anthropic Connection is in
-/// `state`; `None` once it is connected.
-pub fn writing_off(state: &ConnectionState) -> Option<&'static str> {
+/// `state`, for the owner who wants to `goal` with it, as in "gerar título e
+/// descrição"; `None` once it is connected.
+pub fn writing_off(state: &ConnectionState, goal: &str) -> Option<String> {
     match state {
         ConnectionState::Connected => None,
         ConnectionState::Failed { .. } => Some(
             "Não consegui ler a chave da Anthropic no cofre do sistema; o texto com IA fica \
-             desligado. Título e descrição continuam editáveis à mão.",
+             desligado e continua editável à mão."
+                .into(),
         ),
-        _ => Some(
-            "Para gerar título e descrição com IA, cole a chave da API da Anthropic em \
-             Configurações › Conexões. Sem ela, escreva à mão.",
-        ),
+        _ => Some(format!(
+            "Para {goal} com IA, cole a chave da API da Anthropic em Configurações › Conexões. \
+             Sem ela, escreva à mão."
+        )),
     }
 }
 
@@ -65,34 +67,39 @@ pub fn anthropic_state(cx: &App) -> ConnectionState {
         })
 }
 
-/// Why writing failed, as the owner reads it.
-pub fn failure(error: &CopyError) -> String {
+/// Why the writer could not write, as the owner reads it.
+pub fn writer_failure(error: &PlatformError) -> String {
     match error {
-        CopyError::Channel(error) => crate::mercado_livre::failure(error),
-        CopyError::Writer(PlatformError::NotConnected) => {
+        PlatformError::NotConnected => {
             "Cole a chave da API da Anthropic em Configurações › Conexões para gerar o texto."
                 .into()
         }
-        CopyError::Writer(PlatformError::Expired) => {
+        PlatformError::Expired => {
             "A Anthropic não aceitou a chave; confira em Configurações › Conexões.".into()
         }
-        CopyError::Writer(PlatformError::RateLimited) => {
+        PlatformError::RateLimited => {
             "A Anthropic pediu para esperar e continuou pedindo depois de três tentativas. Gere \
              de novo daqui a alguns minutos."
                 .into()
         }
-        CopyError::Writer(PlatformError::Refused(why)) => format!(
+        PlatformError::Refused(why) => format!(
             "A Anthropic recusou o pedido: {why}. Se for o modelo, confira o nome em \
-             Configurações › Títulos e descrições com IA."
+             Configurações › Vendas › Textos com IA."
         ),
-        CopyError::Writer(PlatformError::NotFound) => {
+        PlatformError::NotFound => {
             "A Anthropic não encontrou o que foi pedido; confira o modelo em Configurações › \
-             Títulos e descrições com IA."
+             Vendas › Textos com IA."
                 .into()
         }
-        CopyError::Writer(PlatformError::Failed(why)) => {
-            format!("Não consegui falar com a Anthropic: {why}")
-        }
+        PlatformError::Failed(why) => format!("Não consegui falar com a Anthropic: {why}"),
+    }
+}
+
+/// Why writing failed, as the owner reads it.
+pub fn failure(error: &CopyError) -> String {
+    match error {
+        CopyError::Channel(error) => crate::mercado_livre::failure(error),
+        CopyError::Writer(error) => writer_failure(error),
         CopyError::Rejected(problems) => format!(
             "O texto gerado veio fora das regras duas vezes ({}), então não entrou no rascunho. \
              Gere de novo ou escreva à mão.",
@@ -200,9 +207,10 @@ impl Render for CopySettingsSection {
             .border_color(t.frame)
             .bg(t.surface)
             .child(div().text_sm().text_color(t.text2).child(format!(
-                "No rascunho de anúncio, o botão de IA escreve título e descrição pela API da \
-                 Anthropic, cobrada por uso na sua conta. O texto entra só no rascunho, para \
-                 você revisar; nada é publicado sem o seu clique. O padrão é {DEFAULT_COPY_MODEL}, \
+                "No rascunho de anúncio, o botão de IA escreve título e descrição, e no post de \
+                 divulgação, a chamada, pela API da Anthropic, cobrada por uso na sua conta. O \
+                 texto entra só no rascunho, para você revisar; nada é publicado sem o seu \
+                 clique. O padrão é {DEFAULT_COPY_MODEL}, \
                  o Claude mais recente com bom custo para texto curto."
             )))
             .child(

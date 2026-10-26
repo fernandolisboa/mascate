@@ -1,12 +1,14 @@
-//! Settings screen: Connections (#5), prices and margins (#19), the
-//! Restricted Features (#7), Backup (#6), Updates (#8), then Appearance,
-//! which picks the layout (#41) and the interface theme (#39).
-//! Later settings join it.
+//! Settings screen, one tab at a time: Connections (#5); selling, with
+//! prices and margins (#19), Listing Copy, the order of the Sales Channels,
+//! Orders and Finance; the Restricted Features (#7); Backup (#6); Updates
+//! (#8); and Appearance, which picks the layout (#41) and the interface
+//! theme (#39). A later setting joins the tab of the work it changes.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Icon, IndexPath, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -14,6 +16,7 @@ use gpui_kit::{
 };
 use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, UiThemePreference};
 
+use crate::ad_campaigns::AdsSettingsSection;
 use crate::appearance::{self, color, look};
 use crate::backups::BackupSection;
 use crate::connections::{ConnectionsSection, connection_name};
@@ -100,9 +103,100 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
     )
 }
 
+/// A part of the settings, with its own heading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Connections,
+    Pricing,
+    Ads,
+    Copy,
+    Channels,
+    Orders,
+    Finance,
+    Restricted,
+    Backup,
+    Updates,
+    Appearance,
+}
+
+impl Section {
+    fn heading(self) -> &'static str {
+        match self {
+            Section::Connections => "Conexões",
+            Section::Pricing => "Preços e margens",
+            Section::Ads => "Product Ads",
+            Section::Copy => "Textos com IA",
+            Section::Channels => "Canais de venda",
+            Section::Orders => "Pedidos",
+            Section::Finance => "Finanças",
+            Section::Restricted => "Funcionalidades restritas",
+            Section::Backup => "Backup",
+            Section::Updates => "Atualizações",
+            Section::Appearance => "Aparência",
+        }
+    }
+}
+
+/// A tab of the screen: the sections that change the same kind of work.
+/// Texts elsewhere point at a section as "Configurações › tab › section",
+/// or "Configurações › tab" when the tab holds one section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Connections,
+    Selling,
+    Restricted,
+    Backup,
+    Updates,
+    Appearance,
+}
+
+impl SettingsTab {
+    const ALL: [SettingsTab; 6] = [
+        SettingsTab::Connections,
+        SettingsTab::Selling,
+        SettingsTab::Restricted,
+        SettingsTab::Backup,
+        SettingsTab::Updates,
+        SettingsTab::Appearance,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            SettingsTab::Selling => "Vendas",
+            tab => tab.sections()[0].heading(),
+        }
+    }
+
+    fn sections(self) -> &'static [Section] {
+        match self {
+            SettingsTab::Connections => &[Section::Connections],
+            SettingsTab::Selling => &[
+                Section::Pricing,
+                Section::Ads,
+                Section::Copy,
+                Section::Channels,
+                Section::Orders,
+                Section::Finance,
+            ],
+            SettingsTab::Restricted => &[Section::Restricted],
+            SettingsTab::Backup => &[Section::Backup],
+            SettingsTab::Updates => &[Section::Updates],
+            SettingsTab::Appearance => &[Section::Appearance],
+        }
+    }
+
+    /// Whether the tab heads each section: one with a single section is
+    /// named by the tab already.
+    fn heads_sections(self) -> bool {
+        self.sections().len() > 1
+    }
+}
+
 pub struct SettingsScreen {
+    tab: SettingsTab,
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
+    ads: Entity<AdsSettingsSection>,
     copy: Entity<CopySettingsSection>,
     channels: Entity<ChannelRankingSection>,
     orders: Entity<OrderSettingsSection>,
@@ -152,8 +246,10 @@ impl SettingsScreen {
             .chain([cx.observe(&connections, |_, _, cx| cx.notify())])
             .collect();
         Self {
+            tab: SettingsTab::Connections,
             connections,
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
+            ads: cx.new(|cx| AdsSettingsSection::new(window, cx)),
             copy: cx.new(|cx| CopySettingsSection::new(window, cx)),
             channels: cx.new(ChannelRankingSection::new),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
@@ -543,6 +639,8 @@ impl SettingsScreen {
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(title) = self.backup.read(cx).report_title() {
+            // Back from the report, the Backup it came from.
+            self.tab = SettingsTab::Backup;
             let mut parts = ScreenParts::new(title);
             let backup = self.backup.clone();
             parts.actions.push(
@@ -585,86 +683,108 @@ impl Render for SettingsScreen {
                 .clone()
                 .map(|error| kit::error_notice(error, cx).into_any_element()),
         );
+        let selected = SettingsTab::ALL
+            .iter()
+            .position(|tab| *tab == self.tab)
+            .unwrap_or(0);
         parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Conexões"))
-                .child(self.connections.clone())
+            TabBar::new("settings-tabs")
+                .underline()
+                .selected_index(selected)
+                .children(SettingsTab::ALL.map(|tab| Tab::new().label(tab.name())))
+                .on_click(cx.listener(|this, index: &usize, _, cx| {
+                    if let Some(tab) = SettingsTab::ALL.get(*index) {
+                        this.tab = *tab;
+                        cx.notify();
+                    }
+                }))
                 .into_any_element(),
         );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Preços e margens"))
-                .child(self.pricing.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .font_semibold()
-                        .child("Títulos e descrições com IA"),
-                )
-                .child(self.copy.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Vendas"))
-                .child(self.channels.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Pedidos"))
-                .child(self.orders.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Finanças"))
-                .child(self.finance.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xl()
-                        .font_semibold()
-                        .child("Funcionalidades restritas"),
-                )
-                .child(self.restricted.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Backup"))
-                .child(self.backup.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Atualizações"))
-                .child(self.updates.clone())
-                .into_any_element(),
-        );
-        parts.content.push(
-            v_flex()
-                .gap_3()
-                .child(div().text_xl().font_semibold().child("Aparência"))
-                .child(self.render_appearance(cx))
-                .into_any_element(),
-        );
+        let heads = self.tab.heads_sections();
+        for section in self.tab.sections() {
+            let body = match section {
+                Section::Connections => self.connections.clone().into_any_element(),
+                Section::Pricing => self.pricing.clone().into_any_element(),
+                Section::Ads => self.ads.clone().into_any_element(),
+                Section::Copy => self.copy.clone().into_any_element(),
+                Section::Channels => self.channels.clone().into_any_element(),
+                Section::Orders => self.orders.clone().into_any_element(),
+                Section::Finance => self.finance.clone().into_any_element(),
+                Section::Restricted => self.restricted.clone().into_any_element(),
+                Section::Backup => self.backup.clone().into_any_element(),
+                Section::Updates => self.updates.clone().into_any_element(),
+                Section::Appearance => self.render_appearance(cx),
+            };
+            parts.content.push(
+                v_flex()
+                    .gap_3()
+                    .when(heads, |column| {
+                        column.child(div().text_xl().font_semibold().child(section.heading()))
+                    })
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
         layout::screen(parts, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EVERY_SECTION: [Section; 11] = [
+        Section::Connections,
+        Section::Pricing,
+        Section::Ads,
+        Section::Copy,
+        Section::Channels,
+        Section::Orders,
+        Section::Finance,
+        Section::Restricted,
+        Section::Backup,
+        Section::Updates,
+        Section::Appearance,
+    ];
+
+    #[test]
+    fn every_section_sits_in_one_tab() {
+        for section in EVERY_SECTION {
+            let tabs = SettingsTab::ALL
+                .iter()
+                .filter(|tab| tab.sections().contains(&section))
+                .count();
+            assert_eq!(tabs, 1, "{}", section.heading());
+        }
+    }
+
+    #[test]
+    fn a_tab_of_one_section_is_named_after_it_and_skips_its_heading() {
+        for tab in SettingsTab::ALL {
+            match tab.sections() {
+                [only] => {
+                    assert_eq!(tab.name(), only.heading());
+                    assert!(!tab.heads_sections(), "{}", tab.name());
+                }
+                _ => assert!(tab.heads_sections(), "{}", tab.name()),
+            }
+        }
+    }
+
+    #[test]
+    fn selling_settings_share_the_vendas_tab() {
+        assert_eq!(SettingsTab::Selling.name(), "Vendas");
+        assert_eq!(
+            SettingsTab::Selling.sections(),
+            [
+                Section::Pricing,
+                Section::Ads,
+                Section::Copy,
+                Section::Channels,
+                Section::Orders,
+                Section::Finance,
+            ]
+        );
+        assert_eq!(SettingsTab::ALL[0], SettingsTab::Connections, "opens first");
     }
 }

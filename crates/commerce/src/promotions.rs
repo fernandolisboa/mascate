@@ -7,8 +7,8 @@
 //! anything reaches the channel, and creating one waits for the Reputation
 //! the channel asks for, which the caller reads from marketing (ADR 0024).
 
-use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::{NaiveDate, TimeDelta};
 use libsql::{Connection, Row, TransactionBehavior, params};
@@ -18,7 +18,8 @@ use mascate_kernel::{
     RecordId, SalesChannelKind, Timestamp, channel_day,
 };
 use mascate_platform::{
-    Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
+    Database, InFlight, Migration, StoredRow, StoredValueError, load_single_row, save_single_row,
+    stored,
 };
 use rust_decimal::Decimal;
 
@@ -545,7 +546,7 @@ pub struct Promotions {
     pricing: Pricing,
     /// What is on its way to the channel, so a second click never sends
     /// it again.
-    sending: Mutex<HashSet<String>>,
+    sending: InFlight<String>,
 }
 
 impl Promotions {
@@ -561,7 +562,7 @@ impl Promotions {
             database,
             clock,
             ids,
-            sending: Mutex::default(),
+            sending: InFlight::default(),
         }
     }
 
@@ -908,7 +909,10 @@ impl Promotions {
                 starts,
                 ends,
             } => {
-                let _sending = Sending::start(&self.sending, format!("{listing}:discount"))?;
+                let _sending = self
+                    .sending
+                    .start(format!("{listing}:discount"))
+                    .ok_or(PromotionError::Sending)?;
                 let offer = OfferToJoin {
                     kind: PromotionKind::PriceDiscount,
                     promotion: None,
@@ -926,7 +930,10 @@ impl Promotions {
                 kind,
                 price,
             } => {
-                let _sending = Sending::start(&self.sending, format!("{listing}:{promotion}"))?;
+                let _sending = self
+                    .sending
+                    .start(format!("{listing}:{promotion}"))
+                    .ok_or(PromotionError::Sending)?;
                 let offer = OfferToJoin {
                     kind,
                     promotion: Some(promotion.clone()),
@@ -939,10 +946,10 @@ impl Promotions {
                 .await
             }
             Action::Create(plan) => {
-                let _sending = Sending::start(
-                    &self.sending,
-                    format!("create:{}:{}", plan.kind.code(), plan.name),
-                )?;
+                let _sending = self
+                    .sending
+                    .start(format!("create:{}:{}", plan.kind.code(), plan.name))
+                    .ok_or(PromotionError::Sending)?;
                 let existing = channel.promotions()?.into_iter().find(|promotion| {
                     promotion.kind == plan.kind
                         && promotion.name == plan.name
@@ -969,7 +976,10 @@ impl Promotions {
                 id,
                 plan,
             } => {
-                let _sending = Sending::start(&self.sending, format!("change:{id}"))?;
+                let _sending = self
+                    .sending
+                    .start(format!("change:{id}"))
+                    .ok_or(PromotionError::Sending)?;
                 channel.change(&id, &plan)?;
                 self.database
                     .connection()
@@ -1012,7 +1022,10 @@ impl Promotions {
         if !kept.kind.is_own() {
             return Err(PromotionError::NotOwn);
         }
-        let _sending = Sending::start(&self.sending, format!("end:{offer}"))?;
+        let _sending = self
+            .sending
+            .start(format!("end:{offer}"))
+            .ok_or(PromotionError::Sending)?;
         match channel.leave(&kept.listing, kept.kind, kept.promotion.as_deref()) {
             Ok(()) | Err(PlatformError::NotFound) => {}
             Err(error) => return Err(error.into()),
@@ -1031,7 +1044,10 @@ impl Promotions {
         let kept = self.promotion(promotion).await?;
         on_channel(kept.channel, channel)?;
         let kept = kept.listed;
-        let _sending = Sending::start(&self.sending, format!("end:{promotion}"))?;
+        let _sending = self
+            .sending
+            .start(format!("end:{promotion}"))
+            .ok_or(PromotionError::Sending)?;
         match channel.end(&kept.id, kept.kind) {
             Ok(()) | Err(PlatformError::NotFound) => {}
             Err(error) => return Err(error.into()),
@@ -1312,30 +1328,6 @@ fn check_days(
         return Err(PromotionError::TooLong(max_days));
     }
     Ok(())
-}
-
-struct Sending<'a> {
-    set: &'a Mutex<HashSet<String>>,
-    key: String,
-}
-
-impl<'a> Sending<'a> {
-    fn start(set: &'a Mutex<HashSet<String>>, key: String) -> Result<Self, PromotionError> {
-        let mut sending = set.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !sending.insert(key.clone()) {
-            return Err(PromotionError::Sending);
-        }
-        Ok(Self { set, key })
-    }
-}
-
-impl Drop for Sending<'_> {
-    fn drop(&mut self) {
-        self.set
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.key);
-    }
 }
 
 fn day(date: NaiveDate) -> String {

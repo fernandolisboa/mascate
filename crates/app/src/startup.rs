@@ -9,9 +9,9 @@ use mascate_commerce::{
 };
 use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
-use mascate_kernel::{SystemClock, UuidV7Generator};
+use mascate_kernel::{SalesChannelKind, SystemClock, UuidV7Generator};
 use mascate_marketing::{
-    ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
+    AdCampaigns, ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
     ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
@@ -50,6 +50,7 @@ const MODULE_FLAGS: &[&[Flag]] = &[
     mascate_marketing::FLAGS,
     mascate_affiliate::FLAGS,
     mascate_commerce::FLAGS,
+    mascate_integrations::FLAGS,
 ];
 
 /// Every module's Reminders, in the order the home screen shows them.
@@ -88,6 +89,7 @@ pub struct Started {
     pub questions: Arc<Questions>,
     pub reputation: Arc<Reputation>,
     pub product_ads: Arc<ProductAds>,
+    pub ad_campaigns: Arc<AdCampaigns>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub promotion_channels: Arc<PromotionChannels>,
     pub offer_posts: Arc<OfferPosts>,
@@ -325,6 +327,12 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let ad_campaigns = AdCampaigns::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+                SalesChannelKind::MercadoLivre,
+            );
             let reply_templates = ReplyTemplates::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -391,6 +399,7 @@ pub fn prepare() -> Outcome {
                 questions: Arc::new(questions),
                 reputation: Arc::new(reputation),
                 product_ads: Arc::new(product_ads),
+                ad_campaigns: Arc::new(ad_campaigns),
                 reply_templates: Arc::new(reply_templates),
                 promotion_channels: Arc::new(promotion_channels),
                 offer_posts: Arc::new(offer_posts),
@@ -466,28 +475,31 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, LinkTagger, ManualCommission,
-        ManualPayout, NewAffiliateLink, Practice, Promotion, PromotionRules, Standing, TagRefusal,
+        AffiliatePlatform, CommissionFilter, CommissionStatus, DayClicks, LinkShortener,
+        LinkTagger, MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink,
+        Practice, Promotion, PromotionRules, Shortened, Standing, TagRefusal,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
         ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
-        ChannelStock, FeeBasis, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
-        OnSalesChannel, PromotionKind, PromotionPlan, PromotionStatus, PurchaseOrderStatus,
-        Receiving, SaleFee, SalesChannel,
+        ChannelStock, FeeBasis, Listing, ListingStatus, NewPurchaseLine, NewPurchaseOrder,
+        OfferToJoin, OnSalesChannel, PriceChangeReason, PromotionKind, PromotionPlan,
+        PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
-        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind,
+        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, Roas,
+        SalesChannelKind,
     };
     use mascate_marketing::{
-        AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
-        ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
-        CopySettings, DateRule, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PostStatus, PostTime,
-        QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor, ReputationSource,
-        Score, default_posting_times,
+        AdGroupKind, AdMetrics, AdStatus, CampaignStatus, CampaignStrategy, ChannelAd,
+        ChannelAdGroup, ChannelAds, ChannelCampaign, ChannelKind, ChannelQuality, ChannelQuestion,
+        ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
+        DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews, MetricReading,
+        NewPromotionChannel, NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice,
+        PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource, QuestionStatus, Rating,
+        ReputationColor, ReputationSource, Score, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -526,22 +538,59 @@ mod tests {
         }
     }
 
-    /// A Sales Channel with the sample listing only.
-    struct SampleChannel;
+    /// What 0.5.0 saves: the sample Product listed on Shopee too, its price
+    /// then lowered by the owner.
+    fn sample_shopee_listing() -> ChannelListing {
+        ChannelListing {
+            id: "22000000001".into(),
+            variation: None,
+            title: "Produto de exemplo".into(),
+            price: Money::new(64.into(), Currency::Brl),
+            available_quantity: 0,
+            status: ListingStatus::Paused,
+            link: Some("https://shopee.com.br/product/1/22000000001".into()),
+            listing_type: None,
+            category: Some("100001".into()),
+            seller_sku: Some(SAMPLE_SKU.into()),
+        }
+    }
+
+    fn sample_shopee_price() -> Money {
+        Money::new(62.into(), Currency::Brl)
+    }
+
+    /// A Sales Channel with its sample listing only.
+    #[derive(Clone, Copy)]
+    enum SampleChannel {
+        MercadoLivre,
+        Shopee,
+    }
+
+    impl SampleChannel {
+        fn listing(self) -> ChannelListing {
+            match self {
+                SampleChannel::MercadoLivre => sample_listing(),
+                SampleChannel::Shopee => sample_shopee_listing(),
+            }
+        }
+    }
 
     impl OnSalesChannel for SampleChannel {
         fn sales_channel(&self) -> SalesChannelKind {
-            SalesChannelKind::MercadoLivre
+            match self {
+                SampleChannel::MercadoLivre => SalesChannelKind::MercadoLivre,
+                SampleChannel::Shopee => SalesChannelKind::Shopee,
+            }
         }
     }
 
     impl SalesChannel for SampleChannel {
         fn listing_ids(&self) -> Result<Vec<String>, PlatformError> {
-            Ok(vec![sample_listing().id])
+            Ok(vec![self.listing().id])
         }
 
         fn listings(&self, _: &[String]) -> Result<Vec<ChannelListing>, PlatformError> {
-            Ok(vec![sample_listing()])
+            Ok(vec![self.listing()])
         }
 
         fn sale_fee(&self, _: &FeeBasis, _: Money) -> Result<SaleFee, PlatformError> {
@@ -549,7 +598,7 @@ mod tests {
         }
 
         fn set_price(&self, _: &str, _: Money) -> Result<(), PlatformError> {
-            Err(PlatformError::NotFound)
+            Ok(())
         }
 
         fn set_stock(&self, _: &str, _: &[ChannelStock]) -> Result<(), PlatformError> {
@@ -665,20 +714,30 @@ mod tests {
         }
     }
 
+    /// The sample campaign: R$ 10,00 a day for profitability at 4x.
+    fn sample_campaign() -> ChannelCampaign {
+        ChannelCampaign {
+            budget: Some(Money::new(10.into(), Currency::Brl)),
+            strategy: Some(CampaignStrategy::Profitability),
+            target: Roas::new(4.into()),
+            ..ChannelCampaign::named("1", "Campanha de exemplo", CampaignStatus::Active)
+        }
+    }
+
     /// One campaign advertising the sample listing, R$ 2,50 a day.
     struct SampleAds;
 
     impl ChannelAds for SampleAds {
+        fn advertised_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+
         fn account(&self) -> Result<Option<String>, PlatformError> {
             Ok(Some("1".into()))
         }
 
         fn campaigns(&self, _: &str) -> Result<Vec<ChannelCampaign>, PlatformError> {
-            Ok(vec![ChannelCampaign {
-                id: "1".into(),
-                name: "Campanha de exemplo".into(),
-                status: CampaignStatus::Active,
-            }])
+            Ok(vec![sample_campaign()])
         }
 
         fn ads_on(&self, _: &str, _: chrono::NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
@@ -689,6 +748,17 @@ mod tests {
                     cost: Money::new(rust_decimal::Decimal::new(250, 2), Currency::Brl),
                     ..AdMetrics::zero(Currency::Brl)
                 },
+            }])
+        }
+
+        fn ad_groups(&self, _: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
+            Ok(vec![ChannelAdGroup {
+                id: "1".into(),
+                kind: AdGroupKind::Item,
+                title: None,
+                listings: vec![sample_listing().id],
+                campaign: Some("1".into()),
+                status: AdStatus::Active,
             }])
         }
     }
@@ -754,8 +824,10 @@ mod tests {
         }
     }
 
+    /// Spelled out, so a change to Mercado Livre's defaults never changes
+    /// what the samples stored.
     fn sample_rules() -> PromotionRules {
-        let mut rules = PromotionRules::defaults(AffiliatePlatform::MercadoLivre)
+        let mut rules = PromotionRules::all(Standing::Unknown)
             .with(Practice::PaidSearch, Standing::Forbidden)
             .with(Practice::BoostedPosts, Standing::Allowed);
         rules.brand_keywords = vec!["mercado livre".into()];
@@ -769,6 +841,24 @@ mod tests {
             default_tag: "exemplo".into(),
             keywords: Vec::new(),
             telegram_chat: Some("@canaldeexemplo".into()),
+        }
+    }
+
+    /// What 0.5.0 saves: a Pinterest channel with its board picked.
+    fn sample_pinterest_channel() -> NewPromotionChannel {
+        NewPromotionChannel {
+            name: "Pinterest de exemplo".into(),
+            kind: ChannelKind::Pinterest,
+            default_tag: "pinterest".into(),
+            keywords: Vec::new(),
+            telegram_chat: None,
+        }
+    }
+
+    fn sample_board() -> PinterestBoard {
+        PinterestBoard {
+            id: "987654321012345678".into(),
+            name: "Achados da semana".into(),
         }
     }
 
@@ -795,6 +885,34 @@ mod tests {
             Ok(format!("{link}?tag={tag}"))
         }
     }
+
+    const SAMPLE_SHORT_LINK: &str = "https://exemplo.short.gy/exemplo1";
+
+    /// Shortens every link to the same sample Short Link.
+    struct SampleShortener;
+
+    impl LinkShortener for SampleShortener {
+        fn shorten(&self, _: &str, _: &str) -> Result<Shortened, PlatformError> {
+            Ok(Shortened {
+                url: SAMPLE_SHORT_LINK.into(),
+                key: "lnk_exemplo".into(),
+            })
+        }
+
+        /// Three clicks on the last day asked.
+        fn clicks(
+            &self,
+            _: &str,
+            days: std::ops::RangeInclusive<chrono::NaiveDate>,
+        ) -> Result<Vec<DayClicks>, PlatformError> {
+            Ok(vec![DayClicks {
+                day: *days.end(),
+                clicks: SAMPLE_CLICKS,
+            }])
+        }
+    }
+
+    const SAMPLE_CLICKS: u64 = 3;
 
     const SAMPLE_POST_TEMPLATE: &str = "{produto} por {preco}\n{link}";
 
@@ -991,9 +1109,18 @@ mod tests {
                 .await
                 .unwrap();
             let listings = Listings::new(database.clone(), clock.clone(), ids.clone());
-            listings.sync(&SampleChannel).await.unwrap();
+            listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
             let listing = listings.listings().await.unwrap().remove(0);
             listings.link(listing.id, product.id).await.unwrap();
+            listings.sync(&SampleChannel::Shopee).await.unwrap();
+            let shopee = listing_on(&listings, SalesChannelKind::Shopee)
+                .await
+                .unwrap();
+            listings.link(shopee.id, product.id).await.unwrap();
+            listings
+                .change_price(shopee.id, sample_shopee_price(), &SampleChannel::Shopee)
+                .await
+                .unwrap();
             ListingQuality::new(database.clone(), clock.clone(), ids.clone())
                 .sync(&SampleQuality, &[sample_listing().id])
                 .await
@@ -1039,6 +1166,11 @@ mod tests {
                 .set_posting_times(channel.id, &sample_posting_times())
                 .await
                 .unwrap();
+            let pinterest = channels.create(&sample_pinterest_channel()).await.unwrap();
+            channels
+                .set_pinterest_board(pinterest.id, &sample_board())
+                .await
+                .unwrap();
             affiliate
                 .link_product(commission.program, "Produto de exemplo", product.id)
                 .await
@@ -1048,6 +1180,17 @@ mod tests {
                 .await
                 .unwrap()
                 .link;
+            flags
+                .turn_on(
+                    flags
+                        .request_turn_on(MERCADO_LIVRE_SHORT_LINK.key)
+                        .unwrap()
+                        .confirm("sample"),
+                )
+                .await
+                .unwrap();
+            affiliate.shorten(link.id, &SampleShortener).await.unwrap();
+            affiliate.read_clicks(&SampleShortener).await.unwrap();
             let posts = OfferPosts::new(database.clone(), clock.clone(), ids.clone());
             posts
                 .set_template(channel.id, SAMPLE_POST_TEMPLATE)
@@ -1105,6 +1248,16 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    /// The sample's Listing on `channel`, when it has one.
+    async fn listing_on(listings: &Listings, channel: SalesChannelKind) -> Option<Listing> {
+        listings
+            .listings()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.channel == channel)
     }
 
     /// What 0.4.0 saves: a Merge Import of another computer's copy of the
@@ -1279,17 +1432,51 @@ mod tests {
                 );
                 // Listings arrived in 0.2.0, like the catalog.
                 if Version::parse(released) >= Version::parse("0.2.0") {
-                    let listing = listings.listings().await.unwrap().remove(0);
+                    let listing = listing_on(&listings, SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap_or_else(|| panic!("{name}"));
                     assert_eq!(listing.listed, sample_listing(), "{name}");
-                    assert_eq!(listing.channel, SalesChannelKind::MercadoLivre, "{name}");
                     let product = products
                         .iter()
                         .find(|product| product.sku.as_str() == SAMPLE_SKU)
                         .unwrap_or_else(|| panic!("{name}"));
                     assert_eq!(listing.product, Some(product.id), "{name}");
                 }
-                listings.sync(&SampleChannel).await.unwrap();
-                assert_eq!(listings.listings().await.unwrap().len(), 1, "{name}");
+                listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
+                // Sales Channels besides Mercado Livre and the price history
+                // arrived in 0.5.0: the Shopee listing keeps its Product and
+                // the price the owner approved.
+                let since_0_5_0 = Version::parse(released) >= Version::parse("0.5.0");
+                let shopee = listing_on(&listings, SalesChannelKind::Shopee).await;
+                if since_0_5_0 {
+                    let shopee = shopee.unwrap_or_else(|| panic!("{name}"));
+                    let product = products
+                        .iter()
+                        .find(|product| product.sku.as_str() == SAMPLE_SKU)
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(shopee.product, Some(product.id), "{name}");
+                    assert_eq!(shopee.listed.price, sample_shopee_price(), "{name}");
+                    let history = Repricing::new(
+                        database.clone(),
+                        inventory.clone(),
+                        Arc::new(SystemClock),
+                        Arc::new(UuidV7Generator),
+                    )
+                    .price_history(shopee.id)
+                    .await
+                    .unwrap();
+                    assert_eq!(history.len(), 1, "{name}");
+                    assert_eq!(history[0].reason, PriceChangeReason::Approved, "{name}");
+                    assert_eq!(history[0].old, sample_shopee_listing().price, "{name}");
+                    assert_eq!(history[0].new, sample_shopee_price(), "{name}");
+                } else {
+                    assert!(shopee.is_none(), "{name}");
+                }
+                assert_eq!(
+                    listings.listings().await.unwrap().len(),
+                    1 + usize::from(since_0_5_0),
+                    "{name}"
+                );
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.
@@ -1480,7 +1667,41 @@ mod tests {
                 let costs = ads.costs().await.unwrap();
                 assert!(!costs.is_empty(), "{name}");
                 assert!(
-                    costs.iter().all(|day| day.listing == sample_listing().id),
+                    costs.iter().all(|day| day.listing == sample_listing().id
+                        && day.channel == SalesChannelKind::MercadoLivre),
+                    "{name}"
+                );
+                // Each channel's ads Sync arrived after 0.5.0: the one kept
+                // was Mercado Livre's.
+                assert!(
+                    ads.last_sync(SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap()
+                        .is_some(),
+                    "{name}"
+                );
+                assert_eq!(
+                    ads.last_sync(SalesChannelKind::Shopee).await.unwrap(),
+                    None,
+                    "{name}"
+                );
+                // Ad Campaign settings arrived after 0.5.0: the next Sync
+                // reads each campaign's budget, strategy and Target ROAS,
+                // and the Maximum Daily Budget starts at R$ 50,00.
+                let campaigns = AdCampaigns::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                    SalesChannelKind::MercadoLivre,
+                );
+                assert_eq!(
+                    campaigns.campaigns().await.unwrap(),
+                    [sample_campaign()],
+                    "{name}"
+                );
+                assert_eq!(
+                    campaigns.maximum_daily_budget().await.unwrap(),
+                    DEFAULT_MAXIMUM_DAILY_BUDGET,
                     "{name}"
                 );
                 // Category names and the sales volume limit arrived after
@@ -1490,7 +1711,7 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                listings.sync(&SampleChannel).await.unwrap();
+                listings.sync(&SampleChannel::MercadoLivre).await.unwrap();
                 assert_eq!(
                     listings
                         .category_names(SalesChannelKind::MercadoLivre)
@@ -1585,9 +1806,30 @@ mod tests {
                 if channels.channels().await.unwrap().is_empty() {
                     channels.create(&sample_channel()).await.unwrap();
                 }
-                let kept = channels.channels().await.unwrap();
+                let (pinterest, kept): (Vec<_>, Vec<_>) = channels
+                    .channels()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .partition(|channel| channel.kind == ChannelKind::Pinterest);
+                // Pinterest channels arrived in 0.5.0, with the board the
+                // owner picked.
+                if since_0_5_0 {
+                    assert_eq!(pinterest.len(), 1, "{name}");
+                    assert_eq!(
+                        pinterest[0].default_tag,
+                        sample_pinterest_channel().default_tag,
+                        "{name}"
+                    );
+                    assert_eq!(pinterest[0].pinterest_board, Some(sample_board()), "{name}");
+                } else {
+                    assert!(pinterest.is_empty(), "{name}");
+                }
                 assert_eq!(kept.len(), 1, "{name}");
                 assert_eq!(kept[0].default_tag, "exemplo", "{name}");
+                assert_eq!(kept[0].kind, ChannelKind::TelegramChannel, "{name}");
+                // The board arrived with Pinterest; older channels have none.
+                assert_eq!(kept[0].pinterest_board, None, "{name}");
                 let created = affiliate
                     .create_link(&sample_link(program.id, kept[0].id), &SampleTagger)
                     .await
@@ -1597,6 +1839,60 @@ mod tests {
                     "{name}"
                 );
                 assert_eq!(affiliate.links().await.unwrap().len(), 1, "{name}");
+                // Short Links and their clicks arrived in 0.5.0; the sample's
+                // Program is on Mercado Livre, whose terms forbid a shortener.
+                assert_eq!(
+                    created.link.short.as_deref(),
+                    since_0_5_0.then_some(SAMPLE_SHORT_LINK),
+                    "{name}"
+                );
+                let ever = chrono::DateTime::<chrono::Utc>::MIN_UTC
+                    ..chrono::DateTime::<chrono::Utc>::MAX_UTC;
+                let saved: Vec<u64> = affiliate
+                    .link_clicks(ever.clone())
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|link| link.clicks)
+                    .collect();
+                let saved_clicks = if since_0_5_0 { SAMPLE_CLICKS } else { 0 };
+                assert_eq!(
+                    saved,
+                    if since_0_5_0 {
+                        vec![SAMPLE_CLICKS]
+                    } else {
+                        vec![]
+                    },
+                    "{name}"
+                );
+                flags
+                    .turn_on(
+                        flags
+                            .request_turn_on(MERCADO_LIVRE_SHORT_LINK.key)
+                            .unwrap()
+                            .confirm("sample"),
+                    )
+                    .await
+                    .unwrap();
+                let shortened = affiliate
+                    .shorten(created.link.id, &SampleShortener)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    shortened.link.short.as_deref(),
+                    Some(SAMPLE_SHORT_LINK),
+                    "{name}"
+                );
+                affiliate.read_clicks(&SampleShortener).await.unwrap();
+                let clicks = affiliate.link_clicks(ever).await.unwrap();
+                assert_eq!(clicks.len(), 1, "{name}");
+                // The read adds today's clicks; a sample written today
+                // already has them.
+                let read_today = clicks[0].clicks - saved_clicks;
+                assert!(
+                    read_today == SAMPLE_CLICKS || since_0_5_0 && read_today == 0,
+                    "{name}"
+                );
                 // Offer Posts arrived after 0.2.0 too.
                 let posts = OfferPosts::new(
                     database.clone(),

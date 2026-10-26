@@ -1,0 +1,1 @@
+{"error": "", "message": "", "warning": "", "request_id": "a1d3f0c2b4e64f5a9c1e2d3b4a5f6e70", "response": {"shop_id": 14701711, "region": "BR", "has_next_page": false, "campaign_list": [{"ad_type": "manual", "campaign_id": 70001}, {"ad_type": "auto", "campaign_id": 70002}, {"ad_type": "manual", "campaign_id": 70003}]}}

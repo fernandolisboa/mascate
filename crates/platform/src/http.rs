@@ -22,14 +22,45 @@ pub fn slow_http_agent(base_url: &str, user_agent: &str, answer_timeout: Duratio
     )
 }
 
+/// An agent for reading public pages on any host, for a crawler: a
+/// redirect comes back as the answer, so the crawler checks the new address
+/// before following it.
+pub fn crawling_agent(user_agent: &str) -> ureq::Agent {
+    builder(
+        false,
+        user_agent,
+        Duration::from_secs(30),
+        Duration::from_secs(30),
+    )
+    .max_redirects(0)
+    .build()
+    .into()
+}
+
 fn agent(
     base_url: &str,
     user_agent: &str,
     response_timeout: Duration,
     body_timeout: Duration,
 ) -> ureq::Agent {
+    builder(
+        base_url.starts_with("https://"),
+        user_agent,
+        response_timeout,
+        body_timeout,
+    )
+    .build()
+    .into()
+}
+
+fn builder(
+    https_only: bool,
+    user_agent: &str,
+    response_timeout: Duration,
+    body_timeout: Duration,
+) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
     ureq::Agent::config_builder()
-        .https_only(base_url.starts_with("https://"))
+        .https_only(https_only)
         // The system's certificates, so antivirus or company TLS inspection
         // the system trusts does not break the app's requests.
         .tls_config(
@@ -42,6 +73,4 @@ fn agent(
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(response_timeout))
         .timeout_recv_body(Some(body_timeout))
-        .build()
-        .into()
 }

@@ -421,3 +421,40 @@ fn a_telegram_token_the_platform_refused_reads_expired_until_a_new_one_is_saved(
         ConnectionState::Connected
     );
 }
+
+#[test]
+fn a_login_pinterest_refused_reads_expired_until_the_owner_logs_in_again() {
+    let (connections, store) = connections();
+    connections
+        .save(
+            Connection::Pinterest,
+            &[
+                ("PINTEREST_APP_ID", "1501234"),
+                ("PINTEREST_APP_SECRET", "segredo"),
+            ],
+        )
+        .unwrap();
+    // The keys alone are not a login.
+    assert_eq!(
+        connections.state(Connection::Pinterest),
+        ConnectionState::NotConfigured
+    );
+    store
+        .write("PINTEREST_REFRESH_TOKEN", &Secret::new("pinr_primeiro"))
+        .unwrap();
+    assert_eq!(
+        connections.state(Connection::Pinterest),
+        ConnectionState::Connected
+    );
+
+    connections.mark_expired(Connection::Pinterest);
+    assert_eq!(
+        connections.state(Connection::Pinterest),
+        ConnectionState::Expired
+    );
+    connections.logged_in(Connection::Pinterest);
+    assert_eq!(
+        connections.state(Connection::Pinterest),
+        ConnectionState::Connected
+    );
+}

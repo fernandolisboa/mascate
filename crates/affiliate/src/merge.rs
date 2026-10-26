@@ -1,5 +1,5 @@
 use mascate_platform::KeyPart::Column;
-use mascate_platform::RecognisedBy::{Id, Keys};
+use mascate_platform::RecognisedBy::{Id, Keys, SingleRow};
 use mascate_platform::{ModuleMerge, Reference, TableMerge, UniqueKey};
 
 const TO_PROGRAM: Reference = Reference::to("program_id", "affiliate_programs");
@@ -85,6 +85,21 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             Reference::to("channel_id", "marketing_promotion_channels"),
         ])
         .label(&["product", "channel_id"]),
+        TableMerge::new(
+            "affiliate_short_links",
+            "Link curto",
+            Keys(&[UniqueKey::live(&[Column("link_id")])]),
+        )
+        .references(&[Reference::to("link_id", "affiliate_links")])
+        .label(&["short"]),
+        TableMerge::new(
+            "affiliate_link_clicks",
+            "Cliques do link curto",
+            Keys(&[UniqueKey::live(&[Column("short_link_id"), Column("day")])]),
+        )
+        .references(&[Reference::to("short_link_id", "affiliate_short_links")])
+        .label(&["day", "clicks"]),
+        TableMerge::new("affiliate_click_reads", "Leitura de cliques", SingleRow),
         TableMerge::new(
             "affiliate_syncs",
             "Sync de afiliado",

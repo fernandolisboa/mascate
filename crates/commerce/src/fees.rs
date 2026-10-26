@@ -127,6 +127,7 @@ pub trait ChannelBilling: OnSalesChannel + Send + Sync {
 /// as the caller read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdCost {
+    pub channel: SalesChannelKind,
     /// The channel's id of the listing.
     pub listing: String,
     pub day: NaiveDate,
@@ -413,8 +414,9 @@ impl Orders {
     /// Margin at the tax rate `tax`, and the `ads` (what Product Ads cost,
     /// by listing and day) of the days within `sold` that no sale took.
     /// Each listing's Ads in a month of the channel are split across the
-    /// listing's sales that month that were not cancelled, by their value,
-    /// whatever `sold` is; a month without such a sale keeps its Ads apart.
+    /// listing's sales on that channel that month that were not cancelled,
+    /// by their value, whatever `sold` is; a month without such a sale
+    /// keeps its Ads apart.
     pub async fn sales(
         &self,
         tax: Percentage,
@@ -605,16 +607,16 @@ fn shipping_shares(orders: &[Order]) -> BTreeMap<RecordId, Money> {
     shares
 }
 
-/// A listing in a month of the Sales Channel.
-type ListingMonth<'a> = (&'a str, i32, u32);
+/// A listing of a Sales Channel in a month of the channel.
+type ListingMonth<'a> = (SalesChannelKind, &'a str, i32, u32);
 
 fn month_of(day: NaiveDate) -> (i32, u32) {
     (day.year(), day.month())
 }
 
 /// Each Order's share of `ads`: a listing's Ads in a month of the channel,
-/// split across the lines that sold it that month, in Orders not
-/// cancelled, by their value. The Ads of a listing and month without such
+/// split across the lines that sold it on that channel that month, in
+/// Orders not cancelled, by their value. The Ads of a listing and month without such
 /// a line are left over, day by day.
 fn place_ads(
     orders: &[Order],
@@ -624,7 +626,7 @@ fn place_ads(
     for ad in ads {
         let (year, month) = month_of(ad.day);
         spent
-            .entry((ad.listing.as_str(), year, month))
+            .entry((ad.channel, ad.listing.as_str(), year, month))
             .or_default()
             .push(ad);
     }
@@ -635,7 +637,7 @@ fn place_ads(
         }
         let (year, month) = month_of(channel_day(order.sold.ordered_at));
         for line in &order.lines {
-            sold.entry((line.sold.item.as_str(), year, month))
+            sold.entry((order.channel, line.sold.item.as_str(), year, month))
                 .or_default()
                 .push((
                     order.id,

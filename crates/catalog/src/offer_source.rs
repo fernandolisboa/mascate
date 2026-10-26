@@ -3,7 +3,7 @@
 //! catalog defines what it needs here; each Platform's adapter implements
 //! it (ADR 0013, ADR 0027), so the catalog never knows which one answers.
 
-use mascate_kernel::{Money, Percentage, PlatformError};
+use mascate_kernel::{Money, Percentage, PlatformError, Timestamp};
 use rust_decimal::Decimal;
 
 use crate::ProductSource;
@@ -66,11 +66,12 @@ pub struct FoundOffer {
     /// The Platform's picture of the item, over HTTPS.
     pub image: Option<String>,
     pub shop: FoundShop,
-    /// The lowest price of the item, its cheapest variation.
-    pub price: Money,
+    /// The lowest price of the item, its cheapest variation; `None` when
+    /// the page shows the item without a price, which cannot be kept.
+    pub price: Option<Money>,
     /// The highest price, the dearest variation; the same as `price`
-    /// without variations.
-    pub highest_price: Money,
+    /// without variations, and `None` with it.
+    pub highest_price: Option<Money>,
     /// Units sold, as the Platform counts them.
     pub sales: u32,
     pub commission: Option<Percentage>,
@@ -96,4 +97,20 @@ pub trait OfferSource: Send + Sync {
 
     /// The shops whose name matches `keyword`, on page `page` (1 first).
     fn search_shops(&self, keyword: &str, page: u32) -> Result<Found<FoundShop>, PlatformError>;
+
+    /// The orders `search_offers` accepts.
+    fn orders(&self) -> &[OfferOrder] {
+        &OfferOrder::ALL
+    }
+
+    /// Whether `search_shops` and a search narrowed to a shop work.
+    fn finds_shops(&self) -> bool {
+        true
+    }
+
+    /// Until when the source asks the Platform nothing, after the Platform
+    /// blocked it; `None` while it searches.
+    fn blocked_until(&self) -> Option<Timestamp> {
+        None
+    }
 }

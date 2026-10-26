@@ -82,22 +82,7 @@ impl StoreAuthorization {
     /// The code in the address the browser landed on, or in its query
     /// alone; `None` when it is missing or malformed.
     pub fn from_landing(address: &str) -> Option<Self> {
-        let address = address.trim();
-        let query = address.split_once('?').map_or(address, |(_, query)| query);
-        let query = query.split('#').next().unwrap_or_default();
-        let code = query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .find(|(key, _)| *key == "code")
-            .map(|(_, value)| value)?;
-        let well_formed = !code.is_empty()
-            && code.len() <= 4096
-            && code
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte));
-        well_formed.then(|| Self {
-            code: code.to_owned(),
-        })
+        crate::landing::code_in(address).map(|code| Self { code })
     }
 }
 

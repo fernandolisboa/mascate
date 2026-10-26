@@ -31,6 +31,13 @@ pub enum Connection {
     ShopeeSeller,
     /// The owner's Magalu store, a Sales Channel.
     Magalu,
+    /// The owner's Pinterest account, where Offer Posts go as Pins.
+    Pinterest,
+    /// The owner's professional Instagram account, where Offer Posts go as
+    /// photo posts.
+    Instagram,
+    /// The shortener of the owner's Short Links, on the owner's domain.
+    ShortIo,
 }
 
 /// How a credential reaches the store.
@@ -58,7 +65,7 @@ const fn pasted(name: &'static str) -> Credential {
 }
 
 impl Connection {
-    pub const ALL: [Connection; 11] = [
+    pub const ALL: [Connection; 14] = [
         Connection::MercadoLivre,
         Connection::ShopeeAffiliates,
         Connection::Anthropic,
@@ -70,6 +77,9 @@ impl Connection {
         Connection::Amazon,
         Connection::ShopeeSeller,
         Connection::Magalu,
+        Connection::Pinterest,
+        Connection::Instagram,
+        Connection::ShortIo,
     ];
 
     /// Everything the Connection needs before it counts as connected.
@@ -141,6 +151,21 @@ impl Connection {
                 entry: CredentialEntry::Login,
             },
         ];
+        // The app's keys come from Pinterest's developer page; the first
+        // refresh token, from the owner's login on Pinterest's page.
+        const PINTEREST: &[Credential] = &[
+            pasted("PINTEREST_APP_ID"),
+            pasted("PINTEREST_APP_SECRET"),
+            Credential {
+                name: "PINTEREST_REFRESH_TOKEN",
+                entry: CredentialEntry::Login,
+            },
+        ];
+        // The Meta app dashboard generates the token: no client secret and
+        // no login page. The app renews it and keeps its term beside it.
+        const INSTAGRAM: &[Credential] = &[pasted("INSTAGRAM_ACCESS_TOKEN")];
+        // The domain is not secret: every Short Link shows it.
+        const SHORT_IO: &[Credential] = &[pasted("SHORT_IO_API_KEY"), pasted("SHORT_IO_DOMAIN")];
         match self {
             Connection::MercadoLivre => MERCADO_LIVRE,
             Connection::ShopeeAffiliates => SHOPEE_AFFILIATES,
@@ -153,6 +178,9 @@ impl Connection {
             Connection::Amazon => AMAZON,
             Connection::ShopeeSeller => SHOPEE_SELLER,
             Connection::Magalu => MAGALU,
+            Connection::Pinterest => PINTEREST,
+            Connection::Instagram => INSTAGRAM,
+            Connection::ShortIo => SHORT_IO,
         }
     }
 
@@ -246,6 +274,12 @@ impl Connections {
     /// the owner saves new ones or removes it.
     pub fn mark_expired(&self, connection: Connection) {
         self.expired_set().insert(connection);
+    }
+
+    /// Notes that the owner logged in to the Platform again: the
+    /// Connection no longer reads [`ConnectionState::Expired`].
+    pub fn logged_in(&self, connection: Connection) {
+        self.expired_set().remove(&connection);
     }
 
     fn is_expired(&self, connection: Connection) -> bool {

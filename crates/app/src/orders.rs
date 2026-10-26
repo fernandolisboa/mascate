@@ -1295,7 +1295,7 @@ impl Render for OrdersScreen {
     }
 }
 
-/// Settings › Pedidos: how often the app reads Orders and how long the
+/// Settings › Vendas › Pedidos: how often the app reads Orders and how long the
 /// buyer's data stays.
 pub struct OrderSettingsSection {
     every: Entity<InputState>,

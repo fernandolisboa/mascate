@@ -1,0 +1,9 @@
+{
+  "error": {
+    "message": "You reached maximum number of posts that is allowed to be published by Content Publishing API.",
+    "type": "OAuthException",
+    "code": 9,
+    "error_subcode": 2207042,
+    "fbtrace_id": "AxyzMascate9"
+  }
+}

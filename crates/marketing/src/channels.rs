@@ -1,8 +1,10 @@
 //! Promotion Channels (#99, ADR 0031 decision 5): where the owner promotes
 //! affiliate links and products, each with the marking its links carry.
 //! The Affiliate keeps a channel only by its id; the app translates a
-//! channel into the Affiliate's words when a link is created. A Telegram
-//! channel also has the times its scheduled posts go out at (#104).
+//! channel into the Affiliate's words when a link is created. A channel the
+//! app posts to also has the times its scheduled posts go out at (#104,
+//! #157); a Pinterest channel, the board its Pins go to, picked from the
+//! boards Pinterest lists (#155, ADR 0035 decision 7).
 
 use std::sync::Arc;
 
@@ -33,6 +35,14 @@ pub(crate) const CREATE_PROMOTION_CHANNELS: Migration = Migration {
         WHERE deleted_at IS NULL;",
 };
 
+pub(crate) const ADD_PINTEREST_BOARDS: Migration = Migration {
+    version: 12,
+    name: "keep the board each Pinterest channel posts to",
+    risky: false,
+    sql: "ALTER TABLE marketing_promotion_channels ADD COLUMN pinterest_board TEXT;
+    ALTER TABLE marketing_promotion_channels ADD COLUMN pinterest_board_name TEXT;",
+};
+
 /// The longest name a channel can have, in characters.
 pub const CHANNEL_NAME_MAX_CHARS: usize = 60;
 
@@ -48,32 +58,46 @@ pub enum ChannelKind {
     TikTok,
     /// Ads on Google, Bing and other search engines.
     PaidSearch,
+    /// The owner's Pinterest account: a board of Pins.
+    Pinterest,
     Other,
 }
 
 impl ChannelKind {
-    pub const ALL: [ChannelKind; 6] = [
+    pub const ALL: [ChannelKind; 7] = [
         ChannelKind::TelegramChannel,
         ChannelKind::WhatsAppGroup,
         ChannelKind::Instagram,
         ChannelKind::TikTok,
+        ChannelKind::Pinterest,
         ChannelKind::PaidSearch,
         ChannelKind::Other,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             ChannelKind::TelegramChannel => "telegram_channel",
             ChannelKind::WhatsAppGroup => "whatsapp_group",
             ChannelKind::Instagram => "instagram",
             ChannelKind::TikTok => "tiktok",
             ChannelKind::PaidSearch => "paid_search",
+            ChannelKind::Pinterest => "pinterest",
             ChannelKind::Other => "other",
         }
     }
 
     fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.code() == code)
+    }
+
+    /// Whether the app posts to a channel of this kind, now or at its
+    /// posting times: a Telegram channel, an Instagram account or a
+    /// Pinterest board.
+    pub fn has_destination(self) -> bool {
+        matches!(
+            self,
+            ChannelKind::TelegramChannel | ChannelKind::Instagram | ChannelKind::Pinterest
+        )
     }
 
     /// As the owner reads it.
@@ -84,6 +108,7 @@ impl ChannelKind {
             ChannelKind::Instagram => "Instagram",
             ChannelKind::TikTok => "TikTok",
             ChannelKind::PaidSearch => "Busca paga",
+            ChannelKind::Pinterest => "Pinterest",
             ChannelKind::Other => "Outro",
         }
     }
@@ -103,8 +128,18 @@ pub struct PromotionChannel {
     /// channel.
     pub telegram_chat: Option<String>,
     /// When its scheduled posts go out, on Brasília's clock, earliest
-    /// first; only on a Telegram channel.
+    /// first; only on a channel the app posts to.
     pub posting_times: Vec<NaiveTime>,
+    /// Where its Pins go; only on a Pinterest channel, once picked.
+    pub pinterest_board: Option<PinterestBoard>,
+}
+
+/// A board of the owner's Pinterest account, as Pinterest lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinterestBoard {
+    /// Pinterest's id of the board.
+    pub id: String,
+    pub name: String,
 }
 
 /// A channel as the owner writes it.
@@ -218,8 +253,12 @@ pub enum ChannelError {
     TagTaken(String),
     #[error("a Telegram chat is @name or a -100… id")]
     BadChat,
-    #[error("only a Telegram channel has posting times")]
-    NotTelegram,
+    #[error("only a channel the app posts to has posting times")]
+    NoDestination,
+    #[error("only a Pinterest channel has a board")]
+    NotPinterest,
+    #[error("a board needs Pinterest's id and its name")]
+    BadBoard,
     #[error("no such Promotion Channel")]
     NotFound,
     #[error("the channels hold a value this app cannot read: {0}")]
@@ -238,7 +277,7 @@ impl From<StoredValueError> for ChannelError {
 }
 
 const CHANNEL_QUERY: &str = "SELECT id, name, kind, default_tag, keywords, telegram_chat,
-         posting_times
+         posting_times, pinterest_board, pinterest_board_name
      FROM marketing_promotion_channels WHERE deleted_at IS NULL";
 
 /// The owner's Promotion Channels.
@@ -319,8 +358,9 @@ impl PromotionChannels {
     }
 
     /// Changes the channel; the links already made keep the marking they
-    /// were made with. A post scheduled for its old chat leaves the queue,
-    /// since the owner confirmed where it goes.
+    /// were made with. A post scheduled for its old kind or chat leaves the
+    /// queue, since the owner confirmed where it goes. A channel that stops
+    /// being a Pinterest one forgets its board.
     pub async fn update(
         &self,
         id: RecordId,
@@ -335,7 +375,9 @@ impl PromotionChannels {
             .execute(
                 "UPDATE marketing_promotion_channels
                  SET name = ?1, kind = ?2, default_tag = ?3, keywords = ?4, telegram_chat = ?5,
-                     updated_at = ?6
+                     updated_at = ?6,
+                     pinterest_board = CASE ?2 WHEN 'pinterest' THEN pinterest_board END,
+                     pinterest_board_name = CASE ?2 WHEN 'pinterest' THEN pinterest_board_name END
                  WHERE id = ?7 AND deleted_at IS NULL",
                 params![
                     channel.name.clone(),
@@ -351,7 +393,50 @@ impl PromotionChannels {
         if changed == 0 {
             return Err(ChannelError::NotFound);
         }
-        if before.telegram_chat != channel.telegram_chat {
+        let after = self.channel(id).await?;
+        if before.kind != after.kind
+            || before.telegram_chat != after.telegram_chat
+            || before.pinterest_board != after.pinterest_board
+        {
+            unschedule(&self.database, id, self.clock.now()).await?;
+        }
+        Ok(after)
+    }
+
+    /// Keeps `board`, picked from the ones Pinterest listed, as where the
+    /// Pinterest channel's Pins go. A post scheduled for the old board
+    /// leaves the queue.
+    pub async fn set_pinterest_board(
+        &self,
+        id: RecordId,
+        board: &PinterestBoard,
+    ) -> Result<PromotionChannel, ChannelError> {
+        let board = PinterestBoard {
+            id: board.id.trim().to_owned(),
+            name: board.name.trim().to_owned(),
+        };
+        if board.id.is_empty() || board.name.is_empty() {
+            return Err(ChannelError::BadBoard);
+        }
+        let before = self.channel(id).await?;
+        if before.kind != ChannelKind::Pinterest {
+            return Err(ChannelError::NotPinterest);
+        }
+        self.database
+            .connection()
+            .execute(
+                "UPDATE marketing_promotion_channels
+                 SET pinterest_board = ?1, pinterest_board_name = ?2, updated_at = ?3
+                 WHERE id = ?4 AND deleted_at IS NULL",
+                params![
+                    board.id.clone(),
+                    board.name.clone(),
+                    stored(self.clock.now()),
+                    id.to_string()
+                ],
+            )
+            .await?;
+        if before.pinterest_board.as_ref().map(|old| &old.id) != Some(&board.id) {
             unschedule(&self.database, id, self.clock.now()).await?;
         }
         self.channel(id).await
@@ -365,8 +450,8 @@ impl PromotionChannels {
         id: RecordId,
         times: &[NaiveTime],
     ) -> Result<PromotionChannel, ChannelError> {
-        if self.channel(id).await?.kind != ChannelKind::TelegramChannel {
-            return Err(ChannelError::NotTelegram);
+        if !self.channel(id).await?.kind.has_destination() {
+            return Err(ChannelError::NoDestination);
         }
         self.database
             .connection()
@@ -426,10 +511,16 @@ fn channel_from(row: &libsql::Row) -> Result<PromotionChannel, ChannelError> {
     let kind = ChannelKind::from_code(&kind).ok_or(ChannelError::Unreadable(kind))?;
     let keywords: String = row.get(4)?;
     let times: String = row.get(6)?;
-    let posting_times = if kind == ChannelKind::TelegramChannel {
+    let posting_times = if kind.has_destination() {
         posting_times_from(&times).ok_or(ChannelError::Unreadable(times))?
     } else {
         Vec::new()
+    };
+    let pinterest_board = match (row.get::<Option<String>>(7)?, row.get::<Option<String>>(8)?) {
+        (Some(id), Some(name)) if kind == ChannelKind::Pinterest => {
+            Some(PinterestBoard { id, name })
+        }
+        _ => None,
     };
     Ok(PromotionChannel {
         id: row.id_at(0)?,
@@ -443,5 +534,6 @@ fn channel_from(row: &libsql::Row) -> Result<PromotionChannel, ChannelError> {
             .collect(),
         telegram_chat: row.get(5)?,
         posting_times,
+        pinterest_board,
     })
 }

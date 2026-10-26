@@ -1,0 +1,5 @@
+{
+  "message": "Rate limit exceeded",
+  "success": false,
+  "statusCode": 429
+}

@@ -6,11 +6,15 @@
 //! from the Catalog, the price typed or the one Shopee's search gave. An
 //! Amazon price waits for its Restricted Feature; without it the post goes
 //! without a price. A post on a Telegram channel also goes out through the
-//! bot (#103), after the owner reads the final text, picture and channel
-//! and confirms; one that may have gone out waits for the owner to look.
-//! Confirmed for a time instead, it waits in the Telegram queue (#104),
-//! listed with what is late, unconfirmed, failed or published today.
+//! bot (#103), and one on a Pinterest channel as a Pin on its board (#155),
+//! after the owner reads the final text, picture and channel and confirms;
+//! one that may have gone out waits for the owner to look.
+//! Confirmed for a time instead, it waits in the queue (#104, and on every
+//! destination since #157), listed with what is late, unconfirmed, failed
+//! or published today and with any destination at its limit.
 //! Scheduling offers the dates of the coming Sales Events (#105).
+//! "Escrever chamada com IA" writes the post's Pitch with the Claude API
+//! (#182), in the template's `{chamada}` line.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,16 +30,17 @@ use gpui_kit::{
 };
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, Practice, Program, PromotionRules, RuleWarning,
-    ShownPrice, Standing,
+    ShownPrice, Standing, short_link_flag,
 };
 use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
-use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
+use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
-    ChannelKind, Contact, LATE_AFTER_MINUTES, OfferFacts, OfferPost, OfferPosts, OfferPrice,
-    PRICE_KEEPS_HOURS, PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus,
-    PostTime, PromotionChannel, PublishFailure, PublishRequest, UpcomingEvent, check_post,
-    post_limits,
+    ChannelKind, Contact, DestinationLimit, INSTAGRAM_POSTS_PER_DAY, LATE_AFTER_MINUTES,
+    OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, POST_PITCH,
+    POST_VARIABLES, PRICE_KEEPS_HOURS, PitchError, PitchProblem, PostDraft, PostError, PostImage,
+    PostProblem, PostQueue, PostStatus, PostTime, PromotionChannel, PublishFailure, PublishRequest,
+    UpcomingEvent, check_post, post_limits,
 };
 use mascate_platform::Flag;
 
@@ -45,11 +50,12 @@ use crate::appearance::look;
 use crate::catalog::{self, day_and_time};
 use crate::forms::{Outcome, day_text, input, notice};
 use crate::kit;
+use crate::listing_copy::{anthropic_state, listing_copy, writer_failure, writing_off};
+use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
 use crate::sales_events::{event_date_text, sales_events};
-use crate::telegram;
 
 /// The app's Offer Posts; absent when the database did not open.
 pub struct AppOfferPosts(pub Arc<OfferPosts>);
@@ -168,6 +174,15 @@ pub(crate) fn forbidden_contacts(rules: &PromotionRules) -> Vec<Contact> {
     .collect()
 }
 
+/// The Short Link a post on `channel` carries in place of the whole link,
+/// when the link has one. Pinterest takes only the whole link: it blocks
+/// some shorteners and links that redirect (ADR 0035, decision 7).
+fn short_link_for(link: &AffiliateLink, channel: &PromotionChannel) -> Option<String> {
+    link.short
+        .clone()
+        .filter(|_| channel.kind != ChannelKind::Pinterest)
+}
+
 /// A price for a post, and whether the owner typed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GivenPrice {
@@ -184,9 +199,9 @@ pub(crate) struct Gathered {
     pub refused: Option<Flag>,
 }
 
-/// Drafts the post of `offer` for `channel` with `price` and `image`. A
-/// price a Restricted Feature that is off refuses, as Amazon's typed one,
-/// leaves the post without a price.
+/// Drafts the post of `offer` for `channel` with `price`, `image` and
+/// `pitch`. A price a Restricted Feature that is off refuses, as Amazon's
+/// typed one, leaves the post without a price.
 pub(crate) async fn gather(
     affiliate: &Affiliate,
     posts: &OfferPosts,
@@ -194,28 +209,38 @@ pub(crate) async fn gather(
     channel: &PromotionChannel,
     price: Option<GivenPrice>,
     image: Option<PostImage>,
+    pitch: Option<&str>,
 ) -> Result<Gathered, String> {
     let mut asked = promotion(channel);
     asked.price = price.map(|given| ShownPrice {
         typed: given.typed,
         seen_at: Some(given.price.seen_at),
     });
-    let (price, warnings, refused) = match affiliate.ensure_allowed(offer.program.id, &asked).await
-    {
-        Ok(warnings) => (price, warnings, None),
-        Err(AffiliateError::Restricted(flag)) if asked.price.is_some() => {
-            asked.price = None;
-            let warnings = affiliate
-                .ensure_allowed(offer.program.id, &asked)
-                .await
-                .map_err(|error| failure(&error))?;
-            (None, warnings, Some(flag))
+    let mut short = short_link_for(&offer.link, channel);
+    asked.shortened = short.is_some();
+    let mut refused = None;
+    let warnings = loop {
+        match affiliate.ensure_allowed(offer.program.id, &asked).await {
+            Ok(warnings) => break warnings,
+            // The Short Link's Restricted Feature was turned off after it
+            // was made: the post goes with the whole link.
+            Err(AffiliateError::Restricted(flag))
+                if asked.shortened && short_link_flag(offer.program.platform) == Some(flag) =>
+            {
+                short = None;
+                asked.shortened = false;
+            }
+            Err(AffiliateError::Restricted(flag)) if asked.price.is_some() => {
+                asked.price = None;
+                refused = Some(flag);
+            }
+            Err(error) => return Err(failure(&error)),
         }
-        Err(error) => return Err(failure(&error)),
     };
+    let price = price.filter(|_| refused.is_none());
     let facts = OfferFacts {
         link_id: offer.link.id,
-        link: offer.link.tagged.clone(),
+        link: short.unwrap_or_else(|| offer.link.tagged.clone()),
         product: offer.product.clone(),
         platform: offer.program.platform.name().to_owned(),
         price: price.map(|given| given.price),
@@ -224,7 +249,7 @@ pub(crate) async fn gather(
         forbidden_contacts: forbidden_contacts(&offer.program.rules),
     };
     let draft = posts
-        .draft(&facts, channel)
+        .pitched_draft(&facts, channel, pitch)
         .await
         .map_err(|error| post_failure(&error))?;
     Ok(Gathered {
@@ -245,19 +270,23 @@ pub(crate) fn post_failure(error: &PostError) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         PostError::UnknownVariable(variable) => format!(
-            "O modelo usa {variable}, que o app não preenche. Use {{produto}}, {{preco}}, {{de}}, \
-             {{desconto}}, {{link}} e {{hora_do_preco}}."
+            "O modelo usa {variable}, que o app não preenche. Use {}.",
+            template_variables()
         ),
         PostError::TemplateWithoutLink => {
             "O modelo precisa de {link}: o post sem o link de afiliado não rende comissão.".into()
         }
         PostError::NoSuchChannel => "O canal deste post foi apagado em Divulgação.".into(),
         PostError::NotFound => "Esse post mudou; a lista foi atualizada.".into(),
-        PostError::NoDestination => "Só posts de um canal do Telegram saem pelo app; para os \
-                                     outros canais, copie o texto."
+        PostError::NoDestination => "Só posts de um canal do Telegram, do Pinterest ou do \
+                                     Instagram saem pelo app; para os outros canais, copie o \
+                                     texto."
             .into(),
         PostError::NoChat => "Informe o chat do canal do Telegram em Canais de divulgação, em \
                               Editar, para publicar por ele."
+            .into(),
+        PostError::NoBoard => "Escolha a pasta do canal do Pinterest em Canais de divulgação, \
+                               em Pasta, para publicar nele."
             .into(),
         PostError::WrongStatus(PostStatus::Sent) => "Esse post já foi publicado.".into(),
         PostError::WrongStatus(PostStatus::Sending) => "Esse post está saindo agora.".into(),
@@ -283,11 +312,47 @@ pub(crate) fn post_failure(error: &PostError) -> String {
                                       hora, ou defina os horários do canal em Canais de \
                                       divulgação."
             .into(),
+        PostError::FateUnread(why) => format!("Não consegui conferir o post: {why}"),
         PostError::Unreadable(_) | PostError::Sql(_) => {
             format!("Não consegui ler ou gravar os posts no banco: {error}")
         }
     }
 }
+
+/// Every variable a post template takes, as the owner reads them:
+/// `{produto}, {chamada}, … e {hora_do_preco}`.
+pub(crate) fn template_variables() -> String {
+    let (last, others) = POST_VARIABLES
+        .split_last()
+        .expect("a template takes variables");
+    format!("{} e {last}", others.join(", "))
+}
+
+/// Why the Pitch was not written, as the owner reads it.
+fn pitch_failure(error: &PitchError) -> String {
+    match error {
+        PitchError::NoPitchLine => format!(
+            "O modelo deste canal não tem {POST_PITCH}. Ponha {POST_PITCH} numa linha do modelo, \
+             em Canais de divulgação, para a IA escrever a chamada."
+        ),
+        PitchError::Writer(error) => writer_failure(error),
+        PitchError::Rejected(problems) => format!(
+            "A chamada veio fora das regras duas vezes ({}), então o post ficou como estava. \
+             Escreva de novo ou à mão.",
+            problems
+                .iter()
+                .map(PitchProblem::describe)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+        PitchError::Post(error) => post_failure(error),
+    }
+}
+
+/// What happens to an Instagram post's text, said before it goes out.
+const INSTAGRAM_CAPTION: &str = "O texto vira a legenda do post, uma vez, e o post fica na sua \
+                                 conta: o app não apaga posts. No Instagram o link na legenda \
+                                 não é clicável: quem vê precisa copiar e colar no navegador.";
 
 /// A problem of the post, as the owner reads it.
 pub(crate) fn problem_text(problem: &PostProblem) -> String {
@@ -300,11 +365,27 @@ pub(crate) fn problem_text(problem: &PostProblem) -> String {
             limit,
             caption: true,
         } => format!(
-            "Com foto, o Telegram aceita legenda de até {limit} caracteres, e o texto tem {units}. \
-             Encurte o texto ou tire a foto."
+            "Com foto, o texto vai como legenda, que aceita até {limit} caracteres, e ele tem \
+             {units}. Encurte o texto ou tire a foto."
         ),
         PostProblem::TooLong { units, limit, .. } => format!(
-            "O Telegram aceita até {limit} caracteres, e o texto tem {units}. Encurte o texto."
+            "Este canal aceita até {limit} caracteres, e o texto tem {units}. Encurte o texto."
+        ),
+        PostProblem::NoImage => {
+            "Este canal só publica post com foto: escolha uma foto do produto.".into()
+        }
+        PostProblem::FolderPhoto => "O Instagram busca a foto num endereço da internet, e esta \
+                                     está na pasta do produto: escolha a foto da plataforma \
+                                     (Link da imagem) para publicar pelo app, ou copie o texto e \
+                                     poste à mão com esta foto."
+            .into(),
+        PostProblem::TooManyHashtags { count, limit } => format!(
+            "O texto tem {count} hashtags, e o Instagram aceita até {limit}, contando o #publi. \
+             Tire algumas."
+        ),
+        PostProblem::TooManyMentions { count, limit } => format!(
+            "O texto marca {count} perfis com @, e o Instagram aceita até {limit}. Tire algumas \
+             marcações."
         ),
         PostProblem::NoDisclosure => "O texto ficou sem a identificação de publicidade (#publi). \
                                       Post de afiliado é publicidade, e o CONAR pede que isso \
@@ -366,6 +447,11 @@ struct Editor {
     restricted: Vec<RuleWarning>,
     refused: Option<Flag>,
     form: Option<Outcome>,
+    /// The last Pitch the AI wrote in the text; held only while the post is
+    /// open, so "Gerar texto" keeps it.
+    pitch: Option<String>,
+    /// How the last writing of the Pitch went.
+    pitching: Option<Outcome>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -546,7 +632,8 @@ impl OfferPostsSection {
                         };
                         let facts = OfferFacts {
                             link_id: offer.link.id,
-                            link: offer.link.tagged.clone(),
+                            link: short_link_for(&offer.link, &channel)
+                                .unwrap_or_else(|| offer.link.tagged.clone()),
                             product: offer.product.clone(),
                             platform: offer.program.platform.name().to_owned(),
                             price: None,
@@ -694,6 +781,8 @@ impl OfferPostsSection {
             restricted: Vec::new(),
             refused: None,
             form: None,
+            pitch: None,
+            pitching: None,
             _subscriptions: subscriptions,
         };
         editor.facts.image = picture_of(&editor, cx);
@@ -760,11 +849,21 @@ impl OfferPostsSection {
             }
         };
         let image = picture_of(editor, cx);
+        let pitch = editor.pitch.clone();
         editor.form = None;
         self.busy = true;
-        let working = cx
-            .background_executor()
-            .spawn(async move { gather(&affiliate, &posts, &offer, &channel, price, image).await });
+        let working = cx.background_executor().spawn(async move {
+            gather(
+                &affiliate,
+                &posts,
+                &offer,
+                &channel,
+                price,
+                image,
+                pitch.as_deref(),
+            )
+            .await
+        });
         cx.spawn_in(window, async move |this, cx| {
             let gathered = working.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -782,6 +881,65 @@ impl OfferPostsSection {
                         editor.refused = gathered.refused;
                     }
                     Err(error) => editor.form = Some(Outcome::Failed(error.into())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Writes the Pitch with AI and puts it in the text, in place of the
+    /// last one; the text stays editable and nothing is saved.
+    fn write_pitch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(posts), Some((_, writer))) = (offer_posts(cx), listing_copy(cx)) else {
+            return;
+        };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        let Some(draft) = editor.draft(cx) else {
+            editor.pitching = Some(Outcome::Failed(
+                "O canal deste post foi apagado em Divulgação.".into(),
+            ));
+            cx.notify();
+            return;
+        };
+        let previous = editor.pitch.clone();
+        editor.pitching = None;
+        self.busy = true;
+        let working = cx.background_executor().spawn(async move {
+            posts
+                .write_pitch(writer.as_ref(), &draft, previous.as_deref())
+                .await
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let written = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                let Some(editor) = this.editor.as_mut() else {
+                    return;
+                };
+                match written {
+                    Ok(pitched) => {
+                        editor.text.update(cx, |field, cx| {
+                            field.set_value(pitched.draft.text.clone(), window, cx)
+                        });
+                        editor.pitching = Some(Outcome::Done(
+                            if pitched.edits_replaced {
+                                "Chamada escrita. O texto foi gerado de novo pelo modelo do canal \
+                                 com ela, e o que você tinha mudado à mão saiu. Confira antes de \
+                                 salvar."
+                            } else {
+                                "Chamada escrita no texto. Confira e edite antes de salvar."
+                            }
+                            .into(),
+                        ));
+                        editor.pitch = Some(pitched.pitch);
+                    }
+                    Err(error) => {
+                        editor.pitching = Some(Outcome::Failed(pitch_failure(&error).into()))
+                    }
                 }
                 cx.notify();
             });
@@ -973,9 +1131,18 @@ impl OfferPostsSection {
         cx.notify();
     }
 
-    /// The owner confirmed: the post goes to Telegram, once.
+    /// The owner confirmed: the post goes to its destination, once.
     fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(posts), Some(telegram)) = (offer_posts(cx), telegram::adapter(cx)) else {
+        let Some(kind) = self
+            .confirming
+            .as_ref()
+            .map(|confirming| confirming.request.kind())
+        else {
+            return;
+        };
+        let (Some(posts), Some(destination)) =
+            (offer_posts(cx), post_destinations::adapter(kind, cx))
+        else {
             return;
         };
         let Some(Confirming { request, .. }) = self.confirming.take() else {
@@ -986,7 +1153,7 @@ impl OfferPostsSection {
         self.busy = true;
         let working = cx
             .background_executor()
-            .spawn(async move { posts.publish(telegram.as_ref(), request.confirm()).await });
+            .spawn(async move { posts.publish(destination.as_ref(), request.confirm()).await });
         cx.spawn_in(window, async move |this, cx| {
             let published = working.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -1007,9 +1174,11 @@ impl OfferPostsSection {
                             }
                             (_, Some(failure)) => {
                                 if *failure == PublishFailure::Expired {
-                                    telegram::expired(cx);
+                                    post_destinations::expired(kind, cx);
                                 }
-                                Outcome::Failed(telegram::publish_failure(failure).into())
+                                Outcome::Failed(
+                                    post_destinations::publish_failure(kind, failure).into(),
+                                )
                             }
                             (_, None) => Outcome::Failed("O post não saiu.".into()),
                         }
@@ -1039,6 +1208,65 @@ impl OfferPostsSection {
                 this.busy = false;
                 this.outcome = Some(match marked {
                     Ok(_) => Outcome::Done("Post marcado como publicado.".into()),
+                    Err(error) => Outcome::Failed(post_failure(&error).into()),
+                });
+                cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Asks the destination what became of the unconfirmed post `id`.
+    fn check_fate(
+        &mut self,
+        id: RecordId,
+        kind: ChannelKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(posts), Some(destination)) =
+            (offer_posts(cx), post_destinations::adapter(kind, cx))
+        else {
+            return;
+        };
+        self.busy = true;
+        self.outcome = None;
+        let working = cx
+            .background_executor()
+            .spawn(async move { posts.check_fate(destination.as_ref(), id).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let checked = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                let name = post_destinations::destination_name(kind).unwrap_or("canal");
+                this.outcome = Some(match checked {
+                    Ok(post) => match post.status {
+                        PostStatus::Sent => {
+                            Outcome::Done(format!("O {name} confirmou: o post saiu.").into())
+                        }
+                        PostStatus::Failed => Outcome::Done(
+                            format!(
+                                "O {name} confirmou que o post não saiu. Publique de novo quando \
+                                 quiser."
+                            )
+                            .into(),
+                        ),
+                        _ => Outcome::Failed(
+                            format!(
+                                "O {name} ainda não sabe dizer se o post saiu. Confira o perfil \
+                                 ou tente de novo daqui a pouco."
+                            )
+                            .into(),
+                        ),
+                    },
+                    Err(PostError::FateUnread(error)) => {
+                        if error == PlatformError::Expired {
+                            post_destinations::expired(kind, cx);
+                        }
+                        Outcome::Failed(post_destinations::fate_failure(kind, &error).into())
+                    }
                     Err(error) => Outcome::Failed(post_failure(&error).into()),
                 });
                 cx.update_default_global::<PostChanges, _>(|changes, _| changes.0 += 1);
@@ -1215,9 +1443,7 @@ impl OfferPostsSection {
     fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let request = &confirming.request;
-        let off = telegram::state(cx)
-            .as_ref()
-            .and_then(telegram::publishing_off);
+        let off = post_destinations::publishing_off(request.kind(), cx);
         let picture = match request.image() {
             Some(PostImage::File(path)) => format!(
                 "Foto: {}",
@@ -1292,11 +1518,14 @@ impl OfferPostsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.raised)
-            .child(div().font_medium().child(format!(
-                "Agendar em {} ({})?",
-                request.channel(),
-                request.chat()
-            )))
+            .child(
+                div()
+                    .font_medium()
+                    .child(format!("Agendar {}?", where_it_goes(request))),
+            )
+            .children(
+                pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
+            )
             .child(choices)
             .children(events)
             .when(choice.next_free.is_none(), |panel| {
@@ -1332,9 +1561,13 @@ impl OfferPostsSection {
             )
             .child(div().text_xs().text_color(t.text2).child(format!(
                 "Na hora marcada o post sai sozinho, uma vez, do jeito que está acima, com o app \
-                 aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos com o app \
-                 fechado, ele espera você. Editar o post tira ele da fila."
+                 aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos sem ele \
+                 sair, ele espera você. Editar o post tira ele da fila."
             )))
+            .children(
+                limit_note(request.kind())
+                    .map(|note| div().text_xs().text_color(t.text2).child(note)),
+            )
             .children(off.map(|why| {
                 kit::info_notice(format!("{why} Enquanto isso, o post agendado não sai."), cx)
             }))
@@ -1371,11 +1604,14 @@ impl OfferPostsSection {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.raised)
-            .child(div().font_medium().child(format!(
-                "Publicar agora em {} ({})?",
-                request.channel(),
-                request.chat()
-            )))
+            .child(
+                div()
+                    .font_medium()
+                    .child(format!("Publicar agora {}?", where_it_goes(request))),
+            )
+            .children(
+                pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
+            )
             .child(div().text_xs().text_color(t.text2).child(picture))
             .child(
                 div()
@@ -1387,10 +1623,18 @@ impl OfferPostsSection {
                     .text_sm()
                     .child(request.text().to_owned()),
             )
-            .child(div().text_xs().text_color(t.text2).child(
-                "O post sai do jeito que está acima, uma vez, e fica no canal: o app não apaga \
-                 posts do Telegram.",
-            ))
+            .child(div().text_xs().text_color(t.text2).child(match request.kind() {
+                ChannelKind::Pinterest => {
+                    "O texto acima vira a descrição do Pin, uma vez, e o Pin fica na pasta: o app \
+                     não apaga Pins. Com o acesso Trial do app, o Pin aparece só para você, até o \
+                     Pinterest aprovar o acesso Standard."
+                }
+                ChannelKind::Instagram => INSTAGRAM_CAPTION,
+                _ => {
+                    "O post sai do jeito que está acima, uma vez, e fica no canal: o app não \
+                     apaga posts do Telegram."
+                }
+            }))
             .children(off.map(|why| kit::error_notice(why, cx)))
             .child(
                 h_flex()
@@ -1409,11 +1653,12 @@ impl OfferPostsSection {
             .into_any_element()
     }
 
-    /// Whether the post `channel` names goes out through the bot.
-    fn on_telegram(&self, channel: RecordId) -> bool {
+    /// The kind of the channel `channel` names, while it exists.
+    fn kind_of(&self, channel: RecordId) -> Option<ChannelKind> {
         self.channels
             .iter()
-            .any(|known| known.id == channel && known.kind == ChannelKind::TelegramChannel)
+            .find(|known| known.id == channel)
+            .map(|known| known.kind)
     }
 
     /// Puts the photo on the clipboard, read off the UI thread.
@@ -1494,10 +1739,11 @@ impl OfferPostsSection {
             (PostStatus::Unconfirmed, _) => "não confirmado".to_owned(),
             (PostStatus::Failed, _) => "não publicado".to_owned(),
         };
-        let telegram = self.on_telegram(post.draft.channel);
+        let kind = self.kind_of(post.draft.channel);
+        let publishes = kind.is_some_and(post_destinations::publishes);
         let (opened, copying, id) = (post.clone(), post.clone(), post.id);
         let again = matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed);
-        let publish = (telegram && post.status.publishable()).then(|| {
+        let publish = (publishes && post.status.publishable()).then(|| {
             Button::new(("publish-post", index))
                 .label(if again {
                     "Publicar de novo"
@@ -1511,23 +1757,22 @@ impl OfferPostsSection {
                     cx.listener(move |this, _, window, cx| this.prepare(id, false, window, cx)),
                 )
         });
-        let schedule = (telegram
-            && post.status.publishable()
-            && post.status != PostStatus::Unconfirmed)
-            .then(|| {
-                Button::new(("schedule-post", index))
-                    .label(if post.status.queued() {
-                        "Reagendar"
-                    } else {
-                        "Agendar"
-                    })
-                    .outline()
-                    .small()
-                    .disabled(self.busy || self.confirming.is_some())
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.prepare(id, true, window, cx)),
-                    )
-            });
+        let schedule =
+            (publishes && post.status.publishable() && post.status != PostStatus::Unconfirmed)
+                .then(|| {
+                    Button::new(("schedule-post", index))
+                        .label(if post.status.queued() {
+                            "Reagendar"
+                        } else {
+                            "Agendar"
+                        })
+                        .outline()
+                        .small()
+                        .disabled(self.busy || self.confirming.is_some())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.prepare(id, true, window, cx)
+                        }))
+                });
         let unschedule = post.status.queued().then(|| {
             Button::new(("unschedule-post", index))
                 .label("Tirar da fila")
@@ -1538,8 +1783,9 @@ impl OfferPostsSection {
         });
         let waiting = match post.status {
             PostStatus::Late => Some(format!(
-                "A hora passou de {LATE_AFTER_MINUTES} minutos com o app fechado, e oferta e \
-                 preço podem ter mudado: publique agora ou reagende."
+                "A hora passou de {LATE_AFTER_MINUTES} minutos sem o post sair (app fechado, \
+                 publicação pausada, conexão fora do ar ou limite do destino), e oferta e preço \
+                 podem ter mudado: publique agora ou reagende."
             )),
             PostStatus::PriceExpired => Some(format!(
                 "O preço foi visto há mais de {PRICE_KEEPS_HOURS} horas, mais do que {} deixa \
@@ -1548,6 +1794,23 @@ impl OfferPostsSection {
             )),
             _ => None,
         };
+        let check = kind
+            .filter(|&kind| {
+                post.status == PostStatus::Unconfirmed && post_destinations::checks_fate(kind)
+            })
+            .map(|kind| {
+                let name = post_destinations::destination_name(kind).unwrap_or("canal");
+                Button::new(("check-post-fate", index))
+                    .label(format!("Conferir no {name}"))
+                    .primary()
+                    .small()
+                    .disabled(self.busy)
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.check_fate(id, kind, window, cx)
+                        }),
+                    )
+            });
         let mark = (post.status == PostStatus::Unconfirmed).then(|| {
             Button::new(("mark-post-published", index))
                 .label("Marcar como publicado")
@@ -1563,9 +1826,12 @@ impl OfferPostsSection {
             .as_ref()
             .and_then(|sent| sent.link.clone())
             .map(|link| {
+                let name = kind
+                    .and_then(post_destinations::destination_name)
+                    .unwrap_or("canal");
                 kit::external_link(
                     format!("open-sent-post-{index}"),
-                    "Abrir no Telegram",
+                    format!("Abrir no {name}"),
                     link,
                     cx,
                 )
@@ -1575,7 +1841,10 @@ impl OfferPostsSection {
             .as_ref()
             .filter(|_| matches!(post.status, PostStatus::Failed | PostStatus::Unconfirmed))
             .map(|failure| {
-                let text = telegram::publish_failure(failure);
+                let text = post_destinations::publish_failure(
+                    kind.unwrap_or(ChannelKind::TelegramChannel),
+                    failure,
+                );
                 if failure.may_have_gone_out() {
                     kit::info_notice(text, cx)
                 } else {
@@ -1611,6 +1880,7 @@ impl OfferPostsSection {
                 .gap_2()
                 .flex_wrap()
                 .children(open_sent)
+                .children(check)
                 .children(mark)
                 .children(publish)
                 .children(schedule)
@@ -1650,6 +1920,7 @@ impl OfferPostsSection {
         table_row(&t)
             .flex_wrap()
             .child(kit::tag(facts.platform.clone(), t.text2, cx))
+            .children(kind.map(|kind| kit::tag(kind.name(), t.text2, cx)))
             .child(
                 v_flex()
                     .flex_1()
@@ -1734,14 +2005,46 @@ impl OfferPostsSection {
             .into_any_element()
     }
 
+    /// The button that writes the Pitch with AI, what it needs, and how the
+    /// last writing went.
+    fn render_pitch(&self, editor: &Editor, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let off = writing_off(&anthropic_state(cx), "escrever a chamada");
+        let hint = off.clone().unwrap_or_else(|| {
+            format!(
+                "A IA escreve só a frase de {POST_PITCH}, com o nome do produto, o programa e o \
+                 canal; preço, desconto, link e \"#publi\" continuam vindo do app."
+            )
+        });
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex().child(
+                    Button::new("write-pitch")
+                        .label(if editor.pitch.is_some() {
+                            "Escrever outra chamada com IA"
+                        } else {
+                            "Escrever chamada com IA"
+                        })
+                        .outline()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(self.busy || off.is_some() || editor.channel.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| this.write_pitch(window, cx))),
+                ),
+            )
+            .child(div().text_xs().text_color(t.text2).child(hint))
+            .children(editor.pitching.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element()
+    }
+
     fn render_editor(&self, editor: &Editor, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let (problems, rules) = editor.problems(cx);
         let blocked = problems.iter().any(PostProblem::blocks);
-        let on_telegram = editor
-            .channel
-            .as_ref()
-            .is_some_and(|channel| channel.kind == ChannelKind::TelegramChannel);
+        let unpublishable = problems.iter().any(PostProblem::blocks_publishing);
+        let kind = editor.channel.as_ref().map(|channel| channel.kind);
+        let publishes = kind.is_some_and(post_destinations::publishes);
         let channel = editor.channel.as_ref().map_or_else(
             || "canal apagado".to_owned(),
             |channel| channel.name.clone(),
@@ -1907,6 +2210,7 @@ impl OfferPostsSection {
                         )
                     }),
             )
+            .child(self.render_pitch(editor, cx))
             .child(
                 v_flex()
                     .gap_1()
@@ -1919,7 +2223,7 @@ impl OfferPostsSection {
                         .gap_1()
                         .children(problems.iter().map(|problem| {
                             let text = problem_text(problem);
-                            if problem.blocks() {
+                            if problem.blocks_publishing() {
                                 kit::error_notice(text, cx).into_any_element()
                             } else {
                                 kit::info_notice(text, cx).into_any_element()
@@ -1933,22 +2237,25 @@ impl OfferPostsSection {
                 )
             })
             .children(queued.map(|text| kit::info_notice(text, cx)))
+            .when(kind == Some(ChannelKind::Instagram), |editor| {
+                editor.child(kit::info_notice(INSTAGRAM_CAPTION, cx))
+            })
             .children(editor.form.as_ref().map(|outcome| notice(outcome, cx)))
             .child(
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .children(on_telegram.then(|| {
+                    .children(publishes.then(|| {
                         Button::new("publish-post-now")
                             .label("Publicar agora")
                             .primary()
                             .small()
-                            .disabled(self.busy || blocked || self.confirming.is_some())
+                            .disabled(self.busy || unpublishable || self.confirming.is_some())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.confirm_editing(false, window, cx)
                             }))
                     }))
-                    .children(on_telegram.then(|| {
+                    .children(publishes.then(|| {
                         Button::new("schedule-post-editing")
                             .label("Agendar")
                             .outline()
@@ -1966,7 +2273,7 @@ impl OfferPostsSection {
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.copy_editing(window, cx)),
                             );
-                        if on_telegram {
+                        if publishes {
                             copy.outline()
                         } else {
                             copy.primary()
@@ -2030,6 +2337,53 @@ fn cancel_confirmation(cx: &mut Context<OfferPostsSection>) -> Button {
             this.confirming = None;
             cx.notify();
         }))
+}
+
+/// Where a confirmed post goes, as the confirmation names it: "em Canal
+/// (@chat)", or the connected account on Instagram.
+fn where_it_goes(request: &PublishRequest) -> String {
+    if request.kind() == ChannelKind::Instagram {
+        format!("em {}, na conta do Instagram conectada", request.channel())
+    } else {
+        format!("em {} ({})", request.channel(), request.place())
+    }
+}
+
+/// What a Pin carries besides the text and the photo.
+fn pin_detail(request: &PublishRequest) -> Option<String> {
+    (request.kind() == ChannelKind::Pinterest).then(|| {
+        format!(
+            "Pin na pasta {}, com o título \"{}\" e o link {}",
+            request.place(),
+            request.title(),
+            request.link()
+        )
+    })
+}
+
+/// How the destination of `kind` limits the posts the queue sends it.
+fn limit_note(kind: ChannelKind) -> Option<String> {
+    match kind {
+        ChannelKind::Instagram => Some(format!(
+            "O Instagram aceita até {INSTAGRAM_POSTS_PER_DAY} posts pelo app em 24 horas: com a \
+             cota usada, o post espera na fila, sem chamar o Instagram, até abrir espaço."
+        )),
+        ChannelKind::Pinterest => Some(format!(
+            "O app cria até {PINTEREST_POSTS_PER_DAY} Pins em 24 horas, dentro do limite do \
+             Pinterest; no limite, ou com o Pinterest pedindo para esperar, o Pin espera na fila."
+        )),
+        _ => None,
+    }
+}
+
+/// A destination at its limit, as the queue tells it.
+fn limit_text(limit: &DestinationLimit) -> String {
+    let name = post_destinations::destination_name(limit.kind).unwrap_or("O canal");
+    format!(
+        "{name} está no limite de posts: os agendados para ele esperam na fila, sem chamar o \
+         {name}, até {}. Os que passarem de {LATE_AFTER_MINUTES} minutos da hora esperam você.",
+        post_time(limit.until)
+    )
 }
 
 /// The picture `editor` has picked, as a post keeps it.
@@ -2102,20 +2456,20 @@ impl Render for OfferPostsSection {
             index += 1;
         }
         // A deleted channel's posts still show where they stand.
-        let on_telegram = !groups.is_empty()
+        let queues = !groups.is_empty()
             || self
                 .channels
                 .iter()
-                .any(|channel| channel.kind == ChannelKind::TelegramChannel);
+                .any(|channel| channel.kind.has_destination());
         let paused = queue.paused;
-        let queue_block = on_telegram.then(|| {
+        let queue_block = queues.then(|| {
             v_flex()
                 .gap_2()
                 .child(
                     h_flex()
                         .gap_3()
                         .items_center()
-                        .child(kit::section_heading("Fila do Telegram"))
+                        .child(kit::section_heading("Fila de publicação"))
                         .child(if paused {
                             kit::tag("publicação pausada", t.text2, cx)
                         } else {
@@ -2137,18 +2491,24 @@ impl Render for OfferPostsSection {
                         ),
                 )
                 .child(div().text_sm().text_color(t.text2).child(format!(
-                    "Um post agendado sai sozinho na hora, com o app aberto ou na bandeja, um por \
-                     vez e com alguns segundos entre dois posts do mesmo canal. Se a hora passar de \
-                     {LATE_AFTER_MINUTES} minutos com o app fechado, ele espera você. Pausada, a fila \
+                    "Um post agendado sai sozinho na hora pelo Telegram, Instagram ou Pinterest, \
+                     com o app aberto ou na bandeja, um por vez e com alguns segundos entre dois \
+                     posts do mesmo chat ou da mesma conta. O Instagram e o Pinterest têm limite \
+                     de posts por dia: no limite, o post espera na fila. Se a hora passar de \
+                     {LATE_AFTER_MINUTES} minutos sem ele sair, ele espera você. Pausada, a fila \
                      não publica nada."
                 )))
+                .children(
+                    queue
+                        .limited
+                        .iter()
+                        .map(|limit| kit::info_notice(limit_text(limit), cx)),
+                )
                 .when(groups.is_empty(), |block| {
-                    block.child(
-                        div()
-                            .text_sm()
-                            .text_color(t.text2)
-                            .child("Nada na fila: use Agendar num post de canal do Telegram."),
-                    )
+                    block.child(div().text_sm().text_color(t.text2).child(
+                        "Nada na fila: use Agendar num post de canal do Telegram, do Instagram ou \
+                         do Pinterest.",
+                    ))
                 })
                 .children(groups)
         });
@@ -2177,7 +2537,8 @@ impl Render for OfferPostsSection {
             .child(div().text_sm().text_color(t.text2).child(
                 "Um post por link de afiliado, com o modelo do canal: o app preenche produto, \
                  preço, desconto e link, e põe \"#publi · link de afiliado\" no fim. Edite, confira \
-                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram.",
+                 os avisos e copie para colar no canal, ou publique direto num canal do Telegram, \
+                 do Pinterest ou do Instagram.",
             ))
             .children(self.picking.then(|| self.render_picker(cx)))
             .children(editing)
@@ -2196,8 +2557,8 @@ impl Render for OfferPostsSection {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AMAZON_TYPED_PRICE, AffiliatePlatform, CommissionStatus, LinkTagger, ManualCommission,
-        NewAffiliateLink, Promotion, TagRefusal,
+        AMAZON_SHORT_LINK, AMAZON_TYPED_PRICE, AffiliatePlatform, CommissionStatus, LinkShortener,
+        LinkTagger, ManualCommission, NewAffiliateLink, Promotion, Shortened, TagRefusal,
     };
     use mascate_kernel::{SystemClock, Timestamp, UuidV7Generator};
     use mascate_marketing::{
@@ -2208,15 +2569,34 @@ mod tests {
     use super::*;
     use crate::startup::MODULE_MIGRATIONS;
 
-    struct AmazonTagger;
+    struct Tagger(AffiliatePlatform);
 
-    impl LinkTagger for AmazonTagger {
+    impl LinkTagger for Tagger {
         fn platform(&self) -> AffiliatePlatform {
-            AffiliatePlatform::Amazon
+            self.0
         }
 
         fn tag(&self, link: &str, tag: &str) -> Result<String, TagRefusal> {
             Ok(format!("{link}?tag={tag}"))
+        }
+    }
+
+    struct Shortener;
+
+    impl LinkShortener for Shortener {
+        fn shorten(&self, _: &str, path: &str) -> Result<Shortened, PlatformError> {
+            Ok(Shortened {
+                url: format!("https://mascate.short.gy/{path}"),
+                key: path.to_owned(),
+            })
+        }
+
+        fn clicks(
+            &self,
+            _: &str,
+            _: std::ops::RangeInclusive<chrono::NaiveDate>,
+        ) -> Result<Vec<mascate_affiliate::DayClicks>, PlatformError> {
+            Ok(Vec::new())
         }
     }
 
@@ -2230,6 +2610,11 @@ mod tests {
     }
 
     async fn amazon() -> Fixture {
+        promoting(AffiliatePlatform::Amazon, ChannelKind::TelegramChannel).await
+    }
+
+    /// A link of a `platform` Program for a channel of `kind`.
+    async fn promoting(platform: AffiliatePlatform, kind: ChannelKind) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let database = Arc::new(
             Database::open(&dir.path().join("mascate.db"))
@@ -2243,7 +2628,7 @@ mod tests {
         let affiliate = Affiliate::new(database.clone(), clock.clone(), ids.clone());
         let commission = affiliate
             .record_manual(ManualCommission {
-                platform: AffiliatePlatform::Amazon,
+                platform,
                 program: String::new(),
                 product: "Kindle".into(),
                 sold_at: Utc::now(),
@@ -2255,7 +2640,7 @@ mod tests {
         let channel = PromotionChannels::new(database.clone(), clock.clone(), ids.clone())
             .create(&NewPromotionChannel {
                 name: "Ofertas".into(),
-                kind: ChannelKind::TelegramChannel,
+                kind,
                 default_tag: "ofertas".into(),
                 keywords: Vec::new(),
                 telegram_chat: None,
@@ -2272,7 +2657,7 @@ mod tests {
                     tag: "mascate-tg-20".into(),
                     promotion: Promotion::default(),
                 },
-                &AmazonTagger,
+                &Tagger(platform),
             )
             .await
             .unwrap()
@@ -2316,6 +2701,7 @@ mod tests {
                 &f.channel,
                 Some(typed(seen_at)),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -2345,6 +2731,7 @@ mod tests {
                 &f.channel,
                 Some(typed(seen_at)),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -2356,6 +2743,101 @@ mod tests {
             assert!(on.draft.text.contains("R$ 149,90"));
             assert!(on.draft.text.contains(&price_time(seen_at)));
             assert!(on.draft.text.contains(PRICE_NOTICE));
+        });
+    }
+
+    impl Fixture {
+        /// Gives the link its Short Link and reads the offer again.
+        async fn shortened(mut self) -> Self {
+            let link = self
+                .affiliate
+                .shorten(self.offer.link.id, &Shortener)
+                .await
+                .unwrap()
+                .link;
+            self.offer = read_offer(&self.affiliate, None, link).await.unwrap();
+            self
+        }
+
+        async fn text(&self) -> String {
+            gather(
+                &self.affiliate,
+                &self.posts,
+                &self.offer,
+                &self.channel,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .draft
+            .text
+        }
+    }
+
+    #[test]
+    fn a_telegram_post_carries_the_short_link_and_a_pinterest_one_the_whole_link() {
+        futures::executor::block_on(async {
+            let telegram = promoting(AffiliatePlatform::Hotmart, ChannelKind::TelegramChannel)
+                .await
+                .shortened()
+                .await;
+            let short = telegram.offer.link.short.clone().unwrap();
+            let posted = gather(
+                &telegram.affiliate,
+                &telegram.posts,
+                &telegram.offer,
+                &telegram.channel,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(posted.draft.facts.link, short);
+            assert!(posted.draft.text.contains(&short), "{}", posted.draft.text);
+            assert!(
+                !posted.draft.text.contains("?tag="),
+                "{}",
+                posted.draft.text
+            );
+
+            let pinterest = promoting(AffiliatePlatform::Hotmart, ChannelKind::Pinterest)
+                .await
+                .shortened()
+                .await;
+            let tagged = pinterest.offer.link.tagged.clone();
+            let text = pinterest.text().await;
+            assert!(text.contains(&tagged), "{text}");
+            assert!(!text.contains("short.gy"), "{text}");
+        });
+    }
+
+    #[test]
+    fn a_short_link_whose_flag_was_turned_off_gives_way_to_the_whole_link() {
+        futures::executor::block_on(async {
+            let f = amazon().await;
+            f.flags
+                .turn_on(
+                    f.flags
+                        .request_turn_on(AMAZON_SHORT_LINK.key)
+                        .unwrap()
+                        .confirm("teste"),
+                )
+                .await
+                .unwrap();
+            let f = f.shortened().await;
+            assert!(f.text().await.contains("short.gy"));
+
+            f.flags
+                .turn_off(AMAZON_SHORT_LINK.key, "teste")
+                .await
+                .unwrap();
+            let text = f.text().await;
+
+            assert!(text.contains("?tag=mascate-tg-20"), "{text}");
+            assert!(!text.contains("short.gy"), "{text}");
         });
     }
 

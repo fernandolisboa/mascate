@@ -5,8 +5,6 @@
 //! as found. Off, with the reason, while the Connection waits for Shopee's
 //! approval; registering offers by hand keeps working below it.
 
-use std::sync::Arc;
-
 use chrono::Utc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -15,13 +13,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, ClipboardItem, Entity, EventEmitter, Subscription, Window, div, px};
 use mascate_affiliate::AffiliatePlatform;
 use mascate_catalog::{
-    Catalog, CatalogError, FoundOffer, FoundShop, KeptOffers, OfferOrder, OfferSearch, OfferSource,
-    ProductSource, SearchedOffer,
+    CatalogError, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource, ProductSource,
+    SearchedOffer,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{RecordId, Timestamp};
 use mascate_marketing::{OfferPrice, PromotionChannel};
-use rust_decimal::Decimal;
 
 use crate::affiliate::affiliate;
 use crate::affiliate_links::{
@@ -31,6 +28,7 @@ use crate::appearance::look;
 use crate::catalog;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice};
+use crate::found_offers;
 use crate::kit;
 use crate::offer_posts::StartPost;
 use crate::promotion_channels::promotion_channels;
@@ -241,7 +239,7 @@ impl ShopeeSearch {
         self.busy = true;
         self.outcome = None;
         let working = cx.background_executor().spawn(async move {
-            keep(&catalog, &offers, listed)
+            found_offers::keep(&catalog, ProductSource::ShopeeAffiliate, &offers, listed)
                 .await
                 .map_err(|error| reading(&error))
         });
@@ -254,7 +252,7 @@ impl ShopeeSearch {
                         if this.searches == searching {
                             this.items = items;
                         }
-                        this.outcome = Some(Outcome::Done(kept_text(&report).into()));
+                        this.outcome = Some(Outcome::Done(found_offers::kept_text(&report).into()));
                         cx.emit(OffersKept);
                     }
                     Err(text) => this.outcome = Some(Outcome::Failed(text.into())),
@@ -428,11 +426,11 @@ impl ShopeeSearch {
                         .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
                 )
                 .children(panel.tagged.clone().map(|(link, tagged)| {
-                    let found = OfferPrice {
-                        price: offer.price,
+                    let found = offer.price.map(|price| OfferPrice {
+                        price,
                         before: None,
                         seen_at: self.searched_at,
-                    };
+                    });
                     let image = offer.image.clone();
                     h_flex()
                         .gap_2()
@@ -462,7 +460,7 @@ impl ShopeeSearch {
                                 .on_click(cx.listener(move |_, _, _, cx| {
                                     cx.emit(StartPost {
                                         link,
-                                        found: Some(found),
+                                        found,
                                         image: image.clone(),
                                     })
                                 })),
@@ -521,7 +519,7 @@ impl ShopeeSearch {
         let order = |value: OfferOrder| {
             let on = self.order == value;
             Button::new(("order", value as usize))
-                .label(order_name(value))
+                .label(found_offers::order_name(value))
                 .small()
                 .map(|button| if on { button.primary() } else { button.ghost() })
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -594,98 +592,35 @@ impl ShopeeSearch {
     }
 
     fn render_item(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let t = look(cx).tokens;
         let item = &self.items[index];
         let found = &item.found;
-        let link = found.link.clone();
-        let mut facts = vec![found.shop.name.clone(), sold_text(found.sales)];
-        if let Some(commission) = found.commission {
-            facts.push(format!("comissão {}", commission.to_pt_br()));
-        }
-        if let Some(rating) = found.rating.filter(|rating| !rating.is_zero()) {
-            facts.push(format!("nota {}", stars_text(rating)));
-        }
-        let price = if found.highest_price.amount() > found.price.amount() {
-            format!(
-                "{} a {}",
-                found.price.to_pt_br(),
-                found.highest_price.to_pt_br()
-            )
-        } else {
-            found.price.to_pt_br()
-        };
-        let action = if item.up_to_date() {
-            kit::tag("Nas ofertas", t.success, cx).into_any_element()
-        } else {
-            let offer = found.clone();
-            let label = match &item.kept {
-                Some(kept) => format!("Guardar preço novo (era {})", kept.price.to_pt_br()),
-                None => "Guardar nas ofertas".to_owned(),
-            };
-            Button::new(("keep-offer", index))
-                .label(label)
-                .outline()
-                .small()
-                .disabled(self.busy)
-                .on_click(cx.listener(move |this, _, _, cx| this.keep(vec![offer.clone()], cx)))
-                .into_any_element()
-        };
+        let mut actions = vec![found_offers::keep_action(
+            index,
+            item,
+            self.busy,
+            |this: &mut Self, offers, cx| this.keep(offers, cx),
+            cx,
+        )];
         let linkable = tagger(AffiliatePlatform::Shopee, cx).is_some();
         let opened = self
             .link
             .as_ref()
             .is_some_and(|panel| panel.item == found.id);
-        let item_id = found.id.clone();
-        let create_link = (linkable && !opened).then(|| {
-            Button::new(("open-shopee-link", index))
-                .label("Criar link")
-                .ghost()
-                .small()
-                .on_click(cx.listener(move |this, _, _, cx| this.open_link(item_id.clone(), cx)))
-        });
-        let panel = self.render_link_panel(found, cx);
-        v_flex()
-            .gap_2()
-            .p_3()
-            .rounded(t.radius_lg)
-            .border(t.border_width)
-            .border_color(t.frame)
-            .bg(t.surface)
-            .child(
-                h_flex()
-                    .gap_3()
-                    .items_start()
-                    .justify_between()
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_0p5()
-                            .child(div().font_medium().child(found.title.clone()))
-                            .child(div().text_xs().text_color(t.text2).child(facts.join(" · ")))
-                            .child(
-                                div()
-                                    .id(("shopee-item-link", index))
-                                    .text_xs()
-                                    .text_color(t.accent_text)
-                                    .truncate()
-                                    .cursor_pointer()
-                                    .child(link.clone())
-                                    .on_click(move |_, _, cx| cx.open_url(&link)),
-                            ),
+        if linkable && !opened {
+            let item_id = found.id.clone();
+            actions.push(
+                Button::new(("open-shopee-link", index))
+                    .label("Criar link")
+                    .ghost()
+                    .small()
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.open_link(item_id.clone(), cx)),
                     )
-                    .child(
-                        v_flex()
-                            .flex_none()
-                            .items_end()
-                            .gap_1()
-                            .child(div().font_semibold().child(price))
-                            .child(action)
-                            .children(create_link),
-                    ),
-            )
-            .children(panel)
-            .into_any_element()
+                    .into_any_element(),
+            );
+        }
+        let panel = self.render_link_panel(found, cx);
+        found_offers::item_card("shopee-item-link", index, item, true, actions, panel, cx)
     }
 
     fn render_shop(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -697,7 +632,7 @@ impl ShopeeSearch {
             facts.push(format!("comissão {}", commission.to_pt_br()));
         }
         if let Some(rating) = shop.rating.filter(|rating| !rating.is_zero()) {
-            facts.push(format!("nota {}", stars_text(rating)));
+            facts.push(format!("nota {}", found_offers::stars_text(rating)));
         }
         let chosen = shop.clone();
         h_flex()
@@ -754,7 +689,7 @@ impl ShopeeSearch {
         let pending: Vec<FoundOffer> = self
             .items
             .iter()
-            .filter(|item| !item.up_to_date())
+            .filter(|item| item.keeping_adds())
             .map(|item| item.found.clone())
             .collect();
         let list = v_flex()
@@ -833,114 +768,10 @@ impl Render for ShopeeSearch {
     }
 }
 
-/// Keeps `offers` and marks `listed` again with what is kept now.
-async fn keep(
-    catalog: &Arc<Catalog>,
-    offers: &[FoundOffer],
-    listed: Vec<FoundOffer>,
-) -> Result<(KeptOffers, Vec<SearchedOffer>), CatalogError> {
-    let report = catalog
-        .keep_found_offers(ProductSource::ShopeeAffiliate, offers)
-        .await?;
-    let items = catalog
-        .with_kept(ProductSource::ShopeeAffiliate, listed)
-        .await?;
-    Ok((report, items))
-}
-
 /// Why a search or a keep failed, as the owner reads it.
 fn reading(error: &CatalogError) -> String {
     match error {
         CatalogError::Platform(error) => shopee::failure(error),
         error => catalog::failure(error),
-    }
-}
-
-fn kept_text(report: &KeptOffers) -> String {
-    let mut parts = Vec::new();
-    match report.added {
-        0 => {}
-        1 => parts.push("1 oferta guardada".to_owned()),
-        added => parts.push(format!("{added} ofertas guardadas")),
-    }
-    match report.unchanged {
-        0 => {}
-        1 => parts.push("1 já estava nas ofertas".to_owned()),
-        unchanged => parts.push(format!("{unchanged} já estavam nas ofertas")),
-    }
-    match report.skipped {
-        0 => {}
-        1 => parts.push("1 sem título, link ou preço ficou de fora".to_owned()),
-        skipped => parts.push(format!(
-            "{skipped} sem título, link ou preço ficaram de fora"
-        )),
-    }
-    let mut text = if parts.is_empty() {
-        "Nada para guardar.".to_owned()
-    } else {
-        format!("{}.", parts.join("; "))
-    };
-    if report.added > 0 {
-        text.push_str(" As novas entram nas Oportunidades no próximo Sync.");
-    }
-    text
-}
-
-fn order_name(order: OfferOrder) -> &'static str {
-    match order {
-        OfferOrder::Sales => "Mais vendidos",
-        OfferOrder::Relevance => "Relevância",
-        OfferOrder::LowestPrice => "Menor preço",
-        OfferOrder::HighestCommission => "Maior comissão",
-    }
-}
-
-/// "12.400 vendidos".
-fn sold_text(sales: u32) -> String {
-    let digits = sales.to_string();
-    let mut grouped = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            grouped.push('.');
-        }
-        grouped.push(digit);
-    }
-    match sales {
-        1 => "1 vendido".into(),
-        _ => format!("{grouped} vendidos"),
-    }
-}
-
-/// "4,9".
-fn stars_text(stars: Decimal) -> String {
-    stars.round_dp(1).normalize().to_string().replace('.', ",")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sales_read_with_thousands_grouped() {
-        assert_eq!(sold_text(0), "0 vendidos");
-        assert_eq!(sold_text(1), "1 vendido");
-        assert_eq!(sold_text(830), "830 vendidos");
-        assert_eq!(sold_text(12_400), "12.400 vendidos");
-        assert_eq!(sold_text(1_234_567), "1.234.567 vendidos");
-    }
-
-    #[test]
-    fn kept_offers_read_as_a_sentence() {
-        let report = KeptOffers {
-            added: 2,
-            unchanged: 1,
-            skipped: 0,
-        };
-        assert_eq!(
-            kept_text(&report),
-            "2 ofertas guardadas; 1 já estava nas ofertas. As novas entram nas Oportunidades \
-             no próximo Sync."
-        );
-        assert_eq!(kept_text(&KeptOffers::default()), "Nada para guardar.");
     }
 }

@@ -1,9 +1,12 @@
 // Release builds on Windows run without a console window behind the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ad_campaigns;
+mod ad_groups;
 mod ads;
 mod affiliate;
 mod affiliate_links;
+mod affiliate_panels;
 mod amazon;
 mod amazon_import;
 mod appearance;
@@ -12,6 +15,8 @@ mod brand;
 mod catalog;
 mod commission_dashboard;
 mod connections;
+mod crawler_search;
+mod crawlers;
 mod credential_guides;
 mod dashboard;
 mod drafts;
@@ -19,8 +24,10 @@ mod eduzz;
 mod event_alerts;
 mod finance;
 mod forms;
+mod found_offers;
 mod home;
 mod hotmart;
+mod instagram;
 mod kit;
 mod kiwify;
 mod layout;
@@ -40,6 +47,8 @@ mod orders;
 mod palette;
 mod parts;
 mod payouts;
+mod pinterest;
+mod post_destinations;
 mod post_queue;
 mod preferences;
 mod pricing;
@@ -66,6 +75,7 @@ mod shell;
 mod shopee;
 mod shopee_search;
 mod shopee_seller;
+mod short_io;
 mod span;
 mod startup;
 mod stock;
@@ -81,29 +91,33 @@ use futures::StreamExt;
 use gpui_kit::*;
 use mascate_affiliate::{CommissionSource, LinkTagger};
 use mascate_integrations::{
-    AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, EDUZZ_LINKS, Eduzz, HOTMART_LINKS,
-    Hotmart, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre, Monetizze,
-    ShopeeAffiliates, ShopeeSeller, Telegram,
+    AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
+    HOTMART_LINKS, Hotmart, Instagram, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre,
+    Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, ShortIo, Telegram, installed_browser,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
-    Build, Finish, SystemSecretStore, process_environment, run_installer_after_exit,
-    secret_store_for, system_user,
+    Build, Finish, SystemSecretStore, default_database_path, process_environment,
+    run_installer_after_exit, secret_store_for, system_user,
 };
 
-use crate::ads::AppProductAds;
+use crate::ads::{AppAdCampaigns, AppProductAds};
 use crate::affiliate::{AppAffiliate, CommissionSources};
 use crate::affiliate_links::LinkTaggers;
+use crate::affiliate_panels::{AppAffiliatePanels, PanelSite, Panels};
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
+use crate::crawlers::{AppCrawlers, CrawledSite};
 use crate::finance::AppSalesVolume;
+use crate::instagram::AppInstagram;
 use crate::listing_copy::AppListingCopy;
 use crate::listings::AppListings;
 use crate::magalu::AppMagalu;
 use crate::mercado_livre::AppMercadoLivre;
 use crate::offer_posts::AppOfferPosts;
 use crate::orders::AppOrders;
+use crate::pinterest::AppPinterest;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
 use crate::promotion_channels::AppPromotionChannels;
@@ -120,6 +134,7 @@ use crate::sales_events::AppSalesEvents;
 use crate::shell::Shell;
 use crate::shopee::AppShopee;
 use crate::shopee_seller::AppShopeeSeller;
+use crate::short_io::AppShortIo;
 use crate::stock::AppInventory;
 use crate::stock_mirror::AppStockMirror;
 use crate::telegram::AppTelegram;
@@ -208,6 +223,26 @@ fn main() {
         secrets.clone(),
         Arc::new(SystemClock),
     ));
+    let (pinterest_api, pinterest_login) = pinterest::urls(Build::CURRENT, &process_environment());
+    let pinterest = Arc::new(Pinterest::new(
+        &pinterest_api,
+        &pinterest_login,
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
+    let instagram = Arc::new(Instagram::new(
+        &instagram::api_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+        Arc::new(SystemClock),
+    ));
+    let short_io = Arc::new(ShortIo::new(
+        &short_io::api_url(Build::CURRENT, &process_environment()),
+        &short_io::statistics_url(Build::CURRENT, &process_environment()),
+        &user_agent,
+        secrets.clone(),
+    ));
     let anthropic = Arc::new(Anthropic::new(
         &listing_copy::api_url(Build::CURRENT, &process_environment()),
         &user_agent,
@@ -225,6 +260,25 @@ fn main() {
             &process_environment(),
         )),
     );
+    // The engine exists from the start so its memory and breakers outlive
+    // each screen; no crawler is built until its flag is on.
+    let crawlers = AppCrawlers {
+        engine: Arc::new(Crawler::new(&user_agent, Arc::new(SystemClock))),
+        sites: CrawledSite::all(Build::CURRENT, &process_environment()),
+    };
+    // The browser opens nothing until a panel whose flag is on reads, on a
+    // profile beside the database.
+    let affiliate_panels = default_database_path()
+        .and_then(|database| database.parent().map(std::path::Path::to_path_buf))
+        .map(|data| {
+            AppAffiliatePanels(Arc::new(Panels {
+                browser: Arc::new(mascate_integrations::BrowserSession::new(
+                    installed_browser(&*process_environment()),
+                    affiliate_panels::profile_folder(data),
+                )),
+                sites: PanelSite::all(Build::CURRENT, &process_environment()),
+            }))
+        });
     let user: SharedString = system_user(&process_environment())
         .unwrap_or_else(|| "usuário do sistema".into())
         .into();
@@ -267,6 +321,8 @@ fn main() {
                     repricing: Some(ChannelRepricing::Automation(mercado_livre.clone())),
                     quality: Some(mercado_livre.clone()),
                     promotions: Some(mercado_livre.clone()),
+                    // Product Ads.
+                    ads: Some(mercado_livre.clone()),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -285,8 +341,10 @@ fn main() {
                     repricing: Some(ChannelRepricing::FeaturedOffer(amazon.clone())),
                     // The listing's issues; Amazon gives no score.
                     quality: Some(amazon),
-                    // Amazon offers sellers no Promotion by its API.
+                    // Amazon offers sellers no Promotion by its API, and its
+                    // Ads API is apart from SP-API (ADR 0036).
                     promotions: None,
+                    ads: None,
                 },
                 // Shopee prints the label once the shipment is arranged, and
                 // the label arranges it: no shipment to confirm.
@@ -306,6 +364,8 @@ fn main() {
                     quality: Some(shopee_seller.clone()),
                     // The owner's discounts.
                     promotions: Some(shopee_seller.clone()),
+                    // Shopee Ads, read once Shopee grants the permission.
+                    ads: Some(shopee_seller.clone()),
                 },
                 // The owner sends the NF-e and ships in Magalu's panel:
                 // nothing to print or confirm here. Publishing is out of the
@@ -321,9 +381,10 @@ fn main() {
                     publisher: None,
                     repricing: None,
                     // Magalu's API tells no listing quality and offers
-                    // sellers no Promotion.
+                    // sellers no Promotion, and Magalu Ads has no public API.
                     quality: None,
                     promotions: None,
+                    ads: None,
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));
@@ -331,6 +392,9 @@ fn main() {
             cx.set_global(AppMercadoLivre(mercado_livre));
             cx.set_global(AppShopee(shopee.clone()));
             cx.set_global(AppTelegram(telegram.clone()));
+            cx.set_global(AppPinterest(pinterest));
+            cx.set_global(AppInstagram(instagram));
+            cx.set_global(AppShortIo(short_io));
             if let Some(started) = &started {
                 cx.set_global(AppFlags {
                     flags: started.flags.clone(),
@@ -377,6 +441,10 @@ fn main() {
                 cx.set_global(AppOfferPosts(started.offer_posts.clone()));
                 cx.set_global(AppSalesEvents(started.sales_events.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));
+                cx.set_global(crawlers);
+                if let Some(affiliate_panels) = affiliate_panels {
+                    cx.set_global(affiliate_panels);
+                }
                 cx.set_global(AppTaxes(started.taxes.clone()));
                 cx.set_global(AppSalesVolume(started.sales_volume.clone()));
                 cx.set_global(AppPricing(started.pricing.clone()));
@@ -399,6 +467,7 @@ fn main() {
                 cx.set_global(AppPromotions(started.promotions.clone()));
                 cx.set_global(AppRepricing(started.repricing.clone()));
                 cx.set_global(AppProductAds(started.product_ads.clone()));
+                cx.set_global(AppAdCampaigns(started.ad_campaigns.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     merge_import: started.merge_import.clone(),

@@ -1,0 +1,9 @@
+{
+  "url": "https://www.magazinevoce.com.br/painel/vendas",
+  "tables": [
+    {
+      "headers": ["Quando", "Código", "O que", "Quanto"],
+      "rows": [["19/10/2026", "1491507293822611", "Smart TV", "R$ 18,40"]]
+    }
+  ]
+}
