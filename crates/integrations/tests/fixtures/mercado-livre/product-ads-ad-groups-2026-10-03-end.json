@@ -1,0 +1,101 @@
+{
+  "paging": {
+    "offset": 2,
+    "total": 5,
+    "limit": 50
+  },
+  "results": [
+    {
+      "channel": "MARKETPLACE",
+      "title": "Cabo USB-C 2 m",
+      "advertiser_id": 8823,
+      "ad_group_type": "ITEM",
+      "domain_id": "MLB-USB_CABLES",
+      "official_store_id": 0,
+      "id": 1406300003,
+      "campaign_id": 352,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-09-01T13:05:00Z",
+      "ad_group_external_id": "MLB4100000002",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "ACTIVE",
+      "metrics": {
+        "clicks": 8,
+        "prints": 320,
+        "cost": 3.3,
+        "cpc": 0.41,
+        "ctr": 2.5,
+        "direct_amount": 29.9,
+        "indirect_amount": 0.0,
+        "direct_units_quantity": 1,
+        "indirect_units_quantity": 0,
+        "units_quantity": 1,
+        "acos": 0.0,
+        "roas": 0.0
+      }
+    },
+    {
+      "channel": "MARKETPLACE",
+      "title": "Cabo Lightning",
+      "advertiser_id": 8823,
+      "ad_group_type": "FAMILY",
+      "domain_id": "MLB-USB_CABLES",
+      "official_store_id": 0,
+      "id": 1406300004,
+      "campaign_id": 352,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-09-01T13:05:00Z",
+      "ad_group_external_id": "3080359231396377",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "ACTIVE",
+      "metrics": {
+        "clicks": 0,
+        "prints": 40,
+        "cost": 0.0,
+        "cpc": 0.0,
+        "ctr": 0.0,
+        "direct_amount": 0.0,
+        "indirect_amount": 0.0,
+        "total_amount": 0.0,
+        "direct_units_quantity": 0,
+        "indirect_units_quantity": 0,
+        "units_quantity": 0,
+        "acos": 0.0,
+        "roas": 0.0
+      }
+    },
+    {
+      "channel": "MARKETPLACE",
+      "title": "Carregador Turbo 20 W",
+      "advertiser_id": 8823,
+      "ad_group_type": "CATALOG",
+      "domain_id": "MLB-CELLPHONE_CHARGERS",
+      "official_store_id": 0,
+      "id": 1406300005,
+      "campaign_id": 352,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-09-01T13:05:00Z",
+      "ad_group_external_id": "MLB52015944",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "ACTIVE",
+      "metrics": {
+        "clicks": 0,
+        "prints": 15,
+        "cost": 0.0,
+        "cpc": 0.0,
+        "ctr": 0.0,
+        "direct_amount": 0.0,
+        "indirect_amount": 89.9,
+        "total_amount": 89.9,
+        "direct_units_quantity": 0,
+        "indirect_units_quantity": 1,
+        "units_quantity": 1,
+        "acos": 0.0,
+        "roas": 0.0
+      }
+    }
+  ]
+}

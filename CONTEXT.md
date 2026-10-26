@@ -242,6 +242,10 @@ _Avoid_: Ads (sozinho, no código), anúncio patrocinado, publicidade
 Campanha do Product Ads que agrupa anúncios com um orçamento diário, uma estratégia (rentabilidade, crescimento ou visibilidade) e um Target ROAS. O app cria, pausa, ativa e muda uma Ad Campaign só depois da confirmação do Fernando.
 _Avoid_: campanha (sozinho, é também a Promotion do vendedor), campaign
 
+**Ad Group**:
+Unidade que o Mercado Livre anuncia numa Ad Campaign: um Listing, uma família de variações de User Products ou um produto de catálogo. O app lê as métricas do dia por Ad Group e divide uma família ou um produto de catálogo nos Listings dele, então o custo e as vendas continuam por Listing.
+_Avoid_: grupo de anúncios (no código), agrupador
+
 **Target ROAS**:
 ROAS que uma Ad Campaign pede ao Sales Channel, de 1x a 35x: alvo alto vende menos com mais lucro por venda, alvo baixo vende mais. O app sugere o maior Break-even ROAS dos Products da campanha; abaixo dele, pede uma segunda confirmação. Na tela, "ROAS alvo".
 _Avoid_: ROAS de equilíbrio (é outra coisa), ACOS
