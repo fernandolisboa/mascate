@@ -60,7 +60,9 @@ conta de vendedor do Fernando.
 | `seller-promotion-item-joined.json`, `error-400-promotion.json` | `POST /seller-promotions/items/{id}?app_version=v2` e o preço recusado (400, `ERROR_CREDIBILITY_DISCOUNTED_PRICE`) | Desconto individual; Campanhas tradicionais |
 | `advertisers-pads.json`, `advertisers-empty.json` | `GET /advertising/advertisers?product_id=PADS` com `Api-Version: 1`: o anunciante do vendedor, e um vendedor sem Product Ads | Product Ads (leitura): Consultar anunciante |
 | `product-ads-campaigns.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/campaigns/search` com `api-version: 2`: campanha ativa, pausada e uma sem nome | Product Ads (leitura): Buscar campanhas de anunciante |
-| `product-ads-ads-2026-10-03.json`, `product-ads-ads-2026-10-03-end.json`, `product-ads-ads-empty.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/ads/search?date_from=...&date_to=...&metrics=...` com `api-version: 2` de um dia, em duas páginas (`offset`), e um dia sem anúncios | Product Ads (leitura): Métricas de anúncios |
+| `product-ads-ad-groups-2026-10-03.json`, `product-ads-ad-groups-2026-10-03-end.json`, `product-ads-ad-groups-empty.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/ad_groups/search?date_from=...&date_to=...&metrics=...` com `api-version: 2` de um dia, em duas páginas (`offset`): dois Ad Groups `ITEM` (um sem `total_amount`), uma `FAMILY` que gastou, uma `FAMILY` sem custo nem venda e um `CATALOG` que vendeu sem gastar; e um dia sem Ad Groups | Product Ads para catálogo e user products (leitura): Detalhes e métricas de Ad Group por advertiser |
+| `product-ads-ad-group-1406300002-ads-2026-10-03.json`, `product-ads-ad-group-1406300005-ads-2026-10-03.json` | `GET /advertising/MLB/product_ads/ad_groups/{id}/ads?date_from=...&date_to=...&metrics=...` com `api-version: 2`: as duas variações da família, cada uma com as suas métricas, e o anúncio do produto de catálogo | Product Ads para catálogo e user products (leitura): Métricas dos anúncios pertencentes ao Ad Group |
+| `error-404-no-product-ads.json` | `GET /advertising/advertisers?product_id=PADS` de um usuário sem Product Ads: 404 "No permissions found for user_id" | Product Ads para catálogo e user products (leitura): Consultar anunciante (Nota) |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -200,23 +202,33 @@ recursos vizinhos (conferir no regression pass):
   formato real das datas e da paginação, se o prazo de 14 e 31 dias conta o primeiro e o último
   dia, se o Mercado Livre cobra a tarifa sobre o preço antes ou depois do cupom, e os campos
   `min_discounted_price`/`suggested_discounted_price` que ele devolve para os convites.
-- Product Ads (#27): a consulta do anunciante, a busca de campanhas e a busca de anúncios seguem as
-  páginas "Product Ads (leitura)" e "Product Ads para catálogo e user products (leitura)",
-  consultadas em 05/10/2026: o anunciante vem de `advertisers[]` (`advertiser_id`, `site_id`), e
-  cada anúncio da busca traz `item_id`, `campaign_id`, os dados do anúncio e as métricas pedidas em
-  `metrics` (`clicks`, `prints`, `cost`, `direct_amount`, `indirect_amount`, `total_amount`,
-  `units_quantity`), com `metrics_summary` do período, que o app não lê. O app pede um dia por vez
-  (`date_from` igual a `date_to`) para guardar o custo de cada anúncio por dia. A página mostra o
-  exemplo diário agregado (`aggregation_type=DAILY`) e a lista de campos da busca por anúncio, mas
-  não um exemplo completo dela: o formato foi completado por esses campos. A venda atribuída é
-  `total_amount` (diretas e indiretas, como o ROAS do painel); sem ele, o app soma
-  `direct_amount` e `indirect_amount`. A primeira página do dia foi cortada em dois anúncios para
-  exercitar a paginação. A API não manda moeda: o app usa reais (MLB). Um vendedor sem Product Ads
-  pode receber a lista vazia ou 404; o app trata os dois como sem conta. Ids, nomes e valores são
-  inventados. Conferir no regression pass: o formato real da busca por anúncio, se ela aceita um
-  dia só, quantos dias depois do clique uma venda ainda é atribuída (o app relê os últimos 7),
-  quanto tempo para trás a API responde (o app lê 62 dias no primeiro Sync), e a resposta para um
-  vendedor sem Product Ads.
+- Product Ads (#27, #179): a consulta do anunciante, a busca de campanhas e a leitura por Ad Group
+  seguem a página "Product Ads para catálogo e user products (leitura)" do Brasil, atualizada em
+  19/10/2026 e consultada em 26/10/2026. O Mercado Livre removeu em 30/05/2026 a busca de anúncios
+  com métricas (`.../product_ads/ads/search`), que a #27 usava; as fixtures dela saíram, e o
+  servidor falso dos testes responde 404 a esse caminho. O anunciante vem de `advertisers[]`
+  (`advertiser_id`, `site_id`); um usuário sem Product Ads recebe a lista vazia ou 404 "No
+  permissions found for user_id" (a mensagem da Nota da página; o corpo completo foi completado no
+  formato dos outros erros), e o app trata os dois como sem conta. A busca de Ad Groups traz, por
+  grupo, `id`, `ad_group_type` (`ITEM`, `FAMILY` ou `CATALOG`), `ad_group_external_id` (o
+  `item_id` do anúncio tradicional, o `family_id` da família de User Products ou o `parent_id` do
+  catálogo), `campaign_id` e as métricas pedidas em `metrics` (`clicks`, `prints`, `cost`,
+  `direct_amount`, `indirect_amount`, `total_amount`, `units_quantity`). O grupo `ITEM` é o próprio
+  Listing; um grupo de família ou de catálogo com custo ou venda atribuída no dia é dividido nos
+  seus Listings por `.../product_ads/ad_groups/{id}/ads` do mesmo dia, que traz `item_id`,
+  `campaign_id` e as métricas de cada anúncio; um grupo sem nada no dia não custa outra chamada
+  (ADR 0036). O app pede um dia por vez (`date_from` igual a `date_to`) para guardar o custo de
+  cada Listing por dia; a página aceita até 90 dias para trás. Os exemplos da página são de outros
+  sites (MLM, MLC, MCO), sem `api-version` no exemplo da busca de Ad Groups e com as métricas em
+  maiúsculas nele; o app manda `api-version: 2` e as métricas em minúsculas, como no exemplo dos
+  anúncios do Ad Group. A venda atribuída é `total_amount` (diretas e indiretas, como o ROAS do
+  painel); sem ele, o app soma `direct_amount` e `indirect_amount`. A primeira página do dia foi
+  cortada em dois grupos para exercitar a paginação. A API não manda moeda: o app usa reais (MLB).
+  Ids, nomes e valores são inventados. Conferir no regression pass: a primeira leitura por Ad
+  Group com a conta real, se a busca aceita as métricas em minúsculas e `api-version: 2`, se a
+  soma das variações bate com o grupo da família, se um mesmo Listing aparece em mais de um grupo,
+  quantos dias depois do clique uma venda ainda é atribuída (o app relê os últimos 7), e a
+  resposta para um vendedor sem Product Ads.
 | `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
 | `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |
 | `pricing-automation-rules.json`, `pricing-automation-rules-int.json` | `GET /pricing-automation/items/{id}/rules` (Automatic Repricing, #135): um item com `INT` e `INT_EXT` e outro só com `INT` | Automatizações de preços (pt_br e es_ar, consultadas em 16/10/2026) |

@@ -1,0 +1,6 @@
+{
+  "message": "No permissions found for user_id 123456789",
+  "error": "not_found",
+  "status": 404,
+  "cause": []
+}

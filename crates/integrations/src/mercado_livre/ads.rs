@@ -1,8 +1,8 @@
 //! The owner's Product Ads, for marketing's port (ADR 0025): the account
 //! from `/advertising/advertisers?product_id=PADS`, its campaigns and each
-//! ad's metrics of a day from the Product Ads search, version 2 of the
-//! advertising API. Read only: campaigns are made and changed in Mercado
-//! Livre's own panel.
+//! listing's metrics of a day through the Ad Groups search (ADR 0036), version
+//! 2 of the advertising API. Read only: campaigns are made and changed in
+//! Mercado Livre's own panel.
 
 use chrono::NaiveDate;
 use mascate_kernel::{Currency, Money, PlatformError};
@@ -13,8 +13,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Number;
 
 use super::answers::{
-    AdAnswer, AdCampaignAnswer, AdMetricsAnswer, AdsSearchAnswer, AdvertisersAnswer, decimal,
-    whole_id,
+    AdAnswer, AdCampaignAnswer, AdGroupAnswer, AdMetricsAnswer, AdsSearchAnswer, AdvertisersAnswer,
+    decimal, whole_id,
 };
 use super::sales_channel::path_id;
 use super::{MercadoLivre, SITE};
@@ -30,7 +30,7 @@ const SEARCH_VERSION: (&str, &str) = ("Api-Version", "2");
 /// Results per page of a search.
 const SEARCH_PAGE: u32 = 50;
 
-/// The metrics each ad comes with.
+/// The metrics each Ad Group and ad comes with.
 const METRICS: &str =
     "clicks,prints,cost,direct_amount,indirect_amount,total_amount,units_quantity";
 
@@ -81,27 +81,49 @@ impl ChannelAds for MercadoLivre {
             .collect())
     }
 
+    /// Mercado Livre removed the per-ad metrics search on 2026-05-30: the
+    /// day is read by Ad Group, and only a family or catalog group that
+    /// spent or sold costs a call to split it into its listings.
     fn ads_on(&self, account: &str, day: NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
         let path = format!(
-            "/advertising/{SITE}/advertisers/{}/product_ads/ads/search",
+            "/advertising/{SITE}/advertisers/{}/product_ads/ad_groups/search",
             path_id(account)?
         );
         let day = day.to_string();
-        let found: Vec<AdAnswer> = self.search(
-            &path,
-            &[("date_from", &day), ("date_to", &day), ("metrics", METRICS)],
-        )?;
-        Ok(found
-            .into_iter()
-            .map(|ad| ChannelAd {
-                metrics: ad
-                    .metrics
-                    .as_ref()
-                    .map_or(AdMetrics::zero(CURRENCY), metrics),
-                listing: ad.item_id,
-                campaign: ad.campaign_id.as_ref().map(whole_id),
-            })
-            .collect())
+        let query = [
+            ("date_from", day.as_str()),
+            ("date_to", &day),
+            ("metrics", METRICS),
+        ];
+        let groups: Vec<AdGroupAnswer> = self.search(&path, &query)?;
+        let mut ads = Vec::new();
+        for group in groups {
+            let measured = metrics(group.metrics.as_ref());
+            let campaign = group.campaign_id.as_ref().map(whole_id);
+            match group.ad_group_external_id {
+                Some(listing) if is_listing(group.ad_group_type.as_deref()) => {
+                    ads.push(ChannelAd {
+                        listing,
+                        campaign,
+                        metrics: measured,
+                    });
+                }
+                _ if !spent_or_sold(&measured) => {}
+                _ => {
+                    let path = format!(
+                        "/advertising/{SITE}/product_ads/ad_groups/{}/ads",
+                        path_id(&whole_id(&group.id))?
+                    );
+                    let found: Vec<AdAnswer> = self.search(&path, &query)?;
+                    ads.extend(found.into_iter().map(|ad| ChannelAd {
+                        metrics: metrics(ad.metrics.as_ref()),
+                        listing: ad.item_id,
+                        campaign: ad.campaign_id.as_ref().map(whole_id).or(campaign.clone()),
+                    }));
+                }
+            }
+        }
+        Ok(ads)
     }
 }
 
@@ -131,6 +153,15 @@ impl MercadoLivre {
     }
 }
 
+/// An `ITEM` group is a single listing, its id the group's external id.
+fn is_listing(group_type: Option<&str>) -> bool {
+    group_type.is_some_and(|kind| kind.eq_ignore_ascii_case("ITEM"))
+}
+
+fn spent_or_sold(metrics: &AdMetrics) -> bool {
+    !metrics.cost.amount().is_zero() || !metrics.attributed.amount().is_zero()
+}
+
 /// `active` and `paused`; anything else, as a campaign being set up, is
 /// another state.
 fn status(status: Option<&str>) -> CampaignStatus {
@@ -141,9 +172,13 @@ fn status(status: Option<&str>) -> CampaignStatus {
     }
 }
 
-/// An ad's metrics; the attributed sales are `total_amount`, or the direct
-/// and indirect ones together without it.
-fn metrics(answer: &AdMetricsAnswer) -> AdMetrics {
+/// An Ad Group's or ad's metrics, none when Mercado Livre sent none; the
+/// attributed sales are `total_amount`, or the direct and indirect ones
+/// together without it.
+fn metrics(answer: Option<&AdMetricsAnswer>) -> AdMetrics {
+    let Some(answer) = answer else {
+        return AdMetrics::zero(CURRENCY);
+    };
     let amount = |number: &Option<Number>| decimal(number).unwrap_or_default();
     let attributed = match decimal(&answer.total_amount) {
         Some(total) => total,

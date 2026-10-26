@@ -796,7 +796,19 @@ pub(super) struct AdCampaignAnswer {
     pub status: Option<String>,
 }
 
-/// An ad, with its metrics in the dates asked.
+/// An Ad Group, with its metrics in the dates asked: a listing (`ITEM`), a
+/// family of User Product variations (`FAMILY`) or a catalog product
+/// (`CATALOG`), whose id is `ad_group_external_id`.
+#[derive(Deserialize)]
+pub(super) struct AdGroupAnswer {
+    pub id: Number,
+    pub ad_group_type: Option<String>,
+    pub ad_group_external_id: Option<String>,
+    pub campaign_id: Option<Number>,
+    pub metrics: Option<AdMetricsAnswer>,
+}
+
+/// An ad of an Ad Group, with its metrics in the dates asked.
 #[derive(Deserialize)]
 pub(super) struct AdAnswer {
     pub item_id: String,
