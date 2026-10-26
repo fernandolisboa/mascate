@@ -189,7 +189,11 @@ impl ChannelAdCampaigns for Channel {
             .unwrap()
             .iter()
             .find(|group| group.listings.iter().any(|kept| kept == listing))
-            .cloned())
+            // Mercado Livre's search by item says nothing of the title.
+            .map(|group| ChannelAdGroup {
+                title: None,
+                ..group.clone()
+            }))
     }
 
     fn place_ad_group(
@@ -405,6 +409,7 @@ fn a_family_lists_every_listing_it_moves_and_moves_them_together() {
         let moved = fx.kept(&fone_family().id).await.unwrap();
         assert_eq!(moved.campaign.as_deref(), Some("352"));
         assert_eq!(moved.listings, ["MLB4100000004", "MLB4100000005"]);
+        assert_eq!(moved.title.as_deref(), Some("Fone Bluetooth"));
     });
 }
 

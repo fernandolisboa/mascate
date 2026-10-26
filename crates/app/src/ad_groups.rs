@@ -420,11 +420,17 @@ impl AdGroupsPanel {
 
     fn render_choice(&self, choice: &Choice, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let now = self
+        let group = self
             .groups
             .iter()
-            .find(|group| group.listings.contains(&choice.listing))
-            .and_then(|group| group.campaign.clone());
+            .find(|group| group.listings.contains(&choice.listing));
+        let now = group.and_then(|group| group.campaign.clone());
+        let lead = group.map(|group| {
+            div().text_sm().child(format!(
+                "Para onde vai o anúncio de “{}”:",
+                self.name_of(group)
+            ))
+        });
         let campaigns = self
             .campaigns
             .iter()
@@ -483,6 +489,7 @@ impl AdGroupsPanel {
             .pt_3()
             .border_t(t.border_width)
             .border_color(t.frame)
+            .children(lead)
             .child(
                 v_flex()
                     .gap_1()

@@ -1029,4 +1029,5 @@ fn a_sync_keeps_the_ad_groups_and_a_family_moves_whole_through_marketing() {
     assert_eq!(moved.campaign.as_deref(), Some("352"));
     assert_eq!(moved.status, AdStatus::Paused);
     assert_eq!(moved.listings, ["MLB4100000004", "MLB4100000005"]);
+    assert_eq!(moved.title.as_deref(), Some("Fone de Ouvido Over-ear"));
 }

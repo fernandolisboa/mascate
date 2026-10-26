@@ -308,6 +308,11 @@ impl AdCampaigns {
                     .ad_group_of(&account, listing)
                     .map_err(written)?
                     .ok_or(AdsError::NoAdGroup)?;
+                // The search by item may leave out what the group is called.
+                let found = ChannelAdGroup {
+                    title: found.title.or_else(|| group.title.clone()),
+                    ..found
+                };
                 if found.id != group.id || !same_listings(&found.listings, &group.listings) {
                     write_ad_group(connection, self.ids.as_ref(), &found, self.clock.now()).await?;
                     return Err(AdsError::AdGroupChanged);

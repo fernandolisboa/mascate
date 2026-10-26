@@ -494,6 +494,9 @@ impl SalesScreen {
                 .text_sm()
                 .child(format!("No período: {}.", metrics_text(total))),
         );
+        // The suggested pauses get a column of their own, so the figures
+        // stay under their headings.
+        let pausing = managed && report.products.iter().any(ProductRoas::suggests_pausing);
         let header = h_flex()
             .gap_3()
             .px_3()
@@ -504,23 +507,25 @@ impl SalesScreen {
             .child(money_cell("Vendas atribuídas"))
             .child(money_cell("ROAS real"))
             .child(money_cell("ROAS de equilíbrio"))
-            .child(margin_cell().child(""));
+            .child(margin_cell().child(""))
+            .children(pausing.then(action_cell));
         let products: Vec<AnyElement> = report
             .products
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let pause = (managed && row.suggests_pausing()).then(|| {
+                let pause = pausing.then(|| {
                     let listings = row.listings.clone();
-                    Button::new(("pause-losing-ad", index))
-                        .label("Pausar anúncio")
-                        .outline()
-                        .small()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.ad_groups
-                                .update(cx, |panel, cx| panel.pause_any(&listings, cx))
-                        }))
-                        .into_any_element()
+                    action_cell().children(row.suggests_pausing().then(|| {
+                        Button::new(("pause-losing-ad", index))
+                            .label("Pausar anúncio")
+                            .outline()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.ad_groups
+                                    .update(cx, |panel, cx| panel.pause_any(&listings, cx))
+                            }))
+                    }))
                 });
                 product_row(row, pause, &t, cx)
             })
@@ -564,7 +569,7 @@ impl SalesScreen {
 
 /// One Product's ads, marked when they lose money, with the suggested
 /// pause when they lose enough to judge.
-fn product_row(row: &ProductRoas, pause: Option<AnyElement>, t: &Tokens, cx: &App) -> AnyElement {
+fn product_row(row: &ProductRoas, pause: Option<Div>, t: &Tokens, cx: &App) -> AnyElement {
     let (verdict, ink) = if row.loses() {
         ("dá prejuízo", t.danger)
     } else if row.break_even.is_none() {
@@ -806,6 +811,11 @@ pub(crate) fn money_cell(text: impl Into<SharedString>) -> Div {
 
 pub(crate) fn margin_cell() -> Div {
     div().w(px(150.)).flex_none().text_right()
+}
+
+/// Room for a row's suggested action.
+fn action_cell() -> Div {
+    div().w(px(140.)).flex_none().flex().justify_end()
 }
 
 #[cfg(test)]
