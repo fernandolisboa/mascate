@@ -16,7 +16,8 @@ use mascate_kernel::{
 };
 use mascate_marketing::{
     ADS_HISTORY_DAYS, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState, AdvertisedListing,
-    CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, MIGRATIONS, ProductAds,
+    CampaignProduct, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, MIGRATIONS,
+    ProductAds,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -88,16 +89,8 @@ impl Channel {
         let channel = Self::default();
         *channel.account.lock().unwrap() = Some("8823".into());
         *channel.campaigns.lock().unwrap() = vec![
-            ChannelCampaign {
-                id: "351".into(),
-                name: "Fones".into(),
-                status: CampaignStatus::Active,
-            },
-            ChannelCampaign {
-                id: "352".into(),
-                name: "Cabos".into(),
-                status: CampaignStatus::Paused,
-            },
+            ChannelCampaign::named("351", "Fones", CampaignStatus::Active),
+            ChannelCampaign::named("352", "Cabos", CampaignStatus::Paused),
         ];
         channel
     }
@@ -436,6 +429,49 @@ fn a_report_sums_the_period_by_campaign_and_by_product_losers_first() {
         assert_eq!(unknown.name, "MLB9");
         assert_eq!(unknown.break_even, None);
         assert!(!unknown.loses());
+    });
+}
+
+#[test]
+fn each_campaigns_products_carry_the_worst_break_even_of_their_listings() {
+    block_on(async {
+        let fx = Fixture::new(Channel::with_account()).await;
+        fx.channel.reports(
+            on(10, 2),
+            vec![
+                ad("MLB1", "351", metrics("10.00", "40.00", 20)),
+                ad("MLB3", "351", metrics("20.00", "50.00", 25)),
+                ad("MLB2", "352", metrics("10.00", "120.00", 12)),
+                ad("MLB9", "352", metrics("1.00", "0", 2)),
+            ],
+        );
+        fx.sync().await;
+        let listings = [
+            advertised("MLB1", "fone", Some(break_even("40"))),
+            advertised("MLB3", "fone", Some(break_even("25"))),
+            advertised("MLB2", "cabo", Some(break_even("20"))),
+        ];
+
+        let advertised = fx.ads.advertised_products(&listings).await.unwrap();
+
+        let fone = CampaignProduct {
+            name: "Produto fone".into(),
+            break_even: Some(break_even("25")),
+        };
+        let cabo = CampaignProduct {
+            name: "Produto cabo".into(),
+            break_even: Some(break_even("20")),
+        };
+        let unknown = CampaignProduct {
+            name: "MLB9".into(),
+            break_even: None,
+        };
+        assert_eq!(advertised.by_campaign["351"], std::slice::from_ref(&fone));
+        assert_eq!(
+            advertised.by_campaign["352"],
+            [unknown.clone(), cabo.clone()]
+        );
+        assert_eq!(advertised.all, [unknown, cabo, fone]);
     });
 }
 

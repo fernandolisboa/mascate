@@ -1,0 +1,11 @@
+{
+  "message": "Validation error",
+  "error": "bad_request",
+  "status": 400,
+  "cause": [
+    {
+      "code": "invalid_budget",
+      "message": "The budget is below the minimum for the site."
+    }
+  ]
+}

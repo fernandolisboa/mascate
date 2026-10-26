@@ -16,6 +16,7 @@ use gpui_kit::{
 };
 use mascate_platform::{Appearance, LayoutId, ThemeFamily, ThemeMode, UiTheme, UiThemePreference};
 
+use crate::ad_campaigns::AdsSettingsSection;
 use crate::appearance::{self, color, look};
 use crate::backups::BackupSection;
 use crate::connections::{ConnectionsSection, connection_name};
@@ -107,6 +108,7 @@ fn theme_choices(mode: ThemeMode) -> SearchableVec<ThemeChoice> {
 enum Section {
     Connections,
     Pricing,
+    Ads,
     Copy,
     Channels,
     Orders,
@@ -122,6 +124,7 @@ impl Section {
         match self {
             Section::Connections => "Conexões",
             Section::Pricing => "Preços e margens",
+            Section::Ads => "Product Ads",
             Section::Copy => "Títulos e descrições com IA",
             Section::Channels => "Canais de venda",
             Section::Orders => "Pedidos",
@@ -169,6 +172,7 @@ impl SettingsTab {
             SettingsTab::Connections => &[Section::Connections],
             SettingsTab::Selling => &[
                 Section::Pricing,
+                Section::Ads,
                 Section::Copy,
                 Section::Channels,
                 Section::Orders,
@@ -192,6 +196,7 @@ pub struct SettingsScreen {
     tab: SettingsTab,
     connections: Entity<ConnectionsSection>,
     pricing: Entity<PricingSection>,
+    ads: Entity<AdsSettingsSection>,
     copy: Entity<CopySettingsSection>,
     channels: Entity<ChannelRankingSection>,
     orders: Entity<OrderSettingsSection>,
@@ -244,6 +249,7 @@ impl SettingsScreen {
             tab: SettingsTab::Connections,
             connections,
             pricing: cx.new(|cx| PricingSection::new(window, cx)),
+            ads: cx.new(|cx| AdsSettingsSection::new(window, cx)),
             copy: cx.new(|cx| CopySettingsSection::new(window, cx)),
             channels: cx.new(ChannelRankingSection::new),
             orders: cx.new(|cx| OrderSettingsSection::new(window, cx)),
@@ -699,6 +705,7 @@ impl Render for SettingsScreen {
             let body = match section {
                 Section::Connections => self.connections.clone().into_any_element(),
                 Section::Pricing => self.pricing.clone().into_any_element(),
+                Section::Ads => self.ads.clone().into_any_element(),
                 Section::Copy => self.copy.clone().into_any_element(),
                 Section::Channels => self.channels.clone().into_any_element(),
                 Section::Orders => self.orders.clone().into_any_element(),
@@ -726,9 +733,10 @@ impl Render for SettingsScreen {
 mod tests {
     use super::*;
 
-    const EVERY_SECTION: [Section; 10] = [
+    const EVERY_SECTION: [Section; 11] = [
         Section::Connections,
         Section::Pricing,
+        Section::Ads,
         Section::Copy,
         Section::Channels,
         Section::Orders,
@@ -770,6 +778,7 @@ mod tests {
             SettingsTab::Selling.sections(),
             [
                 Section::Pricing,
+                Section::Ads,
                 Section::Copy,
                 Section::Channels,
                 Section::Orders,

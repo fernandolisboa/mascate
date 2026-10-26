@@ -114,6 +114,7 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         .platform_ids(&["channel_item_id", "channel_campaign_id"])
         .label(&["channel_item_id", "day"]),
         TableMerge::new("marketing_ads_syncs", "Sync de Product Ads", SingleRow),
+        TableMerge::new("marketing_ads_settings", "Opções de Product Ads", SingleRow),
         TableMerge::new("marketing_copy_settings", "Opções de texto", SingleRow),
         TableMerge::new(
             "marketing_promotion_channels",

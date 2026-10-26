@@ -1,8 +1,8 @@
 //! The owner's Product Ads through Mercado Livre's adapter, against the
 //! fake server serving the answers in `fixtures/mercado-livre`, written
-//! from the documentation (see its README), and a Sync of marketing's
-//! Product Ads over them. The rest of what marketing does with them is
-//! tested there.
+//! from the documentation (see its README): reading them, writing campaigns,
+//! and a Sync and a campaign change of marketing's over them. The rest of
+//! what marketing does with them is tested there.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,10 +11,11 @@ use chrono::{NaiveDate, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, PlatformError, Timestamp};
+use mascate_kernel::{Currency, Money, PlatformError, Roas, Timestamp};
 use mascate_marketing::{
-    ADS_HISTORY_DAYS, AdDay, AdMetrics, AdsError, CampaignStatus, ChannelAd, ChannelAds,
-    ChannelCampaign, MIGRATIONS, ProductAds,
+    ADS_HISTORY_DAYS, AdCampaigns, AdDay, AdMetrics, AdsError, CampaignPlan, CampaignStatus,
+    CampaignStrategy, ChannelAd, ChannelAdCampaigns, ChannelAds, ChannelCampaign, MIGRATIONS,
+    ProductAds,
 };
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Database, Secret, SecretStore, migrate};
@@ -27,6 +28,9 @@ const METRICS: &str =
     "clicks%2Cprints%2Ccost%2Cdirect_amount%2Cindirect_amount%2Ctotal_amount%2Cunits_quantity";
 
 const GROUPS: &str = "/advertising/MLB/advertisers/8823/product_ads/ad_groups/search";
+
+const CREATE: &str = "/advertising/MLB/advertisers/8823/product_ads/campaigns";
+const FONES: &str = "/advertising/MLB/product_ads/campaigns/351";
 
 /// Removed by Mercado Livre on 2026-05-30; the fake answers it 404.
 const REMOVED_ADS_SEARCH: &str = "/advertising/MLB/advertisers/8823/product_ads/ads/search";
@@ -60,6 +64,20 @@ fn brl(amount: &str) -> Money {
 
 fn october(day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+}
+
+fn roas(ratio: &str) -> Roas {
+    Roas::new(Decimal::from_str(ratio).unwrap()).unwrap()
+}
+
+fn cabos() -> CampaignPlan {
+    CampaignPlan {
+        name: "Cabos USB".into(),
+        status: CampaignStatus::Active,
+        budget: brl("19.995"),
+        strategy: CampaignStrategy::Profitability,
+        target: roas("4.4"),
+    }
 }
 
 fn now() -> Timestamp {
@@ -114,6 +132,16 @@ impl Fake {
         self
     }
 
+    /// The bodies sent with `method` to `path`, as sent.
+    fn sent(&self, method: &str, path: &str) -> Vec<String> {
+        self.server
+            .received()
+            .into_iter()
+            .filter(|request| request.method == method && request.path == path)
+            .map(|request| request.body)
+            .collect()
+    }
+
     /// Whether any request went to `path`, whatever its query.
     fn asked(&self, path: &str) -> bool {
         self.server
@@ -163,7 +191,7 @@ fn a_seller_product_ads_never_unlocked_for_has_no_account() {
 }
 
 #[test]
-fn the_campaigns_come_with_their_status_and_a_name_even_without_one() {
+fn the_campaigns_come_with_their_status_budget_strategy_and_target_and_a_name_even_without_one() {
     let fake = Fake::connected();
     fake.server
         .serve(CAMPAIGNS, 200, fixture("product-ads-campaigns.json"));
@@ -177,16 +205,21 @@ fn the_campaigns_come_with_their_status_and_a_name_even_without_one() {
                 id: "351".into(),
                 name: "Fones".into(),
                 status: CampaignStatus::Active,
+                budget: Some(brl("30")),
+                strategy: Some(CampaignStrategy::Profitability),
+                target: Some(roas("5")),
             },
             ChannelCampaign {
                 id: "352".into(),
                 name: "Cabos".into(),
                 status: CampaignStatus::Paused,
+                budget: Some(brl("10")),
+                strategy: Some(CampaignStrategy::Visibility),
+                target: Some(roas("2.86")),
             },
             ChannelCampaign {
-                id: "353".into(),
-                name: "Campanha 353".into(),
-                status: CampaignStatus::Other,
+                budget: Some(brl("5")),
+                ..ChannelCampaign::named("353", "Campanha 353", CampaignStatus::Other)
             },
         ]
     );
@@ -377,6 +410,7 @@ fn a_read_turned_down_for_an_old_token_goes_once_more_with_a_renewed_one() {
 struct Synced {
     _dir: tempfile::TempDir,
     ads: ProductAds,
+    campaigns: AdCampaigns,
     fake: Fake,
 }
 
@@ -400,9 +434,11 @@ impl Synced {
             migrate(&database, clock.as_ref(), &[MIGRATIONS])
                 .await
                 .unwrap();
+            let ids = Arc::new(SequentialIds::default());
             Self {
                 _dir: dir,
-                ads: ProductAds::new(database, clock, Arc::new(SequentialIds::default())),
+                ads: ProductAds::new(database.clone(), clock.clone(), ids.clone()),
+                campaigns: AdCampaigns::new(database, clock, ids),
                 fake,
             }
         })
@@ -474,4 +510,210 @@ fn a_page_that_fails_keeps_nothing_and_the_next_sync_reads_the_day_again() {
     );
     synced.sync().unwrap();
     assert_eq!(synced.costs(), october_3_costs());
+}
+
+#[test]
+fn a_new_campaign_posts_the_whole_plan_in_reais_and_comes_back_as_mercado_livre_keeps_it() {
+    let fake = Fake::connected();
+    fake.server.serve_method(
+        "POST",
+        CREATE,
+        201,
+        fixture("product-ads-campaign-created.json"),
+    );
+
+    let created = fake.adapter.create_campaign("8823", &cabos()).unwrap();
+
+    assert_eq!(
+        fake.sent("POST", CREATE),
+        [
+            r#"{"name":"Cabos USB","status":"active","budget":20.00,"strategy":"profitability","roas_target":4.4,"channel":"marketplace"}"#
+        ]
+    );
+    assert_eq!(fake.versions(CREATE), [Some("2".into())]);
+    assert_eq!(
+        created,
+        ChannelCampaign {
+            id: "355328313".into(),
+            name: "Cabos USB".into(),
+            status: CampaignStatus::Active,
+            budget: Some(brl("20")),
+            strategy: Some(CampaignStrategy::Profitability),
+            target: Some(roas("4.4")),
+        }
+    );
+}
+
+#[test]
+fn a_change_puts_the_whole_plan_and_a_pause_only_the_status() {
+    let fake = Fake::connected();
+    fake.server.serve_method(
+        "PUT",
+        FONES,
+        200,
+        fixture("product-ads-campaign-351-changed.json"),
+    );
+    let plan = CampaignPlan {
+        name: "Fones".into(),
+        budget: brl("35.5"),
+        ..cabos()
+    };
+
+    let changed = fake.adapter.change_campaign("351", &plan).unwrap();
+    assert_eq!(changed.budget, Some(brl("35.5")));
+
+    fake.server.serve_method(
+        "PUT",
+        FONES,
+        200,
+        fixture("product-ads-campaign-351-paused.json"),
+    );
+    let paused = fake
+        .adapter
+        .set_campaign_status("351", CampaignStatus::Paused)
+        .unwrap();
+    assert_eq!(paused.status, CampaignStatus::Paused);
+
+    assert_eq!(
+        fake.sent("PUT", FONES),
+        [
+            r#"{"name":"Fones","status":"active","budget":35.5,"strategy":"profitability","roas_target":4.4}"#,
+            r#"{"status":"paused"}"#,
+        ]
+    );
+    assert_eq!(fake.versions(FONES), [Some("2".into()), Some("2".into())]);
+    assert!(fake.sent("POST", CREATE).is_empty());
+}
+
+#[test]
+fn an_account_without_campaign_management_by_api_answers_not_found_and_the_read_goes_on() {
+    let fake = Fake::connected();
+    fake.server.serve_method(
+        "POST",
+        CREATE,
+        403,
+        fixture("error-403-product-ads-campaigns.json"),
+    );
+    fake.server
+        .serve_method("PUT", FONES, 404, r#"{"message":"not found","status":404}"#);
+    fake.server
+        .serve(CAMPAIGNS, 200, fixture("product-ads-campaigns.json"));
+
+    assert_eq!(
+        fake.adapter.create_campaign("8823", &cabos()),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(
+        fake.adapter
+            .set_campaign_status("351", CampaignStatus::Paused),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(fake.adapter.campaigns("8823").unwrap().len(), 3);
+}
+
+#[test]
+fn a_busy_channel_or_a_refused_plan_is_not_taken_as_done() {
+    let fake = Fake::connected();
+    fake.server
+        .serve_method("POST", CREATE, 429, fixture("error-429.json"));
+    fake.server.serve_method(
+        "PUT",
+        FONES,
+        400,
+        fixture("error-400-product-ads-budget.json"),
+    );
+
+    assert_eq!(
+        fake.adapter.create_campaign("8823", &cabos()),
+        Err(PlatformError::RateLimited)
+    );
+    assert_eq!(
+        fake.adapter.change_campaign("351", &cabos()),
+        Err(PlatformError::Refused(
+            "The budget is below the minimum for the site.".into()
+        ))
+    );
+}
+
+#[test]
+fn a_campaign_write_turned_down_for_an_old_token_goes_once_more_with_a_renewed_one() {
+    let fake = Fake::connected();
+    fake.server
+        .serve_method("POST", CREATE, 401, r#"{"message":"invalid_token"}"#);
+    fake.server.then_serve(
+        &format!("POST {CREATE}"),
+        201,
+        fixture("product-ads-campaign-created.json"),
+    );
+
+    fake.adapter.create_campaign("8823", &cabos()).unwrap();
+
+    assert_eq!(fake.sent("POST", CREATE).len(), 2);
+}
+
+#[test]
+fn a_campaign_id_that_could_leave_the_path_or_a_status_mercado_livre_lacks_is_never_sent() {
+    let fake = Fake::connected();
+
+    assert_eq!(
+        fake.adapter.change_campaign("351/../../users/me", &cabos()),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(
+        fake.adapter.create_campaign("8823?x=1", &cabos()),
+        Err(PlatformError::NotFound)
+    );
+    assert!(matches!(
+        fake.adapter
+            .set_campaign_status("351", CampaignStatus::Other),
+        Err(PlatformError::Refused(_))
+    ));
+    let dollars = CampaignPlan {
+        budget: Money::new(Decimal::from(20), Currency::Usd),
+        ..cabos()
+    };
+    assert!(matches!(
+        fake.adapter.create_campaign("8823", &dollars),
+        Err(PlatformError::Refused(_))
+    ));
+    assert!(fake.server.requests().is_empty());
+}
+
+#[test]
+fn a_create_whose_answer_never_arrived_is_found_by_name_and_not_made_twice() {
+    let synced = Synced::new();
+    synced.sync().unwrap();
+    synced.fake.server.hang_up(CREATE);
+    let request = block_on(synced.campaigns.prepare_campaign(cabos(), &[], true)).unwrap();
+
+    let lost = block_on(
+        synced
+            .campaigns
+            .send(&synced.fake.adapter, request.clone().confirm().unwrap()),
+    );
+    assert!(matches!(
+        lost,
+        Err(AdsError::Platform(PlatformError::Failed(_)))
+    ));
+
+    synced.fake.server.serve(
+        CAMPAIGNS,
+        200,
+        fixture("product-ads-campaigns-after-create.json"),
+    );
+    let found = block_on(
+        synced
+            .campaigns
+            .send(&synced.fake.adapter, request.confirm().unwrap()),
+    )
+    .unwrap();
+
+    assert_eq!(found.id, "355328313");
+    assert_eq!(synced.fake.sent("POST", CREATE).len(), 1);
+    assert!(
+        block_on(synced.campaigns.campaigns())
+            .unwrap()
+            .iter()
+            .any(|campaign| campaign.id == "355328313")
+    );
 }

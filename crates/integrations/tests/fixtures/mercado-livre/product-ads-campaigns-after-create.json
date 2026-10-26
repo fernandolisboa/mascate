@@ -1,0 +1,56 @@
+{
+  "paging": {
+    "offset": 0,
+    "limit": 50,
+    "total": 4
+  },
+  "results": [
+    {
+      "id": 351,
+      "name": "Fones",
+      "status": "active",
+      "budget": 30,
+      "currency_id": "BRL",
+      "strategy": "PROFITABILITY",
+      "roas_target": 5,
+      "channel": "marketplace",
+      "date_created": "2026-09-01T10:00:00.000-03:00",
+      "last_updated": "2026-10-01T08:15:00.000-03:00"
+    },
+    {
+      "id": 352,
+      "name": "Cabos",
+      "status": "paused",
+      "budget": 10,
+      "currency_id": "BRL",
+      "strategy": "VISIBILITY",
+      "roas_target": 2.86,
+      "channel": "marketplace",
+      "date_created": "2026-09-10T14:30:00.000-03:00",
+      "last_updated": "2026-09-28T19:00:00.000-03:00"
+    },
+    {
+      "id": 353,
+      "status": "draft",
+      "budget": 5,
+      "currency_id": "BRL",
+      "channel": "marketplace",
+      "date_created": "2026-10-04T09:00:00.000-03:00",
+      "last_updated": "2026-10-04T09:00:00.000-03:00"
+    },
+    {
+      "id": 355328313,
+      "name": "Cabos USB",
+      "status": "active",
+      "currency_id": "BRL",
+      "last_updated": "2026-10-26T11:14:18.156-03:00",
+      "date_created": "2026-10-26T11:14:18.156-03:00",
+      "strategy": "PROFITABILITY",
+      "acos_target": 22.73,
+      "channel": "marketplace",
+      "advertiser_id": 8823,
+      "budget": 20.0,
+      "roas_target": 4.4
+    }
+  ]
+}

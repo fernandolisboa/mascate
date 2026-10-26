@@ -5,13 +5,14 @@
 //! confirms its final text, and the app keeps what it sent (ADR 0022).
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use chrono::TimeDelta;
 use libsql::{Connection, TransactionBehavior, Value, params};
 use mascate_kernel::{Clock, IdGenerator, PlatformError, RecordId, Timestamp};
 use mascate_platform::{
-    Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
+    Database, InFlight, Migration, StoredRow, StoredValueError, load_single_row, save_single_row,
+    stored,
 };
 
 use crate::replies::{ReplyProblem, check_answer};
@@ -267,7 +268,7 @@ pub struct Questions {
     ids: Arc<dyn IdGenerator>,
     /// The questions whose answer is on its way, so a second click never
     /// sends another.
-    sending: Mutex<HashSet<RecordId>>,
+    sending: InFlight<RecordId>,
 }
 
 impl Questions {
@@ -276,7 +277,7 @@ impl Questions {
             database,
             clock,
             ids,
-            sending: Mutex::new(HashSet::new()),
+            sending: InFlight::default(),
         }
     }
 
@@ -402,7 +403,10 @@ impl Questions {
         channel: &dyn ChannelQuestions,
         answer: ConfirmedAnswer,
     ) -> Result<Question, QuestionError> {
-        let _sending = Sending::start(&self.sending, answer.question)?;
+        let _sending = self
+            .sending
+            .start(answer.question)
+            .ok_or(QuestionError::Sending)?;
         let kept = self.question(answer.question).await?;
         if !kept.is_unanswered() || kept.sent.is_some() {
             return Err(QuestionError::NotWaiting);
@@ -453,31 +457,6 @@ impl Questions {
             .into_iter()
             .find(|question| question.id == id)
             .ok_or(QuestionError::NotFound)
-    }
-}
-
-/// Marks a question as being answered for as long as it lives.
-struct Sending<'a> {
-    set: &'a Mutex<HashSet<RecordId>>,
-    question: RecordId,
-}
-
-impl<'a> Sending<'a> {
-    fn start(set: &'a Mutex<HashSet<RecordId>>, question: RecordId) -> Result<Self, QuestionError> {
-        let mut sending = set.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !sending.insert(question) {
-            return Err(QuestionError::Sending);
-        }
-        Ok(Self { set, question })
-    }
-}
-
-impl Drop for Sending<'_> {
-    fn drop(&mut self) {
-        self.set
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.question);
     }
 }
 

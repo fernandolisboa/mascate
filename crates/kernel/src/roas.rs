@@ -11,6 +11,12 @@ use crate::{CurrencyMismatch, Margin, Money};
 pub struct Roas(Decimal);
 
 impl Roas {
+    /// `ratio` times what the ads cost, as the owner types a Target ROAS;
+    /// `None` below zero.
+    pub fn new(ratio: Decimal) -> Option<Self> {
+        (ratio >= Decimal::ZERO).then_some(Self(ratio))
+    }
+
     /// `attributed` sales over the `cost` of the ads that brought them;
     /// `None` when nothing was spent.
     pub fn of(attributed: Money, cost: Money) -> Result<Option<Self>, CurrencyMismatch> {
