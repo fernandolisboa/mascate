@@ -255,6 +255,8 @@ fn a_pitch_with_a_price_a_percentage_a_link_or_a_contact_is_retried_then_fails()
         ("Só R$ 149,90 hoje", PitchProblem::Price),
         ("Leve por 149,90 e aprenda", PitchProblem::Price),
         ("Sai por 149 no Pix", PitchProblem::Price),
+        ("Leve por 59 e economize", PitchProblem::Price),
+        ("Hoje só 39!", PitchProblem::Price),
         ("Menos de 200 reais", PitchProblem::Price),
         ("Desconto de 25 no curso", PitchProblem::Price),
         ("Um quarto mais barato: 25% off", PitchProblem::Percentage),

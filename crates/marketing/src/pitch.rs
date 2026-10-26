@@ -95,8 +95,14 @@ pub fn check_pitch(pitch: &str, facts: &OfferFacts) -> Vec<PitchProblem> {
     problems
 }
 
+/// Words that put a price on the number after them.
+const PRICING_WORDS: [&str; 9] = [
+    "por", "só", "apenas", "custa", "custando", "pague", "pagando", "sai", "saindo",
+];
+
 /// Whether `text` names an amount of money: a currency symbol, "reais",
-/// "centavos" or "BRL", or a number with two decimals after a comma, as in `49,90`.
+/// "centavos" or "BRL", a number right after a word that prices it, as in
+/// "por 59", or a number with two decimals after a comma, as in `49,90`.
 fn has_money(text: &str) -> bool {
     let lower = text.to_lowercase();
     if lower.contains(['$', '€', '£']) {
@@ -110,6 +116,11 @@ fn has_money(text: &str) -> bool {
         .iter()
         .any(|word| matches!(*word, "reais" | "centavos" | "brl"))
     {
+        return true;
+    }
+    if words.windows(2).any(|pair| {
+        PRICING_WORDS.contains(&pair[0]) && pair[1].starts_with(|c: char| c.is_ascii_digit())
+    }) {
         return true;
     }
     let chars: Vec<char> = text.chars().collect();
