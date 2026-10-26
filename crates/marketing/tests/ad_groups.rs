@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
-use mascate_kernel::PlatformError;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
+use mascate_kernel::{PlatformError, SalesChannelKind};
 use mascate_marketing::{
     AdCampaigns, AdChange, AdChangeKind, AdGroupKind, AdState, AdStatus, AdsError, CampaignPlan,
     CampaignStatus, ChannelAd, ChannelAdCampaigns, ChannelAdGroup, ChannelAds, ChannelCampaign,
@@ -142,6 +142,10 @@ impl Channel {
 }
 
 impl ChannelAds for Channel {
+    fn advertised_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
+    }
+
     fn account(&self) -> Result<Option<String>, PlatformError> {
         Ok(Some("8823".into()))
     }
@@ -225,6 +229,10 @@ impl ChannelAdCampaigns for Channel {
 struct NoAccount;
 
 impl ChannelAds for NoAccount {
+    fn advertised_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
+    }
+
     fn account(&self) -> Result<Option<String>, PlatformError> {
         Ok(None)
     }
@@ -268,7 +276,12 @@ impl Fixture {
             .unwrap();
         let fx = Self {
             ads: ProductAds::new(database.clone(), clock.clone(), ids.clone()),
-            campaigns: AdCampaigns::new(database, clock.clone(), ids),
+            campaigns: AdCampaigns::new(
+                database,
+                clock.clone(),
+                ids,
+                SalesChannelKind::MercadoLivre,
+            ),
             _dir: dir,
             clock,
             channel: Channel::new(),

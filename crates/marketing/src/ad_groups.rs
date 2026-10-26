@@ -8,7 +8,7 @@
 //! money is only suggested for a pause ([`crate::ProductRoas::suggests_pausing`]).
 
 use libsql::{Connection, Value, params};
-use mascate_kernel::{IdGenerator, Timestamp};
+use mascate_kernel::{IdGenerator, SalesChannelKind, Timestamp};
 use mascate_platform::{Migration, stored};
 
 use crate::ads::{AdsError, ChannelCampaign, ads_account, read_campaigns};
@@ -237,7 +237,7 @@ impl AdCampaigns {
     /// The Ad Groups as the last Sync or change left them, by the
     /// channel's id.
     pub async fn ad_groups(&self) -> Result<Vec<ChannelAdGroup>, AdsError> {
-        read_ad_groups(self.database.connection()).await
+        read_ad_groups(self.database.connection(), self.channel).await
     }
 
     /// Checks a change to the ad of `listing`: a Listing the channel keeps
@@ -258,7 +258,7 @@ impl AdCampaigns {
             .into_iter()
             .find(|group| group.listings.iter().any(|kept| kept == listing))
             .ok_or(AdsError::NoAdGroup)?;
-        let campaigns = read_campaigns(self.database.connection()).await?;
+        let campaigns = read_campaigns(self.database.connection(), self.channel).await?;
         let find = |id: &str| campaigns.iter().find(|campaign| campaign.id == id).cloned();
         let from = group.campaign.as_deref().and_then(find);
         let to = match &change {
@@ -302,7 +302,9 @@ impl AdCampaigns {
         let connection = self.database.connection();
         let sent = match change {
             AdChange::Place { campaign, status } => {
-                let account = ads_account(connection).await?.ok_or(AdsError::NoAccount)?;
+                let account = ads_account(connection, self.channel)
+                    .await?
+                    .ok_or(AdsError::NoAccount)?;
                 let listing = group.listings.first().ok_or(AdsError::NoAdGroup)?;
                 let found = channel
                     .ad_group_of(&account, listing)
@@ -314,7 +316,14 @@ impl AdCampaigns {
                     ..found
                 };
                 if found.id != group.id || !same_listings(&found.listings, &group.listings) {
-                    write_ad_group(connection, self.ids.as_ref(), &found, self.clock.now()).await?;
+                    write_ad_group(
+                        connection,
+                        self.ids.as_ref(),
+                        self.channel,
+                        &found,
+                        self.clock.now(),
+                    )
+                    .await?;
                     return Err(AdsError::AdGroupChanged);
                 }
                 if found.campaign.as_ref() == Some(&campaign) && found.status == status {
@@ -342,7 +351,14 @@ impl AdCampaigns {
                 }
             }
         };
-        write_ad_group(connection, self.ids.as_ref(), &sent, self.clock.now()).await?;
+        write_ad_group(
+            connection,
+            self.ids.as_ref(),
+            self.channel,
+            &sent,
+            self.clock.now(),
+        )
+        .await?;
         Ok(sent)
     }
 }
@@ -355,21 +371,22 @@ fn same_listings(a: &[String], b: &[String]) -> bool {
     a == b
 }
 
-/// Writes the channel's Ad Groups over the app's: each by its id and
+/// Writes the Ad Groups of `channel` over the app's: each by its id and
 /// Listing, and those the channel no longer reports gone.
 pub(crate) async fn write_ad_groups(
     on: &Connection,
     ids: &dyn IdGenerator,
+    channel: SalesChannelKind,
     groups: &[ChannelAdGroup],
     now: Timestamp,
 ) -> Result<(), AdsError> {
     for group in groups {
-        write_ad_group(on, ids, group, now).await?;
+        write_ad_group(on, ids, channel, group, now).await?;
     }
     on.execute(
         "UPDATE marketing_ad_groups SET deleted_at = ?1, updated_at = ?1
-         WHERE deleted_at IS NULL AND updated_at < ?1",
-        params![stored(now)],
+         WHERE sales_channel = ?2 AND deleted_at IS NULL AND updated_at < ?1",
+        params![stored(now), channel.code()],
     )
     .await?;
     Ok(())
@@ -380,6 +397,7 @@ pub(crate) async fn write_ad_groups(
 async fn write_ad_group(
     on: &Connection,
     ids: &dyn IdGenerator,
+    channel: SalesChannelKind,
     group: &ChannelAdGroup,
     now: Timestamp,
 ) -> Result<(), AdsError> {
@@ -387,8 +405,8 @@ async fn write_ad_group(
         on.execute(
             "INSERT INTO marketing_ad_groups
                  (id, channel_ad_group_id, channel_item_id, kind, title, channel_campaign_id,
-                  status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                  status, created_at, updated_at, sales_channel)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
              ON CONFLICT (sales_channel, channel_ad_group_id, channel_item_id)
                  WHERE deleted_at IS NULL
              DO UPDATE SET kind = excluded.kind, title = excluded.title,
@@ -403,27 +421,33 @@ async fn write_ad_group(
                 group.campaign.clone().map_or(Value::Null, Value::Text),
                 Value::Text(group.status.code().into()),
                 Value::Text(stored(now)),
+                Value::Text(channel.code().into()),
             ],
         )
         .await?;
     }
     on.execute(
         "UPDATE marketing_ad_groups SET deleted_at = ?1, updated_at = ?1
-         WHERE channel_ad_group_id = ?2 AND deleted_at IS NULL AND updated_at < ?1",
-        params![stored(now), group.id.clone()],
+         WHERE sales_channel = ?3 AND channel_ad_group_id = ?2 AND deleted_at IS NULL
+             AND updated_at < ?1",
+        params![stored(now), group.id.clone(), channel.code()],
     )
     .await?;
     Ok(())
 }
 
-/// The live Ad Groups, each with its Listings in the order they were kept.
-async fn read_ad_groups(on: &Connection) -> Result<Vec<ChannelAdGroup>, AdsError> {
+/// The live Ad Groups on `channel`, each with its Listings in the order
+/// they were kept.
+async fn read_ad_groups(
+    on: &Connection,
+    channel: SalesChannelKind,
+) -> Result<Vec<ChannelAdGroup>, AdsError> {
     let mut rows = on
         .query(
             "SELECT channel_ad_group_id, channel_item_id, kind, title, channel_campaign_id, status
-             FROM marketing_ad_groups WHERE deleted_at IS NULL
+             FROM marketing_ad_groups WHERE sales_channel = ?1 AND deleted_at IS NULL
              ORDER BY channel_ad_group_id, channel_item_id",
-            (),
+            [channel.code()],
         )
         .await?;
     let mut groups: Vec<ChannelAdGroup> = Vec::new();

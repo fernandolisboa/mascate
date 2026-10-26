@@ -18,7 +18,7 @@ use mascate_commerce::{
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
-use mascate_marketing::QualitySource;
+use mascate_marketing::{ChannelAds, QualitySource};
 
 use crate::appearance::look;
 use crate::connections::AppConnections;
@@ -46,6 +46,9 @@ pub struct ChannelPorts {
     pub quality: Option<Arc<dyn QualitySource>>,
     /// The owner's Promotions; absent where the channel offers none.
     pub promotions: Option<Arc<dyn ChannelPromotions>>,
+    /// What the owner's ads cost (#27, #183); absent where the channel
+    /// has no ads API.
+    pub ads: Option<Arc<dyn ChannelAds>>,
 }
 
 /// The port a Sales Channel reprices through (#135).

@@ -235,7 +235,7 @@ Conferência que bloqueia uma Promotion quando a margem de uma unidade, no pior 
 _Avoid_: trava (no código), validação de preço
 
 **Product Ads**:
-Anúncio pago do Mercado Livre que destaca um Listing nas buscas, pago por clique. O app lê o custo, as vendas atribuídas, os cliques e as impressões de cada anúncio por dia, uma vez por dia, e muda Ad Campaigns e anúncios só quando o Fernando confirma; o custo do Shopee Ads entra do mesmo jeito, só lido. O custo de um Listing num mês entra na Realized Margin dos Orders dele nesse mês, dividido pelo valor de cada venda; o de um mês sem venda fica à parte no resumo. Exige a Reputation que libera Product Ads; sem ela, a seção fica escondida.
+Anúncio pago do Mercado Livre que destaca um Listing nas buscas, pago por clique. O app lê o custo, as vendas atribuídas, os cliques e as impressões de cada anúncio por dia, uma vez por dia, e muda Ad Campaigns e anúncios só quando o Fernando confirma; o custo do Shopee Ads entra do mesmo jeito, só lido, depois que a Shopee libera a API de Ads para a loja; a Shopee informa o custo por campanha, e o de uma campanha com vários produtos é dividido igualmente entre os Listings dela. O custo de um Listing num mês entra na Realized Margin dos Orders dele nesse mês, no mesmo Sales Channel, dividido pelo valor de cada venda; o de um mês sem venda fica à parte no resumo. No Mercado Livre exige a Reputation que libera Product Ads; sem ela, a parte do Mercado Livre fica escondida.
 _Avoid_: Ads (sozinho, no código), anúncio patrocinado, publicidade
 
 **Ad Campaign**:

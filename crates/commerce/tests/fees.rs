@@ -511,6 +511,7 @@ fn a_summary_leaves_sales_without_a_cost_out_of_the_margin() {
 
 fn ad(listing: &str, month: u32, day: u32, cost: &str) -> AdCost {
     AdCost {
+        channel: SalesChannelKind::MercadoLivre,
         listing: listing.into(),
         day: NaiveDate::from_ymd_opt(2026, month, day).unwrap(),
         cost: brl(cost),
@@ -628,6 +629,49 @@ fn ads_only_ever_come_from_the_caller() {
     });
 }
 
+#[test]
+fn shopee_ads_split_across_shopee_sales_of_the_listing_and_never_reach_another_channel() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = Channel::on(SalesChannelKind::Shopee);
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        fx.sell("O1", 1).await;
+        for (id, units) in [("2610SHP0001", 1), ("2610SHP0002", 2)] {
+            let at = fx.later(1);
+            shopee.sells(order(id, at, vec![sold("MLB1", None, units)]));
+        }
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        let on_shopee = |listing: &str, day, cost| AdCost {
+            channel: SalesChannelKind::Shopee,
+            ..ad(listing, 10, day, cost)
+        };
+        // The same id on Shopee is another Listing: the Mercado Livre sale
+        // of MLB1 takes none of it.
+        let ads = [
+            on_shopee("MLB1", 1, "0.05"),
+            on_shopee("MLB1", 2, "0.05"),
+            on_shopee("800009", 2, "3.00"),
+        ];
+
+        let period = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+
+        assert_eq!(
+            sale_of(&period, "O1").margin.fees_of(FeeKind::Ads),
+            brl("0")
+        );
+        // R$ 0,10 split 89,90 to 179,80, in cents that add up.
+        let one = sale_of(&period, "2610SHP0001").margin.fees_of(FeeKind::Ads);
+        let two = sale_of(&period, "2610SHP0002").margin.fees_of(FeeKind::Ads);
+        assert_eq!(one.checked_add(two).unwrap(), brl("0.10"));
+        assert_eq!((one, two), (brl("0.03"), brl("0.07")));
+        assert_eq!(period.unplaced_ads, [ads[2].clone()]);
+        let summary = SalesSummary::of(&period, Currency::Brl).unwrap();
+        assert_eq!(summary.ads, brl("3.10"));
+    });
+}
+
 fn margin_of(sale: &Sale) -> Money {
     sale.margin.margin.unwrap().amount
 }
@@ -650,6 +694,7 @@ proptest! {
             let ads: Vec<AdCost> = ads
                 .iter()
                 .map(|(other, month, day, cents)| AdCost {
+                    channel: SalesChannelKind::MercadoLivre,
                     listing: if *other { "MLB9" } else { "MLB1" }.into(),
                     day: NaiveDate::from_ymd_opt(2026, *month, *day).unwrap(),
                     cost: Money::new(Decimal::new(*cents, 2), Currency::Brl),

@@ -132,6 +132,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         channels::ADD_PINTEREST_BOARDS,
         campaigns::MANAGE_AD_CAMPAIGNS,
         ad_groups::KEEP_AD_GROUPS,
+        ads::SYNC_ADS_BY_CHANNEL,
     ],
 };
 

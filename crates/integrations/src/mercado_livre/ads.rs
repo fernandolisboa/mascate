@@ -6,7 +6,7 @@
 //! confirmed click.
 
 use chrono::NaiveDate;
-use mascate_kernel::{Currency, Money, PlatformError, Roas};
+use mascate_kernel::{Currency, Money, PlatformError, Roas, SalesChannelKind};
 use mascate_marketing::{
     AdGroupKind, AdMetrics, AdState, AdStatus, CampaignPlan, CampaignStatus, CampaignStrategy,
     ChannelAd, ChannelAdCampaigns, ChannelAdGroup, ChannelAds, ChannelCampaign,
@@ -43,6 +43,10 @@ const METRICS: &str =
 const CURRENCY: Currency = Currency::Brl;
 
 impl ChannelAds for MercadoLivre {
+    fn advertised_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
+    }
+
     /// The owner's advertiser in Mercado Livre Brasil; a user Product Ads
     /// was never unlocked for has none, and may get 404.
     fn account(&self) -> Result<Option<String>, PlatformError> {

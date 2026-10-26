@@ -9,7 +9,9 @@
 use std::sync::Arc;
 
 use libsql::Value;
-use mascate_kernel::{BreakEven, Clock, Currency, IdGenerator, Money, PlatformError, Roas};
+use mascate_kernel::{
+    BreakEven, Clock, Currency, IdGenerator, Money, PlatformError, Roas, SalesChannelKind,
+};
 use mascate_platform::{
     Database, InFlight, Migration, StoredRow, load_single_row, save_single_row,
 };
@@ -339,17 +341,26 @@ pub struct AdCampaigns {
     pub(crate) database: Arc<Database>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) ids: Arc<dyn IdGenerator>,
+    /// The one channel whose campaigns these are.
+    pub(crate) channel: SalesChannelKind,
     /// What is on its way to the channel, so a second click never sends it
     /// again.
     pub(crate) sending: InFlight<String>,
 }
 
 impl AdCampaigns {
-    pub fn new(database: Arc<Database>, clock: Arc<dyn Clock>, ids: Arc<dyn IdGenerator>) -> Self {
+    /// The Ad Campaigns on `channel`, managed through its adapter.
+    pub fn new(
+        database: Arc<Database>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        channel: SalesChannelKind,
+    ) -> Self {
         Self {
             database,
             clock,
             ids,
+            channel,
             sending: InFlight::default(),
         }
     }
@@ -357,7 +368,7 @@ impl AdCampaigns {
     /// The campaigns as the last Sync or change left them, the active ones
     /// first, then by name.
     pub async fn campaigns(&self) -> Result<Vec<ChannelCampaign>, AdsError> {
-        let mut campaigns = read_campaigns(self.database.connection()).await?;
+        let mut campaigns = read_campaigns(self.database.connection(), self.channel).await?;
         campaigns.sort_by(|a, b| {
             (a.status, a.name.to_lowercase()).cmp(&(b.status, b.name.to_lowercase()))
         });
@@ -488,7 +499,7 @@ impl AdCampaigns {
         let _sending = self.sending.start(key).ok_or(AdsError::Sending)?;
         let sent = match &confirmed.action {
             Action::Create(plan) => {
-                let account = ads_account(self.database.connection())
+                let account = ads_account(self.database.connection(), self.channel)
                     .await?
                     .ok_or(AdsError::NoAccount)?;
                 let existing = channel.campaigns(&account)?.into_iter().find(|campaign| {
@@ -509,6 +520,7 @@ impl AdCampaigns {
         write_campaign(
             self.database.connection(),
             self.ids.as_ref(),
+            self.channel,
             &sent,
             self.clock.now(),
         )
@@ -517,7 +529,7 @@ impl AdCampaigns {
     }
 
     async fn campaign(&self, id: &str) -> Result<ChannelCampaign, AdsError> {
-        read_campaigns(self.database.connection())
+        read_campaigns(self.database.connection(), self.channel)
             .await?
             .into_iter()
             .find(|campaign| campaign.id == id)
@@ -542,7 +554,7 @@ impl AdCampaigns {
         if !runs(plan.status) {
             return Err(AdsError::NotRunnable);
         }
-        if read_campaigns(self.database.connection())
+        if read_campaigns(self.database.connection(), self.channel)
             .await?
             .iter()
             .any(|kept| Some(kept.id.as_str()) != changing && same_name(&kept.name, &plan.name))

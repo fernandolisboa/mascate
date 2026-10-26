@@ -321,6 +321,8 @@ fn main() {
                     repricing: Some(ChannelRepricing::Automation(mercado_livre.clone())),
                     quality: Some(mercado_livre.clone()),
                     promotions: Some(mercado_livre.clone()),
+                    // Product Ads.
+                    ads: Some(mercado_livre.clone()),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -339,8 +341,10 @@ fn main() {
                     repricing: Some(ChannelRepricing::FeaturedOffer(amazon.clone())),
                     // The listing's issues; Amazon gives no score.
                     quality: Some(amazon),
-                    // Amazon offers sellers no Promotion by its API.
+                    // Amazon offers sellers no Promotion by its API, and its
+                    // Ads API is apart from SP-API (ADR 0036).
                     promotions: None,
+                    ads: None,
                 },
                 // Shopee prints the label once the shipment is arranged, and
                 // the label arranges it: no shipment to confirm.
@@ -360,6 +364,8 @@ fn main() {
                     quality: Some(shopee_seller.clone()),
                     // The owner's discounts.
                     promotions: Some(shopee_seller.clone()),
+                    // Shopee Ads, read once Shopee grants the permission.
+                    ads: Some(shopee_seller.clone()),
                 },
                 // The owner sends the NF-e and ships in Magalu's panel:
                 // nothing to print or confirm here. Publishing is out of the
@@ -375,9 +381,10 @@ fn main() {
                     publisher: None,
                     repricing: None,
                     // Magalu's API tells no listing quality and offers
-                    // sellers no Promotion.
+                    // sellers no Promotion, and Magalu Ads has no public API.
                     quality: None,
                     promotions: None,
+                    ads: None,
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));
