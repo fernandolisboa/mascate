@@ -1,0 +1,25 @@
+{
+  "id": "msg_01PtC4mXq8dVzN2bLs7RkHy3",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "EqQBCkgIARABGAIiQM2c8Ld1pZ"
+    },
+    {
+      "type": "text",
+      "text": "{\"pitch\": \"Fotos de revista com o celular que você já tem no bolso\"}"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 402,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 96
+  }
+}
