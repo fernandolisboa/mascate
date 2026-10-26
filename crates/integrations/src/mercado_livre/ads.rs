@@ -1,14 +1,15 @@
 //! The owner's Product Ads, for marketing's ports (ADR 0025, ADR 0036): the
-//! account from `/advertising/advertisers?product_id=PADS`, its campaigns
-//! and each listing's metrics of a day through the Ad Groups search, version
-//! 2 of the advertising API; and the campaigns the owner creates, changes,
-//! pauses and activates on their confirmed click.
+//! account from `/advertising/advertisers?product_id=PADS`, its campaigns,
+//! its Ad Groups and each listing's metrics of a day through the Ad Groups
+//! search, version 2 of the advertising API; and the campaigns and Ad
+//! Groups the owner creates, changes, moves, pauses and takes out on their
+//! confirmed click.
 
 use chrono::NaiveDate;
 use mascate_kernel::{Currency, Money, PlatformError, Roas};
 use mascate_marketing::{
-    AdMetrics, CampaignPlan, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
-    ChannelAds, ChannelCampaign,
+    AdGroupKind, AdMetrics, AdState, AdStatus, CampaignPlan, CampaignStatus, CampaignStrategy,
+    ChannelAd, ChannelAdCampaigns, ChannelAdGroup, ChannelAds, ChannelCampaign,
 };
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -78,10 +79,7 @@ impl ChannelAds for MercadoLivre {
     /// day is read by Ad Group, and only a family or catalog group that
     /// spent or sold costs a call to split it into its listings.
     fn ads_on(&self, account: &str, day: NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
-        let path = format!(
-            "/advertising/{SITE}/advertisers/{}/product_ads/ad_groups/search",
-            path_id(account)?
-        );
+        let path = groups_path(account)?;
         let day = day.to_string();
         let query = [
             ("date_from", day.as_str()),
@@ -117,6 +115,16 @@ impl ChannelAds for MercadoLivre {
             }
         }
         Ok(ads)
+    }
+
+    /// Every Ad Group of the account; a family or catalog product costs a
+    /// call for its listings.
+    fn ad_groups(&self, account: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
+        let found: Vec<AdGroupAnswer> = self.search(&groups_path(account)?, &[])?;
+        found
+            .into_iter()
+            .map(|answer| self.ad_group(answer))
+            .collect()
     }
 }
 
@@ -160,12 +168,81 @@ impl ChannelAdCampaigns for MercadoLivre {
             &[format!(r#""status":{}"#, text(status_code(status)?))],
         )
     }
+
+    /// Found by the listing's id: the search by item answers each Ad Group
+    /// with the listing as its external id.
+    fn ad_group_of(
+        &self,
+        account: &str,
+        listing: &str,
+    ) -> Result<Option<ChannelAdGroup>, PlatformError> {
+        let found: Vec<AdGroupAnswer> =
+            self.search(&groups_path(account)?, &[("filters[item_ids]", listing)])?;
+        found
+            .into_iter()
+            .next()
+            .map(|answer| self.ad_group(answer))
+            .transpose()
+    }
+
+    fn place_ad_group(
+        &self,
+        group: &str,
+        campaign: &str,
+        status: AdStatus,
+    ) -> Result<AdState, PlatformError> {
+        let path = format!(
+            "/advertising/{SITE}/product_ads/ad_groups/{}",
+            path_id(group)?
+        );
+        let campaign_id: u64 = campaign
+            .parse()
+            .map_err(|_| PlatformError::Refused("a campaign id is a number".into()))?;
+        let status_code = match status {
+            AdStatus::Active => "active",
+            AdStatus::Paused => "paused",
+            AdStatus::Other => {
+                return Err(PlatformError::Refused(
+                    "an ad is set to active or paused".into(),
+                ));
+            }
+        };
+        let body = format!(
+            r#"{{"status":{},"campaign_id":{campaign_id}}}"#,
+            text(status_code)
+        );
+        let response = self.write_ads(Write::Put, &path, &body)?;
+        match response.status().as_u16() {
+            200 | 201 => read_json::<AdGroupAnswer>(response).map(|answer| AdState {
+                campaign: campaign_of(answer.campaign_id.as_ref()),
+                status: answer
+                    .status
+                    .as_deref()
+                    .map_or(AdStatus::Other, AdStatus::from_code),
+            }),
+            403 | 404 => Err(PlatformError::NotFound),
+            _ => Err(failed(response, &path)),
+        }
+    }
+
+    /// An Ad Group the campaign no longer has answers 404: it is out
+    /// already.
+    fn remove_ad_group(&self, campaign: &str, group: &str) -> Result<(), PlatformError> {
+        let path = format!("{}/ad_groups/{}", campaign_path(campaign)?, path_id(group)?);
+        let response = self.write_ads(Write::Delete, &path, "")?;
+        match response.status().as_u16() {
+            200 | 204 | 404 => Ok(()),
+            403 => Err(PlatformError::NotFound),
+            _ => Err(failed(response, &path)),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 enum Write {
     Post,
     Put,
+    Delete,
 }
 
 impl MercadoLivre {
@@ -179,24 +256,82 @@ impl MercadoLivre {
         fields: &[String],
     ) -> Result<ChannelCampaign, PlatformError> {
         let body = format!("{{{}}}", fields.join(","));
+        let response = self.write_ads(write, path, &body)?;
+        match response.status().as_u16() {
+            200 | 201 => read_json::<AdCampaignAnswer>(response).map(campaign),
+            403 | 404 => Err(PlatformError::NotFound),
+            _ => Err(failed(response, path)),
+        }
+    }
+
+    /// Mercado Livre's answer to writing `body` to `path` in version 2,
+    /// whatever its status; a delete sends no body.
+    fn write_ads(
+        &self,
+        write: Write,
+        path: &str,
+        body: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, PlatformError> {
         let url = format!("{}{path}", self.api);
-        let response = self.answered(|bearer| {
+        self.answered(|bearer| {
             let request = match write {
                 Write::Post => self.agent.post(&url),
                 Write::Put => self.agent.put(&url),
+                Write::Delete => {
+                    return self
+                        .agent
+                        .delete(&url)
+                        .header("Accept", "application/json")
+                        .header("Authorization", bearer)
+                        .header(PRODUCT_ADS_VERSION.0, PRODUCT_ADS_VERSION.1)
+                        .call();
+                }
             };
             request
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .header("Authorization", bearer)
                 .header(PRODUCT_ADS_VERSION.0, PRODUCT_ADS_VERSION.1)
-                .send(&body)
-        })?;
-        match response.status().as_u16() {
-            200 | 201 => read_json::<AdCampaignAnswer>(response).map(campaign),
-            403 | 404 => Err(PlatformError::NotFound),
-            _ => Err(failed(response, path)),
-        }
+                .send(body)
+        })
+    }
+
+    /// An Ad Group with its listings: an `ITEM` group is its own, a family
+    /// or catalog product lists them through its ads.
+    fn ad_group(&self, answer: AdGroupAnswer) -> Result<ChannelAdGroup, PlatformError> {
+        let id = whole_id(&answer.id);
+        let kind = answer
+            .ad_group_type
+            .as_deref()
+            .map_or(AdGroupKind::Other, AdGroupKind::from_code);
+        let listings = match answer.ad_group_external_id {
+            Some(listing) if kind == AdGroupKind::Item => vec![listing],
+            _ => {
+                let path = format!(
+                    "/advertising/{SITE}/product_ads/ad_groups/{}/ads",
+                    path_id(&id)?
+                );
+                let mut listings: Vec<String> = self
+                    .search::<AdAnswer>(&path, &[])?
+                    .into_iter()
+                    .map(|ad| ad.item_id)
+                    .collect();
+                listings.sort();
+                listings.dedup();
+                listings
+            }
+        };
+        Ok(ChannelAdGroup {
+            kind,
+            title: answer.title,
+            listings,
+            campaign: campaign_of(answer.campaign_id.as_ref()),
+            status: answer
+                .status
+                .as_deref()
+                .map_or(AdStatus::Other, AdStatus::from_code),
+            id,
+        })
     }
 
     /// Every result of a Product Ads search, page by page.
@@ -226,7 +361,20 @@ impl MercadoLivre {
 
 /// An `ITEM` group is a single listing, its id the group's external id.
 fn is_listing(group_type: Option<&str>) -> bool {
-    group_type.is_some_and(|kind| kind.eq_ignore_ascii_case("ITEM"))
+    group_type.is_some_and(|kind| AdGroupKind::from_code(kind) == AdGroupKind::Item)
+}
+
+/// The campaign an Ad Group is in; none without one, and `0` read as none
+/// too, in case Mercado Livre answers that way for a group never placed.
+fn campaign_of(id: Option<&Number>) -> Option<String> {
+    id.map(whole_id).filter(|id| id != "0")
+}
+
+fn groups_path(account: &str) -> Result<String, PlatformError> {
+    Ok(format!(
+        "/advertising/{SITE}/advertisers/{}/product_ads/ad_groups/search",
+        path_id(account)?
+    ))
 }
 
 fn spent_or_sold(metrics: &AdMetrics) -> bool {

@@ -810,6 +810,8 @@ pub(super) struct AdGroupAnswer {
     pub ad_group_type: Option<String>,
     pub ad_group_external_id: Option<String>,
     pub campaign_id: Option<Number>,
+    pub status: Option<String>,
+    pub title: Option<String>,
     pub metrics: Option<AdMetricsAnswer>,
 }
 

@@ -13,9 +13,9 @@ use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, PlatformError, Roas, Timestamp};
 use mascate_marketing::{
-    ADS_HISTORY_DAYS, AdCampaigns, AdDay, AdMetrics, AdsError, CampaignPlan, CampaignStatus,
-    CampaignStrategy, ChannelAd, ChannelAdCampaigns, ChannelAds, ChannelCampaign, MIGRATIONS,
-    ProductAds,
+    ADS_HISTORY_DAYS, AdCampaigns, AdChange, AdDay, AdGroupKind, AdMetrics, AdState, AdStatus,
+    AdsError, CampaignPlan, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
+    ChannelAdGroup, ChannelAds, ChannelCampaign, MIGRATIONS, ProductAds,
 };
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Database, Secret, SecretStore, migrate};
@@ -29,11 +29,24 @@ const METRICS: &str =
 
 const GROUPS: &str = "/advertising/MLB/advertisers/8823/product_ads/ad_groups/search";
 
+/// Every Ad Group of the account, with no dates or metrics.
+const ALL_GROUPS: &str =
+    "/advertising/MLB/advertisers/8823/product_ads/ad_groups/search?limit=50&offset=0";
+const FAMILY_ADS: &str = "/advertising/MLB/product_ads/ad_groups/1406300002/ads?limit=50&offset=0";
+const CAPA_GROUP: &str = "/advertising/MLB/product_ads/ad_groups/1406300006";
+const FAMILY_GROUP: &str = "/advertising/MLB/product_ads/ad_groups/1406300002";
+const CAPA_OUT_OF_FONES: &str = "/advertising/MLB/product_ads/campaigns/351/ad_groups/1406300006";
+
 const CREATE: &str = "/advertising/MLB/advertisers/8823/product_ads/campaigns";
 const FONES: &str = "/advertising/MLB/product_ads/campaigns/351";
 
 /// Removed by Mercado Livre on 2026-05-30; the fake answers it 404.
 const REMOVED_ADS_SEARCH: &str = "/advertising/MLB/advertisers/8823/product_ads/ads/search";
+
+/// The search for the Ad Group of `listing`.
+fn group_of(listing: &str) -> String {
+    format!("{GROUPS}?limit=50&offset=0&filters%5Bitem_ids%5D={listing}")
+}
 
 fn day_query(offset: u32, day: &str) -> String {
     format!("limit=50&offset={offset}&date_from={day}&date_to={day}&metrics={METRICS}")
@@ -478,7 +491,7 @@ fn a_sync_keeps_each_listings_cost_of_the_day_and_reading_it_again_changes_nothi
         .server
         .requests()
         .iter()
-        .filter(|path| path.starts_with(GROUPS))
+        .filter(|path| path.starts_with(GROUPS) && path.contains("date_from"))
         .count();
     assert_eq!(days_asked, usize::try_from(ADS_HISTORY_DAYS).unwrap() + 1);
 
@@ -716,4 +729,304 @@ fn a_create_whose_answer_never_arrived_is_found_by_name_and_not_made_twice() {
             .iter()
             .any(|campaign| campaign.id == "355328313")
     );
+}
+
+/// The account's Ad Groups as the fixtures report them.
+fn ad_groups() -> Vec<ChannelAdGroup> {
+    vec![
+        ChannelAdGroup {
+            id: "1406300001".into(),
+            kind: AdGroupKind::Item,
+            title: Some("Fone de Ouvido Bluetooth TWS".into()),
+            listings: vec!["MLB4100000001".into()],
+            campaign: Some("351".into()),
+            status: AdStatus::Active,
+        },
+        fone_family(),
+        ChannelAdGroup {
+            id: "1406300006".into(),
+            kind: AdGroupKind::Item,
+            title: Some("Capa de Silicone iPhone 15".into()),
+            listings: vec!["MLB4100000003".into()],
+            campaign: None,
+            status: AdStatus::Paused,
+        },
+    ]
+}
+
+fn fone_family() -> ChannelAdGroup {
+    ChannelAdGroup {
+        id: "1406300002".into(),
+        kind: AdGroupKind::Family,
+        title: Some("Fone de Ouvido Over-ear".into()),
+        listings: vec!["MLB4100000004".into(), "MLB4100000005".into()],
+        campaign: Some("351".into()),
+        status: AdStatus::Active,
+    }
+}
+
+impl Fake {
+    /// The account's Ad Groups, with the family's ads.
+    fn with_ad_groups(self) -> Self {
+        self.server
+            .serve(ALL_GROUPS, 200, fixture("product-ads-ad-groups.json"));
+        self.server.serve(
+            FAMILY_ADS,
+            200,
+            fixture("product-ads-ad-group-1406300002-ads.json"),
+        );
+        self
+    }
+}
+
+#[test]
+fn the_ad_groups_come_with_their_listings_a_family_listing_its_variations() {
+    let fake = Fake::connected().with_ad_groups();
+
+    assert_eq!(fake.adapter.ad_groups("8823").unwrap(), ad_groups());
+    assert_eq!(fake.versions(ALL_GROUPS), [Some("2".into())]);
+    assert_eq!(fake.versions(FAMILY_ADS), [Some("2".into())]);
+}
+
+#[test]
+fn a_listings_ad_group_is_found_by_the_search_by_item() {
+    let fake = Fake::connected().with_ad_groups();
+    fake.server.serve(
+        &group_of("MLB4100000003"),
+        200,
+        fixture("product-ads-ad-groups-MLB4100000003.json"),
+    );
+    fake.server.serve(
+        &group_of("MLB4100000004"),
+        200,
+        fixture("product-ads-ad-groups-MLB4100000004.json"),
+    );
+    fake.server.serve(
+        &group_of("MLB4199999999"),
+        200,
+        fixture("product-ads-ad-groups-empty.json"),
+    );
+
+    let capa = fake
+        .adapter
+        .ad_group_of("8823", "MLB4100000003")
+        .unwrap()
+        .unwrap();
+    assert_eq!(capa.id, "1406300006");
+    assert_eq!(capa.listings, ["MLB4100000003"]);
+    assert_eq!(capa.campaign, None);
+    assert_eq!(capa.status, AdStatus::Paused);
+
+    let family = fake
+        .adapter
+        .ad_group_of("8823", "MLB4100000004")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        family,
+        ChannelAdGroup {
+            title: None,
+            ..fone_family()
+        }
+    );
+
+    assert_eq!(fake.adapter.ad_group_of("8823", "MLB4199999999"), Ok(None));
+}
+
+#[test]
+fn placing_an_ad_group_puts_its_status_and_campaign() {
+    let fake = Fake::connected();
+    fake.server.serve_method(
+        "PUT",
+        CAPA_GROUP,
+        200,
+        fixture("product-ads-ad-group-1406300006-placed.json"),
+    );
+
+    let placed = fake
+        .adapter
+        .place_ad_group("1406300006", "352", AdStatus::Active)
+        .unwrap();
+
+    assert_eq!(
+        placed,
+        AdState {
+            campaign: Some("352".into()),
+            status: AdStatus::Active,
+        }
+    );
+    assert_eq!(
+        fake.sent("PUT", CAPA_GROUP),
+        [r#"{"status":"active","campaign_id":352}"#]
+    );
+    assert_eq!(fake.versions(CAPA_GROUP), [Some("2".into())]);
+}
+
+#[test]
+fn taking_out_an_ad_group_deletes_it_from_its_campaign_and_one_already_out_is_out() {
+    let fake = Fake::connected();
+    fake.server
+        .serve_method("DELETE", CAPA_OUT_OF_FONES, 204, "");
+    assert_eq!(fake.adapter.remove_ad_group("351", "1406300006"), Ok(()));
+    assert_eq!(fake.versions(CAPA_OUT_OF_FONES), [Some("2".into())]);
+
+    fake.server.serve_method(
+        "DELETE",
+        CAPA_OUT_OF_FONES,
+        404,
+        fixture("error-404-product-ads-ad-group.json"),
+    );
+    assert_eq!(fake.adapter.remove_ad_group("351", "1406300006"), Ok(()));
+}
+
+#[test]
+fn an_ad_group_write_the_account_cannot_make_by_api_answers_not_found() {
+    let fake = Fake::connected();
+    fake.server.serve_method(
+        "PUT",
+        CAPA_GROUP,
+        403,
+        fixture("error-403-product-ads-ad-group.json"),
+    );
+    fake.server.serve_method(
+        "DELETE",
+        CAPA_OUT_OF_FONES,
+        403,
+        fixture("error-403-product-ads-ad-group.json"),
+    );
+
+    assert_eq!(
+        fake.adapter
+            .place_ad_group("1406300006", "352", AdStatus::Active),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(
+        fake.adapter.remove_ad_group("351", "1406300006"),
+        Err(PlatformError::NotFound)
+    );
+}
+
+#[test]
+fn a_busy_channel_takes_no_ad_group_write_as_done() {
+    let fake = Fake::connected();
+    fake.server
+        .serve_method("PUT", CAPA_GROUP, 429, fixture("error-429.json"));
+    fake.server
+        .serve_method("DELETE", CAPA_OUT_OF_FONES, 429, fixture("error-429.json"));
+    fake.server
+        .serve(&group_of("MLB4100000003"), 429, fixture("error-429.json"));
+
+    assert_eq!(
+        fake.adapter
+            .place_ad_group("1406300006", "352", AdStatus::Active),
+        Err(PlatformError::RateLimited)
+    );
+    assert_eq!(
+        fake.adapter.remove_ad_group("351", "1406300006"),
+        Err(PlatformError::RateLimited)
+    );
+    assert_eq!(
+        fake.adapter.ad_group_of("8823", "MLB4100000003"),
+        Err(PlatformError::RateLimited)
+    );
+}
+
+#[test]
+fn an_ad_group_write_turned_down_for_an_old_token_goes_once_more_with_a_renewed_one() {
+    let fake = Fake::connected();
+    fake.server
+        .serve_method("PUT", CAPA_GROUP, 401, r#"{"message":"invalid_token"}"#);
+    fake.server.then_serve(
+        &format!("PUT {CAPA_GROUP}"),
+        200,
+        fixture("product-ads-ad-group-1406300006-placed.json"),
+    );
+
+    fake.adapter
+        .place_ad_group("1406300006", "352", AdStatus::Active)
+        .unwrap();
+
+    assert_eq!(fake.sent("PUT", CAPA_GROUP).len(), 2);
+}
+
+#[test]
+fn an_ad_group_or_campaign_id_that_could_leave_the_path_is_never_sent() {
+    let fake = Fake::connected();
+
+    assert_eq!(
+        fake.adapter
+            .place_ad_group("1406300006/../../users/me", "352", AdStatus::Active),
+        Err(PlatformError::NotFound)
+    );
+    assert!(matches!(
+        fake.adapter
+            .place_ad_group("1406300006", "352,\"x\":1", AdStatus::Active),
+        Err(PlatformError::Refused(_))
+    ));
+    assert!(matches!(
+        fake.adapter
+            .place_ad_group("1406300006", "352", AdStatus::Other),
+        Err(PlatformError::Refused(_))
+    ));
+    assert_eq!(
+        fake.adapter.remove_ad_group("351?x=1", "1406300006"),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(
+        fake.adapter.ad_group_of("8823/..", "MLB4100000003"),
+        Err(PlatformError::NotFound)
+    );
+    assert!(fake.server.requests().is_empty());
+}
+
+#[test]
+fn a_sync_keeps_the_ad_groups_and_a_family_moves_whole_through_marketing() {
+    let synced = Synced::new();
+    synced
+        .fake
+        .server
+        .serve(ALL_GROUPS, 200, fixture("product-ads-ad-groups.json"));
+    synced.fake.server.serve(
+        FAMILY_ADS,
+        200,
+        fixture("product-ads-ad-group-1406300002-ads.json"),
+    );
+    synced.fake.server.serve(
+        &group_of("MLB4100000004"),
+        200,
+        fixture("product-ads-ad-groups-MLB4100000004.json"),
+    );
+    synced.fake.server.serve_method(
+        "PUT",
+        FAMILY_GROUP,
+        200,
+        fixture("product-ads-ad-group-1406300002-moved.json"),
+    );
+    synced.sync().unwrap();
+    assert_eq!(block_on(synced.campaigns.ad_groups()).unwrap(), ad_groups());
+
+    let request = block_on(synced.campaigns.prepare_ad(
+        "MLB4100000005",
+        AdChange::Place {
+            campaign: "352".into(),
+            status: AdStatus::Paused,
+        },
+        true,
+    ))
+    .unwrap();
+    assert_eq!(request.listings(), ["MLB4100000004", "MLB4100000005"]);
+    let moved = block_on(
+        synced
+            .campaigns
+            .send_ad(&synced.fake.adapter, request.confirm()),
+    )
+    .unwrap();
+
+    assert_eq!(
+        synced.fake.sent("PUT", FAMILY_GROUP),
+        [r#"{"status":"paused","campaign_id":352}"#]
+    );
+    assert_eq!(moved.campaign.as_deref(), Some("352"));
+    assert_eq!(moved.status, AdStatus::Paused);
+    assert_eq!(moved.listings, ["MLB4100000004", "MLB4100000005"]);
 }

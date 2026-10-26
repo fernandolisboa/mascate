@@ -15,9 +15,9 @@ use mascate_kernel::{
     BreakEven, Currency, Margin, Money, PlatformError, Timestamp, channel_day_start,
 };
 use mascate_marketing::{
-    ADS_HISTORY_DAYS, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState, AdvertisedListing,
-    CampaignProduct, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, MIGRATIONS,
-    ProductAds,
+    ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState,
+    AdvertisedListing, CampaignProduct, CampaignStatus, ChannelAd, ChannelAdGroup, ChannelAds,
+    ChannelCampaign, MIGRATIONS, ProductAds, ProductRoas,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -127,6 +127,10 @@ impl ChannelAds for Channel {
             .get(&day)
             .cloned()
             .unwrap_or_default())
+    }
+
+    fn ad_groups(&self, _: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
+        Ok(Vec::new())
     }
 }
 
@@ -421,6 +425,7 @@ fn a_report_sums_the_period_by_campaign_and_by_product_losers_first() {
         // The listing that asks more of its ads sets the Product's.
         assert_eq!(fone.break_even, Some(break_even("25")));
         assert!(fone.loses());
+        assert!(fone.suggests_pausing());
         let cabo = &report.products[1];
         assert_eq!(cabo.product, "cabo");
         assert_eq!(cabo.roas().unwrap().to_pt_br(), "12,00x");
@@ -429,7 +434,42 @@ fn a_report_sums_the_period_by_campaign_and_by_product_losers_first() {
         assert_eq!(unknown.name, "MLB9");
         assert_eq!(unknown.break_even, None);
         assert!(!unknown.loses());
+        assert!(
+            !report
+                .products
+                .iter()
+                .skip(1)
+                .any(ProductRoas::suggests_pausing)
+        );
     });
+}
+
+/// A Product's ads in a period, as a report sums them up.
+fn product(cost: &str, attributed: &str, break_even: Option<BreakEven>) -> ProductRoas {
+    ProductRoas {
+        product: "fone".into(),
+        name: "Fone Bluetooth".into(),
+        listings: vec!["MLB1".into()],
+        metrics: metrics(cost, attributed, 10),
+        break_even,
+    }
+}
+
+#[test]
+fn pausing_is_suggested_only_from_the_minimum_cost_and_below_the_break_even() {
+    assert_eq!(ADS_LOSS_MIN_COST, brl("20"));
+    let needs_4x = Some(break_even("25"));
+
+    // R$ 19,99 at 3x is a loss, but too little spent to judge the ad.
+    assert!(product("19.99", "59.97", needs_4x).loses());
+    assert!(!product("19.99", "59.97", needs_4x).suggests_pausing());
+    assert!(product("20.00", "60.00", needs_4x).suggests_pausing());
+    // At the break-even the ad pays for itself.
+    assert!(!product("50.00", "200.00", needs_4x).suggests_pausing());
+    // Nothing pays for a Product losing before ads.
+    assert!(product("25.00", "500.00", Some(BreakEven::Never)).suggests_pausing());
+    // Without a known break-even, nothing is suggested.
+    assert!(!product("80.00", "0", None).suggests_pausing());
 }
 
 #[test]
@@ -560,5 +600,36 @@ proptest! {
             }
             Ok(())
         })?;
+    }
+}
+
+proptest! {
+    /// Pausing is suggested exactly when the ads spent at least R$ 20,00
+    /// and brought in less than the break-even asks.
+    #[test]
+    fn pausing_is_suggested_exactly_from_the_minimum_cost_below_the_break_even(
+        cost in 0i64..10_000,
+        attributed in 0i64..100_000,
+        margin in prop::option::of(-20i64..=100),
+    ) {
+        let cost = Money::new(Decimal::new(cost, 2), Currency::Brl);
+        let attributed = Money::new(Decimal::new(attributed, 2), Currency::Brl);
+        let least = margin.map(|percent| break_even(&percent.to_string()));
+        let row = ProductRoas {
+            metrics: AdMetrics { cost, attributed, ..AdMetrics::zero(Currency::Brl) },
+            ..product("0", "0", least)
+        };
+
+        let below = match least {
+            Some(BreakEven::At(least)) => {
+                attributed.amount() < least.ratio() * cost.amount()
+            }
+            Some(BreakEven::Never) => true,
+            None => false,
+        };
+        prop_assert_eq!(
+            row.suggests_pausing(),
+            cost.amount() >= Decimal::from(20) && below
+        );
     }
 }

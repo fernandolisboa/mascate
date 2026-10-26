@@ -243,7 +243,7 @@ Campanha do Product Ads que agrupa anúncios com um orçamento diário, uma estr
 _Avoid_: campanha (sozinho, é também a Promotion do vendedor), campaign
 
 **Ad Group**:
-Unidade que o Mercado Livre anuncia numa Ad Campaign: um Listing, uma família de variações de User Products ou um produto de catálogo. O app lê as métricas do dia por Ad Group e divide uma família ou um produto de catálogo nos Listings dele, então o custo e as vendas continuam por Listing.
+Unidade que o Mercado Livre anuncia numa Ad Campaign: um Listing, uma família de variações de User Products ou um produto de catálogo. O app lê as métricas do dia por Ad Group e divide uma família ou um produto de catálogo nos Listings dele, então o custo e as vendas continuam por Listing. O app põe, move, pausa e tira um Ad Group de uma campanha só depois da confirmação do Fernando; uma família ou um produto de catálogo vai inteiro, e a confirmação lista os Listings dele. Um Product que gastou pelo menos R$ 20,00 no período com ROAS abaixo do Break-even ROAS ganha a sugestão "Pausar anúncio"; o app nunca pausa sozinho.
 _Avoid_: grupo de anúncios (no código), agrupador
 
 **Target ROAS**:

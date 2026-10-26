@@ -1,0 +1,56 @@
+{
+  "paging": {
+    "offset": 0,
+    "total": 3,
+    "limit": 50
+  },
+  "results": [
+    {
+      "channel": "MARKETPLACE",
+      "title": "Fone de Ouvido Bluetooth TWS",
+      "advertiser_id": 8823,
+      "ad_group_type": "ITEM",
+      "domain_id": "MLB-HEADPHONES",
+      "official_store_id": 0,
+      "id": 1406300001,
+      "campaign_id": 351,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-09-01T13:05:00Z",
+      "ad_group_external_id": "MLB4100000001",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "ACTIVE"
+    },
+    {
+      "channel": "MARKETPLACE",
+      "title": "Fone de Ouvido Over-ear",
+      "advertiser_id": 8823,
+      "ad_group_type": "FAMILY",
+      "domain_id": "MLB-HEADPHONES",
+      "official_store_id": 0,
+      "id": 1406300002,
+      "campaign_id": 351,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-09-01T13:05:00Z",
+      "ad_group_external_id": "3080359231396376",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "ACTIVE"
+    },
+    {
+      "channel": "MARKETPLACE",
+      "title": "Capa de Silicone iPhone 15",
+      "advertiser_id": 8823,
+      "ad_group_type": "ITEM",
+      "domain_id": "MLB-CELLPHONE_CASES",
+      "official_store_id": 0,
+      "id": 1406300006,
+      "original_advertiser_id": 8823,
+      "date_created": "2026-10-20T09:12:00Z",
+      "ad_group_external_id": "MLB4100000003",
+      "current_advertiser_id": 8823,
+      "sll": false,
+      "status": "PAUSED"
+    }
+  ]
+}

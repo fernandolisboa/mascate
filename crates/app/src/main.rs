@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ad_campaigns;
+mod ad_groups;
 mod ads;
 mod affiliate;
 mod affiliate_links;

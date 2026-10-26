@@ -1,0 +1,33 @@
+{
+  "paging": {
+    "offset": 0,
+    "total": 2,
+    "limit": 50
+  },
+  "results": [
+    {
+      "item_id": "MLB4100000004",
+      "campaign_id": 351,
+      "ad_group_id": 1406300002,
+      "title": "Fone de Ouvido Over-ear Azul",
+      "status": "active",
+      "channel": "marketplace",
+      "advertiser_id": 8823,
+      "status_raw": "A",
+      "family_id": 3080359231396376,
+      "user_product_id": "MLBU3361694576"
+    },
+    {
+      "item_id": "MLB4100000005",
+      "campaign_id": 351,
+      "ad_group_id": 1406300002,
+      "title": "Fone de Ouvido Over-ear Preto",
+      "status": "active",
+      "channel": "marketplace",
+      "advertiser_id": 8823,
+      "status_raw": "A",
+      "family_id": 3080359231396376,
+      "user_product_id": "MLBU3361694577"
+    }
+  ]
+}

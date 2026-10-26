@@ -66,6 +66,9 @@ conta de vendedor do Fernando.
 | `product-ads-ad-groups-2026-10-03.json`, `product-ads-ad-groups-2026-10-03-end.json`, `product-ads-ad-groups-empty.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/ad_groups/search?date_from=...&date_to=...&metrics=...` com `api-version: 2` de um dia, em duas páginas (`offset`): dois Ad Groups `ITEM` (um sem `total_amount`), uma `FAMILY` que gastou, uma `FAMILY` sem custo nem venda e um `CATALOG` que vendeu sem gastar; e um dia sem Ad Groups | Product Ads para catálogo e user products (leitura): Detalhes e métricas de Ad Group por advertiser |
 | `product-ads-ad-group-1406300002-ads-2026-10-03.json`, `product-ads-ad-group-1406300005-ads-2026-10-03.json` | `GET /advertising/MLB/product_ads/ad_groups/{id}/ads?date_from=...&date_to=...&metrics=...` com `api-version: 2`: as duas variações da família, cada uma com as suas métricas, e o anúncio do produto de catálogo | Product Ads para catálogo e user products (leitura): Métricas dos anúncios pertencentes ao Ad Group |
 | `error-404-no-product-ads.json` | `GET /advertising/advertisers?product_id=PADS` de um usuário sem Product Ads: 404 "No permissions found for user_id" | Product Ads para catálogo e user products (leitura): Consultar anunciante (Nota) |
+| `product-ads-ad-groups.json`, `product-ads-ad-group-1406300002-ads.json` | a mesma busca de Ad Groups e os anúncios do grupo, sem datas nem `metrics` (#181): um `ITEM` numa campanha, a `FAMILY` com as duas variações e um `ITEM` nunca anunciado, sem `campaign_id` e `PAUSED` | Product Ads para catálogo e user products (leitura): Detalhes de Ad Group por advertiser |
+| `product-ads-ad-groups-MLB4100000003.json`, `product-ads-ad-groups-MLB4100000004.json` | `GET .../product_ads/ad_groups/search?filters[item_ids]={item}` com `api-version: 2`: o Ad Group de um anúncio nunca anunciado e o da família de uma variação | Product Ads para catálogo e user products (leitura): Buscar Ad Groups por itens |
+| `product-ads-ad-group-1406300006-placed.json`, `product-ads-ad-group-1406300002-moved.json`, `error-403-product-ads-ad-group.json`, `error-404-product-ads-ad-group.json` | `PUT /advertising/MLB/product_ads/ad_groups/{id}` com `status` e `campaign_id` (posto numa campanha; família movida e pausada), e os erros de uma conta sem gestão pela API (403) e do `DELETE .../campaigns/{campanha}/ad_groups/{id}` de um grupo que já saiu (404) | Product Ads: anúncios nas campanhas (Global Selling) |
 
 Campos que a documentação não mostra por inteiro e que foram completados pelo formato dos
 recursos vizinhos (conferir no regression pass):
@@ -244,6 +247,19 @@ recursos vizinhos (conferir no regression pass):
   outros erros; ids, nomes e valores são inventados. Conferir no regression pass: se os
   endpoints de escrita respondem no MLB, qual prefixo vale, se `roas_target` aceita decimais e
   qual é o orçamento mínimo diário.
+- Anúncios nas campanhas (#181): a busca por itens (`filters[item_ids]`, no plural) segue a página
+  do Brasil citada acima; a resposta traz `id` (o `ad_group_id`), `ad_group_external_id`,
+  `status` em maiúsculas, `campaign_id` e `ad_group_type`, sem datas. A lista de todos os Ad Groups
+  e os anúncios de um grupo são pedidos sem datas nem `metrics` para guardar a que campanha cada
+  um pertence; a página só mostra essas chamadas com datas, então conferir no regression pass se
+  as datas são obrigatórias. Pôr, mover e pausar é `PUT /advertising/MLB/product_ads/ad_groups/{id}`
+  com `status` e `campaign_id`, e tirar é `DELETE
+  /advertising/MLB/product_ads/campaigns/{campanha}/ad_groups/{id}`, como na página de campanhas
+  do Global Selling (com o prefixo `/marketplace` lá); as respostas do `PUT` e os corpos de erro
+  foram completados no formato da leitura e dos outros erros, e um `DELETE` de um grupo que já
+  saiu (404) conta como tirado. Conferir no regression pass: se um Listing nunca anunciado já tem
+  Ad Group, como vem o `campaign_id` dele (ausente ou 0) e se mover uma família leva todas as
+  variações.
 | `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
 | `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |
 | `pricing-automation-rules.json`, `pricing-automation-rules-int.json` | `GET /pricing-automation/items/{id}/rules` (Automatic Repricing, #135): um item com `INT` e `INT_EXT` e outro só com `INT` | Automatizações de preços (pt_br e es_ar, consultadas em 16/10/2026) |

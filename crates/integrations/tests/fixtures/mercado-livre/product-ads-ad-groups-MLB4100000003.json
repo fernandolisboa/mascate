@@ -1,0 +1,16 @@
+{
+  "paging": {
+    "offset": 0,
+    "total": 1,
+    "limit": 50
+  },
+  "results": [
+    {
+      "id": 1406300006,
+      "ad_group_external_id": "MLB4100000003",
+      "status": "PAUSED",
+      "advertiser_id": 8823,
+      "ad_group_type": "ITEM"
+    }
+  ]
+}
