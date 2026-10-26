@@ -495,7 +495,7 @@ impl AdCampaignsPanel {
                     .gap_3()
                     .items_end()
                     .child(field("Nome", &self.name, 240.))
-                    .child(field("Orçamento diário (R$)", &self.budget, 170.))
+                    .child(field("Orçamento diário (R$)", &self.budget, 210.))
                     .child(field("ROAS alvo (x)", &self.target, 120.)),
             )
             .child(
