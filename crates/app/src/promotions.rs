@@ -1094,14 +1094,9 @@ impl PromotionsScreen {
                 SellerTool::Promotions.requirement()
             )),
         };
-        let minimum = self.minimum.map(|minimum| {
-            format!(
-                "Margem mínima: {}. Nenhuma promoção passa se uma unidade vendida no menor preço, \
-                 depois do cupom, ficar com margem abaixo dela. Mude em Configurações › Vendas › \
-                 Preços e margens.",
-                minimum.to_pt_br()
-            )
-        });
+        let minimum = self
+            .minimum
+            .map(|minimum| minimum_rule(minimum, self.channel));
         let mut body = v_flex()
             .gap_3()
             .child(h_flex().gap_2().flex_wrap().children(buttons))
@@ -1825,6 +1820,21 @@ fn muted(text: impl Into<SharedString>, t: &Tokens) -> AnyElement {
         .into_any_element()
 }
 
+/// The Margin Guard's rule, naming the coupon only where the channel has coupons.
+fn minimum_rule(minimum: Percentage, channel: SalesChannelKind) -> String {
+    let after_coupon = if promotion_kinds(channel).contains(&PromotionKind::Coupon) {
+        ", depois do cupom,"
+    } else {
+        ""
+    };
+    format!(
+        "Margem mínima: {}. Nenhuma promoção passa se uma unidade vendida no menor \
+         preço{after_coupon} ficar com margem abaixo dela. Mude em Configurações › Vendas › \
+         Preços e margens.",
+        minimum.to_pt_br()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use mascate_kernel::Currency;
@@ -1834,6 +1844,19 @@ mod tests {
 
     fn brl(amount: i64) -> Money {
         Money::new(Decimal::from(amount), Currency::Brl)
+    }
+
+    #[test]
+    fn the_minimum_rule_names_the_coupon_only_where_the_channel_has_coupons() {
+        let minimum = Percentage::new(10.into()).unwrap();
+        assert!(
+            minimum_rule(minimum, SalesChannelKind::MercadoLivre)
+                .contains("no menor preço, depois do cupom, ficar")
+        );
+        assert!(
+            minimum_rule(minimum, SalesChannelKind::Shopee)
+                .contains("no menor preço ficar com margem abaixo dela")
+        );
     }
 
     #[test]
