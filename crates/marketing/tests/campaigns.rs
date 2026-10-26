@@ -14,9 +14,10 @@ use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{BreakEven, Currency, Margin, Money, PlatformError, Roas};
 use mascate_marketing::{
-    AdCampaigns, AdsError, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct,
-    CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns, ChannelAds, ChannelCampaign,
-    DEFAULT_MAXIMUM_DAILY_BUDGET, MIGRATIONS, ProductAds, suggested_target,
+    AdCampaigns, AdState, AdStatus, AdsError, BudgetSpend, CampaignChange, CampaignPlan,
+    CampaignProduct, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
+    ChannelAdGroup, ChannelAds, ChannelCampaign, DEFAULT_MAXIMUM_DAILY_BUDGET, MIGRATIONS,
+    ProductAds, suggested_target,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -140,6 +141,10 @@ impl ChannelAds for Channel {
     fn ads_on(&self, _: &str, _: NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
         Ok(Vec::new())
     }
+
+    fn ad_groups(&self, _: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
+        Ok(Vec::new())
+    }
 }
 
 impl ChannelAdCampaigns for Channel {
@@ -195,6 +200,19 @@ impl ChannelAdCampaigns for Channel {
             .ok_or(PlatformError::NotFound)?;
         kept.status = status;
         Ok(kept.clone())
+    }
+
+    // Ad Groups are tested in tests/ad_groups.rs.
+    fn ad_group_of(&self, _: &str, _: &str) -> Result<Option<ChannelAdGroup>, PlatformError> {
+        Ok(None)
+    }
+
+    fn place_ad_group(&self, _: &str, _: &str, _: AdStatus) -> Result<AdState, PlatformError> {
+        Err(PlatformError::NotFound)
+    }
+
+    fn remove_ad_group(&self, _: &str, _: &str) -> Result<(), PlatformError> {
+        Err(PlatformError::NotFound)
     }
 }
 

@@ -4,6 +4,7 @@
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
+mod ad_groups;
 mod ads;
 mod campaigns;
 mod channels;
@@ -20,10 +21,13 @@ mod reputation;
 mod sales_channels;
 mod sales_events;
 
+pub use ad_groups::{
+    AdChange, AdChangeKind, AdGroupKind, AdRequest, AdState, AdStatus, ChannelAdGroup, ConfirmedAd,
+};
 pub use ads::{
-    ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
-    AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds, CampaignStatus,
-    ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
+    ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics,
+    AdsError, AdsReport, AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds,
+    CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
 };
 pub use campaigns::{
     AdCampaigns, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct, CampaignRequest,
@@ -123,6 +127,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         sales_channels::ADD_SALES_CHANNELS,
         channels::ADD_PINTEREST_BOARDS,
         campaigns::MANAGE_AD_CAMPAIGNS,
+        ad_groups::KEEP_AD_GROUPS,
     ],
 };
 

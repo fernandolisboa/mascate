@@ -18,6 +18,7 @@ use mascate_kernel::{Currency, Margin, Money, SalesChannelKind, Timestamp};
 use mascate_marketing::{AdMetrics, AdsReport, AdsSyncState, ProductRoas, SellerTool};
 
 use crate::ad_campaigns::AdCampaignsPanel;
+use crate::ad_groups::AdGroupsPanel;
 use crate::ads::{self, AdsSyncs};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
@@ -99,6 +100,7 @@ pub struct SalesScreen {
     sold: SalesPeriod,
     ads: AdsView,
     campaigns: Entity<AdCampaignsPanel>,
+    ad_groups: Entity<AdGroupsPanel>,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -121,6 +123,7 @@ impl SalesScreen {
             },
             ads: AdsView::Locked,
             campaigns: cx.new(|cx| AdCampaignsPanel::new(window, cx)),
+            ad_groups: cx.new(|cx| AdGroupsPanel::new(window, cx)),
             reads: 0,
             outcome: None,
             _subscriptions: subscriptions,
@@ -209,6 +212,16 @@ impl SalesScreen {
             let _ = this.update(cx, |this, cx| {
                 if this.reads != read {
                     return;
+                }
+                if let Ok(report) = &report {
+                    let suggested = report
+                        .products
+                        .iter()
+                        .filter(|product| product.suggests_pausing())
+                        .flat_map(|product| product.listings.iter().cloned())
+                        .collect();
+                    this.ad_groups
+                        .update(cx, |panel, cx| panel.suggest(suggested, cx));
                 }
                 this.ads = match report {
                     Ok(report) => AdsView::Read { report, last_sync },
@@ -410,7 +423,7 @@ impl SalesScreen {
     /// Product Ads in the period: hidden, with why, until the Reputation
     /// unlocks them; then each Product's ROAS against its break-even, and
     /// each campaign.
-    fn render_ads(&self, cx: &App) -> AnyElement {
+    fn render_ads(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let note = |text: String| div().text_sm().text_color(t.text2).child(text);
         let body = match &self.ads {
@@ -438,7 +451,7 @@ impl SalesScreen {
         &self,
         report: &AdsReport,
         last_sync: Option<AdsSyncState>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
         let read = match last_sync {
@@ -457,10 +470,14 @@ impl SalesScreen {
         let mut column = v_flex()
             .gap_3()
             .child(div().text_sm().text_color(t.text2).child(read));
-        // Campaigns are managed with the account a Sync found.
-        let campaigns = last_sync
-            .is_some_and(|last| last.account)
-            .then(|| self.campaigns.clone());
+        // Campaigns and their ads are managed with the account a Sync found.
+        let managed = last_sync.is_some_and(|last| last.account);
+        let campaigns = managed.then(|| {
+            v_flex()
+                .gap_4()
+                .child(self.campaigns.clone())
+                .child(self.ad_groups.clone())
+        });
         let Some(total) = &report.total else {
             return column
                 .child(
@@ -477,6 +494,9 @@ impl SalesScreen {
                 .text_sm()
                 .child(format!("No período: {}.", metrics_text(total))),
         );
+        // The suggested pauses get a column of their own, so the figures
+        // stay under their headings.
+        let pausing = managed && report.products.iter().any(ProductRoas::suggests_pausing);
         let header = h_flex()
             .gap_3()
             .px_3()
@@ -487,8 +507,29 @@ impl SalesScreen {
             .child(money_cell("Vendas atribuídas"))
             .child(money_cell("ROAS real"))
             .child(money_cell("ROAS de equilíbrio"))
-            .child(margin_cell().child(""));
-        let products = report.products.iter().map(|row| product_row(row, &t, cx));
+            .child(margin_cell().child(""))
+            .children(pausing.then(action_cell));
+        let products: Vec<AnyElement> = report
+            .products
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let pause = pausing.then(|| {
+                    let listings = row.listings.clone();
+                    action_cell().children(row.suggests_pausing().then(|| {
+                        Button::new(("pause-losing-ad", index))
+                            .label("Pausar anúncio")
+                            .outline()
+                            .small()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.ad_groups
+                                    .update(cx, |panel, cx| panel.pause_any(&listings, cx))
+                            }))
+                    }))
+                });
+                product_row(row, pause, &t, cx)
+            })
+            .collect();
         column = column
             .child(v_flex().gap_2().child(header).children(products))
             .child(div().text_xs().text_color(t.text2).child(
@@ -526,8 +567,9 @@ impl SalesScreen {
     }
 }
 
-/// One Product's ads, marked when they lose money.
-fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
+/// One Product's ads, marked when they lose money, with the suggested
+/// pause when they lose enough to judge.
+fn product_row(row: &ProductRoas, pause: Option<Div>, t: &Tokens, cx: &App) -> AnyElement {
     let (verdict, ink) = if row.loses() {
         ("dá prejuízo", t.danger)
     } else if row.break_even.is_none() {
@@ -562,6 +604,7 @@ fn product_row(row: &ProductRoas, t: &Tokens, cx: &App) -> AnyElement {
                 .justify_end()
                 .child(kit::tag(verdict, ink, cx)),
         )
+        .children(pause)
         .into_any_element()
 }
 
@@ -768,6 +811,11 @@ pub(crate) fn money_cell(text: impl Into<SharedString>) -> Div {
 
 pub(crate) fn margin_cell() -> Div {
     div().w(px(150.)).flex_none().text_right()
+}
+
+/// Room for a row's suggested action.
+fn action_cell() -> Div {
+    div().w(px(140.)).flex_none().flex().justify_end()
 }
 
 #[cfg(test)]

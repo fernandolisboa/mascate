@@ -2,8 +2,8 @@
 //! Order Sync while the Reputation unlocks them, their cost handed to
 //! Commerce for each sale's Realized Margin, and each Product's ROAS
 //! against its break-even, worked out from Commerce's prices and summed up
-//! by Marketing (ADR 0025). Ad Campaigns change only on the owner's
-//! confirmed click, in Vendas (#180, ADR 0036).
+//! by Marketing (ADR 0025). Ad Campaigns and the ads in them change only on
+//! the owner's confirmed click, in Vendas (#180, #181, ADR 0036).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -80,6 +80,15 @@ pub(crate) fn failure(error: &AdsError) -> String {
             "O Mercado Livre aceita ROAS alvo de 1 a 35, como 4,5.".into()
         }
         AdsError::UnknownCampaign => "Essa campanha não existe mais; atualize a tela.".into(),
+        AdsError::NoAdGroup => "O Mercado Livre ainda não criou o Ad Group deste anúncio, então ele \
+             não pode entrar numa campanha por enquanto. O app lê os Ad Groups uma vez por dia; \
+             tente de novo depois do próximo Sync."
+            .into(),
+        AdsError::Unchanged => "O anúncio já está assim; nada a enviar.".into(),
+        AdsError::AdGroupChanged => "Os anúncios deste grupo mudaram no Mercado Livre desde que \
+             você conferiu (uma variação entrou ou saiu). A lista foi atualizada: confira de novo \
+             antes de enviar."
+            .into(),
         AdsError::NotManaged => "O Mercado Livre não deixa a sua conta criar nem mudar campanhas \
              pela API (ou a campanha não existe mais lá). Faça a mudança no painel do Mercado \
              Livre, em Publicidade › Product Ads; a leitura do custo e do ROAS continua."

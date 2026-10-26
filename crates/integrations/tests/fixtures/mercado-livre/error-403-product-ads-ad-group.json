@@ -1,0 +1,6 @@
+{
+  "message": "User does not have permission to manage this ad group",
+  "error": "forbidden",
+  "status": 403,
+  "cause": []
+}

@@ -7,7 +7,7 @@
 //! queue shows what is still to send and why it did not go, and each
 //! listing can be paused and reactivated.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
@@ -29,6 +29,8 @@ use mascate_integrations::ConnectionState;
 use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
 use rust_decimal::Decimal;
 
+use crate::ad_groups;
+use crate::ads;
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE, product_choice};
 use crate::drafts::{self, DraftPublished, DraftsSection};
@@ -217,6 +219,7 @@ struct Snapshot {
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     connections: Vec<(SalesChannelKind, ConnectionState)>,
+    ads: BTreeMap<String, String>,
 }
 
 pub struct ListingsScreen {
@@ -228,6 +231,9 @@ pub struct ListingsScreen {
     last_sync: Option<Timestamp>,
     /// Each Sales Channel's Connection, once read.
     connections: Vec<(SalesChannelKind, ConnectionState)>,
+    /// Where each Mercado Livre listing's ad stands in Product Ads, by its
+    /// id.
+    ads: BTreeMap<String, String>,
     /// The listing to link whose row is open, and for what.
     step: Option<(RecordId, Step)>,
     product_pick: Picker,
@@ -279,6 +285,7 @@ impl ListingsScreen {
             products: Vec::new(),
             last_sync: None,
             connections: Vec::new(),
+            ads: BTreeMap::new(),
             step: None,
             product_pick: picker(window, cx),
             product_name: input("Nome do produto", window, cx),
@@ -330,6 +337,7 @@ impl ListingsScreen {
             return;
         };
         let reach = sales_channels::reach(cx);
+        let ad_campaigns = ads::ad_campaigns(cx);
         self.reads += 1;
         let read = self.reads;
         self.busy = true;
@@ -344,6 +352,7 @@ impl ListingsScreen {
                     to_link: listings.to_link(&known).await.map_err(|e| failure(&e))?,
                     last_sync: listings.last_sync().await.map_err(|e| failure(&e))?,
                     connections: reach.states(),
+                    ads: ad_groups::ad_lines(ad_campaigns.as_deref()).await?,
                     products,
                 })
             }
@@ -412,6 +421,7 @@ impl ListingsScreen {
         self.products = snapshot.products;
         self.last_sync = snapshot.last_sync;
         self.connections = snapshot.connections;
+        self.ads = snapshot.ads;
     }
 
     /// Whether any Sales Channel is connected.
@@ -1367,6 +1377,12 @@ impl ListingsScreen {
                             )
                             .on_click(move |_, _, cx| cx.open_url(&link))
                     })),
+            )
+            .children(
+                (listing.channel == SalesChannelKind::MercadoLivre)
+                    .then(|| self.ads.get(&listed.id))
+                    .flatten()
+                    .map(|line| div().text_xs().text_color(t.text2).child(line.clone())),
             )
             .children(listing.sent_price.as_ref().map(|sent| {
                 let ink = match sent.state {

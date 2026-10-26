@@ -21,6 +21,9 @@ use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
 };
 
+use rust_decimal::Decimal;
+
+use crate::ad_groups::{ChannelAdGroup, write_ad_groups};
 use crate::campaigns::{CampaignProduct, CampaignStrategy};
 
 pub(crate) const CREATE_PRODUCT_ADS: Migration = Migration {
@@ -76,6 +79,12 @@ pub const ADS_REFRESH_MINUTES: i64 = 24 * 60;
 
 /// Days the first Sync reads back: this month and the last, whole.
 pub const ADS_HISTORY_DAYS: i64 = 62;
+
+/// The least a Product's ads spend in a period before a ROAS below its
+/// Break-even ROAS suggests pausing them: R$ 20,00, so a few clicks never
+/// judge an ad.
+pub const ADS_LOSS_MIN_COST: Money =
+    Money::new(Decimal::from_parts(20, 0, 0, false, 0), Currency::Brl);
 
 /// Days read again in each Sync: a sale the channel attributes to a click
 /// can come some days after it. Not in the documentation consulted: to be
@@ -219,6 +228,10 @@ pub trait ChannelAds: Send + Sync {
     /// Each ad's metrics on `day` of the channel; an ad that did nothing
     /// that day may be left out.
     fn ads_on(&self, account: &str, day: NaiveDate) -> Result<Vec<ChannelAd>, PlatformError>;
+
+    /// The account's Ad Groups, each with its Listings, campaign and
+    /// status.
+    fn ad_groups(&self, account: &str) -> Result<Vec<ChannelAdGroup>, PlatformError>;
 }
 
 /// What a Sync of Product Ads read.
@@ -298,6 +311,16 @@ impl ProductRoas {
             _ => false,
         }
     }
+
+    /// Whether to suggest pausing its ads: they lose money and spent at
+    /// least [`ADS_LOSS_MIN_COST`]. Only ever a suggestion: nothing pauses
+    /// without the owner's click.
+    pub fn suggests_pausing(&self) -> bool {
+        let cost = self.metrics.cost;
+        self.loses()
+            && cost.currency() == ADS_LOSS_MIN_COST.currency()
+            && cost.amount() >= ADS_LOSS_MIN_COST.amount()
+    }
 }
 
 /// The Products the owner's ads advertised, by campaign and all together.
@@ -345,6 +368,12 @@ pub enum AdsError {
     TargetOutOfRange,
     #[error("no such campaign")]
     UnknownCampaign,
+    #[error("the channel has no Ad Group for this listing yet")]
+    NoAdGroup,
+    #[error("the ad is already like that")]
+    Unchanged,
+    #[error("the Ad Group changed on the channel since it was checked")]
+    AdGroupChanged,
     #[error("the channel does not let the account manage campaigns by its API")]
     NotManaged,
     #[error("this campaign change is already on its way to the channel")]
@@ -395,10 +424,10 @@ impl ProductAds {
         Ok(self.sync_row().await?.map(|(state, _)| state))
     }
 
-    /// Reads the campaigns and each ad's metrics day by day, up to
-    /// yesterday on the channel: the [`ADS_HISTORY_DAYS`] before it the
-    /// first time, then from [`ADS_SETTLE_DAYS`] before the last day read.
-    /// Each day is kept by listing and day: reading it again changes
+    /// Reads the campaigns, the Ad Groups and each ad's metrics day by
+    /// day, up to yesterday on the channel: the [`ADS_HISTORY_DAYS`] before
+    /// it the first time, then from [`ADS_SETTLE_DAYS`] before the last day
+    /// read. Each day is kept by listing and day: reading it again changes
     /// nothing, and an ad the channel no longer reports for it is gone.
     /// Nothing is kept unless everything was read.
     pub async fn sync(&self, channel: &dyn ChannelAds) -> Result<AdsSync, AdsError> {
@@ -408,6 +437,7 @@ impl ProductAds {
             return Ok(AdsSync::default());
         };
         let campaigns = channel.campaigns(&account)?;
+        let groups = channel.ad_groups(&account)?;
         let yesterday = channel_day(now) - TimeDelta::days(1);
         let earliest = yesterday - TimeDelta::days(ADS_HISTORY_DAYS - 1);
         let first = match self.sync_row().await?.and_then(|(_, through)| through) {
@@ -426,6 +456,7 @@ impl ProductAds {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
         self.write_campaigns(&transaction, &campaigns, now).await?;
+        write_ad_groups(&transaction, self.ids.as_ref(), &groups, now).await?;
         let mut report = AdsSync {
             account: true,
             days: read.len(),

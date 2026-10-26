@@ -15,6 +15,7 @@ use mascate_platform::{
 };
 use rust_decimal::{Decimal, RoundingStrategy};
 
+use crate::ad_groups::{AdState, AdStatus, ChannelAdGroup};
 use crate::ads::{
     AdsError, CampaignStatus, ChannelAds, ChannelCampaign, ads_account, read_campaigns,
     write_campaign,
@@ -115,10 +116,10 @@ pub struct CampaignPlan {
     pub target: Roas,
 }
 
-/// The owner's Ad Campaigns, as a Platform's adapter changes them. A write
-/// the channel does not allow the account by its API answers
-/// [`PlatformError::NotFound`]. Calls block on the network, so they run off
-/// the UI thread.
+/// The owner's Ad Campaigns and the Ad Groups in them, as a Platform's
+/// adapter changes them. A write the channel does not allow the account by
+/// its API answers [`PlatformError::NotFound`]. Calls block on the network,
+/// so they run off the UI thread.
 pub trait ChannelAdCampaigns: ChannelAds {
     fn create_campaign(
         &self,
@@ -138,6 +139,27 @@ pub trait ChannelAdCampaigns: ChannelAds {
         campaign: &str,
         status: CampaignStatus,
     ) -> Result<ChannelCampaign, PlatformError>;
+
+    /// The Ad Group that advertises `listing`, with all its Listings;
+    /// `None` when the channel has none for it yet.
+    fn ad_group_of(
+        &self,
+        account: &str,
+        listing: &str,
+    ) -> Result<Option<ChannelAdGroup>, PlatformError>;
+
+    /// Puts the Ad Group into `campaign`, running or paused, wherever it
+    /// was.
+    fn place_ad_group(
+        &self,
+        group: &str,
+        campaign: &str,
+        status: AdStatus,
+    ) -> Result<AdState, PlatformError>;
+
+    /// Takes the Ad Group out of `campaign`; one the campaign no longer
+    /// has is out already.
+    fn remove_ad_group(&self, campaign: &str, group: &str) -> Result<(), PlatformError>;
 }
 
 /// A Product a campaign advertises, as the caller knows it.
@@ -314,12 +336,12 @@ pub struct ConfirmedCampaign {
 
 /// The owner's Ad Campaigns and the Maximum Daily Budget that guards them.
 pub struct AdCampaigns {
-    database: Arc<Database>,
-    clock: Arc<dyn Clock>,
-    ids: Arc<dyn IdGenerator>,
+    pub(crate) database: Arc<Database>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) ids: Arc<dyn IdGenerator>,
     /// What is on its way to the channel, so a second click never sends it
     /// again.
-    sending: InFlight<String>,
+    pub(crate) sending: InFlight<String>,
 }
 
 impl AdCampaigns {
@@ -570,7 +592,7 @@ fn same_name(a: &str, b: &str) -> bool {
 
 /// A write the channel does not allow is the account without campaign
 /// management by API.
-fn written(error: PlatformError) -> AdsError {
+pub(crate) fn written(error: PlatformError) -> AdsError {
     match error {
         PlatformError::NotFound => AdsError::NotManaged,
         error => AdsError::Platform(error),

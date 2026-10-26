@@ -492,12 +492,13 @@ mod tests {
         SalesChannelKind,
     };
     use mascate_marketing::{
-        AdMetrics, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAds, ChannelCampaign,
-        ChannelKind, ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation,
-        ChannelReview, CopySettings, DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem,
-        ListingReviews, MetricReading, NewPromotionChannel, NewReplyTemplate, NewSalesEvent,
-        OfferFacts, OfferPrice, PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource,
-        QuestionStatus, Rating, ReputationColor, ReputationSource, Score, default_posting_times,
+        AdGroupKind, AdMetrics, AdStatus, CampaignStatus, CampaignStrategy, ChannelAd,
+        ChannelAdGroup, ChannelAds, ChannelCampaign, ChannelKind, ChannelQuality, ChannelQuestion,
+        ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
+        DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews, MetricReading,
+        NewPromotionChannel, NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice,
+        PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource, QuestionStatus, Rating,
+        ReputationColor, ReputationSource, Score, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -742,6 +743,17 @@ mod tests {
                     cost: Money::new(rust_decimal::Decimal::new(250, 2), Currency::Brl),
                     ..AdMetrics::zero(Currency::Brl)
                 },
+            }])
+        }
+
+        fn ad_groups(&self, _: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
+            Ok(vec![ChannelAdGroup {
+                id: "1".into(),
+                kind: AdGroupKind::Item,
+                title: None,
+                listings: vec![sample_listing().id],
+                campaign: Some("1".into()),
+                status: AdStatus::Active,
             }])
         }
     }
