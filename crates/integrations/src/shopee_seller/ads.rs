@@ -235,7 +235,8 @@ fn campaign(setting: &AdCampaignSetting) -> ChannelCampaign {
 }
 
 /// The Listings a campaign advertises: those it lists, or those Shopee
-/// picked for an automatic selection.
+/// picked for an automatic selection. None for a campaign without products,
+/// whose day then has no Listing to land on.
 fn listings(setting: &AdCampaignSetting) -> Vec<String> {
     let listed = setting
         .common_info
