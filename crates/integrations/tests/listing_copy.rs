@@ -14,7 +14,7 @@ use mascate_kernel::PlatformError;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_marketing::{
     BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, CopyBrief, CopyChannel, CopyRequest,
-    CopyWriter, ListingCopy, MIGRATIONS, WrittenCopy,
+    CopyShape, CopyWriter, ListingCopy, MIGRATIONS, Written, WrittenCopy,
 };
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
 use mascate_platform::{Database, Secret, SecretStore, migrate};
@@ -100,10 +100,15 @@ fn request() -> CopyRequest {
         model: "claude-sonnet-5-5".into(),
         instructions: COPY_INSTRUCTIONS.into(),
         prompt: "<dados>\nProduto: Fone Lenovo LP40\n</dados>".into(),
+        shape: CopyShape::Listing,
     }
 }
 
-fn lenovo_copy() -> WrittenCopy {
+fn lenovo_copy() -> Written {
+    Written::Listing(lenovo_written())
+}
+
+fn lenovo_written() -> WrittenCopy {
     WrittenCopy {
         title: "Fone De Ouvido Bluetooth Sem Fio Lenovo LP40 TWS Branco".into(),
         description: "Fone de ouvido sem fio Lenovo LP40 para o dia a dia, com estojo de \
@@ -379,8 +384,8 @@ fn a_draft_gets_its_copy_written_from_both_platforms() {
             .unwrap()
     });
 
-    assert_eq!(copy.title, lenovo_copy().title);
-    assert_eq!(copy.description, lenovo_copy().description);
+    assert_eq!(copy.title, lenovo_written().title);
+    assert_eq!(copy.description, lenovo_written().description);
     assert_eq!(
         copy.trends_in_title,
         [

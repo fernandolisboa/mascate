@@ -75,7 +75,9 @@ pub(crate) fn connection_purpose(connection: Connection) -> &'static str {
             "Open API de afiliados: busca de ofertas. Sem credenciais, fica aguardando \
              aprovação e a descoberta usa o cadastro manual de ofertas."
         }
-        Connection::Anthropic => "Títulos e descrições de anúncio gerados como rascunho.",
+        Connection::Anthropic => {
+            "Títulos e descrições de anúncio e chamadas de post gerados como rascunho."
+        }
         Connection::Hotmart | Connection::Monetizze => {
             "Comissões de afiliado: vendas, status, estornos e cancelamentos, lidos a cada hora."
         }

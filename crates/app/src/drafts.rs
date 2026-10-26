@@ -1866,32 +1866,34 @@ impl DraftsSection {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
-        let off = listing_copy::writing_off(&listing_copy::anthropic_state(cx))
-            .map(str::to_owned)
-            .or_else(|| {
-                (draft.channel != SalesChannelKind::MercadoLivre).then(|| {
-                    format!(
-                        "Por enquanto a IA escreve só para o Mercado Livre, com o limite do título \
+        let off = listing_copy::writing_off(
+            &listing_copy::anthropic_state(cx),
+            "gerar título e descrição",
+        )
+        .or_else(|| {
+            (draft.channel != SalesChannelKind::MercadoLivre).then(|| {
+                format!(
+                    "Por enquanto a IA escreve só para o Mercado Livre, com o limite do título \
                          e os termos em alta das categorias dele; {} escreva o título e a \
                          descrição você mesmo.",
-                        sales_channels::on(draft.channel)
-                    )
-                })
+                    sales_channels::on(draft.channel)
+                )
             })
-            .or_else(|| {
-                (!sales_channels::is_connected(cx, SalesChannelKind::MercadoLivre)).then(|| {
-                    "Conecte a conta do Mercado Livre em Configurações › Conexões: o limite do \
+        })
+        .or_else(|| {
+            (!sales_channels::is_connected(cx, SalesChannelKind::MercadoLivre)).then(|| {
+                "Conecte a conta do Mercado Livre em Configurações › Conexões: o limite do \
                      título e os termos em alta vêm da categoria."
-                        .to_owned()
-                })
+                    .to_owned()
             })
-            .or_else(|| {
-                draft.category.is_none().then(|| {
-                    "Escolha a categoria antes de gerar: o limite do título e os termos em alta \
+        })
+        .or_else(|| {
+            draft.category.is_none().then(|| {
+                "Escolha a categoria antes de gerar: o limite do título e os termos em alta \
                      vêm dela."
-                        .to_owned()
-                })
-            });
+                    .to_owned()
+            })
+        });
         let hint = match (&off, &editor.written) {
             (Some(off), _) => off.clone(),
             (None, Some(written)) => written_text(written),

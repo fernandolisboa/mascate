@@ -13,6 +13,8 @@
 //! destination since #157), listed with what is late, unconfirmed, failed
 //! or published today and with any destination at its limit.
 //! Scheduling offers the dates of the coming Sales Events (#105).
+//! "Escrever chamada com IA" writes the post's Pitch with the Claude API
+//! (#182), in the template's `{chamada}` line.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,9 +37,10 @@ use mascate_commerce::is_picture;
 use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp, parse_amount};
 use mascate_marketing::{
     ChannelKind, Contact, DestinationLimit, INSTAGRAM_POSTS_PER_DAY, LATE_AFTER_MINUTES,
-    OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, PRICE_KEEPS_HOURS,
-    PostDraft, PostError, PostImage, PostProblem, PostQueue, PostStatus, PostTime,
-    PromotionChannel, PublishFailure, PublishRequest, UpcomingEvent, check_post, post_limits,
+    OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, POST_PITCH,
+    POST_VARIABLES, PRICE_KEEPS_HOURS, PitchError, PitchProblem, PostDraft, PostError, PostImage,
+    PostProblem, PostQueue, PostStatus, PostTime, PromotionChannel, PublishFailure, PublishRequest,
+    UpcomingEvent, check_post, post_limits,
 };
 use mascate_platform::Flag;
 
@@ -47,6 +50,7 @@ use crate::appearance::look;
 use crate::catalog::{self, day_and_time};
 use crate::forms::{Outcome, day_text, input, notice};
 use crate::kit;
+use crate::listing_copy::{anthropic_state, listing_copy, writer_failure, writing_off};
 use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
@@ -195,9 +199,9 @@ pub(crate) struct Gathered {
     pub refused: Option<Flag>,
 }
 
-/// Drafts the post of `offer` for `channel` with `price` and `image`. A
-/// price a Restricted Feature that is off refuses, as Amazon's typed one,
-/// leaves the post without a price.
+/// Drafts the post of `offer` for `channel` with `price`, `image` and
+/// `pitch`. A price a Restricted Feature that is off refuses, as Amazon's
+/// typed one, leaves the post without a price.
 pub(crate) async fn gather(
     affiliate: &Affiliate,
     posts: &OfferPosts,
@@ -205,6 +209,7 @@ pub(crate) async fn gather(
     channel: &PromotionChannel,
     price: Option<GivenPrice>,
     image: Option<PostImage>,
+    pitch: Option<&str>,
 ) -> Result<Gathered, String> {
     let mut asked = promotion(channel);
     asked.price = price.map(|given| ShownPrice {
@@ -244,7 +249,7 @@ pub(crate) async fn gather(
         forbidden_contacts: forbidden_contacts(&offer.program.rules),
     };
     let draft = posts
-        .draft(&facts, channel)
+        .pitched_draft(&facts, channel, pitch)
         .await
         .map_err(|error| post_failure(&error))?;
     Ok(Gathered {
@@ -265,8 +270,8 @@ pub(crate) fn post_failure(error: &PostError) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         PostError::UnknownVariable(variable) => format!(
-            "O modelo usa {variable}, que o app não preenche. Use {{produto}}, {{preco}}, {{de}}, \
-             {{desconto}}, {{link}} e {{hora_do_preco}}."
+            "O modelo usa {variable}, que o app não preenche. Use {}.",
+            template_variables()
         ),
         PostError::TemplateWithoutLink => {
             "O modelo precisa de {link}: o post sem o link de afiliado não rende comissão.".into()
@@ -311,6 +316,36 @@ pub(crate) fn post_failure(error: &PostError) -> String {
         PostError::Unreadable(_) | PostError::Sql(_) => {
             format!("Não consegui ler ou gravar os posts no banco: {error}")
         }
+    }
+}
+
+/// Every variable a post template takes, as the owner reads them:
+/// `{produto}, {chamada}, … e {hora_do_preco}`.
+pub(crate) fn template_variables() -> String {
+    let (last, others) = POST_VARIABLES
+        .split_last()
+        .expect("a template takes variables");
+    format!("{} e {last}", others.join(", "))
+}
+
+/// Why the Pitch was not written, as the owner reads it.
+fn pitch_failure(error: &PitchError) -> String {
+    match error {
+        PitchError::NoPitchLine => format!(
+            "O modelo deste canal não tem {POST_PITCH}. Ponha {POST_PITCH} numa linha do modelo, \
+             em Canais de divulgação, para a IA escrever a chamada."
+        ),
+        PitchError::Writer(error) => writer_failure(error),
+        PitchError::Rejected(problems) => format!(
+            "A chamada veio fora das regras duas vezes ({}), então o post ficou como estava. \
+             Escreva de novo ou à mão.",
+            problems
+                .iter()
+                .map(PitchProblem::describe)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+        PitchError::Post(error) => post_failure(error),
     }
 }
 
@@ -412,6 +447,11 @@ struct Editor {
     restricted: Vec<RuleWarning>,
     refused: Option<Flag>,
     form: Option<Outcome>,
+    /// The last Pitch the AI wrote in the text; held only while the post is
+    /// open, so "Gerar texto" keeps it.
+    pitch: Option<String>,
+    /// How the last writing of the Pitch went.
+    pitching: Option<Outcome>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -741,6 +781,8 @@ impl OfferPostsSection {
             restricted: Vec::new(),
             refused: None,
             form: None,
+            pitch: None,
+            pitching: None,
             _subscriptions: subscriptions,
         };
         editor.facts.image = picture_of(&editor, cx);
@@ -807,11 +849,21 @@ impl OfferPostsSection {
             }
         };
         let image = picture_of(editor, cx);
+        let pitch = editor.pitch.clone();
         editor.form = None;
         self.busy = true;
-        let working = cx
-            .background_executor()
-            .spawn(async move { gather(&affiliate, &posts, &offer, &channel, price, image).await });
+        let working = cx.background_executor().spawn(async move {
+            gather(
+                &affiliate,
+                &posts,
+                &offer,
+                &channel,
+                price,
+                image,
+                pitch.as_deref(),
+            )
+            .await
+        });
         cx.spawn_in(window, async move |this, cx| {
             let gathered = working.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -829,6 +881,65 @@ impl OfferPostsSection {
                         editor.refused = gathered.refused;
                     }
                     Err(error) => editor.form = Some(Outcome::Failed(error.into())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Writes the Pitch with AI and puts it in the text, in place of the
+    /// last one; the text stays editable and nothing is saved.
+    fn write_pitch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(posts), Some((_, writer))) = (offer_posts(cx), listing_copy(cx)) else {
+            return;
+        };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        let Some(draft) = editor.draft(cx) else {
+            editor.pitching = Some(Outcome::Failed(
+                "O canal deste post foi apagado em Divulgação.".into(),
+            ));
+            cx.notify();
+            return;
+        };
+        let previous = editor.pitch.clone();
+        editor.pitching = None;
+        self.busy = true;
+        let working = cx.background_executor().spawn(async move {
+            posts
+                .write_pitch(writer.as_ref(), &draft, previous.as_deref())
+                .await
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let written = working.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                let Some(editor) = this.editor.as_mut() else {
+                    return;
+                };
+                match written {
+                    Ok(pitched) => {
+                        editor.text.update(cx, |field, cx| {
+                            field.set_value(pitched.draft.text.clone(), window, cx)
+                        });
+                        editor.pitching = Some(Outcome::Done(
+                            if pitched.edits_replaced {
+                                "Chamada escrita. O texto foi gerado de novo pelo modelo do canal \
+                                 com ela, e o que você tinha mudado à mão saiu. Confira antes de \
+                                 salvar."
+                            } else {
+                                "Chamada escrita no texto. Confira e edite antes de salvar."
+                            }
+                            .into(),
+                        ));
+                        editor.pitch = Some(pitched.pitch);
+                    }
+                    Err(error) => {
+                        editor.pitching = Some(Outcome::Failed(pitch_failure(&error).into()))
+                    }
                 }
                 cx.notify();
             });
@@ -1894,6 +2005,39 @@ impl OfferPostsSection {
             .into_any_element()
     }
 
+    /// The button that writes the Pitch with AI, what it needs, and how the
+    /// last writing went.
+    fn render_pitch(&self, editor: &Editor, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let off = writing_off(&anthropic_state(cx), "escrever a chamada");
+        let hint = off.clone().unwrap_or_else(|| {
+            format!(
+                "A IA escreve só a frase de {POST_PITCH}, com o nome do produto, o programa e o \
+                 canal; preço, desconto, link e \"#publi\" continuam vindo do app."
+            )
+        });
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex().child(
+                    Button::new("write-pitch")
+                        .label(if editor.pitch.is_some() {
+                            "Escrever outra chamada com IA"
+                        } else {
+                            "Escrever chamada com IA"
+                        })
+                        .outline()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(self.busy || off.is_some() || editor.channel.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| this.write_pitch(window, cx))),
+                ),
+            )
+            .child(div().text_xs().text_color(t.text2).child(hint))
+            .children(editor.pitching.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element()
+    }
+
     fn render_editor(&self, editor: &Editor, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let (problems, rules) = editor.problems(cx);
@@ -2066,6 +2210,7 @@ impl OfferPostsSection {
                         )
                     }),
             )
+            .child(self.render_pitch(editor, cx))
             .child(
                 v_flex()
                     .gap_1()
@@ -2556,6 +2701,7 @@ mod tests {
                 &f.channel,
                 Some(typed(seen_at)),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -2584,6 +2730,7 @@ mod tests {
                 &f.offer,
                 &f.channel,
                 Some(typed(seen_at)),
+                None,
                 None,
             )
             .await
@@ -2620,6 +2767,7 @@ mod tests {
                 &self.channel,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap()
@@ -2641,6 +2789,7 @@ mod tests {
                 &telegram.posts,
                 &telegram.offer,
                 &telegram.channel,
+                None,
                 None,
                 None,
             )

@@ -1,6 +1,6 @@
 //! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost
 //! and Ad Campaigns, Listing Copy,
-//! Promotion Channels and Offer Posts, published through a destination's port
+//! Promotion Channels and Offer Posts with their Pitch, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
@@ -12,6 +12,7 @@ mod copy;
 mod merge;
 mod offer_posts;
 mod performance;
+mod pitch;
 mod publishing;
 mod quality;
 mod questions;
@@ -41,13 +42,13 @@ pub use channels::{
 };
 pub use copy::{
     BriefAttribute, COPY_INSTRUCTIONS, CategoryRules, CopyBrief, CopyChannel, CopyError, CopyField,
-    CopyProblem, CopyRequest, CopySettings, CopyWriter, DEFAULT_COPY_MODEL, GeneratedCopy,
-    ListingCopy, MODEL_MAX_CHARS, WrittenCopy, check_copy,
+    CopyProblem, CopyRequest, CopySettings, CopyShape, CopyWriter, DEFAULT_COPY_MODEL,
+    GeneratedCopy, ListingCopy, MODEL_MAX_CHARS, Written, WrittenCopy, check_copy,
 };
 pub use merge::MERGE;
 pub use offer_posts::{
     DISCLOSURE, DISCLOSURE_WINDOW_DAYS, INSTAGRAM_LIMITS, OfferFacts, OfferPost, OfferPosts,
-    OfferPrice, PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PRICE,
+    OfferPrice, PINTEREST_LIMITS, POST_BEFORE, POST_DISCOUNT, POST_LINK, POST_PITCH, POST_PRICE,
     POST_PRICE_TIME, POST_PRODUCT, POST_VARIABLES, PRICE_NOTICE, PostDraft, PostError, PostImage,
     PostLimits, PostProblem, PostStatus, SentPost, TELEGRAM_LIMITS, check_post, default_template,
     discount, has_disclosure, post_limits, price_time,
@@ -55,6 +56,9 @@ pub use offer_posts::{
 pub use performance::{
     ChannelPerformance, Comparator, MetricGroup, MetricTarget, MetricUnit, PerformanceMetric,
     PerformanceRating, ShopPerformance,
+};
+pub use pitch::{
+    PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, PitchError, PitchProblem, PitchedDraft, check_pitch,
 };
 pub use publishing::{
     ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PostFate,

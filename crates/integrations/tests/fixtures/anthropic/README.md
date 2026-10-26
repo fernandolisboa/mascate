@@ -8,6 +8,7 @@ regression pass da fase 1 (#37) confere com uma chave real.
 | Arquivo | Recurso | Origem |
 |---|---|---|
 | `message-copy.json` | `POST /v1/messages` respondido: um bloco `thinking` vazio (o padrão `display: "omitted"`) e o bloco `text` com o JSON do esquema (`title`, `description`), `stop_reason` `end_turn` | Messages API; Structured outputs |
+| `message-pitch.json` | o mesmo para a chamada de um Offer Post (#182): o bloco `text` com o JSON do esquema `{pitch}` | Messages API; Structured outputs |
 | `message-refusal.json` | o mesmo, recusado pelo classificador de segurança: HTTP 200, `stop_reason` `refusal`, `stop_details` | Refusals and fallback |
 | `message-max-tokens.json` | a resposta cortada em `max_tokens`, com o JSON pela metade | Messages API |
 | `error-400.json` | `invalid_request_error` | Errors |
@@ -22,7 +23,8 @@ Como o app chama a API:
   `Content-Type: application/json`, sem streaming, `max_tokens` 16000.
 - O corpo leva `model` (o das Configurações, padrão `claude-sonnet-5-5`), `system` com as regras do
   anúncio, uma mensagem `user` com os dados do produto e `output_config.format` com o esquema
-  `{title, description}` (`additionalProperties: false`). `thinking` e `effort` ficam no padrão do
+  `{title, description}` (`additionalProperties: false`), ou `{pitch}` quando o pedido é a chamada de
+  um Offer Post (#182, `system` com as regras da chamada). `thinking` e `effort` ficam no padrão do
   modelo, para qualquer modelo atual aceitar o mesmo corpo.
 - 429, 529 e outros 5xx, e falha de rede, são tentados de novo depois de 2, 4 e 8 segundos. 401 é
   chave não aceita; 400, 402, 403, 404 e os outros 4xx são recusas com o texto de `error.message`.
@@ -30,6 +32,7 @@ Como o app chama a API:
 
 Inventados ou completados (conferir no regression pass):
 
-- Ids, `request_id`, assinatura do bloco `thinking`, contagem de tokens e o texto do anúncio.
+- Ids, `request_id`, assinatura do bloco `thinking`, contagem de tokens e o texto do anúncio e da
+  chamada.
 - Se `claude-sonnet-5-5` aceita `output_config.format` sem `effort` nem `thinking` e quanto tempo
-  leva uma resposta com o pensamento adaptativo no padrão.
+  leva uma resposta com o pensamento adaptativo no padrão; quanto leva uma chamada (#116).

@@ -125,7 +125,7 @@ impl Section {
             Section::Connections => "Conexões",
             Section::Pricing => "Preços e margens",
             Section::Ads => "Product Ads",
-            Section::Copy => "Títulos e descrições com IA",
+            Section::Copy => "Textos com IA",
             Section::Channels => "Canais de venda",
             Section::Orders => "Pedidos",
             Section::Finance => "Finanças",

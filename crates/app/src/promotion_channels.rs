@@ -20,8 +20,8 @@ use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_kernel::RecordId;
 use mascate_marketing::{
     CHANNEL_NAME_MAX_CHARS, ChannelError, ChannelKind, DISCLOSURE, DestinationStanding,
-    NewPromotionChannel, PinterestBoard, PostDestination as _, PromotionChannel, PromotionChannels,
-    default_posting_times, suggested_tag,
+    NewPromotionChannel, POST_PITCH, PinterestBoard, PostDestination as _, PromotionChannel,
+    PromotionChannels, default_posting_times, suggested_tag,
 };
 
 use crate::appearance::look;
@@ -29,7 +29,9 @@ use crate::catalog::NO_DATABASE;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::layout;
-use crate::offer_posts::{OfferPostsSection, StartPost, offer_posts, post_failure};
+use crate::offer_posts::{
+    OfferPostsSection, StartPost, offer_posts, post_failure, template_variables,
+};
 use crate::parts::ScreenParts;
 use crate::post_queue::{times_text, typed_times};
 use crate::sales::table_row;
@@ -303,10 +305,11 @@ impl PromotionScreen {
             .bg(t.raised)
             .child(div().font_medium().child("Modelo do post"))
             .child(div().text_xs().text_color(t.text2).child(format!(
-                "Use {{produto}}, {{preco}}, {{de}}, {{desconto}}, {{link}} e {{hora_do_preco}}. \
-                 Uma linha com um valor que o post não tem sai inteira, então deixe cada um na sua \
-                 linha. O app põe \"{DISCLOSURE}\" no fim quando o modelo não identifica a \
-                 publicidade."
+                "Use {}. Uma linha com um valor que o post não tem sai inteira, então deixe cada \
+                 um na sua linha. {POST_PITCH} é a chamada que a IA escreve no post, vazia até você \
+                 pedir. O app põe \"{DISCLOSURE}\" no fim quando o modelo não identifica a \
+                 publicidade.",
+                template_variables()
             )))
             .child(Textarea::new(&editor.text).small())
             .children(editor.outcome.as_ref().map(|outcome| notice(outcome, cx)))

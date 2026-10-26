@@ -82,10 +82,13 @@ pub const POST_LINK: &str = "{link}";
 /// Stands for when the price was seen, as in `em 13/10/2026 às 21:40,
 /// horário de Brasília`.
 pub const POST_PRICE_TIME: &str = "{hora_do_preco}";
+/// Stands for the Pitch, the line that sells the product (#182).
+pub const POST_PITCH: &str = "{chamada}";
 
 /// Every variable a post template takes.
-pub const POST_VARIABLES: [&str; 6] = [
+pub const POST_VARIABLES: [&str; 7] = [
     POST_PRODUCT,
+    POST_PITCH,
     POST_PRICE,
     POST_BEFORE,
     POST_DISCOUNT,
@@ -183,14 +186,16 @@ pub fn post_limits(kind: ChannelKind) -> Option<PostLimits> {
 pub fn default_template(kind: ChannelKind) -> &'static str {
     match kind {
         ChannelKind::TelegramChannel | ChannelKind::WhatsAppGroup | ChannelKind::Other => {
-            "🔥 {produto}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n📉 {desconto} de \
+            "🔥 {produto}\n{chamada}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n📉 {desconto} de \
              desconto\n\n👉 {link}"
         }
         ChannelKind::Instagram | ChannelKind::TikTok | ChannelKind::Pinterest => {
-            "{produto}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n{desconto} de \
+            "{produto}\n{chamada}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n{desconto} de \
              desconto\n\nLink: {link}"
         }
-        ChannelKind::PaidSearch => "{produto}\nPor {preco}\nPreço {hora_do_preco}\n{link}",
+        ChannelKind::PaidSearch => {
+            "{produto}\n{chamada}\nPor {preco}\nPreço {hora_do_preco}\n{link}"
+        }
     }
 }
 
@@ -210,7 +215,7 @@ pub fn discount(price: Money, before: Money) -> Option<Percentage> {
 
 /// A discount as a post shows it, in whole percent: `25%`. `None` when it
 /// rounds to nothing.
-fn discount_text(discount: Percentage) -> Option<String> {
+pub(crate) fn discount_text(discount: Percentage) -> Option<String> {
     let whole = discount
         .percent()
         .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
@@ -553,11 +558,11 @@ fn shows_price(text: &str, price: &OfferPrice) -> bool {
     text.contains(&price.price.to_pt_br())
 }
 
-/// The post `template` makes of `facts`: every variable filled, each line
-/// with a variable that has no value left out, blank runs made one, then
-/// the price notice when the Program asks for the price time and the
-/// disclosure when the template has none.
-fn fill(template: &str, facts: &OfferFacts) -> String {
+/// The post `template` makes of `facts` and `pitch`: every variable filled,
+/// each line with a variable that has no value left out, blank runs made
+/// one, then the price notice when the Program asks for the price time and
+/// the disclosure when the template has none.
+pub(crate) fn fill(template: &str, facts: &OfferFacts, pitch: Option<&str>) -> String {
     let price = facts.price.as_ref();
     let discounted = price.and_then(|price| {
         let before = price.before?;
@@ -565,7 +570,9 @@ fn fill(template: &str, facts: &OfferFacts) -> String {
     });
     let product = facts.product.trim();
     let link = facts.link.trim();
-    let values: [(&str, Option<String>); 6] = [
+    let pitch = pitch.map(str::trim).filter(|pitch| !pitch.is_empty());
+    // The Pitch goes in last, so nothing it says is taken for a variable.
+    let values: [(&str, Option<String>); 7] = [
         (
             POST_PRODUCT,
             (!product.is_empty()).then(|| product.to_owned()),
@@ -583,6 +590,7 @@ fn fill(template: &str, facts: &OfferFacts) -> String {
                 .filter(|_| facts.price_needs_time)
                 .map(|price| price_time(price.seen_at)),
         ),
+        (POST_PITCH, pitch.map(str::to_owned)),
     ];
     let mut lines: Vec<String> = Vec::new();
     for line in template.lines() {
@@ -781,10 +789,20 @@ impl OfferPosts {
         facts: &OfferFacts,
         channel: &PromotionChannel,
     ) -> Result<PostDraft, PostError> {
+        self.pitched_draft(facts, channel, None).await
+    }
+
+    /// The same, with `pitch` in the template's [`POST_PITCH`].
+    pub async fn pitched_draft(
+        &self,
+        facts: &OfferFacts,
+        channel: &PromotionChannel,
+        pitch: Option<&str>,
+    ) -> Result<PostDraft, PostError> {
         let template = self.template(channel).await?;
         Ok(PostDraft {
             channel: channel.id,
-            text: fill(&template, facts),
+            text: fill(&template, facts, pitch),
             facts: facts.clone(),
         })
     }
