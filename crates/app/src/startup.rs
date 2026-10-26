@@ -11,7 +11,7 @@ use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SystemClock, UuidV7Generator};
 use mascate_marketing::{
-    ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
+    AdCampaigns, ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
     ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
@@ -89,6 +89,7 @@ pub struct Started {
     pub questions: Arc<Questions>,
     pub reputation: Arc<Reputation>,
     pub product_ads: Arc<ProductAds>,
+    pub ad_campaigns: Arc<AdCampaigns>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub promotion_channels: Arc<PromotionChannels>,
     pub offer_posts: Arc<OfferPosts>,
@@ -326,6 +327,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let ad_campaigns = AdCampaigns::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let reply_templates = ReplyTemplates::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -392,6 +398,7 @@ pub fn prepare() -> Outcome {
                 questions: Arc::new(questions),
                 reputation: Arc::new(reputation),
                 product_ads: Arc::new(product_ads),
+                ad_campaigns: Arc::new(ad_campaigns),
                 reply_templates: Arc::new(reply_templates),
                 promotion_channels: Arc::new(promotion_channels),
                 offer_posts: Arc::new(offer_posts),
@@ -481,15 +488,16 @@ mod tests {
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
-        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind,
+        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, Roas,
+        SalesChannelKind,
     };
     use mascate_marketing::{
-        AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ChannelKind,
-        ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview,
-        CopySettings, DateRule, ListedItem, ListingReviews, MetricReading, NewPromotionChannel,
-        NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice, PinterestBoard, PostStatus,
-        PostTime, QualityLevel, QualitySource, QuestionStatus, Rating, ReputationColor,
-        ReputationSource, Score, default_posting_times,
+        AdMetrics, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAds, ChannelCampaign,
+        ChannelKind, ChannelQuality, ChannelQuestion, ChannelQuestions, ChannelReputation,
+        ChannelReview, CopySettings, DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem,
+        ListingReviews, MetricReading, NewPromotionChannel, NewReplyTemplate, NewSalesEvent,
+        OfferFacts, OfferPrice, PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource,
+        QuestionStatus, Rating, ReputationColor, ReputationSource, Score, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -704,6 +712,16 @@ mod tests {
         }
     }
 
+    /// The sample campaign: R$ 10,00 a day for profitability at 4x.
+    fn sample_campaign() -> ChannelCampaign {
+        ChannelCampaign {
+            budget: Some(Money::new(10.into(), Currency::Brl)),
+            strategy: Some(CampaignStrategy::Profitability),
+            target: Roas::new(4.into()),
+            ..ChannelCampaign::named("1", "Campanha de exemplo", CampaignStatus::Active)
+        }
+    }
+
     /// One campaign advertising the sample listing, R$ 2,50 a day.
     struct SampleAds;
 
@@ -713,11 +731,7 @@ mod tests {
         }
 
         fn campaigns(&self, _: &str) -> Result<Vec<ChannelCampaign>, PlatformError> {
-            Ok(vec![ChannelCampaign {
-                id: "1".into(),
-                name: "Campanha de exemplo".into(),
-                status: CampaignStatus::Active,
-            }])
+            Ok(vec![sample_campaign()])
         }
 
         fn ads_on(&self, _: &str, _: chrono::NaiveDate) -> Result<Vec<ChannelAd>, PlatformError> {
@@ -1637,6 +1651,24 @@ mod tests {
                 assert!(!costs.is_empty(), "{name}");
                 assert!(
                     costs.iter().all(|day| day.listing == sample_listing().id),
+                    "{name}"
+                );
+                // Ad Campaign settings arrived after 0.5.0: the next Sync
+                // reads each campaign's budget, strategy and Target ROAS,
+                // and the Maximum Daily Budget starts at R$ 50,00.
+                let campaigns = AdCampaigns::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert_eq!(
+                    campaigns.campaigns().await.unwrap(),
+                    [sample_campaign()],
+                    "{name}"
+                );
+                assert_eq!(
+                    campaigns.maximum_daily_budget().await.unwrap(),
+                    DEFAULT_MAXIMUM_DAILY_BUDGET,
                     "{name}"
                 );
                 // Category names and the sales volume limit arrived after

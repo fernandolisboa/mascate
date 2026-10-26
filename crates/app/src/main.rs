@@ -1,6 +1,7 @@
 // Release builds on Windows run without a console window behind the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ad_campaigns;
 mod ads;
 mod affiliate;
 mod affiliate_links;
@@ -99,7 +100,7 @@ use mascate_platform::{
     run_installer_after_exit, secret_store_for, system_user,
 };
 
-use crate::ads::AppProductAds;
+use crate::ads::{AppAdCampaigns, AppProductAds};
 use crate::affiliate::{AppAffiliate, CommissionSources};
 use crate::affiliate_links::LinkTaggers;
 use crate::affiliate_panels::{AppAffiliatePanels, PanelSite, Panels};
@@ -458,6 +459,7 @@ fn main() {
                 cx.set_global(AppPromotions(started.promotions.clone()));
                 cx.set_global(AppRepricing(started.repricing.clone()));
                 cx.set_global(AppProductAds(started.product_ads.clone()));
+                cx.set_global(AppAdCampaigns(started.ad_campaigns.clone()));
                 cx.set_global(AppBackups {
                     backups: started.backups.clone(),
                     merge_import: started.merge_import.clone(),

@@ -1,9 +1,11 @@
-//! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost, Listing Copy,
+//! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost
+//! and Ad Campaigns, Listing Copy,
 //! Promotion Channels and Offer Posts, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
 mod ads;
+mod campaigns;
 mod channels;
 mod copy;
 mod merge;
@@ -20,8 +22,14 @@ mod sales_events;
 
 pub use ads::{
     ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
-    AdsSync, AdsSyncState, AdvertisedListing, CampaignAds, CampaignStatus, ChannelAd, ChannelAds,
-    ChannelCampaign, ProductAds, ProductRoas,
+    AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds, CampaignStatus,
+    ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
+};
+pub use campaigns::{
+    AdCampaigns, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct, CampaignRequest,
+    CampaignStrategy, ChannelAdCampaigns, ConfirmedCampaign, DAILY_BUDGETS_IN_A_MONTH,
+    DEFAULT_MAXIMUM_DAILY_BUDGET, LossToAccept, MAX_TARGET_ROAS, MIN_TARGET_ROAS,
+    MOST_DAILY_BUDGETS_IN_A_DAY, suggested_target,
 };
 pub use channels::{
     CHANNEL_NAME_MAX_CHARS, CHANNEL_TAG_MAX_CHARS, ChannelError, ChannelKind, NewPromotionChannel,
@@ -114,6 +122,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         sales_events::CREATE_SALES_EVENTS,
         sales_channels::ADD_SALES_CHANNELS,
         channels::ADD_PINTEREST_BOARDS,
+        campaigns::MANAGE_AD_CAMPAIGNS,
     ],
 };
 

@@ -1,8 +1,8 @@
 //! Product Ads (#27): what the owner's ads on the Sales Channel cost and
 //! brought in, listing by listing and day by day, read once a day through a
 //! port a Platform's adapter implements (ADR 0013), and each Product's ROAS
-//! against the least that pays for its ads. Campaigns are created and
-//! changed in the channel's own panel: nothing here writes to it. The
+//! against the least that pays for its ads. Nothing here writes to the
+//! channel: Ad Campaigns change through [`crate::AdCampaigns`]. The
 //! listings, their Products and break-even come from the caller (ADR 0021),
 //! and the caller hands the cost to Commerce for the Realized Margin (ADR
 //! 0025).
@@ -20,6 +20,8 @@ use mascate_kernel::{
 use mascate_platform::{
     Database, Migration, StoredRow, StoredValueError, load_single_row, save_single_row, stored,
 };
+
+use crate::campaigns::{CampaignProduct, CampaignStrategy};
 
 pub(crate) const CREATE_PRODUCT_ADS: Migration = Migration {
     version: 4,
@@ -96,7 +98,7 @@ impl CampaignStatus {
         CampaignStatus::Other,
     ];
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             CampaignStatus::Active => "active",
             CampaignStatus::Paused => "paused",
@@ -118,12 +120,31 @@ impl CampaignStatus {
     }
 }
 
-/// A Product Ads campaign, as the channel reports it.
+/// A Product Ads campaign, as the channel reports it. What the channel
+/// leaves out is `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelCampaign {
     pub id: String,
     pub name: String,
     pub status: CampaignStatus,
+    /// What it may spend a day, on average.
+    pub budget: Option<Money>,
+    pub strategy: Option<CampaignStrategy>,
+    pub target: Option<Roas>,
+}
+
+impl ChannelCampaign {
+    /// A campaign known only by its id, name and status.
+    pub fn named(id: impl Into<String>, name: impl Into<String>, status: CampaignStatus) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            status,
+            budget: None,
+            strategy: None,
+            target: None,
+        }
+    }
 }
 
 /// What ads cost and brought in.
@@ -279,6 +300,14 @@ impl ProductRoas {
     }
 }
 
+/// The Products the owner's ads advertised, by campaign and all together.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdvertisedProducts {
+    /// By the channel's id of each campaign.
+    pub by_campaign: BTreeMap<String, Vec<CampaignProduct>>,
+    pub all: Vec<CampaignProduct>,
+}
+
 /// Product Ads in a period, by campaign and by Product.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdsReport {
@@ -296,6 +325,30 @@ pub enum AdsError {
     Platform(#[from] PlatformError),
     #[error(transparent)]
     Currencies(#[from] CurrencyMismatch),
+    #[error("the Reputation does not unlock Product Ads yet")]
+    Locked,
+    #[error("the channel has no Product Ads account for the owner")]
+    NoAccount,
+    #[error("a campaign needs a name")]
+    NoName,
+    #[error("a live campaign already has that name")]
+    NameTaken,
+    #[error("a campaign is set to run or to be paused")]
+    NotRunnable,
+    #[error("a daily budget is above zero cents, in the currency of the maximum")]
+    InvalidBudget,
+    #[error("the daily budget is above the Maximum Daily Budget of {}", .0.to_pt_br())]
+    AboveMaximumBudget(Money),
+    #[error("the Maximum Daily Budget is above zero")]
+    InvalidMaximum,
+    #[error("a Target ROAS goes from 1x to 35x")]
+    TargetOutOfRange,
+    #[error("no such campaign")]
+    UnknownCampaign,
+    #[error("the channel does not let the account manage campaigns by its API")]
+    NotManaged,
+    #[error("this campaign change is already on its way to the channel")]
+    Sending,
     #[error("the Product Ads hold a value this app cannot read: {0}")]
     Unreadable(String),
     #[error(transparent)]
@@ -527,22 +580,7 @@ impl ProductAds {
         now: Timestamp,
     ) -> Result<(), AdsError> {
         for campaign in campaigns {
-            on.execute(
-                "INSERT INTO marketing_ad_campaigns
-                     (id, channel_campaign_id, name, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-                 ON CONFLICT (sales_channel, channel_campaign_id) WHERE deleted_at IS NULL
-                 DO UPDATE SET name = excluded.name, status = excluded.status,
-                     updated_at = excluded.updated_at",
-                params![
-                    self.ids.next_id().to_string(),
-                    campaign.id.clone(),
-                    campaign.name.clone(),
-                    campaign.status.code(),
-                    stored(now)
-                ],
-            )
-            .await?;
+            write_campaign(on, self.ids.as_ref(), campaign, now).await?;
         }
         on.execute(
             "UPDATE marketing_ad_campaigns SET deleted_at = ?1, updated_at = ?1
@@ -641,32 +679,138 @@ impl ProductAds {
         Ok(days)
     }
 
-    async fn campaigns(&self) -> Result<BTreeMap<String, ChannelCampaign>, AdsError> {
-        let mut rows = self
-            .database
-            .connection()
-            .query(
-                "SELECT channel_campaign_id, name, status FROM marketing_ad_campaigns
-                 WHERE deleted_at IS NULL",
-                (),
-            )
-            .await?;
-        let mut campaigns = BTreeMap::new();
-        while let Some(row) = rows.next().await? {
-            let id: String = row.get(0)?;
-            let status: String = row.get(2)?;
-            campaigns.insert(
-                id.clone(),
-                ChannelCampaign {
-                    id,
-                    name: row.get(1)?,
-                    status: CampaignStatus::from_code(&status)
-                        .ok_or(AdsError::Unreadable(status))?,
-                },
-            );
+    /// The Products each campaign advertised in the days read, and all of
+    /// them together, each with the worst break-even of its listings.
+    /// `listings` say which Product each listing sells, as for
+    /// [`ProductAds::report`]; a listing the caller does not know is a
+    /// Product of its own, its break-even unknown.
+    pub async fn advertised_products(
+        &self,
+        listings: &[AdvertisedListing],
+    ) -> Result<AdvertisedProducts, AdsError> {
+        let mut by_campaign: BTreeMap<String, BTreeMap<String, CampaignProduct>> = BTreeMap::new();
+        let mut all: BTreeMap<String, CampaignProduct> = BTreeMap::new();
+        for row in self.days().await? {
+            let known = listings.iter().find(|known| known.listing == row.listing);
+            let key = known.map_or(&row.listing, |known| &known.product);
+            let product = CampaignProduct {
+                name: known.map_or_else(|| row.listing.clone(), |known| known.name.clone()),
+                break_even: known.and_then(|known| known.break_even),
+            };
+            if let Some(campaign) = &row.campaign {
+                add_product(
+                    by_campaign.entry(campaign.clone()).or_default(),
+                    key,
+                    &product,
+                );
+            }
+            add_product(&mut all, key, &product);
         }
-        Ok(campaigns)
+        Ok(AdvertisedProducts {
+            by_campaign: by_campaign
+                .into_iter()
+                .map(|(campaign, products)| (campaign, products.into_values().collect()))
+                .collect(),
+            all: all.into_values().collect(),
+        })
     }
+
+    async fn campaigns(&self) -> Result<BTreeMap<String, ChannelCampaign>, AdsError> {
+        Ok(read_campaigns(self.database.connection())
+            .await?
+            .into_iter()
+            .map(|campaign| (campaign.id.clone(), campaign))
+            .collect())
+    }
+}
+
+/// The owner's Product Ads account, as the last Sync read it.
+pub(crate) async fn ads_account(on: &Connection) -> Result<Option<String>, AdsError> {
+    Ok(
+        match load_single_row(on, SYNCS_TABLE, SYNCS_COLUMNS).await? {
+            Some(row) => row.get(0)?,
+            None => None,
+        },
+    )
+}
+
+/// Writes a campaign over the app's by the channel's id, with whatever the
+/// channel said of its budget, strategy and Target ROAS.
+pub(crate) async fn write_campaign(
+    on: &Connection,
+    ids: &dyn IdGenerator,
+    campaign: &ChannelCampaign,
+    now: Timestamp,
+) -> Result<(), AdsError> {
+    on.execute(
+        "INSERT INTO marketing_ad_campaigns
+             (id, channel_campaign_id, name, status, daily_budget, currency, strategy,
+              roas_target, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+         ON CONFLICT (sales_channel, channel_campaign_id) WHERE deleted_at IS NULL
+         DO UPDATE SET name = excluded.name, status = excluded.status,
+             daily_budget = excluded.daily_budget, currency = excluded.currency,
+             strategy = excluded.strategy, roas_target = excluded.roas_target,
+             updated_at = excluded.updated_at",
+        vec![
+            Value::Text(ids.next_id().to_string()),
+            Value::Text(campaign.id.clone()),
+            Value::Text(campaign.name.clone()),
+            Value::Text(campaign.status.code().into()),
+            optional_text(campaign.budget.map(|budget| budget.amount().to_string())),
+            optional_text(
+                campaign
+                    .budget
+                    .map(|budget| budget.currency().code().to_owned()),
+            ),
+            optional_text(campaign.strategy.map(|strategy| strategy.code().to_owned())),
+            optional_text(campaign.target.map(|target| target.ratio().to_string())),
+            Value::Text(stored(now)),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// The live campaigns, as the last Sync or send left them.
+pub(crate) async fn read_campaigns(on: &Connection) -> Result<Vec<ChannelCampaign>, AdsError> {
+    let mut rows = on
+        .query(
+            "SELECT channel_campaign_id, name, status, daily_budget, currency, strategy,
+                 roas_target
+             FROM marketing_ad_campaigns WHERE deleted_at IS NULL",
+            (),
+        )
+        .await?;
+    let mut campaigns = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let status: String = row.get(2)?;
+        let budget = match row.get::<Option<String>>(3)? {
+            Some(_) => Some(Money::new(row.decimal_at(3)?, row.currency_at(4)?)),
+            None => None,
+        };
+        let strategy = row
+            .get::<Option<String>>(5)?
+            .map(|code| CampaignStrategy::from_code(&code).ok_or(AdsError::Unreadable(code)))
+            .transpose()?;
+        let target = match row.get::<Option<String>>(6)? {
+            Some(text) => Some(Roas::new(row.decimal_at(6)?).ok_or(AdsError::Unreadable(text))?),
+            None => None,
+        };
+        campaigns.push(ChannelCampaign {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            status: CampaignStatus::from_code(&status).ok_or(AdsError::Unreadable(status))?,
+            budget,
+            strategy,
+            target,
+        });
+    }
+    Ok(campaigns)
+}
+
+fn optional_text(text: Option<String>) -> Value {
+    text.map_or(Value::Null, Value::Text)
 }
 
 /// One ad's day as kept.
@@ -675,6 +819,21 @@ struct StoredDay {
     day: NaiveDate,
     campaign: Option<String>,
     metrics: AdMetrics,
+}
+
+/// Puts `product` under `key`, the worst break-even of its listings
+/// winning: an unknown one leaves it unknown, as in a report.
+fn add_product(
+    products: &mut BTreeMap<String, CampaignProduct>,
+    key: &str,
+    product: &CampaignProduct,
+) {
+    match products.get_mut(key) {
+        Some(kept) => kept.break_even = kept.break_even.zip(product.break_even).map(worst),
+        None => {
+            products.insert(key.to_owned(), product.clone());
+        }
+    }
 }
 
 /// The break-even that asks more of the ads: none pays at all, or the

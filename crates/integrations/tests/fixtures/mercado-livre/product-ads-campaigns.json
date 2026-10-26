@@ -12,7 +12,7 @@
       "budget": 30,
       "currency_id": "BRL",
       "strategy": "PROFITABILITY",
-      "acos_target": 20,
+      "roas_target": 5,
       "channel": "marketplace",
       "date_created": "2026-09-01T10:00:00.000-03:00",
       "last_updated": "2026-10-01T08:15:00.000-03:00"
@@ -24,7 +24,7 @@
       "budget": 10,
       "currency_id": "BRL",
       "strategy": "VISIBILITY",
-      "acos_target": 35,
+      "roas_target": 2.86,
       "channel": "marketplace",
       "date_created": "2026-09-10T14:30:00.000-03:00",
       "last_updated": "2026-09-28T19:00:00.000-03:00"

@@ -1,14 +1,17 @@
-//! The owner's Product Ads, for marketing's port (ADR 0025): the account
-//! from `/advertising/advertisers?product_id=PADS`, its campaigns and each
-//! listing's metrics of a day through the Ad Groups search (ADR 0036), version
-//! 2 of the advertising API. Read only: campaigns are made and changed in
-//! Mercado Livre's own panel.
+//! The owner's Product Ads, for marketing's ports (ADR 0025, ADR 0036): the
+//! account from `/advertising/advertisers?product_id=PADS`, its campaigns
+//! and each listing's metrics of a day through the Ad Groups search, version
+//! 2 of the advertising API; and the campaigns the owner creates, changes,
+//! pauses and activates on their confirmed click.
 
 use chrono::NaiveDate;
-use mascate_kernel::{Currency, Money, PlatformError};
-use mascate_marketing::{AdMetrics, CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign};
-use rust_decimal::Decimal;
+use mascate_kernel::{Currency, Money, PlatformError, Roas};
+use mascate_marketing::{
+    AdMetrics, CampaignPlan, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
+    ChannelAds, ChannelCampaign,
+};
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::{Decimal, RoundingStrategy};
 use serde::de::DeserializeOwned;
 use serde_json::Number;
 
@@ -17,15 +20,15 @@ use super::answers::{
     decimal, whole_id,
 };
 use super::sales_channel::path_id;
-use super::{MercadoLivre, SITE};
+use super::{MercadoLivre, SITE, failed, number, read_json, text};
 
 /// Product Ads, among the advertising products (Brand Ads, Display...).
 const PRODUCT_ADS: &str = "PADS";
 
-/// The advertisers list answers in version 1, the Product Ads searches in
+/// The advertisers list answers in version 1, the rest of Product Ads in
 /// version 2.
 const ADVERTISERS_VERSION: (&str, &str) = ("Api-Version", "1");
-const SEARCH_VERSION: (&str, &str) = ("Api-Version", "2");
+const PRODUCT_ADS_VERSION: (&str, &str) = ("Api-Version", "2");
 
 /// Results per page of a search.
 const SEARCH_PAGE: u32 = 50;
@@ -68,17 +71,7 @@ impl ChannelAds for MercadoLivre {
             path_id(account)?
         );
         let found: Vec<AdCampaignAnswer> = self.search(&path, &[])?;
-        Ok(found
-            .into_iter()
-            .map(|campaign| {
-                let id = whole_id(&campaign.id);
-                ChannelCampaign {
-                    name: campaign.name.unwrap_or_else(|| format!("Campanha {id}")),
-                    status: status(campaign.status.as_deref()),
-                    id,
-                }
-            })
-            .collect())
+        Ok(found.into_iter().map(campaign).collect())
     }
 
     /// Mercado Livre removed the per-ad metrics search on 2026-05-30: the
@@ -127,7 +120,85 @@ impl ChannelAds for MercadoLivre {
     }
 }
 
+/// Mercado Livre documents these writes on its Global Selling page, with
+/// the `/marketplace` prefix; the app sends them with the prefix of the
+/// Brazilian reads, to be confirmed with the real account (ADR 0036).
+impl ChannelAdCampaigns for MercadoLivre {
+    fn create_campaign(
+        &self,
+        account: &str,
+        plan: &CampaignPlan,
+    ) -> Result<ChannelCampaign, PlatformError> {
+        let mut fields = plan_fields(plan)?;
+        fields.push(r#""channel":"marketplace""#.into());
+        self.manage(
+            Write::Post,
+            &format!(
+                "/advertising/{SITE}/advertisers/{}/product_ads/campaigns",
+                path_id(account)?
+            ),
+            &fields,
+        )
+    }
+
+    fn change_campaign(
+        &self,
+        campaign: &str,
+        plan: &CampaignPlan,
+    ) -> Result<ChannelCampaign, PlatformError> {
+        self.manage(Write::Put, &campaign_path(campaign)?, &plan_fields(plan)?)
+    }
+
+    fn set_campaign_status(
+        &self,
+        campaign: &str,
+        status: CampaignStatus,
+    ) -> Result<ChannelCampaign, PlatformError> {
+        self.manage(
+            Write::Put,
+            &campaign_path(campaign)?,
+            &[format!(r#""status":{}"#, text(status_code(status)?))],
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Write {
+    Post,
+    Put,
+}
+
 impl MercadoLivre {
+    /// The campaign Mercado Livre answers to writing `fields` to `path`. An
+    /// account it does not let manage campaigns by API answers 403 or 404,
+    /// both [`PlatformError::NotFound`] for marketing.
+    fn manage(
+        &self,
+        write: Write,
+        path: &str,
+        fields: &[String],
+    ) -> Result<ChannelCampaign, PlatformError> {
+        let body = format!("{{{}}}", fields.join(","));
+        let url = format!("{}{path}", self.api);
+        let response = self.answered(|bearer| {
+            let request = match write {
+                Write::Post => self.agent.post(&url),
+                Write::Put => self.agent.put(&url),
+            };
+            request
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Authorization", bearer)
+                .header(PRODUCT_ADS_VERSION.0, PRODUCT_ADS_VERSION.1)
+                .send(&body)
+        })?;
+        match response.status().as_u16() {
+            200 | 201 => read_json::<AdCampaignAnswer>(response).map(campaign),
+            403 | 404 => Err(PlatformError::NotFound),
+            _ => Err(failed(response, path)),
+        }
+    }
+
     /// Every result of a Product Ads search, page by page.
     fn search<T: DeserializeOwned>(
         &self,
@@ -141,7 +212,7 @@ impl MercadoLivre {
             let offset_text = offset.to_string();
             let mut asked: Vec<(&str, &str)> = vec![("limit", &limit), ("offset", &offset_text)];
             asked.extend_from_slice(query);
-            let page: AdsSearchAnswer<T> = self.get_with(path, &asked, &[SEARCH_VERSION])?;
+            let page: AdsSearchAnswer<T> = self.get_with(path, &asked, &[PRODUCT_ADS_VERSION])?;
             let read = u32::try_from(page.results.len()).unwrap_or(SEARCH_PAGE);
             results.extend(page.results);
             offset += read;
@@ -160,6 +231,72 @@ fn is_listing(group_type: Option<&str>) -> bool {
 
 fn spent_or_sold(metrics: &AdMetrics) -> bool {
     !metrics.cost.amount().is_zero() || !metrics.attributed.amount().is_zero()
+}
+
+fn campaign_path(campaign: &str) -> Result<String, PlatformError> {
+    Ok(format!(
+        "/advertising/{SITE}/product_ads/campaigns/{}",
+        path_id(campaign)?
+    ))
+}
+
+/// The whole plan as Mercado Livre takes it: the budget in reais rounded
+/// to cents, and the Target ROAS to the hundredth its answers carry.
+fn plan_fields(plan: &CampaignPlan) -> Result<Vec<String>, PlatformError> {
+    if plan.budget.currency() != CURRENCY {
+        return Err(PlatformError::Refused(
+            "Mercado Livre Brasil takes a campaign's budget in reais".into(),
+        ));
+    }
+    let target = plan
+        .target
+        .ratio()
+        .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+        .normalize();
+    Ok(vec![
+        format!(r#""name":{}"#, text(&plan.name)),
+        format!(r#""status":{}"#, text(status_code(plan.status)?)),
+        format!(r#""budget":{}"#, number(plan.budget)),
+        format!(r#""strategy":{}"#, text(plan.strategy.code())),
+        format!(r#""roas_target":{target}"#),
+    ])
+}
+
+/// A campaign is set to run or to be paused, nothing else.
+fn status_code(status: CampaignStatus) -> Result<&'static str, PlatformError> {
+    match status {
+        CampaignStatus::Active => Ok("active"),
+        CampaignStatus::Paused => Ok("paused"),
+        CampaignStatus::Other => Err(PlatformError::Refused(
+            "a campaign is set to active or paused".into(),
+        )),
+    }
+}
+
+/// A campaign as Mercado Livre reports it: one without a name gets one
+/// from its id; a budget, strategy or Target ROAS it leaves out or the app
+/// does not know is left unknown.
+fn campaign(answer: AdCampaignAnswer) -> ChannelCampaign {
+    let id = whole_id(&answer.id);
+    let currency = match answer.currency_id.as_deref() {
+        None => Some(CURRENCY),
+        Some(code) => Currency::from_code(code),
+    };
+    ChannelCampaign {
+        name: answer.name.unwrap_or_else(|| format!("Campanha {id}")),
+        status: status(answer.status.as_deref()),
+        budget: decimal(&answer.budget)
+            .zip(currency)
+            .map(|(amount, currency)| Money::new(amount, currency)),
+        strategy: answer
+            .strategy
+            .as_deref()
+            .and_then(CampaignStrategy::from_code),
+        target: decimal(&answer.roas_target)
+            .filter(|ratio| !ratio.is_zero())
+            .and_then(Roas::new),
+        id,
+    }
 }
 
 /// `active` and `paused`; anything else, as a campaign being set up, is

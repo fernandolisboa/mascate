@@ -12,20 +12,18 @@ use chrono::{Datelike, Local, Months, NaiveDate, TimeZone, Utc};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Div, Hsla, SharedString, Subscription, Window, div, px};
+use gpui_kit::{AnyElement, App, Div, Entity, Hsla, SharedString, Subscription, Window, div, px};
 use mascate_commerce::{FeeKind, OrderStatus, RealizedMargin, Sale, SalesPeriod, SalesSummary};
 use mascate_kernel::{Currency, Margin, Money, SalesChannelKind, Timestamp};
 use mascate_marketing::{AdMetrics, AdsReport, AdsSyncState, ProductRoas, SellerTool};
 
-use crate::ads::{self, AdsSyncs, ReportSources};
+use crate::ad_campaigns::AdCampaignsPanel;
+use crate::ads::{self, AdsSyncs};
 use crate::appearance::{Tokens, look};
 use crate::catalog::{self, NO_DATABASE};
-use crate::connections::AppConnections;
 use crate::forms::{Outcome, notice};
 use crate::kit;
 use crate::layout;
-use crate::listings::listings;
-use crate::mercado_livre;
 use crate::orders::{self, OrderSyncs, sold_text};
 use crate::parts::ScreenParts;
 use crate::pricing;
@@ -100,6 +98,7 @@ pub struct SalesScreen {
     period: Period,
     sold: SalesPeriod,
     ads: AdsView,
+    campaigns: Entity<AdCampaignsPanel>,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
@@ -107,7 +106,7 @@ pub struct SalesScreen {
 }
 
 impl SalesScreen {
-    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Each Order Sync brings new Orders and, after it, their Fees; each
         // Sync of Product Ads, what the ads cost.
         let subscriptions = vec![
@@ -121,6 +120,7 @@ impl SalesScreen {
                 unplaced_ads: Vec::new(),
             },
             ads: AdsView::Locked,
+            campaigns: cx.new(|cx| AdCampaignsPanel::new(window, cx)),
             reads: 0,
             outcome: None,
             _subscriptions: subscriptions,
@@ -193,27 +193,8 @@ impl SalesScreen {
     /// Sums up the period's Product Ads by campaign and by Product, each
     /// against its break-even on Mercado Livre's sale fees.
     fn read_ads(&mut self, last_sync: Option<AdsSyncState>, cx: &mut Context<Self>) {
-        let (Some(ads), Some(listings), Some(catalog), Some(pricing), Some(taxes)) = (
-            ads::product_ads(cx),
-            listings(cx),
-            catalog::catalog(cx),
-            pricing::pricing(cx),
-            pricing::taxes(cx),
-        ) else {
+        let Some(sources) = ads::report_sources(cx) else {
             return;
-        };
-        let connected = cx
-            .global::<AppConnections>()
-            .0
-            .state(mascate_integrations::Connection::MercadoLivre)
-            == mascate_integrations::ConnectionState::Connected;
-        let sources = ReportSources {
-            ads,
-            listings,
-            catalog,
-            pricing,
-            taxes,
-            channel: mercado_livre::adapter(cx).filter(|_| connected),
         };
         let during = self.period.range(Local::now().date_naive());
         let read = self.reads;
@@ -463,12 +444,12 @@ impl SalesScreen {
         let read = match last_sync {
             Some(last) if !last.account => format!(
                 "O Mercado Livre não tem uma conta de Product Ads para você (lido em {}). \
-                 Campanhas se criam no painel do Mercado Livre.",
+                 Ative o Product Ads em Minha conta › Publicidade no Mercado Livre para criar \
+                 campanhas aqui.",
                 catalog::day_and_time(last.at)
             ),
             Some(last) => format!(
-                "Lido uma vez por dia, até ontem; último Sync: {}. Campanhas se criam e mudam no \
-                 painel do Mercado Livre.",
+                "Lido uma vez por dia, até ontem; último Sync: {}.",
                 catalog::day_and_time(last.at)
             ),
             None => "O Product Ads é lido uma vez por dia depois do Sync de pedidos.".into(),
@@ -476,6 +457,10 @@ impl SalesScreen {
         let mut column = v_flex()
             .gap_3()
             .child(div().text_sm().text_color(t.text2).child(read));
+        // Campaigns are managed with the account a Sync found.
+        let campaigns = last_sync
+            .is_some_and(|last| last.account)
+            .then(|| self.campaigns.clone());
         let Some(total) = &report.total else {
             return column
                 .child(
@@ -484,6 +469,7 @@ impl SalesScreen {
                         .text_color(t.text2)
                         .child("Nenhum anúncio patrocinado com custo neste período."),
                 )
+                .children(campaigns)
                 .into_any_element();
         };
         column = column.child(
@@ -536,7 +522,7 @@ impl SalesScreen {
             });
             column = column.child(v_flex().gap_2().child(header).children(rows));
         }
-        column.into_any_element()
+        column.children(campaigns).into_any_element()
     }
 }
 

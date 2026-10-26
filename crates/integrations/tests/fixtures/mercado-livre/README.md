@@ -59,7 +59,10 @@ conta de vendedor do Fernando.
 | `seller-promotion-created.json` | `POST /seller-promotions/promotions?app_version=v2` (e a resposta do `PUT` da mesma campanha) | Campanhas do vendedor |
 | `seller-promotion-item-joined.json`, `error-400-promotion.json` | `POST /seller-promotions/items/{id}?app_version=v2` e o preço recusado (400, `ERROR_CREDIBILITY_DISCOUNTED_PRICE`) | Desconto individual; Campanhas tradicionais |
 | `advertisers-pads.json`, `advertisers-empty.json` | `GET /advertising/advertisers?product_id=PADS` com `Api-Version: 1`: o anunciante do vendedor, e um vendedor sem Product Ads | Product Ads (leitura): Consultar anunciante |
-| `product-ads-campaigns.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/campaigns/search` com `api-version: 2`: campanha ativa, pausada e uma sem nome | Product Ads (leitura): Buscar campanhas de anunciante |
+| `product-ads-campaigns.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/campaigns/search` com `api-version: 2`: campanha ativa, pausada e uma sem nome, com `budget`, `currency_id`, `strategy` e `roas_target` | Product Ads (leitura): Buscar campanhas de anunciante |
+| `product-ads-campaign-created.json`, `product-ads-campaigns-after-create.json` | `POST /advertising/MLB/advertisers/{id}/product_ads/campaigns` com `api-version: 2` (#180) e a busca de campanhas depois dele, já com a nova | Product Ads: Criar campanha |
+| `product-ads-campaign-351-changed.json`, `product-ads-campaign-351-paused.json` | `PUT /advertising/MLB/product_ads/campaigns/{id}` com `api-version: 2`: novo orçamento, estratégia e ROAS objetivo, e só `status: paused` | Product Ads: Modificar campanha |
+| `error-403-product-ads-campaigns.json`, `error-400-product-ads-budget.json` | o mesmo `POST` de uma conta que não gerencia campanhas pela API (403) e um orçamento abaixo do mínimo do site (400, `cause` inventado) | Product Ads / erros |
 | `product-ads-ad-groups-2026-10-03.json`, `product-ads-ad-groups-2026-10-03-end.json`, `product-ads-ad-groups-empty.json` | `GET /advertising/MLB/advertisers/{id}/product_ads/ad_groups/search?date_from=...&date_to=...&metrics=...` com `api-version: 2` de um dia, em duas páginas (`offset`): dois Ad Groups `ITEM` (um sem `total_amount`), uma `FAMILY` que gastou, uma `FAMILY` sem custo nem venda e um `CATALOG` que vendeu sem gastar; e um dia sem Ad Groups | Product Ads para catálogo e user products (leitura): Detalhes e métricas de Ad Group por advertiser |
 | `product-ads-ad-group-1406300002-ads-2026-10-03.json`, `product-ads-ad-group-1406300005-ads-2026-10-03.json` | `GET /advertising/MLB/product_ads/ad_groups/{id}/ads?date_from=...&date_to=...&metrics=...` com `api-version: 2`: as duas variações da família, cada uma com as suas métricas, e o anúncio do produto de catálogo | Product Ads para catálogo e user products (leitura): Métricas dos anúncios pertencentes ao Ad Group |
 | `error-404-no-product-ads.json` | `GET /advertising/advertisers?product_id=PADS` de um usuário sem Product Ads: 404 "No permissions found for user_id" | Product Ads para catálogo e user products (leitura): Consultar anunciante (Nota) |
@@ -229,6 +232,18 @@ recursos vizinhos (conferir no regression pass):
   soma das variações bate com o grupo da família, se um mesmo Listing aparece em mais de um grupo,
   quantos dias depois do clique uma venda ainda é atribuída (o app relê os últimos 7), e a
   resposta para um vendedor sem Product Ads.
+- Campanhas de Product Ads (#180): criar e modificar seguem a página "Product Ads: campanhas"
+  (Global Selling, consultada em 26/10/2026): o `POST` leva `name`, `status` (`active` ou
+  `paused`), `budget`, `strategy` (`profitability`, `increase` ou `visibility`), `channel:
+  "marketplace"` e `roas_target` de 1 a 35; o `PUT` leva só o que muda. A resposta devolve a
+  estratégia em maiúsculas, `currency_id` e `budget`, e `roas_target` com casas decimais
+  (`15.38` no exemplo). Os exemplos da página usam o prefixo `/marketplace/advertising/$SITE`; o
+  app usa `/advertising/MLB`, o mesmo da leitura, e o orçamento vai arredondado em centavos. Um
+  403 ou 404 na escrita quer dizer que a conta não gerencia campanhas pela API: o app mostra o
+  caminho no painel e a leitura continua. Os corpos de erro foram completados no formato dos
+  outros erros; ids, nomes e valores são inventados. Conferir no regression pass: se os
+  endpoints de escrita respondem no MLB, qual prefixo vale, se `roas_target` aceita decimais e
+  qual é o orçamento mínimo diário.
 | `order-2000009876543210.json`, `order-2000009876543300.json`, `order-2000009876543500.json` | `GET /orders/{id}` com os pagamentos (`payments[].id` e `status`): um aprovado e um estornado, dois aprovados, um aprovado | Gerenciamento de vendas (Consultar pedido); Pagamentos |
 | `mp-payment-91000000001.json`, `mp-payment-91000000002.json`, `mp-payment-91000000004.json`, `mp-payment-91000000005.json` | `GET https://api.mercadopago.com/v1/payments/{id}` com o login do Mercado Livre: dinheiro a liberar com data (`money_release_status: pending`, `money_release_date`), já liberado, pagamento estornado depois do pedido, e a liberar sem data nem `net_received_amount` | Mercado Pago: Obter pagamento (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`); Mercado Livre: Valores para emissão de nota fiscal |
 | `pricing-automation-rules.json`, `pricing-automation-rules-int.json` | `GET /pricing-automation/items/{id}/rules` (Automatic Repricing, #135): um item com `INT` e `INT_EXT` e outro só com `INT` | Automatizações de preços (pt_br e es_ar, consultadas em 16/10/2026) |
