@@ -65,22 +65,35 @@ pub(crate) struct ListingProduct {
     pub open: bool,
 }
 
-/// The Mercado Livre Listings: the only ones questions, Reputation and
-/// Product Ads read, which only Mercado Livre offers by API (ADR 0033).
-pub(crate) async fn mercado_livre_listings(listings: &Listings) -> Result<Vec<Listing>, String> {
+/// The Listings on `kind`.
+pub(crate) async fn channel_listings(
+    listings: &Listings,
+    kind: SalesChannelKind,
+) -> Result<Vec<Listing>, String> {
     Ok(listings
         .listings()
         .await
         .map_err(|e| failure(&e))?
         .into_iter()
-        .filter(|listing| listing.channel == SalesChannelKind::MercadoLivre)
+        .filter(|listing| listing.channel == kind)
         .collect())
 }
 
-/// What each Mercado Livre listing sells, by the channel's id.
+/// What each Mercado Livre listing sells, by the channel's id: the only
+/// ones questions and Reputation read, which only Mercado Livre offers by
+/// API (ADR 0033).
 pub(crate) async fn listing_products(
     listings: &Listings,
     catalog: &Catalog,
+) -> Result<std::collections::BTreeMap<String, ListingProduct>, String> {
+    listing_products_on(listings, catalog, SalesChannelKind::MercadoLivre).await
+}
+
+/// What each listing on `kind` sells, by the channel's id.
+pub(crate) async fn listing_products_on(
+    listings: &Listings,
+    catalog: &Catalog,
+    kind: SalesChannelKind,
 ) -> Result<std::collections::BTreeMap<String, ListingProduct>, String> {
     let products: std::collections::BTreeMap<RecordId, String> = catalog
         .products()
@@ -90,7 +103,7 @@ pub(crate) async fn listing_products(
         .map(|product| (product.id, product.name))
         .collect();
     let mut sold = std::collections::BTreeMap::new();
-    for listing in mercado_livre_listings(listings).await? {
+    for listing in channel_listings(listings, kind).await? {
         let open = listing.listed.status != ListingStatus::Closed;
         let linked = listing
             .product

@@ -12,7 +12,9 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Entity, SharedString, Subscription, Task, Window, div, px};
-use mascate_kernel::{BreakEven, Currency, Money, PlatformError, Roas, parse_amount};
+use mascate_kernel::{
+    BreakEven, Currency, Money, PlatformError, Roas, SalesChannelKind, parse_amount,
+};
 use mascate_marketing::{
     AdsError, AdvertisedProducts, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct,
     CampaignRequest, CampaignStatus, CampaignStrategy, ChannelCampaign, ConfirmedCampaign,
@@ -90,9 +92,11 @@ impl AdCampaignsPanel {
     /// Reads the campaigns, the Maximum Daily Budget and the Products each
     /// campaign advertised again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let (Some(campaigns), Some(sources), Some(reputation)) =
-            (ad_campaigns(cx), report_sources(cx), reputation(cx))
-        else {
+        let (Some(campaigns), Some(sources), Some(reputation)) = (
+            ad_campaigns(cx),
+            report_sources(cx, SalesChannelKind::MercadoLivre),
+            reputation(cx),
+        ) else {
             return;
         };
         self.reads += 1;

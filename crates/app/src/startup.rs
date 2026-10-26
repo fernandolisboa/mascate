@@ -9,7 +9,7 @@ use mascate_commerce::{
 };
 use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
-use mascate_kernel::{SystemClock, UuidV7Generator};
+use mascate_kernel::{SalesChannelKind, SystemClock, UuidV7Generator};
 use mascate_marketing::{
     AdCampaigns, ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
     ReplyTemplates, Reputation, SalesEvents,
@@ -331,6 +331,7 @@ pub fn prepare() -> Outcome {
                 database.clone(),
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
+                SalesChannelKind::MercadoLivre,
             );
             let reply_templates = ReplyTemplates::new(
                 database.clone(),
@@ -727,6 +728,10 @@ mod tests {
     struct SampleAds;
 
     impl ChannelAds for SampleAds {
+        fn advertised_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+
         fn account(&self) -> Result<Option<String>, PlatformError> {
             Ok(Some("1".into()))
         }
@@ -1662,7 +1667,22 @@ mod tests {
                 let costs = ads.costs().await.unwrap();
                 assert!(!costs.is_empty(), "{name}");
                 assert!(
-                    costs.iter().all(|day| day.listing == sample_listing().id),
+                    costs.iter().all(|day| day.listing == sample_listing().id
+                        && day.channel == SalesChannelKind::MercadoLivre),
+                    "{name}"
+                );
+                // Each channel's ads Sync arrived after 0.5.0: the one kept
+                // was Mercado Livre's.
+                assert!(
+                    ads.last_sync(SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap()
+                        .is_some(),
+                    "{name}"
+                );
+                assert_eq!(
+                    ads.last_sync(SalesChannelKind::Shopee).await.unwrap(),
+                    None,
                     "{name}"
                 );
                 // Ad Campaign settings arrived after 0.5.0: the next Sync
@@ -1672,6 +1692,7 @@ mod tests {
                     database.clone(),
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
+                    SalesChannelKind::MercadoLivre,
                 );
                 assert_eq!(
                     campaigns.campaigns().await.unwrap(),

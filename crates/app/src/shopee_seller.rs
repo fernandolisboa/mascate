@@ -253,6 +253,7 @@ mod tests {
                 repricing: None,
                 quality: None,
                 promotions: None,
+                ads: None,
             }
         }
 

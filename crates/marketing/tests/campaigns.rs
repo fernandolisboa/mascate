@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{BreakEven, Currency, Margin, Money, PlatformError, Roas};
+use mascate_kernel::{BreakEven, Currency, Margin, Money, PlatformError, Roas, SalesChannelKind};
 use mascate_marketing::{
     AdCampaigns, AdState, AdStatus, AdsError, BudgetSpend, CampaignChange, CampaignPlan,
     CampaignProduct, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
@@ -129,6 +129,10 @@ impl Channel {
 }
 
 impl ChannelAds for Channel {
+    fn advertised_channel(&self) -> SalesChannelKind {
+        SalesChannelKind::MercadoLivre
+    }
+
     fn account(&self) -> Result<Option<String>, PlatformError> {
         Ok(Some("8823".into()))
     }
@@ -248,7 +252,12 @@ impl Fixture {
             .unwrap();
         Self {
             ads: ProductAds::new(database.clone(), clock.clone(), ids.clone()),
-            campaigns: Arc::new(AdCampaigns::new(database, clock.clone(), ids)),
+            campaigns: Arc::new(AdCampaigns::new(
+                database,
+                clock.clone(),
+                ids,
+                SalesChannelKind::MercadoLivre,
+            )),
             _dir: dir,
             clock,
             channel: Arc::new(Channel::new()),

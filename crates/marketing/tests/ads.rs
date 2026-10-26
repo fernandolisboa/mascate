@@ -12,7 +12,8 @@ use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{
-    BreakEven, Currency, Margin, Money, PlatformError, Timestamp, channel_day_start,
+    BreakEven, Currency, Margin, Money, PlatformError, SalesChannelKind, Timestamp,
+    channel_day_start,
 };
 use mascate_marketing::{
     ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState,
@@ -22,6 +23,9 @@ use mascate_marketing::{
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
+
+const ML: SalesChannelKind = SalesChannelKind::MercadoLivre;
+const SHOPEE: SalesChannelKind = SalesChannelKind::Shopee;
 
 fn brl(amount: &str) -> Money {
     Money::new(Decimal::from_str(amount).unwrap(), Currency::Brl)
@@ -74,9 +78,10 @@ fn advertised(listing: &str, product: &str, break_even: Option<BreakEven>) -> Ad
     }
 }
 
-/// A channel answering from memory.
+/// A channel answering from memory: Mercado Livre, unless it is Shopee.
 #[derive(Default)]
 struct Channel {
+    shopee: bool,
     account: Mutex<Option<String>>,
     campaigns: Mutex<Vec<ChannelCampaign>>,
     days: Mutex<BTreeMap<NaiveDate, Vec<ChannelAd>>>,
@@ -95,6 +100,20 @@ impl Channel {
         channel
     }
 
+    fn shopee_with_account() -> Self {
+        let channel = Self {
+            shopee: true,
+            ..Self::default()
+        };
+        *channel.account.lock().unwrap() = Some("8823".into());
+        *channel.campaigns.lock().unwrap() = vec![ChannelCampaign::named(
+            "351",
+            "Fone na Shopee",
+            CampaignStatus::Active,
+        )];
+        channel
+    }
+
     fn reports(&self, day: NaiveDate, ads: Vec<ChannelAd>) {
         self.days.lock().unwrap().insert(day, ads);
     }
@@ -105,6 +124,10 @@ impl Channel {
 }
 
 impl ChannelAds for Channel {
+    fn advertised_channel(&self) -> SalesChannelKind {
+        if self.shopee { SHOPEE } else { ML }
+    }
+
     fn account(&self) -> Result<Option<String>, PlatformError> {
         Ok(self.account.lock().unwrap().clone())
     }
@@ -182,21 +205,21 @@ fn october() -> std::ops::Range<Timestamp> {
 fn without_a_product_ads_account_nothing_is_read_and_nothing_kept() {
     block_on(async {
         let fx = Fixture::new(Channel::default()).await;
-        assert!(fx.ads.is_due().await.unwrap());
+        assert!(fx.ads.is_due(ML).await.unwrap());
 
         assert_eq!(fx.sync().await, AdsSync::default());
 
         assert!(fx.channel.asked().is_empty());
         assert_eq!(
-            fx.ads.last_sync().await.unwrap(),
+            fx.ads.last_sync(ML).await.unwrap(),
             Some(AdsSyncState {
                 at: noon(),
                 account: false
             })
         );
         assert!(fx.ads.costs().await.unwrap().is_empty());
-        assert_eq!(fx.ads.report(ever(), &[]).await.unwrap().total, None);
-        assert!(!fx.ads.is_due().await.unwrap());
+        assert_eq!(fx.ads.report(ML, ever(), &[]).await.unwrap().total, None);
+        assert!(!fx.ads.is_due(ML).await.unwrap());
     });
 }
 
@@ -234,11 +257,13 @@ fn the_first_sync_reads_two_months_back_to_yesterday_and_keeps_each_ad_by_day() 
             fx.ads.costs().await.unwrap(),
             [
                 AdDay {
+                    channel: ML,
                     listing: "MLB1".into(),
                     day: on(9, 28),
                     cost: brl("8.10"),
                 },
                 AdDay {
+                    channel: ML,
                     listing: "MLB1".into(),
                     day: on(10, 3),
                     cost: brl("12.40"),
@@ -260,7 +285,7 @@ fn a_sync_a_day_later_reads_back_the_days_a_sale_can_still_reach_and_changes_not
         );
         fx.sync().await;
         fx.channel.asked();
-        let before = fx.ads.report(ever(), &[]).await.unwrap();
+        let before = fx.ads.report(ML, ever(), &[]).await.unwrap();
 
         // The channel attributes a sale to the click of the 3rd, and reports
         // the 5th.
@@ -271,7 +296,7 @@ fn a_sync_a_day_later_reads_back_the_days_a_sale_can_still_reach_and_changes_not
         fx.channel
             .reports(on(10, 5), vec![ad("MLB2", "352", metrics("3.30", "0", 4))]);
         fx.later(TimeDelta::days(1));
-        assert!(fx.ads.is_due().await.unwrap());
+        assert!(fx.ads.is_due(ML).await.unwrap());
         fx.sync().await;
 
         let asked = fx.channel.asked();
@@ -279,7 +304,7 @@ fn a_sync_a_day_later_reads_back_the_days_a_sale_can_still_reach_and_changes_not
         assert_eq!(asked.len(), settle + 1);
         assert_eq!(asked[0], on(10, 4) - TimeDelta::days(ADS_SETTLE_DAYS - 1));
         assert_eq!(asked.last(), Some(&on(10, 5)));
-        let after = fx.ads.report(ever(), &[]).await.unwrap();
+        let after = fx.ads.report(ML, ever(), &[]).await.unwrap();
         let total = after.total.unwrap();
         assert_eq!(
             total.cost,
@@ -310,12 +335,12 @@ fn reading_the_same_days_again_keeps_the_same_ads() {
             ],
         );
         fx.sync().await;
-        let first = fx.ads.report(ever(), &[]).await.unwrap();
+        let first = fx.ads.report(ML, ever(), &[]).await.unwrap();
 
         fx.later(TimeDelta::minutes(5));
         fx.sync().await;
 
-        assert_eq!(fx.ads.report(ever(), &[]).await.unwrap(), first);
+        assert_eq!(fx.ads.report(ML, ever(), &[]).await.unwrap(), first);
         assert_eq!(fx.ads.costs().await.unwrap().len(), 2);
     });
 }
@@ -341,6 +366,7 @@ fn an_ad_the_channel_no_longer_reports_for_a_day_is_gone() {
         assert_eq!(
             fx.ads.costs().await.unwrap(),
             [AdDay {
+                channel: ML,
                 listing: "MLB1".into(),
                 day: on(10, 2),
                 cost: brl("4.20"),
@@ -361,7 +387,7 @@ fn a_day_that_fails_to_read_keeps_nothing_of_the_sync() {
 
         assert!(failed.is_err());
         assert!(fx.ads.costs().await.unwrap().is_empty());
-        assert_eq!(fx.ads.last_sync().await.unwrap(), None);
+        assert_eq!(fx.ads.last_sync(ML).await.unwrap(), None);
     });
 }
 
@@ -392,7 +418,7 @@ fn a_report_sums_the_period_by_campaign_and_by_product_losers_first() {
             advertised("MLB2", "cabo", Some(break_even("20"))),
         ];
 
-        let report = fx.ads.report(october(), &listings).await.unwrap();
+        let report = fx.ads.report(ML, october(), &listings).await.unwrap();
 
         let total = report.total.unwrap();
         assert_eq!(total.cost, brl("41.00"));
@@ -444,6 +470,91 @@ fn a_report_sums_the_period_by_campaign_and_by_product_losers_first() {
     });
 }
 
+#[test]
+fn each_sales_channel_keeps_its_own_sync_ads_and_campaigns() {
+    block_on(async {
+        let fx = Fixture::new(Channel::with_account()).await;
+        let shopee = Channel::shopee_with_account();
+        fx.channel
+            .reports(on(10, 2), vec![ad("1001", "351", metrics("4.00", "0", 7))]);
+        // The same ids on Shopee are other listings and another campaign.
+        shopee.reports(
+            on(10, 2),
+            vec![ad("1001", "351", metrics("6.50", "39.90", 12))],
+        );
+        fx.sync().await;
+        fx.later(TimeDelta::minutes(5));
+
+        let synced = fx.ads.sync(&shopee).await.unwrap();
+
+        assert!(synced.account);
+        assert_eq!(synced.ads, 1);
+        assert_eq!(
+            fx.ads.costs().await.unwrap(),
+            [
+                AdDay {
+                    channel: ML,
+                    listing: "1001".into(),
+                    day: on(10, 2),
+                    cost: brl("4.00"),
+                },
+                AdDay {
+                    channel: SHOPEE,
+                    listing: "1001".into(),
+                    day: on(10, 2),
+                    cost: brl("6.50"),
+                },
+            ]
+        );
+        let on_shopee = fx.ads.report(SHOPEE, october(), &[]).await.unwrap();
+        assert_eq!(on_shopee.total.unwrap().cost, brl("6.50"));
+        assert_eq!(
+            on_shopee.campaigns[0].campaign.as_ref().unwrap().name,
+            "Fone na Shopee"
+        );
+        let on_ml = fx.ads.report(ML, october(), &[]).await.unwrap();
+        assert_eq!(on_ml.total.unwrap().cost, brl("4.00"));
+        assert_eq!(on_ml.campaigns[0].campaign.as_ref().unwrap().name, "Fones");
+        assert_eq!(
+            fx.ads.last_sync(ML).await.unwrap().unwrap().at,
+            noon(),
+            "Shopee's Sync leaves Mercado Livre's as it was"
+        );
+        assert!(!fx.ads.is_due(SHOPEE).await.unwrap());
+    });
+}
+
+#[test]
+fn a_shop_without_ads_permission_writes_nothing_and_leaves_the_other_channel_alone() {
+    block_on(async {
+        let fx = Fixture::new(Channel::with_account()).await;
+        fx.channel
+            .reports(on(10, 2), vec![ad("MLB1", "351", metrics("4.00", "0", 7))]);
+        fx.sync().await;
+        let shopee = Channel {
+            shopee: true,
+            ..Channel::default()
+        };
+
+        assert_eq!(fx.ads.sync(&shopee).await.unwrap(), AdsSync::default());
+
+        assert!(shopee.asked().is_empty());
+        assert_eq!(
+            fx.ads.last_sync(SHOPEE).await.unwrap(),
+            Some(AdsSyncState {
+                at: noon(),
+                account: false
+            })
+        );
+        assert_eq!(
+            fx.ads.report(SHOPEE, ever(), &[]).await.unwrap().total,
+            None
+        );
+        assert_eq!(fx.ads.costs().await.unwrap().len(), 1);
+        assert!(fx.ads.last_sync(ML).await.unwrap().unwrap().account);
+    });
+}
+
 /// A Product's ads in a period, as a report sums them up.
 fn product(cost: &str, attributed: &str, break_even: Option<BreakEven>) -> ProductRoas {
     ProductRoas {
@@ -492,7 +603,7 @@ fn each_campaigns_products_carry_the_worst_break_even_of_their_listings() {
             advertised("MLB2", "cabo", Some(break_even("20"))),
         ];
 
-        let advertised = fx.ads.advertised_products(&listings).await.unwrap();
+        let advertised = fx.ads.advertised_products(ML, &listings).await.unwrap();
 
         let fone = CampaignProduct {
             name: "Produto fone".into(),
@@ -528,6 +639,7 @@ fn ads_that_spend_on_a_product_losing_before_ads_always_lose() {
         let report = fx
             .ads
             .report(
+                ML,
                 october(),
                 &[advertised("MLB1", "fone", Some(BreakEven::Never))],
             )
@@ -580,7 +692,7 @@ proptest! {
                 advertised("MLB1", "fone", None),
             ];
 
-            let report = fx.ads.report(october(), &listings).await.unwrap();
+            let report = fx.ads.report(ML, october(), &listings).await.unwrap();
 
             if let Some(total) = report.total {
                 let products = Money::sum(

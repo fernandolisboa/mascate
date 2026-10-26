@@ -1,7 +1,8 @@
 //! A database from before Sales Channels in Marketing (v10) moved to this
 //! version: every Listing Quality, question, Review and Product Ads row it
-//! had stays as it was, on Mercado Livre, and the next Mercado Livre Sync
-//! updates those rows instead of adding new ones (ADR 0033).
+//! had stays as it was, on Mercado Livre, its Product Ads Sync included
+//! (#183), and the next Mercado Livre Sync updates those rows instead of
+//! adding new ones (ADR 0033).
 
 use std::sync::Arc;
 
@@ -58,7 +59,12 @@ const BEFORE_SALES_CHANNELS: &str = "
          created_at, updated_at)
         VALUES ('00000000-0000-7000-8000-000000000008', 'MLB1', '2026-10-01', '1', '2.50',
                 '0', 'BRL', 3, 120, 0, '2026-10-01T12:00:00+00:00',
-                '2026-10-01T12:00:00+00:00');";
+                '2026-10-01T12:00:00+00:00');
+    INSERT INTO marketing_ads_syncs
+        (id, account, read_through, synced_at, created_at, updated_at)
+        VALUES ('00000000-0000-7000-8000-000000000009', '8823', '2026-10-01',
+                '2026-10-02T12:00:00+00:00', '2026-10-02T12:00:00+00:00',
+                '2026-10-02T12:00:00+00:00');";
 
 /// Mercado Livre rating MLB1 as before.
 struct MercadoLivre;
@@ -171,18 +177,28 @@ fn every_row_from_before_sales_channels_stays_as_it_was_on_mercado_livre() {
         assert_eq!(low[0].listing, "MLB1");
         assert_eq!(low[0].review.id, "52001");
 
-        let costs =
-            mascate_marketing::ProductAds::new(database.clone(), clock.clone(), ids.clone())
-                .costs()
-                .await
-                .unwrap();
+        let ads = mascate_marketing::ProductAds::new(database.clone(), clock.clone(), ids.clone());
+        let costs = ads.costs().await.unwrap();
         assert_eq!(costs.len(), 1);
+        assert_eq!(costs[0].channel, SalesChannelKind::MercadoLivre);
         assert_eq!(costs[0].listing, "MLB1");
         assert_eq!(costs[0].day, NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         assert_eq!(
             costs[0].cost,
             Money::new(Decimal::new(250, 2), Currency::Brl)
         );
+
+        let synced = ads
+            .last_sync(SalesChannelKind::MercadoLivre)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(synced.account);
+        assert_eq!(
+            synced.at,
+            Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap()
+        );
+        assert_eq!(ads.last_sync(SalesChannelKind::Shopee).await.unwrap(), None);
 
         // Mercado Livre's next Sync finds the row it had.
         quality

@@ -696,3 +696,90 @@ pub(super) struct PromotionOnItem {
 pub(super) struct PromotionPrice {
     pub promotion_price: Option<serde_json::Number>,
 }
+
+/// One page of `ads/get_product_level_campaign_id_list`.
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignIds {
+    #[serde(default)]
+    pub campaign_list: Vec<AdCampaignId>,
+    #[serde(default)]
+    pub has_next_page: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignId {
+    #[serde(deserialize_with = "numeric_id")]
+    pub campaign_id: String,
+}
+
+/// `ads/get_product_level_campaign_setting_info`.
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignSettings {
+    #[serde(default)]
+    pub campaign_list: Vec<AdCampaignSetting>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignSetting {
+    #[serde(deserialize_with = "numeric_id")]
+    pub campaign_id: String,
+    pub common_info: Option<AdCampaignCommon>,
+    pub auto_bidding_info: Option<AdAutoBidding>,
+    /// The products Shopee picked for a campaign with automatic selection.
+    #[serde(default)]
+    pub auto_product_ads_info: Vec<AdAutoProduct>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignCommon {
+    pub ad_name: Option<String>,
+    /// `ongoing`, `scheduled`, `ended`, `paused`, `deleted` or `closed`.
+    pub campaign_status: Option<String>,
+    #[serde(default)]
+    pub item_id_list: Vec<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdAutoBidding {
+    pub roas_target: Option<serde_json::Number>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdAutoProduct {
+    pub item_id: u64,
+}
+
+/// One shop of `ads/get_product_campaign_daily_performance`, whose
+/// `response` is a list.
+#[derive(Debug, Deserialize)]
+pub(super) struct AdShopPerformance {
+    /// `BR` for a Brazilian shop.
+    pub region: Option<String>,
+    #[serde(default)]
+    pub campaign_list: Vec<AdCampaignPerformance>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AdCampaignPerformance {
+    #[serde(deserialize_with = "numeric_id")]
+    pub campaign_id: String,
+    #[serde(default)]
+    pub metrics_list: Vec<AdDayMetrics>,
+}
+
+/// A campaign's day. Shopee counts a sale within 7 days of a click; the
+/// broad figures take the shop's other products bought after it too.
+#[derive(Debug, Deserialize)]
+pub(super) struct AdDayMetrics {
+    /// `DD-MM-YYYY`.
+    pub date: String,
+    #[serde(default)]
+    pub impression: u64,
+    #[serde(default)]
+    pub clicks: u64,
+    pub expense: Option<serde_json::Number>,
+    pub broad_gmv: Option<serde_json::Number>,
+    /// Units the attributed sales sold.
+    #[serde(default)]
+    pub broad_order_amount: u64,
+}

@@ -6,12 +6,14 @@
 //! (#130), and their Fees and money from the escrow; it arranges an Order's
 //! shipment and prints its label (#131); it publishes a draft, with its
 //! variations as models (#132); it reads the shop's listings with issues and
-//! its performance, and runs the owner's discounts (#136). Every call is signed with
+//! its performance, and runs the owner's discounts (#136); it reads what Shopee Ads
+//! cost each Listing (#183). Every call is signed with
 //! HMAC-SHA256 of the partner key; the shop's login comes from Shopee's
 //! authorization page and its refresh token is single use. Shopee has no fee
 //! estimate, so the sale fee is its published table. Separate from Shopee
 //! Afiliados, which is another API with other keys.
 
+mod ads;
 mod answers;
 mod escrow;
 mod labels;
@@ -320,7 +322,17 @@ impl ShopeeSeller {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, PlatformError> {
-        self.signed(path, BACKOFF, attempt, |common| {
+        self.get_reading(path, query, attempt)
+    }
+
+    /// Shopee's answer to `GET path` with `query`, as `read` makes it out.
+    fn get_reading<T>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        read: impl Fn(ureq::http::Response<ureq::Body>, &str) -> Attempt<T>,
+    ) -> Result<T, PlatformError> {
+        self.signed(path, BACKOFF, read, |common| {
             let mut request = self
                 .agent
                 .get(format!("{}{path}", self.api))

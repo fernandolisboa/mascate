@@ -11,7 +11,7 @@ use chrono::{NaiveDate, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, PlatformError, Roas, Timestamp};
+use mascate_kernel::{Currency, Money, PlatformError, Roas, SalesChannelKind, Timestamp};
 use mascate_marketing::{
     ADS_HISTORY_DAYS, AdCampaigns, AdChange, AdDay, AdGroupKind, AdMetrics, AdState, AdStatus,
     AdsError, CampaignPlan, CampaignStatus, CampaignStrategy, ChannelAd, ChannelAdCampaigns,
@@ -451,7 +451,7 @@ impl Synced {
             Self {
                 _dir: dir,
                 ads: ProductAds::new(database.clone(), clock.clone(), ids.clone()),
-                campaigns: AdCampaigns::new(database, clock, ids),
+                campaigns: AdCampaigns::new(database, clock, ids, SalesChannelKind::MercadoLivre),
                 fake,
             }
         })
@@ -470,6 +470,7 @@ fn october_3_costs() -> Vec<AdDay> {
     let mut costs: Vec<AdDay> = october_3_ads()
         .into_iter()
         .map(|ad| AdDay {
+            channel: SalesChannelKind::MercadoLivre,
             listing: ad.listing,
             day: october(3),
             cost: ad.metrics.cost,
@@ -514,7 +515,10 @@ fn a_page_that_fails_keeps_nothing_and_the_next_sync_reads_the_day_again() {
         Err(AdsError::Platform(PlatformError::RateLimited))
     ));
     assert!(synced.costs().is_empty());
-    assert_eq!(block_on(synced.ads.last_sync()).unwrap(), None);
+    assert_eq!(
+        block_on(synced.ads.last_sync(SalesChannelKind::MercadoLivre)).unwrap(),
+        None
+    );
 
     synced.fake.server.serve(
         &family,
