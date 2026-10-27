@@ -194,6 +194,10 @@ _Avoid_: post, copy (sozinho), anúncio
 Frase curta que vende o produto num Offer Post, na variável `{chamada}` do modelo, escrita pela IA ou à mão. Nunca traz preço, desconto, link ou contato: isso vem dos fatos do post. Na tela, "chamada".
 _Avoid_: copy (sozinho), gancho, slogan
 
+**Promotion Spend**:
+Dinheiro que o Fernando gastou para divulgar num Promotion Channel em alguns dias (anúncio na Meta, no Google, post impulsionado), digitado ou lido do relatório exportado pela Platform do anúncio. Entra no lucro e no ROAS de cada canal e de cada produto. Diferente do custo do Product Ads, que é de um Listing.
+_Avoid_: custo (sozinho), investimento, verba
+
 **Listing Copy**:
 Título e descrição de um Listing gerados como rascunho para o Fernando editar.
 _Avoid_: copy (sozinho), descrição
@@ -301,6 +305,14 @@ _Avoid_: divergência, duplicata
 **Interface Theme**:
 Conjunto de cores, cantos e fonte da interface do app (Papel, Grafite, Ouro Negro…). O Fernando escolhe um tema fixo ou segue o claro/escuro do sistema com um par de temas. Só muda a aparência, nunca a posição das coisas.
 _Avoid_: tema (sozinho, quando houver dúvida com tema de anúncio), skin, modo escuro
+
+**Work Context**:
+A Platform em que o Fernando está trabalhando agora (Mercado Livre, Shopee, Amazon, Magalu, Hotmart, Kiwify, Monetizze, Eduzz) ou Tudo, escolhida no topo da janela. O menu mostra só as telas que se aplicam a ela e cada tela abre filtrada e travada nela. Só muda o que a interface mostra, nunca os dados.
+_Avoid_: modo, perfil, workspace, conta
+
+**Guided Flow**:
+A tela Passo a passo, que leva um produto de afiliado do Program ao resultado (link, divulgação, Promotion Spend, lucro), usando o que os módulos já guardam para saber em que passo cada produto está.
+_Avoid_: wizard, assistente, campanha
 
 **Layout**:
 Arranjo que posiciona as partes de cada tela (navegação, título, ações, conteúdo): Workspace (barra lateral) ou Studio (abas no topo e barra de status). Nunca muda o que as partes fazem.
