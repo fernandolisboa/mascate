@@ -24,6 +24,7 @@ use crate::appearance::look;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, notice};
 use crate::listings;
+use crate::work_context::WorkContext;
 
 /// One Sales Channel's adapter, port by port; a port the channel does not
 /// offer yet is absent.
@@ -285,22 +286,47 @@ fn article(kind: SalesChannelKind) -> &'static str {
     }
 }
 
-/// A list's choice of one Sales Channel, or all of them.
+/// A list's choice of one Sales Channel, or all of them: the owner's chip
+/// in All, the Work Context's channel, fixed, in a Platform's context.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ChannelFilter(Option<SalesChannelKind>);
+pub struct ChannelFilter {
+    chosen: Option<SalesChannelKind>,
+    fixed: bool,
+}
 
 impl ChannelFilter {
+    /// The filter the list applies under `context`: its Sales Channel,
+    /// which no chip changes, or this chip choice in All.
+    pub fn in_context(self, context: WorkContext) -> Self {
+        match context.sales_channel() {
+            Some(kind) => Self {
+                chosen: Some(kind),
+                fixed: true,
+            },
+            None => self,
+        }
+    }
+
     /// Whether a row on `kind` shows, of a list holding the channels `held`:
-    /// a channel the list no longer holds shows every row.
+    /// a chip for a channel the list no longer holds shows every row, and
+    /// a fixed channel only its own, even none.
     pub fn shows(self, kind: SalesChannelKind, held: &BTreeSet<SalesChannelKind>) -> bool {
-        match self.0 {
-            Some(chosen) if held.contains(&chosen) => chosen == kind,
+        match self.chosen {
+            Some(chosen) if self.fixed || held.contains(&chosen) => chosen == kind,
             _ => true,
         }
     }
 
+    /// The one channel the list shows, when it shows one.
+    pub fn only(self, held: &BTreeSet<SalesChannelKind>) -> Option<SalesChannelKind> {
+        match self.chosen {
+            Some(chosen) if self.fixed || held.contains(&chosen) => Some(chosen),
+            _ => None,
+        }
+    }
+
     /// "Todos os canais" and a chip for each channel the list holds; none
-    /// while it holds a single one.
+    /// while it holds a single one or the channel is fixed.
     pub fn chips<T: 'static>(
         self,
         id: &'static str,
@@ -308,10 +334,10 @@ impl ChannelFilter {
         cx: &mut Context<T>,
         pick: fn(&mut T, ChannelFilter, &mut Context<T>),
     ) -> Option<AnyElement> {
-        if held.len() < 2 {
+        if self.fixed || held.len() < 2 {
             return None;
         }
-        let chosen = self.0.filter(|kind| held.contains(kind));
+        let chosen = self.chosen.filter(|kind| held.contains(kind));
         let chip = |index: usize, label: &'static str, value: Option<SalesChannelKind>| {
             let button = Button::new((id, index)).label(label).small();
             if chosen == value {
@@ -319,7 +345,16 @@ impl ChannelFilter {
             } else {
                 button.outline()
             }
-            .on_click(cx.listener(move |this, _, _, cx| pick(this, ChannelFilter(value), cx)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                pick(
+                    this,
+                    ChannelFilter {
+                        chosen: value,
+                        fixed: false,
+                    },
+                    cx,
+                )
+            }))
         };
         let mut row = h_flex()
             .flex_wrap()
@@ -330,6 +365,19 @@ impl ChannelFilter {
         }
         Some(row.into_any_element())
     }
+}
+
+/// The channels of `states` the Work Context shows, for the notices about
+/// their Connections.
+pub fn shown_states(
+    states: &[(SalesChannelKind, ConnectionState)],
+    context: WorkContext,
+) -> Vec<(SalesChannelKind, ConnectionState)> {
+    states
+        .iter()
+        .filter(|(kind, _)| context.shows_channel(*kind))
+        .cloned()
+        .collect()
 }
 
 /// Configurações › Vendas › Canais de venda: the order of the Sales Channels, first to last.
@@ -458,18 +506,63 @@ impl Render for ChannelRankingSection {
 mod tests {
     use super::*;
 
+    fn chip(kind: SalesChannelKind) -> ChannelFilter {
+        ChannelFilter {
+            chosen: Some(kind),
+            fixed: false,
+        }
+    }
+
     #[test]
     fn a_channel_filter_shows_its_channel_or_everything() {
         let held = BTreeSet::from([SalesChannelKind::MercadoLivre, SalesChannelKind::Amazon]);
         let all = ChannelFilter::default();
-        let amazon = ChannelFilter(Some(SalesChannelKind::Amazon));
-        let shopee = ChannelFilter(Some(SalesChannelKind::Shopee));
+        let amazon = chip(SalesChannelKind::Amazon);
+        let shopee = chip(SalesChannelKind::Shopee);
 
         assert!(all.shows(SalesChannelKind::MercadoLivre, &held));
         assert!(amazon.shows(SalesChannelKind::Amazon, &held));
         assert!(!amazon.shows(SalesChannelKind::MercadoLivre, &held));
         // A channel the list no longer holds shows every row.
         assert!(shopee.shows(SalesChannelKind::MercadoLivre, &held));
+    }
+
+    #[test]
+    fn a_platform_context_fixes_the_filter_on_its_channel_and_all_keeps_the_chip() {
+        use SalesChannelKind::{Amazon, Magalu, MercadoLivre};
+        let held = BTreeSet::from([MercadoLivre, Amazon]);
+        let picked = chip(Amazon);
+
+        let in_all = picked.in_context(WorkContext::All);
+        assert_eq!(in_all, picked);
+        assert_eq!(in_all.only(&held), Some(Amazon));
+
+        let on_ml = picked.in_context(WorkContext::MercadoLivre);
+        assert!(on_ml.shows(MercadoLivre, &held));
+        assert!(!on_ml.shows(Amazon, &held));
+        assert_eq!(on_ml.only(&held), Some(MercadoLivre));
+        // A context whose channel the list does not hold shows nothing.
+        let on_magalu = ChannelFilter::default().in_context(WorkContext::Magalu);
+        assert!(!on_magalu.shows(MercadoLivre, &held));
+        assert!(!on_magalu.shows(Amazon, &held));
+        assert_eq!(on_magalu.only(&held), Some(Magalu));
+        // A Platform the owner only promotes on has no channel to fix.
+        assert_eq!(picked.in_context(WorkContext::Hotmart), picked);
+    }
+
+    #[test]
+    fn the_connection_notices_follow_the_context() {
+        use SalesChannelKind::{Amazon, MercadoLivre};
+        let states = [
+            (MercadoLivre, ConnectionState::Connected),
+            (Amazon, ConnectionState::Expired),
+        ];
+        assert_eq!(shown_states(&states, WorkContext::All), states);
+        assert_eq!(
+            shown_states(&states, WorkContext::Amazon),
+            [(Amazon, ConnectionState::Expired)]
+        );
+        assert!(shown_states(&states, WorkContext::Shopee).is_empty());
     }
 
     #[test]

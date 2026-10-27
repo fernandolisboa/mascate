@@ -84,6 +84,7 @@ mod telegram;
 mod title_bar;
 mod tray;
 mod updates;
+mod work_context;
 
 use std::sync::Arc;
 
@@ -304,6 +305,10 @@ fn main() {
             cx.set_global(Preferences::new(
                 started.as_ref().map(|started| started.database.clone()),
                 saved,
+                started
+                    .as_ref()
+                    .map(|started| started.work_context)
+                    .unwrap_or_default(),
             ));
             cx.set_global(AppConnections(connections));
             cx.set_global(SalesChannels(vec![

@@ -19,8 +19,10 @@ use mascate_platform::{
     MergeImport, ModuleMerge, ModuleMigrations, OpenError, Opened, Registry, ReleaseChannel,
     Reminder, Reminders, UpdateSettings, Updater, Version, apply_staged_restore,
     default_backup_folder, default_database_path, default_owner_folder, load_appearance,
-    load_update_settings, open_and_migrate, undo_applied_restore,
+    load_update_settings, load_work_context, open_and_migrate, undo_applied_restore,
 };
+
+use crate::work_context::WorkContext;
 
 /// Every module's migrations, in dependency order. Modules add theirs here.
 pub const MODULE_MIGRATIONS: &[ModuleMigrations] = &[
@@ -70,6 +72,7 @@ pub type Outcome = Result<Started, Problem>;
 pub struct Started {
     pub database: Arc<Database>,
     pub appearance: Appearance,
+    pub work_context: WorkContext,
     pub flags: Arc<Flags>,
     pub reminders: Arc<Reminders>,
     pub backups: Arc<Backups>,
@@ -166,8 +169,9 @@ pub fn updater() -> Option<Updater> {
 
 /// Swaps in a staged restore, creates the database on first run, brings its
 /// schema up to date (a restored file from an older version included) with
-/// a Backup first, and reads the saved appearance, before any window opens
-/// so the first frame is already in the owner's theme and layout.
+/// a Backup first, and reads the saved appearance and Work Context, before
+/// any window opens so the first frame is already in the owner's theme,
+/// layout and context.
 pub fn prepare() -> Outcome {
     let path = default_database_path()
         .ok_or_else(|| Problem::new("Não encontrei a pasta de dados do usuário.", None))?;
@@ -219,6 +223,12 @@ pub fn prepare() -> Outcome {
                 eprintln!("could not read the saved appearance: {error}");
                 Appearance::default()
             });
+            let work_context = load_work_context(&database).await.unwrap_or_else(|error| {
+                // Nor is a context that cannot be read: the app opens in All.
+                eprintln!("could not read the saved Work Context: {error}");
+                None
+            });
+            let work_context = WorkContext::from_code_or_default(work_context.as_deref());
             let flags = Flags::new(
                 database.clone(),
                 Registry::new(MODULE_FLAGS)?,
@@ -380,6 +390,7 @@ pub fn prepare() -> Outcome {
             Ok::<_, Box<dyn std::error::Error>>(Started {
                 database: database.clone(),
                 appearance,
+                work_context,
                 flags: Arc::new(flags),
                 reminders: Arc::new(reminders),
                 backups: Arc::new(backups),
@@ -1376,6 +1387,8 @@ mod tests {
                     },
                     "{name}"
                 );
+                // No released version kept a Work Context: each opens in All.
+                assert_eq!(load_work_context(&database).await.unwrap(), None, "{name}");
                 let flags = Flags::new(
                     database.clone(),
                     Registry::new(MODULE_FLAGS).unwrap(),

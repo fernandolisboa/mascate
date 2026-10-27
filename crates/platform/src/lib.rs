@@ -1,7 +1,7 @@
 //! The app platform module: where the data lives, how its schema evolves,
 //! how it is backed up and restored, how the app updates itself, where
-//! secrets are kept, how the app's own interface looks, and the flags and
-//! Reminders every module declares.
+//! secrets are kept, how the app's own interface looks, which Work Context
+//! it follows, and the flags and Reminders every module declares.
 
 mod appearance;
 mod backups;
@@ -21,6 +21,7 @@ mod stored_row;
 mod stored_time;
 mod system_secrets;
 mod updates;
+mod work_context;
 
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -69,6 +70,7 @@ pub use updates::{
     Finish, Installation, UpdateError, UpdateSettings, Updater, load_update_settings,
     run_installer_after_exit, save_update_settings,
 };
+pub use work_context::{load_work_context, save_work_context};
 
 /// This module's own tables.
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
@@ -80,6 +82,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         backups::CREATE_BACKUP_SETTINGS,
         updates::CREATE_UPDATE_SETTINGS,
         merging::CREATE_MERGES,
+        work_context::CREATE_WORK_CONTEXT,
     ],
 };
 
@@ -109,5 +112,11 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         ),
         // The merges this machine applied, with their reports.
         TableMerge::new("platform_merges", "Mesclagem", RecognisedBy::ThisMachine),
+        // What the owner is working on at this computer right now.
+        TableMerge::new(
+            "platform_work_context",
+            "Contexto de trabalho",
+            RecognisedBy::ThisMachine,
+        ),
     ],
 };

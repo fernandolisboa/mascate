@@ -40,11 +40,13 @@ use crate::layout;
 use crate::offers::OpenProduct;
 use crate::orders;
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::pricing;
 use crate::quality;
 use crate::repricing::{self, RepricingPanel};
 use crate::sales_channels::{self, ChannelFilter};
 use crate::stock_mirror;
+use crate::work_context;
 
 /// The app's Listings; absent when the database did not open.
 pub struct AppListings(pub Arc<Listings>);
@@ -323,6 +325,27 @@ impl ListingsScreen {
         self.drafts
             .update(cx, |drafts, cx| drafts.refresh(window, cx));
         self.run(window, cx, |_, _| async { Ok(None) }, |_, _: (), _, _| {});
+    }
+
+    /// Follows a new Work Context: a listing's open row or price panel on a
+    /// channel it does not show closes without sending, as does a draft's
+    /// editor; the drafts themselves stay saved.
+    pub fn follow_context(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        let channel_of = |id: RecordId| {
+            self.listings
+                .iter()
+                .chain(self.to_link.iter().map(|entry| &entry.listing))
+                .find(|listing| listing.id == id)
+                .map(|listing| listing.channel)
+        };
+        let (mut step, mut price) = (self.step.take(), self.price.take());
+        work_context::close_outside(&mut step, context, |(id, _)| channel_of(*id));
+        work_context::close_outside(&mut price, context, |panel| channel_of(panel.listing));
+        (self.step, self.price) = (step, price);
+        self.drafts
+            .update(cx, |drafts, cx| drafts.follow_context(window, cx));
+        cx.notify();
     }
 
     /// Starts a draft of `product`, asked from its sheet in Produtos.
@@ -1625,11 +1648,18 @@ impl ListingsScreen {
                     }),
                 None => row.child(kit::tag("sem produto", t.text2, cx)),
             });
+        // The click goes straight to the channel, so the button names it.
         let status = match listing.listed.status {
             ListingStatus::Active => Some(("Pausar", true)),
             ListingStatus::Paused => Some(("Reativar", false)),
             _ => None,
-        };
+        }
+        .map(|(verb, pause)| {
+            (
+                format!("{verb} {}", sales_channels::on(listing.channel)),
+                pause,
+            )
+        });
         let follows = matches!(
             listing.listed.status,
             ListingStatus::Active | ListingStatus::Paused | ListingStatus::OutOfStock
@@ -1691,7 +1721,9 @@ impl Render for ListingsScreen {
             return layout::screen(parts, cx);
         }
         parts.actions.push(self.render_sync(cx));
-        for text in sales_channels::connection_notices(&self.connections) {
+        let context = preferences::work_context(cx);
+        let states = sales_channels::shown_states(&self.connections, context);
+        for text in sales_channels::connection_notices(&states) {
             parts
                 .notices
                 .push(kit::info_notice(text, cx).into_any_element());
@@ -1703,9 +1735,15 @@ impl Render for ListingsScreen {
         }
 
         parts.content.push(self.drafts.clone().into_any_element());
+        // The stock is one, split across every channel's listings, and goes
+        // out only after every channel's Orders (ADR 0017, ADR 0033): its
+        // queue shows whole in every context, each row naming its channel.
         parts.content.extend(self.render_stock(cx));
 
-        if !self.to_link.is_empty() {
+        let to_link: Vec<usize> = (0..self.to_link.len())
+            .filter(|index| context.shows_channel(self.to_link[*index].listing.channel))
+            .collect();
+        if !to_link.is_empty() {
             parts.content.push(
                 v_flex()
                     .gap_3()
@@ -1715,14 +1753,18 @@ impl Render for ListingsScreen {
                             .items_baseline()
                             .child(kit::section_heading(format!(
                                 "A vincular ({})",
-                                self.to_link.len()
+                                to_link.len()
                             )))
                             .child(div().text_xs().text_color(t.text2).child(
                                 "anúncios sem produto: confirme a sugestão, escolha um produto \
                                  ou crie um a partir do anúncio",
                             )),
                     )
-                    .children((0..self.to_link.len()).map(|index| self.render_to_link(index, cx)))
+                    .children(
+                        to_link
+                            .into_iter()
+                            .map(|index| self.render_to_link(index, cx)),
+                    )
                     .into_any_element(),
             );
         }
@@ -1732,21 +1774,23 @@ impl Render for ListingsScreen {
             .iter()
             .map(|listing| listing.channel)
             .collect();
+        let filter = self.channel_filter.in_context(context);
         let shown: Vec<usize> = (0..self.listings.len())
-            .filter(|index| {
-                self.channel_filter
-                    .shows(self.listings[*index].channel, &held)
-            })
+            .filter(|index| filter.shows(self.listings[*index].channel, &held))
             .collect();
         let mut heading = match shown.len() {
             0 => "Anúncios".to_owned(),
             1 => "1 anúncio".to_owned(),
             count => format!("{count} anúncios"),
         };
-        if let [only] = held.iter().collect::<Vec<_>>()[..] {
-            heading = format!("{heading} {}", sales_channels::on(*only));
+        let single = match held.iter().collect::<Vec<_>>()[..] {
+            [only] => Some(*only),
+            _ => None,
+        };
+        if let Some(only) = filter.only(&held).or(single) {
+            heading = format!("{heading} {}", sales_channels::on(only));
         }
-        let chips = self.channel_filter.chips(
+        let chips = filter.chips(
             "listing-channel",
             &held,
             cx,
@@ -1760,14 +1804,22 @@ impl Render for ListingsScreen {
                 .gap_3()
                 .child(kit::section_heading(heading))
                 .children(chips)
-                .when(self.listings.is_empty(), |list| {
-                    list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhum anúncio ainda. Sincronize para trazer os anúncios ativos e \
-                         pausados da sua conta; cada variação vira um anúncio próprio, vinculado ao \
-                         produto que ela vende.",
-                    ))
+                .when(shown.is_empty(), |list| {
+                    let on = filter
+                        .only(&held)
+                        .map(|kind| format!(" {}", sales_channels::on(kind)))
+                        .unwrap_or_default();
+                    list.child(div().text_sm().text_color(t.text2).child(format!(
+                        "Nenhum anúncio{on} ainda. Sincronize para trazer os anúncios ativos e \
+                         pausados da sua conta; cada variação vira um anúncio próprio, vinculado \
+                         ao produto que ela vende."
+                    )))
                 })
-                .children(shown.into_iter().map(|index| self.render_listing(index, cx)))
+                .children(
+                    shown
+                        .into_iter()
+                        .map(|index| self.render_listing(index, cx)),
+                )
                 .into_any_element(),
         );
         layout::screen(parts, cx)

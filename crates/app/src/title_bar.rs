@@ -1,6 +1,7 @@
 //! The window's title bar (#67), drawn by Mascate in the interface theme
-//! in place of the native caption, after Bardo's: the logo (#69), a
-//! drag area, and the minimize / maximize / close buttons.
+//! in place of the native caption, after Bardo's: the logo (#69), the Work
+//! Context picker (ADR 0037), a drag area, and the minimize / maximize /
+//! close buttons.
 //!
 //! On Windows every part declares what it is ([`WindowControlArea`]) and
 //! the system does the rest, as it does for its own caption: dragging,
@@ -9,16 +10,22 @@
 //! zooms the window itself, and leaves the buttons to the window manager
 //! when it draws its own decorations.
 
+use std::rc::Rc;
+
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, InteractiveElementExt as _, h_flex};
+use gpui_kit::component::button::{Button as KitButton, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::{Icon, InteractiveElementExt as _, Side, Sizable as _, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Decorations, MouseButton, Pixels, Window, WindowControlArea, WindowControls,
-    div, px,
+    AnyElement, App, Decorations, Div, MouseButton, Pixels, Stateful, Window, WindowControlArea,
+    WindowControls, div, px,
 };
 
 use crate::appearance::{Tokens, look};
 use crate::brand;
+use crate::parts::OnPick;
+use crate::work_context::WorkContext;
 
 /// Height of the bar.
 const HEIGHT: Pixels = px(32.);
@@ -26,7 +33,12 @@ const HEIGHT: Pixels = px(32.);
 const BUTTON_WIDTH: Pixels = px(46.);
 
 /// The bar over every layout.
-pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn title_bar(
+    context: WorkContext,
+    on_pick: OnPick<WorkContext>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     let t = look(cx).tokens;
     let brand = h_flex()
         .gap_2()
@@ -38,41 +50,6 @@ pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
         // Taller than the tag only by the room its box leaves under the
         // baseline: the letters stay the size they were.
         .child(brand::wordmark(px(17.5)).text_color(t.text));
-    let drag = h_flex()
-        .id("title-bar-drag")
-        .flex_1()
-        .h_full()
-        .min_w_0()
-        .items_center()
-        .child(brand);
-    let drag = if cfg!(target_os = "windows") {
-        drag.window_control_area(WindowControlArea::Drag)
-    } else {
-        // Without the system's caption the bar moves the window itself,
-        // once the pointer moves, so a double click still reaches it.
-        let pressed = window.use_keyed_state("title-bar-pressed", cx, |_, _| Pressed(false));
-        let down = pressed.clone();
-        let up = pressed.clone();
-        let out = pressed.clone();
-        drag.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            down.update(cx, |pressed, _| pressed.0 = true);
-        })
-        .on_mouse_up(MouseButton::Left, move |_, _, cx| {
-            up.update(cx, |pressed, _| pressed.0 = false);
-        })
-        .on_mouse_down_out(move |_, _, cx| {
-            out.update(cx, |pressed, _| pressed.0 = false);
-        })
-        .on_mouse_move(move |_, window, cx| {
-            if pressed.update(cx, |pressed, _| std::mem::take(&mut pressed.0)) {
-                window.start_window_move();
-            }
-        })
-        .on_double_click(|_, window, _| window.zoom_window())
-        .on_mouse_down(MouseButton::Right, |event, window, _| {
-            window.show_window_menu(event.position);
-        })
-    };
     let buttons = draws_buttons(window.window_decorations())
         .then(|| buttons(window.window_controls(), window.is_maximized()));
     h_flex()
@@ -84,7 +61,16 @@ pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
         .border_b(t.border_width)
         .border_color(t.border)
         .text_color(t.text)
-        .child(drag)
+        .child(
+            drag_area("title-bar-brand", window, cx)
+                .flex_none()
+                .pr_3()
+                .child(brand),
+        )
+        // Outside the drag areas, so a click opens the menu and never
+        // moves the window.
+        .child(context_picker(context, on_pick))
+        .child(drag_area("title-bar-drag", window, cx).flex_1().min_w_0())
         .when_some(buttons, |bar, buttons| {
             bar.child(
                 h_flex()
@@ -94,6 +80,73 @@ pub fn title_bar(window: &mut Window, cx: &mut App) -> AnyElement {
             )
         })
         .into_any_element()
+}
+
+/// The Work Context on screen, with the menu to pick another: everything
+/// first, then the Platforms the owner sells and promotes on, then those
+/// they only promote on.
+fn context_picker(current: WorkContext, on_pick: OnPick<WorkContext>) -> AnyElement {
+    KitButton::new("work-context")
+        .ghost()
+        .xsmall()
+        .icon(Icon::new(current.icon()))
+        .label(current.name())
+        .dropdown_caret(true)
+        .tooltip("O que você está fazendo: cada tela mostra só o que é dele")
+        .dropdown_menu(move |menu, _, _| {
+            let item = |menu: PopupMenu, context: WorkContext| {
+                let pick = Rc::clone(&on_pick);
+                menu.item(
+                    PopupMenuItem::new(context.name())
+                        .icon(Icon::new(context.icon()))
+                        .checked(context == current)
+                        .on_click(move |_, window, cx| pick(context, window, cx)),
+                )
+            };
+            let (selling, promoting): (Vec<WorkContext>, Vec<WorkContext>) = WorkContext::ALL
+                .into_iter()
+                .filter(|context| *context != WorkContext::All)
+                .partition(|context| context.sales_channel().is_some());
+            let menu = item(menu.check_side(Side::Right), WorkContext::All)
+                .separator()
+                .label("Venda e afiliação");
+            let menu = selling.into_iter().fold(menu, item);
+            let menu = menu.separator().label("Só afiliação");
+            promoting.into_iter().fold(menu, item)
+        })
+        .into_any_element()
+}
+
+/// Where a press moves the window and a double click maximizes it.
+fn drag_area(id: &'static str, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    let drag = h_flex().id(id).h_full().items_center();
+    if cfg!(target_os = "windows") {
+        return drag.window_control_area(WindowControlArea::Drag);
+    }
+    // Without the system's caption the bar moves the window itself, once
+    // the pointer moves, so a double click still reaches it.
+    let pressed = window.use_keyed_state("title-bar-pressed", cx, |_, _| Pressed(false));
+    let down = pressed.clone();
+    let up = pressed.clone();
+    let out = pressed.clone();
+    drag.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+        down.update(cx, |pressed, _| pressed.0 = true);
+    })
+    .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+        up.update(cx, |pressed, _| pressed.0 = false);
+    })
+    .on_mouse_down_out(move |_, _, cx| {
+        out.update(cx, |pressed, _| pressed.0 = false);
+    })
+    .on_mouse_move(move |_, window, cx| {
+        if pressed.update(cx, |pressed, _| std::mem::take(&mut pressed.0)) {
+            window.start_window_move();
+        }
+    })
+    .on_double_click(|_, window, _| window.zoom_window())
+    .on_mouse_down(MouseButton::Right, |event, window, _| {
+        window.show_window_menu(event.position);
+    })
 }
 
 /// Whether a press on the drag area may still turn into a window move.

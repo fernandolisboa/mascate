@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{Entity, SharedString, Subscription, Window, div};
@@ -33,6 +35,7 @@ use crate::sales::SalesScreen;
 use crate::settings::SettingsScreen;
 use crate::stock::StockScreen;
 use crate::title_bar;
+use crate::work_context::WorkContext;
 
 /// The main window: the navigation and the current screen; where each goes
 /// is the layout's ([`crate::layout`]).
@@ -125,11 +128,11 @@ impl Shell {
                 &products,
                 window,
                 |shell, _, start: &StartDraft, window, cx| {
+                    shell.go(Place::Listings, window, cx);
                     shell.listings.update(cx, |listings, cx| {
                         listings.refresh(window, cx);
                         listings.start_draft(start.0, window, cx);
                     });
-                    shell.place = Place::Listings;
                     cx.notify();
                 },
             ),
@@ -140,34 +143,34 @@ impl Shell {
                     shell
                         .stock
                         .update(cx, |stock, cx| stock.open(Some(open.0), window, cx));
-                    shell.place = Place::Stock;
+                    shell.go(Place::Stock, window, cx);
                     cx.notify();
                 },
             ),
             cx.subscribe_in(
                 &home.read(cx).question_alerts.clone(),
                 window,
-                |shell, _, _: &OpenQuestions, _, cx| {
+                |shell, _, _: &OpenQuestions, window, cx| {
                     shell.questions.update(cx, QuestionsScreen::refresh);
-                    shell.place = Place::Questions;
+                    shell.go(Place::Questions, window, cx);
                     cx.notify();
                 },
             ),
             cx.subscribe_in(
                 &home.read(cx).reputation_alerts.clone(),
                 window,
-                |shell, _, _: &OpenReputation, _, cx| {
+                |shell, _, _: &OpenReputation, window, cx| {
                     shell.reputation.update(cx, ReputationScreen::refresh);
-                    shell.place = Place::Reputation;
+                    shell.go(Place::Reputation, window, cx);
                     cx.notify();
                 },
             ),
             cx.subscribe_in(
                 &home.read(cx).order_alerts.clone(),
                 window,
-                |shell, _, _: &OpenOrders, _, cx| {
+                |shell, _, _: &OpenOrders, window, cx| {
                     shell.orders.update(cx, OrdersScreen::refresh);
-                    shell.place = Place::Orders;
+                    shell.go(Place::Orders, window, cx);
                     cx.notify();
                 },
             ),
@@ -178,7 +181,7 @@ impl Shell {
                     shell
                         .promotion
                         .update(cx, |promotion, cx| promotion.refresh(window, cx));
-                    shell.place = Place::Promotion;
+                    shell.go(Place::Promotion, window, cx);
                     cx.notify();
                 },
             ),
@@ -222,17 +225,26 @@ impl Shell {
         }
     }
 
+    /// Opens `place`, asked from another screen; a place the Work Context
+    /// does not list brings back All, which lists every place.
+    fn go(&mut self, place: Place, window: &mut Window, cx: &mut Context<Self>) {
+        if !place.shows_in(preferences::work_context(cx)) {
+            self.switch_context(WorkContext::All, window, cx);
+        }
+        self.place = place;
+    }
+
     fn open_product(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {
         self.products
             .update(cx, |products, cx| products.open(product, window, cx));
-        self.place = Place::Products;
+        self.go(Place::Products, window, cx);
         cx.notify();
     }
 
     fn start_post(&mut self, start: &StartPost, window: &mut Window, cx: &mut Context<Self>) {
         self.promotion
             .update(cx, |promotion, cx| promotion.start_post(start, window, cx));
-        self.place = Place::Promotion;
+        self.go(Place::Promotion, window, cx);
         cx.notify();
     }
 
@@ -240,8 +252,9 @@ impl Shell {
         let shell = cx.entity().downgrade();
         Navigation {
             current: self.place,
+            context: preferences::work_context(cx),
             state: self.state.clone(),
-            on_pick: std::rc::Rc::new(move |place, window, cx| {
+            on_pick: Rc::new(move |place, window, cx| {
                 let _ = shell.update(cx, |shell, cx| {
                     shell.place = place;
                     // Each visit reads its data again: another screen may
@@ -290,9 +303,46 @@ impl Shell {
     }
 }
 
+impl Shell {
+    /// Shows `context` from the next frame on: each sales screen closes
+    /// what it had open on another channel without sending it, and a place
+    /// the context does not list gives way to Hoje.
+    fn switch_context(
+        &mut self,
+        context: WorkContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if preferences::work_context(cx) == context {
+            return;
+        }
+        let saving = preferences::set_work_context(context, cx);
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(error) = saving.await {
+                    eprintln!("{error}");
+                }
+            })
+            .detach();
+        self.listings
+            .update(cx, |listings, cx| listings.follow_context(window, cx));
+        self.orders.update(cx, OrdersScreen::follow_context);
+        self.promotions
+            .update(cx, |promotions, cx| promotions.follow_context(window, cx));
+        self.quality.update(cx, |_, cx| cx.notify());
+        self.sales.update(cx, |_, cx| cx.notify());
+        if !self.place.shows_in(context) {
+            self.place = Place::Today;
+            self.home.update(cx, Home::refresh);
+        }
+        cx.notify();
+    }
+}
+
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let navigation = self.navigation(cx);
+        let shell = cx.entity().downgrade();
         let screen = match self.place {
             Place::Today => self.home.clone().into_any_element(),
             Place::Opportunities => self.opportunities.clone().into_any_element(),
@@ -314,7 +364,14 @@ impl Render for Shell {
         };
         v_flex()
             .size_full()
-            .child(title_bar::title_bar(window, cx))
+            .child(title_bar::title_bar(
+                preferences::work_context(cx),
+                Rc::new(move |context, window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.switch_context(context, window, cx));
+                }),
+                window,
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
