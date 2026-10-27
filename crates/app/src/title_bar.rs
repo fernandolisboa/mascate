@@ -88,7 +88,7 @@ pub fn title_bar(
 fn context_picker(current: WorkContext, on_pick: OnPick<WorkContext>) -> AnyElement {
     KitButton::new("work-context")
         .ghost()
-        .xsmall()
+        .small()
         .icon(Icon::new(current.icon()))
         .label(current.name())
         .dropdown_caret(true)

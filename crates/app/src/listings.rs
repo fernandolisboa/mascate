@@ -1648,18 +1648,11 @@ impl ListingsScreen {
                     }),
                 None => row.child(kit::tag("sem produto", t.text2, cx)),
             });
-        // The click goes straight to the channel, so the button names it.
         let status = match listing.listed.status {
             ListingStatus::Active => Some(("Pausar", true)),
             ListingStatus::Paused => Some(("Reativar", false)),
             _ => None,
-        }
-        .map(|(verb, pause)| {
-            (
-                format!("{verb} {}", sales_channels::on(listing.channel)),
-                pause,
-            )
-        });
+        };
         let follows = matches!(
             listing.listed.status,
             ListingStatus::Active | ListingStatus::Paused | ListingStatus::OutOfStock
