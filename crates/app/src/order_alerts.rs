@@ -6,20 +6,70 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, EventEmitter, SharedString, Subscription, Window, div};
-use mascate_commerce::{DispatchAlert, Order};
+use mascate_commerce::{DispatchAlert, Order, Orders};
 
 use crate::appearance::look;
 use crate::catalog;
 use crate::kit;
 use crate::orders::{OrderSyncs, due_tag, failure, orders, sold_text};
+use crate::preferences;
 use crate::purchases::units_text;
+use crate::work_context::WorkContext;
 
 /// The owner asked to see the Orders.
 pub struct OpenOrders;
 
+/// What the Orders ask of the owner.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct OrderAlerts {
+    /// Late to dispatch or close to their time, the soonest first.
+    pub dispatch: Vec<DispatchAlert>,
+    /// Waiting for the owner to say the units came back.
+    pub returning: Vec<Order>,
+}
+
+impl OrderAlerts {
+    /// Reads what every channel's Orders ask of the owner.
+    pub(crate) async fn read(orders: &Orders) -> Result<Self, String> {
+        let dispatch = orders.dispatch_alerts().await.map_err(|e| failure(&e))?;
+        let returning = orders
+            .orders()
+            .await
+            .map_err(|e| failure(&e))?
+            .into_iter()
+            .filter(|order| order.units_awaiting_return() > 0)
+            .collect();
+        Ok(Self {
+            dispatch,
+            returning,
+        })
+    }
+
+    /// Those of the Orders on a channel `context` shows.
+    pub(crate) fn in_context(&self, context: WorkContext) -> Self {
+        Self {
+            dispatch: self
+                .dispatch
+                .iter()
+                .filter(|alert| context.shows_channel(alert.order.channel))
+                .cloned()
+                .collect(),
+            returning: self
+                .returning
+                .iter()
+                .filter(|order| context.shows_channel(order.channel))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.dispatch.is_empty() && self.returning.is_empty()
+    }
+}
+
 pub struct OrderAlertsArea {
-    dispatch: Vec<DispatchAlert>,
-    returning: Vec<Order>,
+    alerts: OrderAlerts,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     error: Option<SharedString>,
@@ -32,8 +82,7 @@ impl OrderAlertsArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![cx.observe_global::<OrderSyncs>(Self::refresh)];
         let mut area = Self {
-            dispatch: Vec::new(),
-            returning: Vec::new(),
+            alerts: OrderAlerts::default(),
             reads: 0,
             error: None,
             _subscriptions: subscriptions,
@@ -42,8 +91,9 @@ impl OrderAlertsArea {
         area
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.dispatch.is_empty() && self.returning.is_empty() && self.error.is_none()
+    /// Whether nothing on a channel `context` shows asks for the owner.
+    pub fn is_empty_in(&self, context: WorkContext) -> bool {
+        self.alerts.in_context(context).is_empty() && self.error.is_none()
     }
 
     /// Reads the Orders again, as when the home screen comes into view.
@@ -53,17 +103,9 @@ impl OrderAlertsArea {
         };
         self.reads += 1;
         let read = self.reads;
-        let reading = cx.background_executor().spawn(async move {
-            let dispatch = orders.dispatch_alerts().await.map_err(|e| failure(&e))?;
-            let returning: Vec<Order> = orders
-                .orders()
-                .await
-                .map_err(|e| failure(&e))?
-                .into_iter()
-                .filter(|order| order.units_awaiting_return() > 0)
-                .collect();
-            Ok::<_, String>((dispatch, returning))
-        });
+        let reading = cx
+            .background_executor()
+            .spawn(async move { OrderAlerts::read(&orders).await });
         cx.spawn(async move |this, cx| {
             let read_back = reading.await;
             let _ = this.update(cx, |this, cx| {
@@ -71,9 +113,8 @@ impl OrderAlertsArea {
                     return;
                 }
                 match read_back {
-                    Ok((dispatch, returning)) => {
-                        this.dispatch = dispatch;
-                        this.returning = returning;
+                    Ok(alerts) => {
+                        this.alerts = alerts;
                         this.error = None;
                     }
                     Err(error) => {
@@ -117,12 +158,17 @@ impl OrderAlertsArea {
 
 impl Render for OrderAlertsArea {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.is_empty() {
+        let context = preferences::work_context(cx);
+        if self.is_empty_in(context) {
             return div().into_any_element();
         }
         let t = look(cx).tokens;
+        let OrderAlerts {
+            dispatch,
+            returning,
+        } = self.alerts.in_context(context);
         let mut rows = Vec::new();
-        for alert in self.dispatch.clone() {
+        for alert in dispatch {
             let (text, ink) = due_tag(alert.due, &t);
             let by = alert
                 .order
@@ -139,7 +185,7 @@ impl Render for OrderAlertsArea {
                 cx,
             ));
         }
-        for order in self.returning.clone() {
+        for order in returning {
             rows.push(self.render_row(
                 ("Devolução".into(), t.accent_text),
                 sold_text(&order),
@@ -172,5 +218,48 @@ impl Render for OrderAlertsArea {
             })
             .children(rows)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::executor::block_on;
+    use mascate_kernel::SalesChannelKind;
+
+    use super::*;
+    use crate::testing::Store;
+
+    fn channels(alerts: &OrderAlerts) -> Vec<SalesChannelKind> {
+        alerts
+            .dispatch
+            .iter()
+            .map(|alert| alert.order.channel)
+            .collect()
+    }
+
+    #[test]
+    fn hoje_in_a_channel_s_context_asks_only_for_that_channel_s_orders() {
+        block_on(async {
+            let store = Store::selling_and_promoting().await;
+
+            let alerts = OrderAlerts::read(&store.orders).await.unwrap();
+
+            assert_eq!(
+                channels(&alerts.in_context(WorkContext::All)),
+                [SalesChannelKind::MercadoLivre, SalesChannelKind::Shopee]
+            );
+            assert_eq!(alerts.in_context(WorkContext::All), alerts);
+            assert_eq!(
+                channels(&alerts.in_context(WorkContext::MercadoLivre)),
+                [SalesChannelKind::MercadoLivre]
+            );
+            assert_eq!(
+                channels(&alerts.in_context(WorkContext::Shopee)),
+                [SalesChannelKind::Shopee]
+            );
+            for context in [WorkContext::Amazon, WorkContext::Hotmart] {
+                assert!(alerts.in_context(context).is_empty(), "{}", context.name());
+            }
+        });
     }
 }

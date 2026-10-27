@@ -241,7 +241,12 @@ impl Shell {
         cx.notify();
     }
 
+    /// Opens a new post from a link, in All when the Work Context does not
+    /// show the link's Platform.
     fn start_post(&mut self, start: &StartPost, window: &mut Window, cx: &mut Context<Self>) {
+        if !preferences::work_context(cx).shows_platform(start.platform) {
+            self.switch_context(WorkContext::All, window, cx);
+        }
         self.promotion
             .update(cx, |promotion, cx| promotion.start_post(start, window, cx));
         self.go(Place::Promotion, window, cx);
@@ -304,9 +309,9 @@ impl Shell {
 }
 
 impl Shell {
-    /// Shows `context` from the next frame on: each sales screen closes
-    /// what it had open on another channel without sending it, and a place
-    /// the context does not list gives way to Hoje.
+    /// Shows `context` from the next frame on: each screen closes what it
+    /// had open on another channel or Platform without sending it, and a
+    /// place the context does not list gives way to Hoje.
     fn switch_context(
         &mut self,
         context: WorkContext,
@@ -329,8 +334,13 @@ impl Shell {
         self.orders.update(cx, OrdersScreen::follow_context);
         self.promotions
             .update(cx, |promotions, cx| promotions.follow_context(window, cx));
+        self.affiliate
+            .update(cx, |affiliate, cx| affiliate.follow_context(window, cx));
+        self.promotion.update(cx, PromotionScreen::follow_context);
+        self.dashboard.update(cx, DashboardScreen::refresh);
         self.quality.update(cx, |_, cx| cx.notify());
         self.sales.update(cx, |_, cx| cx.notify());
+        self.home.update(cx, |_, cx| cx.notify());
         if !self.place.shows_in(context) {
             self.place = Place::Today;
             self.home.update(cx, Home::refresh);

@@ -81,6 +81,8 @@ mod startup;
 mod stock;
 mod stock_mirror;
 mod telegram;
+#[cfg(test)]
+mod testing;
 mod title_bar;
 mod tray;
 mod updates;

@@ -27,6 +27,7 @@ use crate::affiliate::{CommissionSyncs, affiliate, failure, recorded_text};
 use crate::appearance::look;
 use crate::forms::{Outcome, notice};
 use crate::kit;
+use crate::preferences;
 use crate::restricted::AppFlags;
 
 /// The browser every panel shares, so one profile holds every login and
@@ -448,7 +449,9 @@ impl Render for AffiliatePanelsSection {
             .as_ref()
             .filter(|_| self.shown.is_empty())
             .map(|(_, outcome)| notice(outcome, cx));
+        let context = preferences::work_context(cx);
         let shown: Vec<AnyElement> = (0..self.shown.len())
+            .filter(|&index| context.shows_platform(self.shown[index].panel.platform()))
             .map(|index| self.render_panel(index, &panels, cx))
             .collect();
         v_flex()

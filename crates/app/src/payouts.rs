@@ -14,7 +14,6 @@ use chrono::Local;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, EventEmitter, SharedString, Window, div, px};
@@ -25,14 +24,18 @@ use mascate_affiliate::{
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, Money, RecordId, Timestamp, parse_amount};
 
-use crate::affiliate::{PlatformSelect, affiliate, failure, platform_select};
+use crate::affiliate::{
+    PlatformSelect, affiliate, failure, form_platform, platform_field, platform_select,
+};
 use crate::appearance::look;
 use crate::catalog::day;
 use crate::connections::AppConnections;
 use crate::forms::{Outcome, input, notice, parse_day};
 use crate::kit;
+use crate::preferences;
 use crate::sales::day_start;
 use crate::shopee;
+use crate::work_context;
 
 /// A Payout was recorded or deleted: the Commissions it covers changed
 /// status.
@@ -113,6 +116,17 @@ impl PayoutsSection {
         .detach();
     }
 
+    /// Follows a new Work Context: a proposal of a Platform it does not show
+    /// closes without paying anything.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        work_context::close_outside_platform(&mut self.proposal, context, |proposal| {
+            Some(proposal.payout.platform)
+        });
+        self.deleting = None;
+        cx.notify();
+    }
+
     /// Runs `change` off the UI thread, then reads the Payouts again and
     /// hands what the change returned to `then`.
     fn run<T, F, Fut>(
@@ -161,11 +175,7 @@ impl PayoutsSection {
 
     /// The Payout the form describes, or why it cannot be one yet.
     fn written(&self, cx: &App) -> Result<ManualPayout, &'static str> {
-        let platform = *self
-            .platform
-            .read(cx)
-            .selected_value()
-            .ok_or("Escolha a plataforma.")?;
+        let platform = form_platform(&self.platform, cx).ok_or("Escolha a plataforma.")?;
         let paid_on = parse_day(&self.paid_on.read(cx).value())
             .ok_or("Digite a data do repasse como 01/10/2026.")?;
         let amount = parse_amount(&self.amount.read(cx).value())
@@ -574,6 +584,9 @@ impl PayoutsSection {
     }
 
     fn render_validated(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !preferences::work_context(cx).shows_platform(AffiliatePlatform::Shopee) {
+            return None;
+        }
         let state = self.shopee.as_ref()?;
         let t = look(cx).tokens;
         let card = v_flex()
@@ -677,10 +690,11 @@ impl PayoutsSection {
                     .flex_wrap()
                     .gap_3()
                     .items_end()
-                    .child(div().w(px(180.)).child(field(
-                        "Plataforma",
-                        Select::new(&self.platform).small().into_any_element(),
-                    )))
+                    .child(
+                        div()
+                            .w(px(180.))
+                            .child(field("Plataforma", platform_field(&self.platform, cx))),
+                    )
                     .child(div().w(px(130.)).child(field(
                         "Data do repasse",
                         Input::new(&self.paid_on).small().into_any_element(),
@@ -792,16 +806,18 @@ fn today() -> String {
 impl Render for PayoutsSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
+        let context = preferences::work_context(cx);
         let payouts: Vec<AnyElement> = self
             .payouts
             .iter()
+            .filter(|payout| context.shows_platform(payout.platform))
             .map(|payout| self.render_payout(payout, cx))
             .collect();
         v_flex()
             .gap_3()
             .child(kit::section_heading(format!(
                 "Repasses ({})",
-                self.payouts.len()
+                payouts.len()
             )))
             .child(div().text_sm().text_color(t.text2).child(
                 "O que cada plataforma repassou e as comissões que cada repasse cobre. A \

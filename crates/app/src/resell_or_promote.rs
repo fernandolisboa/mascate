@@ -24,6 +24,7 @@ use crate::kit;
 use crate::orders::OrderSyncs;
 use crate::sales::{amount_text, margin_cell, orders_text, table_row};
 use crate::span::{SpanChanged, SpanPicker};
+use crate::work_context::WorkContext;
 
 /// The approved and paid Commissions of sales made during `during`.
 pub(crate) async fn earned(
@@ -62,17 +63,19 @@ pub(crate) struct Compared {
     pub promoted: usize,
 }
 
-/// Every Product a promoted product is linked to, reselling against
-/// promoting in the period `sold` covers.
+/// Every Product a promoted product of `context` is linked to, reselling
+/// against promoting in the period `sold` covers.
 pub(crate) async fn compare_linked(
     affiliate: &Affiliate,
     sold: &SoldPeriod,
     earned: &[Commission],
+    context: WorkContext,
 ) -> Result<Compared, String> {
-    let promoted = affiliate
+    let mut promoted = affiliate
         .promoted_products()
         .await
         .map_err(|e| affiliate::failure(&e))?;
+    promoted.retain(|promoted| context.shows_platform(promoted.program.platform));
     let mut products: Vec<(&String, RecordId)> = promoted
         .iter()
         .filter_map(|promoted| promoted.linked_to)
@@ -295,7 +298,8 @@ async fn read_card(
     affiliate: Arc<Affiliate>,
     during: Range<Timestamp>,
 ) -> Result<CardRead, String> {
-    let sold = sales.read(during.clone()).await?;
+    // A Product's sheet belongs to every Work Context.
+    let sold = sales.read(during.clone(), WorkContext::All).await?;
     let earned = earned(&affiliate, during).await?;
     let promoted_as = affiliate
         .promoted_products()

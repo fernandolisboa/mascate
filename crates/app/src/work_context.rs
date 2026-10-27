@@ -6,6 +6,7 @@
 
 use gpui_kit::assets::IconName;
 use mascate_affiliate::AffiliatePlatform;
+use mascate_commerce::SalesPeriod;
 use mascate_kernel::SalesChannelKind;
 
 /// Everything, or one Platform. Mercado Livre, Shopee, Amazon and Magalu
@@ -106,10 +107,6 @@ impl WorkContext {
 
     /// The affiliate Platform the context filters by; `None` in All, where
     /// a Program of a Platform without an API also shows.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the affiliate screens follow it from #193 on")
-    )]
     pub fn affiliate_platform(self) -> Option<AffiliatePlatform> {
         match self {
             WorkContext::All => None,
@@ -129,6 +126,31 @@ impl WorkContext {
     pub fn shows_channel(self, kind: SalesChannelKind) -> bool {
         self == WorkContext::All || self.sales_channel() == Some(kind)
     }
+
+    /// Whether what belongs to the affiliate Platform `platform` shows:
+    /// everything in All, only its own in a Platform's context.
+    pub fn shows_platform(self, platform: AffiliatePlatform) -> bool {
+        self == WorkContext::All || self.affiliate_platform() == Some(platform)
+    }
+
+    /// Whether the context sells: All, or a Sales Channel's.
+    pub fn sells(self) -> bool {
+        self == WorkContext::All || self.sales_channel().is_some()
+    }
+
+    /// The part of `period` the context shows: all of it in All, its
+    /// channel's sales and unplaced ads on a Sales Channel, nothing on a
+    /// Platform the owner only promotes.
+    pub fn sales_in(self, period: &SalesPeriod) -> SalesPeriod {
+        match (self, self.sales_channel()) {
+            (WorkContext::All, _) => period.clone(),
+            (_, Some(kind)) => period.on(kind),
+            (_, None) => SalesPeriod {
+                sales: Vec::new(),
+                unplaced_ads: Vec::new(),
+            },
+        }
+    }
 }
 
 /// Closes `open`, a form or a confirmation waiting on a screen, unless it
@@ -140,11 +162,25 @@ pub fn close_outside<T>(
     context: WorkContext,
     channel: impl FnOnce(&T) -> Option<SalesChannelKind>,
 ) {
-    let keeps = open
-        .as_ref()
-        .and_then(channel)
-        .is_some_and(|kind| context.shows_channel(kind));
-    if !keeps {
+    close_unless(open, |open| {
+        channel(open).is_some_and(|kind| context.shows_channel(kind))
+    });
+}
+
+/// Closes `open` unless it belongs to an affiliate Platform `context`
+/// shows, as [`close_outside`] does for a Sales Channel's.
+pub fn close_outside_platform<T>(
+    open: &mut Option<T>,
+    context: WorkContext,
+    platform: impl FnOnce(&T) -> Option<AffiliatePlatform>,
+) {
+    close_unless(open, |open| {
+        platform(open).is_some_and(|platform| context.shows_platform(platform))
+    });
+}
+
+fn close_unless<T>(open: &mut Option<T>, keeps: impl FnOnce(&T) -> bool) {
+    if !open.as_ref().is_some_and(keeps) {
         *open = None;
     }
 }
@@ -312,6 +348,55 @@ mod tests {
         }
         assert!(WorkContext::Shopee.shows_channel(SalesChannelKind::Shopee));
         assert!(!WorkContext::Shopee.shows_channel(SalesChannelKind::MercadoLivre));
+    }
+
+    #[test]
+    fn all_shows_every_affiliate_platform_and_a_platform_only_its_own() {
+        for platform in AffiliatePlatform::ALL {
+            assert!(WorkContext::All.shows_platform(platform));
+        }
+        for context in WorkContext::ALL.into_iter().skip(1) {
+            let shown: Vec<AffiliatePlatform> = AffiliatePlatform::ALL
+                .into_iter()
+                .filter(|&platform| context.shows_platform(platform))
+                .collect();
+            assert_eq!(shown, [context.affiliate_platform().unwrap()]);
+        }
+    }
+
+    #[test]
+    fn a_form_of_a_platform_the_new_context_does_not_show_closes() {
+        for (context, kept) in [
+            (WorkContext::All, true),
+            (WorkContext::Hotmart, true),
+            (WorkContext::Kiwify, false),
+            (WorkContext::MercadoLivre, false),
+        ] {
+            let mut open = Some(AffiliatePlatform::Hotmart);
+            close_outside_platform(&mut open, context, |platform| Some(*platform));
+            assert_eq!(open.is_some(), kept, "{}", context.name());
+        }
+        let mut unknown = Some(());
+        close_outside_platform(&mut unknown, WorkContext::All, |_| None);
+        assert!(unknown.is_none());
+    }
+
+    #[test]
+    fn only_all_and_the_sales_channels_sell() {
+        let selling: Vec<WorkContext> = WorkContext::ALL
+            .into_iter()
+            .filter(|context| context.sells())
+            .collect();
+        assert_eq!(
+            selling,
+            [
+                WorkContext::All,
+                WorkContext::MercadoLivre,
+                WorkContext::Shopee,
+                WorkContext::Amazon,
+                WorkContext::Magalu,
+            ]
+        );
     }
 
     /// The app ships only gpui-kit's default icons: any other draws nothing.

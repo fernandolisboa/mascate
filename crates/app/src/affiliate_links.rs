@@ -28,11 +28,13 @@ use crate::appearance::look;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
 use crate::offer_posts::StartPost;
+use crate::preferences;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::{practice_name, standing_name};
 use crate::sales::table_row;
 use crate::shopee;
 use crate::short_io;
+use crate::work_context;
 
 /// The Platforms whose links the app tags, each through its adapter. Each
 /// Platform's slice adds its tagger here.
@@ -329,6 +331,23 @@ impl AffiliateLinksSection {
         );
     }
 
+    /// Follows a new Work Context: "Criar link" for a Program of a Platform
+    /// it does not show closes without creating anything.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        let programs = &self.programs;
+        work_context::close_outside_platform(&mut self.creating, context, |creating| {
+            programs
+                .iter()
+                .find(|program| program.id == *creating)
+                .map(|program| program.platform)
+        });
+        if self.creating.is_none() {
+            self.warnings.clear();
+        }
+        cx.notify();
+    }
+
     fn creating_platform(&self) -> Option<AffiliatePlatform> {
         let creating = self.creating?;
         self.programs
@@ -471,7 +490,7 @@ impl AffiliateLinksSection {
     ) -> AnyElement {
         let t = look(cx).tokens;
         let (product, tagged) = (link.product.clone(), link.tagged.clone());
-        let id = link.id;
+        let (id, platform) = (link.id, link.program.platform);
         let short_action = match &link.short {
             Some(short) => {
                 let (product, short) = (link.product.clone(), short.clone());
@@ -484,7 +503,7 @@ impl AffiliateLinksSection {
                     )
             }
             None => Button::new(("shorten-link", index))
-                .label("Encurtar")
+                .label("Encurtar no Short.io")
                 .outline()
                 .small()
                 .disabled(self.busy)
@@ -540,6 +559,7 @@ impl AffiliateLinksSection {
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(StartPost {
                             link: id,
+                            platform,
                             found: None,
                             image: None,
                         })
@@ -663,7 +683,13 @@ impl AffiliateLinksSection {
                     .gap_2()
                     .child(
                         Button::new("create-link")
-                            .label("Criar link")
+                            // Only Shopee is asked for the link; the others
+                            // are tagged in the app.
+                            .label(if shopee {
+                                "Criar link na Shopee"
+                            } else {
+                                "Criar link"
+                            })
                             .primary()
                             .small()
                             .loading(self.busy)
@@ -783,10 +809,12 @@ impl AffiliateLinksSection {
 impl Render for AffiliateLinksSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
+        let context = preferences::work_context(cx);
         let (taggable, untagged): (Vec<Program>, Vec<Program>) = self
             .programs
             .clone()
             .into_iter()
+            .filter(|program| context.shows_platform(program.platform))
             .partition(|program| tagger(program.platform, cx).is_some());
         let mut rows: Vec<AnyElement> = taggable
             .iter()
@@ -799,6 +827,7 @@ impl Render for AffiliateLinksSection {
                 taggers
                     .0
                     .iter()
+                    .filter(|tagger| context.shows_platform(tagger.platform()))
                     .filter(|tagger| {
                         !self
                             .programs

@@ -165,7 +165,8 @@ impl AmazonImportSection {
         cx.notify();
     }
 
-    fn cancel(&mut self, cx: &mut Context<Self>) {
+    /// Drops the previewed import without recording it.
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
         self.preview = None;
         cx.notify();
     }
