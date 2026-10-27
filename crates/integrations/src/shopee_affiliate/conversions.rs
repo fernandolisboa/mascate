@@ -57,10 +57,9 @@ const VALIDATED_FIELDS: &str =
 
 /// Shopee Afiliados is one Program for every Conversion and link.
 pub(super) fn program() -> ReportedProgram {
-    ReportedProgram {
-        id: "shopee-affiliates".into(),
-        name: "Shopee Afiliados".into(),
-    }
+    AffiliatePlatform::Shopee
+        .own_program()
+        .expect("Shopee has one Program")
 }
 
 impl CommissionSource for ShopeeAffiliates {

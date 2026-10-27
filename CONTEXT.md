@@ -157,7 +157,7 @@ _Avoid_: estoque mínimo, ponto de pedido
 ## Afiliação
 
 **Program**:
-Programa de afiliado de uma Platform (ou de um produto específico, como na Hotmart), com suas regras de divulgação: cada uma permitida, proibida ou não verificada (que avisa como proibida).
+Programa de afiliado de uma Platform (ou de um produto específico, como na Hotmart), com suas regras de divulgação: cada uma permitida, proibida ou não verificada (que avisa como proibida). Nasce da primeira venda ou antes dela, cadastrado pelo Fernando; o cadastrado fica provisório até ele confirmar de qual venda é.
 _Avoid_: parceria, afiliação (sozinho)
 
 **Affiliate Link**:

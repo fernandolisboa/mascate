@@ -11,7 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{NaiveDate, NaiveDateTime, TimeDelta};
-use mascate_affiliate::{CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram};
+use mascate_affiliate::{
+    AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion,
+};
 use mascate_kernel::{Currency, Money, PlatformError, Timestamp, brasilia, fold, parse_amount};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -231,8 +233,8 @@ const REQUIRED: [Column; 5] = [
 pub(crate) struct SalesReport {
     pub(crate) path: &'static str,
     pub(crate) columns: &'static [(Column, &'static [&'static str])],
-    pub(crate) program_id: &'static str,
-    pub(crate) program_name: &'static str,
+    /// Its Platform, which has one Program for every sale.
+    pub(crate) platform: AffiliatePlatform,
     pub(crate) history_days: i64,
     pub(crate) settle_days: i64,
 }
@@ -305,10 +307,10 @@ impl SalesReport {
             }
             sales.push(ReportedConversion {
                 key: key.to_owned(),
-                program: ReportedProgram {
-                    id: self.program_id.into(),
-                    name: self.program_name.into(),
-                },
+                program: self
+                    .platform
+                    .own_program()
+                    .expect("a panel's Platform has one Program"),
                 product,
                 sold_at,
                 commission: Money::new(commission, Currency::Brl),

@@ -78,8 +78,7 @@ const REPORT: SalesReport = SalesReport {
             ],
         ),
     ],
-    program_id: "magalu-affiliates",
-    program_name: "Parceiro Magalu",
+    platform: AffiliatePlatform::Magalu,
     history_days: 90,
     settle_days: 60,
 };
