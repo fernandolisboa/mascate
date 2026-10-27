@@ -471,9 +471,10 @@ impl DashboardScreen {
             )
             .child(div().text_xs().text_color(t.text2).child(
                 "Comissões de afiliado: as aprovadas e pagas das vendas do período, na moeda da \
-                 plataforma e sem conversão; estornos e vendas canceladas ficam fora. O detalhe \
-                 fica em Afiliação. Capital em estoque: as unidades de hoje pelo custo médio, \
-                 qualquer que seja o período.",
+                 plataforma e sem conversão; estornos e vendas canceladas ficam fora. Resultado \
+                 da afiliação: as comissões menos o gasto com divulgação lançado em Divulgação \
+                 para os mesmos dias, na mesma moeda. O detalhe fica em Afiliação. Capital em \
+                 estoque: as unidades de hoje pelo custo médio, qualquer que seja o período.",
             ))
             .into_any_element()
     }

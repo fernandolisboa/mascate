@@ -280,6 +280,7 @@ impl CommissionDashboard {
                 let spent = !report.spent.amount().is_zero();
                 h_flex()
                     .flex_wrap()
+                    .items_stretch()
                     .gap_3()
                     .child(figure(
                         label("Ganho", total),
