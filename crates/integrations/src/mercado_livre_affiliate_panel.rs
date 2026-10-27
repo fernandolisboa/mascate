@@ -73,8 +73,7 @@ const REPORT: SalesReport = SalesReport {
         ),
         (Column::Tracking, &["Etiqueta", "Tag", "Etiqueta do link"]),
     ],
-    program_id: "mercado-livre-affiliates",
-    program_name: "Afiliados Mercado Livre",
+    platform: AffiliatePlatform::MercadoLivre,
     history_days: 90,
     settle_days: 60,
 };

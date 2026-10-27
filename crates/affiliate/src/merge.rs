@@ -19,6 +19,19 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         )
         .label(&["name"]),
         TableMerge::new(
+            "affiliate_declined_joins",
+            "Afiliação diferente da venda",
+            Keys(&[UniqueKey::live(&[
+                Column("provisional_id"),
+                Column("sold_id"),
+            ])]),
+        )
+        .references(&[
+            Reference::to("provisional_id", "affiliate_programs"),
+            Reference::to("sold_id", "affiliate_programs"),
+        ])
+        .label(&["provisional_id", "sold_id"]),
+        TableMerge::new(
             "affiliate_conversions",
             "Conversão",
             Keys(&[UniqueKey::live(&[

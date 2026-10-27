@@ -37,7 +37,7 @@ use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 use mascate_marketing::PromotionChannel;
 use mascate_platform::Flags;
 
-use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection};
+use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection, ProgramAdded};
 use crate::affiliate_panels::{self, AffiliatePanelsSection, PanelRead, Panels};
 use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
@@ -51,6 +51,7 @@ use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
 use crate::preferences;
 use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSection};
+use crate::program_joins::{ProgramJoinsSection, ProgramsJoined};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::PromotionRulesSection;
 use crate::restricted::AppFlags;
@@ -453,6 +454,7 @@ pub struct AffiliateScreen {
     payouts: Entity<PayoutsSection>,
     links: Entity<ProductLinksSection>,
     pub(crate) affiliate_links: Entity<AffiliateLinksSection>,
+    joins: Entity<ProgramJoinsSection>,
     rules: Entity<PromotionRulesSection>,
     panels: Entity<AffiliatePanelsSection>,
     _subscriptions: Vec<Subscription>,
@@ -468,6 +470,7 @@ impl AffiliateScreen {
         let import = cx.new(|_| AmazonImportSection::default());
         let links = cx.new(|cx| ProductLinksSection::new(window, cx));
         let affiliate_links = cx.new(|cx| AffiliateLinksSection::new(window, cx));
+        let joins = cx.new(|cx| ProgramJoinsSection::new(window, cx));
         let rules = cx.new(|cx| PromotionRulesSection::new(window, cx));
         let panels = cx.new(|_| AffiliatePanelsSection::default());
         let subscriptions = vec![
@@ -514,6 +517,19 @@ impl AffiliateScreen {
                 |this, _, _: &AffiliateLinkCreated, window, cx| this.read_commissions(window, cx),
             ),
             cx.subscribe_in(
+                &affiliate_links,
+                window,
+                |this, _, _: &ProgramAdded, window, cx| {
+                    this.rules.update(cx, |rules, cx| rules.refresh(window, cx))
+                },
+            ),
+            // A sale joined to a Program added by hand changes its Program
+            // everywhere.
+            cx.subscribe_in(&joins, window, |this, _, _: &ProgramsJoined, window, cx| {
+                cx.update_default_global::<CommissionChanges, _>(|changes, _| changes.0 += 1);
+                this.refresh(window, cx)
+            }),
+            cx.subscribe_in(
                 &links,
                 window,
                 |this, _, wanted: &CreateLinkFor, window, cx| {
@@ -548,6 +564,7 @@ impl AffiliateScreen {
             payouts,
             links,
             affiliate_links,
+            joins,
             rules,
             panels,
             _subscriptions: subscriptions,
@@ -566,6 +583,7 @@ impl AffiliateScreen {
         self.links.update(cx, |links, cx| links.refresh(window, cx));
         self.affiliate_links
             .update(cx, |links, cx| links.refresh(window, cx));
+        self.joins.update(cx, |joins, cx| joins.refresh(window, cx));
         self.rules.update(cx, |rules, cx| rules.refresh(window, cx));
         self.panels
             .update(cx, |panels, cx| panels.refresh(window, cx));
@@ -592,6 +610,7 @@ impl AffiliateScreen {
         self.affiliate_links
             .update(cx, AffiliateLinksSection::follow_context);
         self.rules.update(cx, PromotionRulesSection::follow_context);
+        self.joins.update(cx, ProgramJoinsSection::follow_context);
         self.panels.update(cx, |_, cx| cx.notify());
         if !context.shows_platform(AffiliatePlatform::Amazon) {
             self.import.update(cx, AmazonImportSection::cancel);
@@ -1338,8 +1357,11 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
         AffiliateError::NotCoverable => {
             "As comissões deste repasse já foram conferidas; a lista foi atualizada.".into()
         }
-        AffiliateError::NoProduct => "Digite o produto da venda.".into(),
+        AffiliateError::NoProduct => "Digite o produto.".into(),
         AffiliateError::NoSuchProgram => "Esse programa mudou; a lista foi atualizada.".into(),
+        AffiliateError::NotJoinable => {
+            "Essa venda já foi respondida ou mudou; a lista foi atualizada.".into()
+        }
         AffiliateError::NoSuchLink => "Esse link mudou; a lista foi atualizada.".into(),
         AffiliateError::BadTag => "A marcação tem letras minúsculas, números, _ e -, até 40 \
                                    caracteres."
@@ -1394,6 +1416,7 @@ impl Render for AffiliateScreen {
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
+        parts.content.push(self.joins.clone().into_any_element());
         parts
             .content
             .push(self.dashboard.clone().into_any_element());

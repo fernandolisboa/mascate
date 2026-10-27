@@ -342,11 +342,16 @@ pub struct Program {
     pub platform: AffiliatePlatform,
     pub name: String,
     pub rules: PromotionRules,
+    /// Added by the owner before its first sale and not joined to a sale's
+    /// Program yet (#194).
+    pub provisional: bool,
+    /// The product the owner named when adding it.
+    pub product: Option<String>,
 }
 
 const PROGRAM_QUERY: &str =
     "SELECT id, platform, name, paid_search, boosted_posts, email, direct_message, offline,
-         shortener, brand_keywords, price_needs_time
+         shortener, brand_keywords, price_needs_time, provisional, product
      FROM affiliate_programs WHERE deleted_at IS NULL";
 
 impl Affiliate {
@@ -483,5 +488,7 @@ fn program_from(row: &libsql::Row) -> Result<Program, AffiliateError> {
         platform,
         name: row.get(2)?,
         rules,
+        provisional: row.get::<i64>(11)? == 1,
+        product: row.get(12)?,
     })
 }

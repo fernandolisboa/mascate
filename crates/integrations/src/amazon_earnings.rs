@@ -14,9 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::RangeInclusive;
 
 use chrono::{NaiveDate, NaiveDateTime, TimeZone as _};
-use mascate_affiliate::{
-    AffiliatePlatform, CommissionStatus, Reading, ReportedConversion, ReportedProgram,
-};
+use mascate_affiliate::{AffiliatePlatform, CommissionStatus, Reading, ReportedConversion};
 use mascate_kernel::{Currency, Money, Timestamp, brasilia, fold, parse_amount};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -36,10 +34,6 @@ pub const LINKS: UrlTagger = UrlTagger {
     domains: &["amazon.com.br"],
     tag_ends_with: Some("-20"),
 };
-
-/// Amazon has one Program for every product.
-const PROGRAM_ID: &str = "amazon-associates";
-const PROGRAM_NAME: &str = "Amazon Associados";
 
 /// The report's columns. Amazon writes the currency after the money ones,
 /// as in `Ad Fees($)`; that suffix is not part of the name.
@@ -592,10 +586,10 @@ impl Sale {
         };
         ReportedConversion {
             key: self.key.clone(),
-            program: ReportedProgram {
-                id: PROGRAM_ID.into(),
-                name: PROGRAM_NAME.into(),
-            },
+            // Amazon has one Program for every product.
+            program: AffiliatePlatform::Amazon
+                .own_program()
+                .expect("Amazon has one Program"),
             product: self.row.name.clone(),
             sold_at: self.row.when(),
             commission: Money::new(amount.normalize(), Currency::Brl),

@@ -488,7 +488,7 @@ mod tests {
     use mascate_affiliate::{
         AffiliatePlatform, CommissionFilter, CommissionStatus, DayClicks, LinkShortener,
         LinkTagger, MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink,
-        Practice, Promotion, PromotionRules, Shortened, Standing, TagRefusal,
+        NewProgram, Practice, Promotion, PromotionRules, Shortened, Standing, TagRefusal,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -1807,6 +1807,38 @@ mod tests {
                 assert_eq!(
                     affiliate.program(program.id).await.unwrap().rules,
                     sample_rules(),
+                    "{name}"
+                );
+                // Programs added before their first sale arrived after
+                // 0.5.0: every kept Program was born from a sale, and the
+                // first sale of an added one waits for the owner.
+                assert!(!program.provisional, "{name}");
+                assert!(affiliate.joins().await.unwrap().is_empty(), "{name}");
+                let added = affiliate
+                    .add_program(&NewProgram {
+                        platform: AffiliatePlatform::Hotmart,
+                        name: "Curso de exemplo".into(),
+                        product: "Curso de exemplo".into(),
+                    })
+                    .await
+                    .unwrap();
+                assert!(added.provisional, "{name}");
+                let sold = affiliate
+                    .record_manual(ManualCommission {
+                        platform: AffiliatePlatform::Hotmart,
+                        ..sample_commission()
+                    })
+                    .await
+                    .unwrap();
+                let joins = affiliate.joins().await.unwrap();
+                assert_eq!(joins.len(), 1, "{name}");
+                affiliate
+                    .confirm_join(added.id, joins[0].sold.id)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    affiliate.commission(sold.id).await.unwrap().program,
+                    added.id,
                     "{name}"
                 );
                 // Promotion Channels and Affiliate Links arrived after

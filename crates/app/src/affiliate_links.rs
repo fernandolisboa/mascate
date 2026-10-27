@@ -5,7 +5,8 @@
 //! it). Shopee's link is the short link its API gives (#100). The Program's
 //! rules are checked first: what only warns is shown, a Restricted Feature
 //! that is off refuses (ADR 0031). "Encurtar" gives a link its Short Link
-//! through Short.io (#158, ADR 0035).
+//! through Short.io (#158, ADR 0035). "Nova afiliação" adds a Program
+//! before its first sale and goes straight to its link (#194).
 
 use std::sync::Arc;
 
@@ -18,12 +19,15 @@ use gpui_kit::{
 };
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform, CreatedLink, LinkTagger,
-    NewAffiliateLink, Program, PromotedProduct, Promotion, Reach, ReportedProgram, RuleWarning,
+    NewAffiliateLink, NewProgram, Program, PromotedProduct, Promotion, Reach, ReportedProgram,
+    RuleWarning,
 };
 use mascate_kernel::{PlatformError, RecordId};
 use mascate_marketing::{ChannelKind, PromotionChannel};
 
-use crate::affiliate::{affiliate, failure};
+use crate::affiliate::{
+    PlatformSelect, affiliate, failure, form_platform, platform_field, platform_select,
+};
 use crate::appearance::look;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
@@ -162,6 +166,9 @@ async fn read(affiliate: &Affiliate) -> Result<Snapshot, AffiliateError> {
 /// A link was created: the sales carrying its marking join its channel.
 pub struct AffiliateLinkCreated;
 
+/// A Program was added by hand: its rules can be read and edited.
+pub struct ProgramAdded;
+
 pub struct AffiliateLinksSection {
     links: Vec<AffiliateLink>,
     programs: Vec<Program>,
@@ -169,6 +176,11 @@ pub struct AffiliateLinksSection {
     channels: Vec<PromotionChannel>,
     /// The Program the form creates a link for.
     creating: Option<RecordId>,
+    /// "Nova afiliação" is open: it fills the product and the link, then
+    /// becomes "Criar link" for the Program it adds.
+    adding: bool,
+    platform: PlatformSelect,
+    name: Entity<InputState>,
     product: Entity<InputState>,
     pasted: Entity<InputState>,
     /// The Amazon tracking id of the channel.
@@ -188,6 +200,8 @@ pub struct AffiliateLinksSection {
 
 impl EventEmitter<AffiliateLinkCreated> for AffiliateLinksSection {}
 
+impl EventEmitter<ProgramAdded> for AffiliateLinksSection {}
+
 impl EventEmitter<StartPost> for AffiliateLinksSection {}
 
 impl AffiliateLinksSection {
@@ -202,6 +216,9 @@ impl AffiliateLinksSection {
             promoted: Vec::new(),
             channels: Vec::new(),
             creating: None,
+            adding: false,
+            platform: platform_select(window, cx),
+            name: input("Igual ao produto", window, cx),
             product: input("Como a plataforma chama o produto", window, cx),
             pasted: input("https://go.hotmart.com/…", window, cx),
             tracking_id: input("mascate-tg-20", window, cx),
@@ -305,10 +322,69 @@ impl AffiliateLinksSection {
         self.pasted
             .update(cx, |field, cx| field.set_value("", window, cx));
         self.creating = Some(program);
+        self.adding = false;
         self.channel = None;
         self.warnings.clear();
         self.form = None;
         cx.notify();
+    }
+
+    /// Opens "Nova afiliação" with empty fields.
+    fn open_adding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for field in [&self.name, &self.product, &self.pasted] {
+            field.update(cx, |field, cx| field.set_value("", window, cx));
+        }
+        self.adding = true;
+        self.creating = None;
+        self.warnings.clear();
+        self.form = None;
+        cx.notify();
+    }
+
+    /// Adds the Program the owner typed, then turns the form into "Criar
+    /// link" for it with the product and the link kept, where the app
+    /// tags links of its Platform.
+    fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(platform) = form_platform(&self.platform, cx) else {
+            self.form = Some(Outcome::Failed("Escolha a plataforma.".into()));
+            cx.notify();
+            return;
+        };
+        let new = NewProgram {
+            platform,
+            name: self.name.read(cx).value().to_string(),
+            product: self.product.read(cx).value().to_string(),
+        };
+        self.form = None;
+        self.run(
+            window,
+            cx,
+            move |affiliate| async move { affiliate.add_program(&new).await },
+            move |this, program: Program, _, cx| {
+                this.adding = false;
+                cx.emit(ProgramAdded);
+                if tagger(program.platform, cx).is_some() {
+                    this.creating = Some(program.id);
+                    this.channel = None;
+                    this.outcome = Some(Outcome::Done(
+                        format!(
+                            "Afiliação {} cadastrada. Escolha o canal para criar o link.",
+                            program.name
+                        )
+                        .into(),
+                    ));
+                } else {
+                    this.outcome = Some(Outcome::Done(
+                        format!(
+                            "Afiliação {} cadastrada. O app ainda não marca links da {}.",
+                            program.name,
+                            program.platform.name()
+                        )
+                        .into(),
+                    ));
+                }
+            },
+        );
     }
 
     /// Opens "Criar link" on the one Program of `tagger`'s Platform,
@@ -715,6 +791,83 @@ impl AffiliateLinksSection {
             .into_any_element()
     }
 
+    fn render_adding(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let field = |label: &'static str, input: &Entity<InputState>| {
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().child(label))
+                .child(div().w(px(420.)).child(Input::new(input).small()))
+        };
+        let platform = form_platform(&self.platform, cx);
+        let single = platform.is_some_and(|platform| platform.own_program().is_some());
+        let platform_name = platform.map_or("plataforma", AffiliatePlatform::name);
+        v_flex()
+            .gap_3()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.border)
+            .bg(t.raised)
+            .child(div().font_medium().child("Nova afiliação"))
+            .child(div().text_sm().text_color(t.text2).child(
+                "Cadastre a afiliação que você acabou de pegar, como aparece na página de \
+                 afiliação, para criar o link e divulgar antes da primeira venda. Quando a \
+                 primeira venda chegar, o app pergunta se é desta afiliação.",
+            ))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_sm().child("Plataforma"))
+                    .child(platform_field(&self.platform, cx)),
+            )
+            .child(if single {
+                div()
+                    .text_xs()
+                    .text_color(t.text2)
+                    .child(format!(
+                        "Na {platform_name} a afiliação é uma só para todos os produtos: o \
+                         link entra nela."
+                    ))
+                    .into_any_element()
+            } else {
+                field("Nome da afiliação", &self.name).into_any_element()
+            })
+            .child(field("Produto", &self.product))
+            .child(field("Link de afiliado", &self.pasted).child(
+                div().text_xs().text_color(t.text2).child(format!(
+                    "O HotLink ou o link que a {platform_name} dá na página de afiliação. \
+                     Pode deixar para o próximo passo."
+                )),
+            ))
+            .children(self.form.as_ref().map(|outcome| notice(outcome, cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("add-program")
+                            .label("Continuar para o link")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| this.add(window, cx))),
+                    )
+                    .child(
+                        Button::new("cancel-program")
+                            .label("Cancelar")
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.adding = false;
+                                this.form = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_program(
         &self,
         index: usize,
@@ -743,11 +896,15 @@ impl AffiliateLinksSection {
                             .flex_1()
                             .min_w(px(220.))
                             .child(div().font_medium().truncate().child(program.name.clone()))
-                            .child(div().text_xs().text_color(t.text2).child(match count {
-                                0 => "nenhum link ainda".to_owned(),
-                                1 => "1 link".to_owned(),
-                                count => format!("{count} links"),
-                            })),
+                            .child(div().text_xs().text_color(t.text2).child(format!(
+                                "{}{}",
+                                waiting_prefix(program.provisional),
+                                match count {
+                                    0 => "nenhum link ainda".to_owned(),
+                                    1 => "1 link".to_owned(),
+                                    count => format!("{count} links"),
+                                }
+                            ))),
                     )
                     .child(
                         Button::new(("open-create-link", index))
@@ -763,6 +920,15 @@ impl AffiliateLinksSection {
             .children(form)
             .children(links)
             .into_any_element()
+    }
+}
+
+/// What a provisional Program's line starts with.
+fn waiting_prefix(provisional: bool) -> &'static str {
+    if provisional {
+        "aguardando a primeira venda · "
+    } else {
+        ""
     }
 }
 
@@ -848,7 +1014,23 @@ impl Render for AffiliateLinksSection {
         untagged.dedup();
         v_flex()
             .gap_3()
-            .child(kit::section_heading("Links de afiliado"))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_4()
+                    .items_center()
+                    .child(kit::section_heading("Links de afiliado"))
+                    .child(
+                        Button::new("open-add-program")
+                            .label("Nova afiliação")
+                            .outline()
+                            .small()
+                            .disabled(self.busy || self.adding)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_adding(window, cx)),
+                            ),
+                    ),
+            )
             .child(div().text_sm().text_color(t.text2).child(
                 "Cole o link de afiliado de um produto e escolha o canal: o app acrescenta a \
                  marcação do canal, que volta em cada venda e liga a comissão a ele. Na Shopee, \
@@ -862,10 +1044,11 @@ impl Render for AffiliateLinksSection {
                     .iter()
                     .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
             )
+            .when(self.adding, |section| section.child(self.render_adding(cx)))
             .when(rows.is_empty(), |section| {
                 section.child(div().text_sm().text_color(t.text2).child(
                     "Nenhum programa da Hotmart, Kiwify, Monetizze, Eduzz ou Amazon ainda: eles \
-                     aparecem aqui com a primeira comissão.",
+                     aparecem aqui com a primeira comissão, ou antes dela em \"Nova afiliação\".",
                 ))
             })
             .children(rows)

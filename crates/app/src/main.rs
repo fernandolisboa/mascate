@@ -54,6 +54,7 @@ mod preferences;
 mod pricing;
 mod product_links;
 mod products;
+mod program_joins;
 mod promotion_channels;
 mod promotion_rules;
 mod promotions;

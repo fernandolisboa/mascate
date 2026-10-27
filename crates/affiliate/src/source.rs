@@ -56,6 +56,29 @@ impl AffiliatePlatform {
             .find(|platform| platform.code() == code)
     }
 
+    /// The one Program of a Platform that has a single one for every
+    /// product, as its adapters report it; `None` where each product has
+    /// its own.
+    pub fn own_program(self) -> Option<ReportedProgram> {
+        let (id, name) = match self {
+            AffiliatePlatform::Shopee => ("shopee-affiliates", "Shopee Afiliados"),
+            AffiliatePlatform::Amazon => ("amazon-associates", "Amazon Associados"),
+            AffiliatePlatform::MercadoLivre => {
+                ("mercado-livre-affiliates", "Afiliados Mercado Livre")
+            }
+            AffiliatePlatform::Magalu => ("magalu-affiliates", "Parceiro Magalu"),
+            AffiliatePlatform::Hotmart
+            | AffiliatePlatform::Kiwify
+            | AffiliatePlatform::Eduzz
+            | AffiliatePlatform::Monetizze
+            | AffiliatePlatform::Other => return None,
+        };
+        Some(ReportedProgram {
+            id: id.into(),
+            name: name.into(),
+        })
+    }
+
     /// As the owner reads it.
     pub fn name(self) -> &'static str {
         match self {

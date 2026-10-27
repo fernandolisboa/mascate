@@ -247,6 +247,8 @@ pub enum AffiliateError {
     NoProduct,
     #[error("no such Program")]
     NoSuchProgram,
+    #[error("these Programs are not a sale and a Program added before it to join")]
+    NotJoinable,
     #[error("no such Affiliate Link")]
     NoSuchLink,
     #[error("a marking is lowercase letters, digits, _ and -, up to 40 characters")]

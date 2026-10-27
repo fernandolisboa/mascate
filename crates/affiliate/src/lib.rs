@@ -6,6 +6,7 @@ mod commissions;
 mod links;
 mod merge;
 mod payouts;
+mod provisional_programs;
 mod report;
 mod rules;
 mod short_links;
@@ -22,6 +23,7 @@ pub use commissions::{
 pub use links::PromotedProduct;
 pub use merge::MERGE;
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
+pub use provisional_programs::{NewProgram, ProgramJoin};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use rules::{
     AMAZON_TYPED_PRICE, BRAND_KEYWORDS, Practice, Program, Promotion, PromotionRules, Reach,
@@ -51,6 +53,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         affiliate_links::CREATE_AFFILIATE_LINKS,
         short_links::CREATE_SHORT_LINKS,
         clicks::CREATE_LINK_CLICKS,
+        provisional_programs::ADD_PROVISIONAL_PROGRAMS,
     ],
 };
 
