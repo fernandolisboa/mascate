@@ -1133,8 +1133,8 @@ impl Render for PromotionScreen {
                 .children(rows)
                 .into_any_element(),
         );
-        parts.content.push(self.render_form(cx));
         parts.content.push(self.spends.clone().into_any_element());
+        parts.content.push(self.render_form(cx));
         layout::screen(parts, cx)
     }
 }
