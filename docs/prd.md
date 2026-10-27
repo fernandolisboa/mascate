@@ -150,6 +150,13 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 104. Como Fernando, quero criar, pausar e ajustar campanhas do Product Ads no app, com o ROAS alvo sugerido pelo ROAS de equilíbrio e um teto de orçamento, para gastar com anúncio sem sair da conta da margem.
 105. Como Fernando, quero pôr, mover e pausar anúncios nas campanhas e ver a sugestão de pausar o que dá prejuízo, para cortar o gasto que não volta.
 106. Como Fernando, quero que a IA escreva a chamada dos Offer Posts, com preço, link e #publi ainda vindos do app, para postar com um texto melhor sem risco de errar o preço.
+107. Como Fernando, quero escolher no topo em que Platform estou trabalhando, ou Tudo, para que o menu mostre só as telas dela e eu não escolha o canal errado ao trocar de tela.
+108. Como Fernando, quero que Afiliação, Divulgação, Hoje e Painel também sigam essa escolha e que formulários novos já venham com ela, para não repetir a Platform em cada tela.
+109. Como Fernando, quero cadastrar uma afiliação nova antes da primeira venda, para criar o link e divulgar logo.
+110. Como Fernando, quero lançar o gasto de divulgação de cada Promotion Channel, digitado ou importado do relatório da Meta ou do Google Ads, para saber quanto custou cada venda.
+111. Como Fernando, quero ver lucro e ROAS por produto e por Promotion Channel, com a sugestão de pausar o que dá prejuízo, para pôr dinheiro só no que volta.
+112. Como Fernando, quero uma tela Passo a passo que leva um produto de afiliado do cadastro ao resultado, para divulgar sem procurar cada coisa em uma tela.
+113. Como Fernando, quero ser avisado quando um texto promete resultado (renda, saúde, garantia), para não ter anúncio reprovado nem conta bloqueada.
 
 ## Implementation Decisions
 
@@ -223,7 +230,7 @@ Prior art: o repositório ainda não tem código; esses padrões serão estabele
 - Multiusuário e multi-tenant.
 - Emissão de NF-e, Mercado Envios Flex e Full (exigem NF-e) enquanto não houver CNPJ; ficam como Reminder.
 - Compra automática na Shopee ou no ML como comprador (não existe API); a Purchase Order é registrada à mão.
-- Gestão de campanhas de Google Ads e Meta Ads (o Product Ads é gerido pelo app desde a fase 3, ADR 0036), blog/SEO, e-mail marketing, TikTok por API, WhatsApp Cloud API, geração de vídeo, CRM e remarketing.
+- Gestão de campanhas de Google Ads e Meta Ads (o Product Ads é gerido pelo app desde a fase 3, ADR 0036; o gasto da Meta e do Google é só registrado, ADR 0037), blog/SEO, e-mail marketing, TikTok por API, WhatsApp Cloud API, geração de vídeo, CRM e remarketing.
 - Autocompra pelo próprio link de afiliado (não é construída nem atrás de flag).
 
 ## Further Notes
