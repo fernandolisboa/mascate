@@ -58,19 +58,23 @@ pub enum ChannelKind {
     TikTok,
     /// Ads on Google, Bing and other search engines.
     PaidSearch,
+    /// Paid ads on Meta (Facebook, Instagram) or TikTok: a boosted post in
+    /// a Program's rules.
+    PaidSocial,
     /// The owner's Pinterest account: a board of Pins.
     Pinterest,
     Other,
 }
 
 impl ChannelKind {
-    pub const ALL: [ChannelKind; 7] = [
+    pub const ALL: [ChannelKind; 8] = [
         ChannelKind::TelegramChannel,
         ChannelKind::WhatsAppGroup,
         ChannelKind::Instagram,
         ChannelKind::TikTok,
         ChannelKind::Pinterest,
         ChannelKind::PaidSearch,
+        ChannelKind::PaidSocial,
         ChannelKind::Other,
     ];
 
@@ -81,6 +85,7 @@ impl ChannelKind {
             ChannelKind::Instagram => "instagram",
             ChannelKind::TikTok => "tiktok",
             ChannelKind::PaidSearch => "paid_search",
+            ChannelKind::PaidSocial => "paid_social",
             ChannelKind::Pinterest => "pinterest",
             ChannelKind::Other => "other",
         }
@@ -108,6 +113,7 @@ impl ChannelKind {
             ChannelKind::Instagram => "Instagram",
             ChannelKind::TikTok => "TikTok",
             ChannelKind::PaidSearch => "Busca paga",
+            ChannelKind::PaidSocial => "Anúncio pago na Meta ou no TikTok",
             ChannelKind::Pinterest => "Pinterest",
             ChannelKind::Other => "Outro",
         }

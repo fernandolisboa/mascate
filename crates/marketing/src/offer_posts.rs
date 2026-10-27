@@ -176,6 +176,7 @@ pub fn post_limits(kind: ChannelKind) -> Option<PostLimits> {
         ChannelKind::WhatsAppGroup
         | ChannelKind::TikTok
         | ChannelKind::PaidSearch
+        | ChannelKind::PaidSocial
         | ChannelKind::Other => None,
     }
 }
@@ -189,7 +190,10 @@ pub fn default_template(kind: ChannelKind) -> &'static str {
             "🔥 {produto}\n{chamada}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n📉 {desconto} de \
              desconto\n\n👉 {link}"
         }
-        ChannelKind::Instagram | ChannelKind::TikTok | ChannelKind::Pinterest => {
+        ChannelKind::Instagram
+        | ChannelKind::TikTok
+        | ChannelKind::Pinterest
+        | ChannelKind::PaidSocial => {
             "{produto}\n{chamada}\n\nDe {de}\nPor {preco}\nPreço {hora_do_preco}\n{desconto} de \
              desconto\n\nLink: {link}"
         }
@@ -990,6 +994,7 @@ impl OfferPosts {
             ChannelKind::WhatsAppGroup
             | ChannelKind::TikTok
             | ChannelKind::PaidSearch
+            | ChannelKind::PaidSocial
             | ChannelKind::Other => return Err(PostError::NoDestination),
         };
         let limits = post_limits(channel.kind);

@@ -1,3 +1,4 @@
 # Exported reports are tested byte for byte: line breaks inside quoted cells and
 # Windows-1252 text must reach the reader as Amazon and Excel write them.
 crates/integrations/tests/fixtures/amazon/** -text
+crates/integrations/tests/fixtures/spend-reports/** -text

@@ -8,6 +8,7 @@
 //! channel the app posts to has the posting times its scheduled posts go
 //! out at (#104, #157).
 //! The Sales Events calendar sits between the posts and the channels (#105).
+//! What each channel spent comes last (#195).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,6 +35,7 @@ use crate::offer_posts::{
 };
 use crate::parts::ScreenParts;
 use crate::post_queue::{times_text, typed_times};
+use crate::promotion_spends::SpendsSection;
 use crate::sales::table_row;
 use crate::sales_events::CalendarSection;
 use crate::{pinterest, telegram};
@@ -107,6 +109,11 @@ fn kind_note(kind: ChannelKind) -> &'static str {
              aceita link em busca paga, e marcas como amazon, shopee ou hotmart ficam \
              bloqueadas."
         }
+        ChannelKind::PaidSocial => {
+            "Anúncio que você paga no Gerenciador de Anúncios da Meta (Facebook e Instagram) ou no \
+             TikTok. Conta como impulsionar post nas regras de cada programa. Lance o gasto à \
+             mão ou importe o relatório da Meta em \"Gasto com divulgação\"."
+        }
         ChannelKind::WhatsAppGroup | ChannelKind::TikTok | ChannelKind::Other => {
             "Um canal ou grupo seu, onde você posta de graça."
         }
@@ -136,6 +143,7 @@ struct TemplateEditor {
 pub struct PromotionScreen {
     posts: Entity<OfferPostsSection>,
     calendar: Entity<CalendarSection>,
+    spends: Entity<SpendsSection>,
     channels: Vec<PromotionChannel>,
     template: Option<TemplateEditor>,
     times: Option<TimesEditor>,
@@ -168,6 +176,7 @@ impl PromotionScreen {
         let mut screen = Self {
             posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
             calendar: cx.new(|cx| CalendarSection::new(window, cx)),
+            spends: cx.new(|_| SpendsSection::new()),
             channels: Vec::new(),
             template: None,
             times: None,
@@ -509,7 +518,11 @@ impl PromotionScreen {
                 if this.reads == read {
                     this.busy = false;
                     match read_back {
-                        Ok(channels) => this.channels = channels,
+                        Ok(channels) => {
+                            this.spends
+                                .update(cx, |spends, cx| spends.set_channels(channels.clone(), cx));
+                            this.channels = channels;
+                        }
                         Err(error) => this.outcome = Some(Outcome::Failed(failure(&error).into())),
                     }
                 }
@@ -1107,7 +1120,7 @@ impl Render for PromotionScreen {
                 .gap_3()
                 .child(kit::section_heading("Canais de divulgação"))
                 .child(div().text_sm().text_color(t.text2).child(
-                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram, TikTok, Pinterest, busca paga. Cada canal tem uma marcação, que vai nos links de afiliado criados em Afiliação.",
+                    "Onde você divulga: canal do Telegram, grupo de WhatsApp, Instagram, TikTok, Pinterest, busca paga, anúncio pago na Meta. Cada canal tem uma marcação, que vai nos links de afiliado criados em Afiliação.",
                 ))
                 .when(rows.is_empty(), |list| {
                     list.child(
@@ -1120,6 +1133,7 @@ impl Render for PromotionScreen {
                 .children(rows)
                 .into_any_element(),
         );
+        parts.content.push(self.spends.clone().into_any_element());
         parts.content.push(self.render_form(cx));
         layout::screen(parts, cx)
     }

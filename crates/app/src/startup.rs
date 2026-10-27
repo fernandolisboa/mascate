@@ -11,8 +11,8 @@ use mascate_finance::{SalesVolume, Taxes};
 use mascate_inventory::Inventory;
 use mascate_kernel::{SalesChannelKind, SystemClock, UuidV7Generator};
 use mascate_marketing::{
-    AdCampaigns, ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels, Questions,
-    ReplyTemplates, Reputation, SalesEvents,
+    AdCampaigns, ListingCopy, ListingQuality, OfferPosts, ProductAds, PromotionChannels,
+    PromotionSpends, Questions, ReplyTemplates, Reputation, SalesEvents,
 };
 use mascate_platform::{
     Appearance, AppliedMerge, BackupSettings, Backups, Database, Flag, Flags, Installation,
@@ -95,6 +95,7 @@ pub struct Started {
     pub ad_campaigns: Arc<AdCampaigns>,
     pub reply_templates: Arc<ReplyTemplates>,
     pub promotion_channels: Arc<PromotionChannels>,
+    pub promotion_spends: Arc<PromotionSpends>,
     pub offer_posts: Arc<OfferPosts>,
     pub sales_events: Arc<SalesEvents>,
     pub taxes: Arc<Taxes>,
@@ -353,6 +354,11 @@ pub fn prepare() -> Outcome {
                 Arc::new(SystemClock),
                 Arc::new(UuidV7Generator),
             );
+            let promotion_spends = PromotionSpends::new(
+                database.clone(),
+                Arc::new(SystemClock),
+                Arc::new(UuidV7Generator),
+            );
             let offer_posts = OfferPosts::new(
                 database.clone(),
                 Arc::new(SystemClock),
@@ -413,6 +419,7 @@ pub fn prepare() -> Outcome {
                 ad_campaigns: Arc::new(ad_campaigns),
                 reply_templates: Arc::new(reply_templates),
                 promotion_channels: Arc::new(promotion_channels),
+                promotion_spends: Arc::new(promotion_spends),
                 offer_posts: Arc::new(offer_posts),
                 sales_events: Arc::new(sales_events),
                 taxes: Arc::new(taxes),
@@ -504,13 +511,14 @@ mod tests {
         SalesChannelKind,
     };
     use mascate_marketing::{
-        AdGroupKind, AdMetrics, AdStatus, CampaignStatus, CampaignStrategy, ChannelAd,
-        ChannelAdGroup, ChannelAds, ChannelCampaign, ChannelKind, ChannelQuality, ChannelQuestion,
-        ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
-        DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews, MetricReading,
-        NewPromotionChannel, NewReplyTemplate, NewSalesEvent, OfferFacts, OfferPrice,
-        PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource, QuestionStatus, Rating,
-        ReputationColor, ReputationSource, Score, default_posting_times,
+        AdGroupKind, AdMetrics, AdStatus, CampaignLink, CampaignStatus, CampaignStrategy,
+        ChannelAd, ChannelAdGroup, ChannelAds, ChannelCampaign, ChannelKind, ChannelQuality,
+        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, ChannelSpend,
+        CopySettings, DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews,
+        MetricReading, NewPromotionChannel, NewPromotionSpend, NewReplyTemplate, NewSalesEvent,
+        OfferFacts, OfferPrice, PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource,
+        QuestionStatus, Rating, ReportedSpend, ReputationColor, ReputationSource, Score,
+        SpendReport, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
     use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
@@ -1875,6 +1883,53 @@ mod tests {
                 assert_eq!(kept[0].kind, ChannelKind::TelegramChannel, "{name}");
                 // The board arrived with Pinterest; older channels have none.
                 assert_eq!(kept[0].pinterest_board, None, "{name}");
+                // Promotion Spends arrived after 0.5.0: a kept channel has
+                // none, then keeps a typed one and a report's day once.
+                let spends = PromotionSpends::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert!(
+                    spends.spends(kept[0].id).await.unwrap().is_empty(),
+                    "{name}"
+                );
+                let october = |day| chrono::NaiveDate::from_ymd_opt(2026, 10, day).unwrap();
+                let reais = |cents| Money::new(rust_decimal::Decimal::new(cents, 2), Currency::Brl);
+                spends
+                    .record(&NewPromotionSpend {
+                        channel: kept[0].id,
+                        first_day: october(1),
+                        last_day: october(10),
+                        amount: reais(5000),
+                    })
+                    .await
+                    .unwrap();
+                let reported = [ReportedSpend {
+                    report: SpendReport::MetaAds,
+                    campaign: "Exemplo".into(),
+                    day: october(11),
+                    amount: reais(2000),
+                }];
+                let link = CampaignLink {
+                    report: SpendReport::MetaAds,
+                    campaign: "Exemplo".into(),
+                    channel: kept[0].id,
+                };
+                spends.import(&reported, &[link]).await.unwrap();
+                assert_eq!(
+                    spends.import(&reported, &[]).await.unwrap().unchanged,
+                    1,
+                    "{name}"
+                );
+                assert_eq!(
+                    spends.spent(october(1)..=october(31)).await.unwrap(),
+                    vec![ChannelSpend {
+                        channel: kept[0].id,
+                        amount: reais(7000),
+                    }],
+                    "{name}"
+                );
                 let created = affiliate
                     .create_link(&sample_link(program.id, kept[0].id), &SampleTagger)
                     .await

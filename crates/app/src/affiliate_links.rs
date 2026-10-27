@@ -55,11 +55,13 @@ pub(crate) fn tagger(platform: AffiliatePlatform, cx: &App) -> Option<Arc<dyn Li
 }
 
 /// A Promotion Channel in the Affiliate's words (ADR 0031, decision 1):
-/// paid search is paid search, every other kind is the owner's own channel.
+/// paid search is paid search, a paid ad on Meta or TikTok is a boosted
+/// post (ADR 0037, decision 6), every other kind is the owner's own channel.
 pub(crate) fn promotion(channel: &PromotionChannel) -> Promotion {
     Promotion {
         reach: match channel.kind {
             ChannelKind::PaidSearch => Reach::PaidSearch,
+            ChannelKind::PaidSocial => Reach::BoostedPost,
             ChannelKind::TelegramChannel
             | ChannelKind::WhatsAppGroup
             | ChannelKind::Instagram
@@ -1058,5 +1060,47 @@ impl Render for AffiliateLinksSection {
                     untagged.join(", ")
                 )))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mascate_affiliate::{Practice, PromotionRules, Standing};
+
+    use super::*;
+
+    fn channel(kind: ChannelKind) -> PromotionChannel {
+        PromotionChannel {
+            id: RecordId::nil(),
+            name: "Canal".into(),
+            kind,
+            default_tag: "canal".into(),
+            keywords: Vec::new(),
+            telegram_chat: None,
+            posting_times: Vec::new(),
+            pinterest_board: None,
+        }
+    }
+
+    #[test]
+    fn a_paid_ad_on_meta_or_tiktok_is_checked_against_the_boosted_post_rule() {
+        let rules = PromotionRules::defaults(AffiliatePlatform::Hotmart)
+            .with(Practice::BoostedPosts, Standing::Forbidden);
+        assert_eq!(
+            rules.check(&promotion(&channel(ChannelKind::PaidSocial))),
+            vec![RuleWarning::Practice {
+                practice: Practice::BoostedPosts,
+                standing: Standing::Forbidden,
+            }]
+        );
+        assert_eq!(
+            rules.check(&promotion(&channel(ChannelKind::Instagram))),
+            Vec::new()
+        );
+        let allowed = rules.with(Practice::BoostedPosts, Standing::Allowed);
+        assert_eq!(
+            allowed.check(&promotion(&channel(ChannelKind::PaidSocial))),
+            Vec::new()
+        );
     }
 }

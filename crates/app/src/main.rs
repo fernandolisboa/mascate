@@ -57,6 +57,7 @@ mod products;
 mod program_joins;
 mod promotion_channels;
 mod promotion_rules;
+mod promotion_spends;
 mod promotions;
 mod purchases;
 mod quality;
@@ -125,6 +126,7 @@ use crate::pinterest::AppPinterest;
 use crate::preferences::Preferences;
 use crate::pricing::{AppPricing, AppTaxes};
 use crate::promotion_channels::AppPromotionChannels;
+use crate::promotion_spends::AppPromotionSpends;
 use crate::promotions::AppPromotions;
 use crate::purchases::AppPurchaseOrders;
 use crate::quality::AppQuality;
@@ -446,6 +448,7 @@ fn main() {
                     .collect(),
                 ));
                 cx.set_global(AppPromotionChannels(started.promotion_channels.clone()));
+                cx.set_global(AppPromotionSpends(started.promotion_spends.clone()));
                 cx.set_global(AppOfferPosts(started.offer_posts.clone()));
                 cx.set_global(AppSalesEvents(started.sales_events.clone()));
                 cx.set_global(AppCatalog(started.catalog.clone()));

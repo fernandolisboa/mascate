@@ -15,12 +15,14 @@ use std::ops::RangeInclusive;
 
 use chrono::{NaiveDate, NaiveDateTime, TimeZone as _};
 use mascate_affiliate::{AffiliatePlatform, CommissionStatus, Reading, ReportedConversion};
-use mascate_kernel::{Currency, Money, Timestamp, brasilia, fold, parse_amount};
+use mascate_kernel::{Currency, Money, Timestamp, brasilia};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::link_tags::UrlTagger;
-use crate::spreadsheet::{Cell, TableError, TableRow, excel_serial, read_table};
+use crate::spreadsheet::{
+    Cell, SkippedRow, TableError, TableRow, columns_of, date_time, decimal, read_table,
+};
 
 /// The Platform the report's Conversions belong to.
 pub const PLATFORM: AffiliatePlatform = AffiliatePlatform::Amazon;
@@ -103,13 +105,6 @@ pub enum ReportError {
     Unreadable(String),
 }
 
-/// A row the import leaves out, and why, as the owner reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkippedRow {
-    pub line: usize,
-    pub reason: String,
-}
-
 /// An earnings report, read and checked, before it meets what earlier
 /// imports brought.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,12 +127,15 @@ pub struct EarningsImport {
 /// Reads an earnings report exported as CSV or XLSX. A file whose header
 /// is not the report's is refused whole.
 pub fn read_earnings_report(bytes: &[u8]) -> Result<EarningsReport, ReportError> {
-    let table =
-        read_table(bytes, |names| columns_of(names).is_some()).map_err(|error| match error {
-            TableError::NoHeader => ReportError::NotEarningsReport,
-            TableError::Unreadable(why) => ReportError::Unreadable(why),
-        })?;
-    let columns = columns_of(&table.header).ok_or(ReportError::NotEarningsReport)?;
+    let table = read_table(bytes, |names| {
+        columns_of(names, &COLUMNS, &REQUIRED).is_some()
+    })
+    .map_err(|error| match error {
+        TableError::NoHeader => ReportError::NotEarningsReport,
+        TableError::Unreadable(why) => ReportError::Unreadable(why),
+    })?;
+    let columns =
+        columns_of(&table.header, &COLUMNS, &REQUIRED).ok_or(ReportError::NotEarningsReport)?;
     let mut rows = Vec::new();
     let mut skipped = Vec::new();
     for row in &table.rows {
@@ -302,35 +300,6 @@ fn units(count: u32) -> String {
     }
 }
 
-/// The columns at their positions in `names`, when every required one is
-/// there.
-fn columns_of(names: &[String]) -> Option<HashMap<Column, usize>> {
-    let mut found = HashMap::new();
-    for (index, name) in names.iter().enumerate() {
-        let name = folded(name);
-        if let Some((column, _)) = COLUMNS
-            .iter()
-            .find(|(_, known)| known.iter().any(|known| folded(known) == name))
-        {
-            found.entry(*column).or_insert(index);
-        }
-    }
-    REQUIRED
-        .iter()
-        .all(|column| found.contains_key(column))
-        .then_some(found)
-}
-
-/// A header name without its currency suffix, as letters and digits only:
-/// `Ad Fees($)` and `ad fees` are the same column.
-fn folded(name: &str) -> String {
-    let name = match name.find('(') {
-        Some(start) => &name[..start],
-        None => name,
-    };
-    name.chars().filter_map(fold).collect()
-}
-
 /// One row as read, before it is told apart from the others.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Row {
@@ -371,7 +340,7 @@ impl Row {
         if name.is_empty() {
             return Err("linha sem o nome do produto".into());
         }
-        let date_shipped = date(cell(Column::DateShipped))
+        let date_shipped = date_time(cell(Column::DateShipped))
             .ok_or_else(|| format!("data de envio ilegível: {}", text(Column::DateShipped)))?;
         let money = |column: Column, label: &str| {
             decimal(cell(column)).ok_or_else(|| format!("{label} ilegível: {}", text(column)))
@@ -446,44 +415,6 @@ mod date_text {
     ) -> Result<NaiveDateTime, D::Error> {
         let text = String::deserialize(deserializer)?;
         NaiveDateTime::parse_from_str(&text, DATE_FORMAT).map_err(serde::de::Error::custom)
-    }
-}
-
-/// A money or count cell: a number in XLSX, text in CSV written either way,
-/// `1.234,56` or `1234.56`.
-fn decimal(cell: &Cell) -> Option<Decimal> {
-    match cell {
-        Cell::Number(number) => Some(*number),
-        Cell::Text(text) => parse_amount(text),
-        Cell::Empty | Cell::Date(_) => None,
-    }
-}
-
-/// A date cell: a date in XLSX (or its serial number when the cell is not
-/// formatted as a date), text in CSV in the ways Amazon and Excel write it.
-fn date(cell: &Cell) -> Option<NaiveDateTime> {
-    const WITH_TIME: [&str; 5] = [
-        DATE_FORMAT,
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%Y %H:%M",
-    ];
-    const DAY_ONLY: [&str; 2] = ["%Y-%m-%d", "%d/%m/%Y"];
-    match cell {
-        Cell::Date(date) => Some(*date),
-        Cell::Number(serial) => excel_serial(serial.to_string().parse().ok()?),
-        Cell::Text(text) => WITH_TIME
-            .iter()
-            .find_map(|format| NaiveDateTime::parse_from_str(text, format).ok())
-            .or_else(|| {
-                DAY_ONLY.iter().find_map(|format| {
-                    NaiveDate::parse_from_str(text, format)
-                        .ok()?
-                        .and_hms_opt(0, 0, 0)
-                })
-            }),
-        Cell::Empty => None,
     }
 }
 
