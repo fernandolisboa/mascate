@@ -33,7 +33,7 @@ O Fernando comparou o Mascate com um documento de visão para afiliado da Hotmar
 
 ## Consequences
 
-- O épico vira fatias verticais, nesta ordem: o seletor de contexto com o menu e as telas de venda travadas; as telas de afiliação, Hoje e Painel no contexto; o Program antes da primeira venda; o gasto de divulgação digitado e importado; lucro e ROAS por canal e por produto; o aviso de promessa de resultado; o Passo a passo, depois de todas.
+- O épico #191 vira fatias verticais, nesta ordem: o seletor de contexto com o menu e as telas de venda travadas (#192); as telas de afiliação, Hoje e Painel no contexto (#193, depois da #192); o Program antes da primeira venda (#194); o Promotion Spend digitado e importado (#195); lucro e ROAS por canal e por produto (#196, depois da #195); o aviso de promessa de resultado (#197); o Passo a passo (#198, depois da #193, #194, #196 e #197). Todas `ready-for-agent` e `afk`.
 - Migrações previstas: Platform v7 (o Work Context guardado), Affiliate v8 (a marca de Program provisório) e Marketing v16 (Promotion Spends e a ligação de campanha a canal). O Commerce e o Finance não migram.
 - O `ADS_LOSS_MIN_COST` passa do Marketing ao `kernel`. Nenhuma aresta nova no teste de arquitetura e nenhuma dependência nova.
 - Glossário: Work Context, Promotion Spend e Guided Flow (na tela, Passo a passo) entram no `CONTEXT.md`; o PRD ganha as histórias 107 a 113 e diz que o gasto da Meta e do Google é registrado, não gerido.
