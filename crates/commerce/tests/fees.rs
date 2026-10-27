@@ -672,6 +672,57 @@ fn shopee_ads_split_across_shopee_sales_of_the_listing_and_never_reach_another_c
     });
 }
 
+#[test]
+fn a_period_on_one_channel_keeps_its_sales_and_the_ads_no_sale_of_it_took() {
+    block_on(async {
+        let fx = Fixture::selling().await;
+        let shopee = Channel::on(SalesChannelKind::Shopee);
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        fx.sell("O1", 1).await;
+        let at = fx.later(1);
+        shopee.sells(order("2610SHP0001", at, vec![sold("MLB1", None, 1)]));
+        fx.later(5);
+        fx.orders.sync(&shopee).await.unwrap();
+        let on_shopee = |listing: &str, day, cost| AdCost {
+            channel: SalesChannelKind::Shopee,
+            ..ad(listing, 10, day, cost)
+        };
+        let ads = [
+            ad("MLB9", 10, 1, "4.00"),
+            on_shopee("800009", 2, "3.00"),
+            on_shopee("MLB1", 2, "0.10"),
+        ];
+        let period = fx.orders.sales(percent("0"), ever(), &ads).await.unwrap();
+
+        let shopee_only = period.on(SalesChannelKind::Shopee);
+        let ml_only = period.on(SalesChannelKind::MercadoLivre);
+
+        let ids = |period: &SalesPeriod| -> Vec<String> {
+            period
+                .sales
+                .iter()
+                .map(|sale| sale.order.sold.id.clone())
+                .collect()
+        };
+        assert_eq!(ids(&shopee_only), ["2610SHP0001"]);
+        assert_eq!(ids(&ml_only), ["O1"]);
+        assert_eq!(shopee_only.unplaced_ads, [ads[1].clone()]);
+        assert_eq!(ml_only.unplaced_ads, [ads[0].clone()]);
+        assert!(period.on(SalesChannelKind::Magalu).sales.is_empty());
+        // The channels together are the whole period.
+        let summary = |period: &SalesPeriod| SalesSummary::of(period, Currency::Brl).unwrap();
+        assert_eq!(
+            summary(&shopee_only)
+                .ads
+                .checked_add(summary(&ml_only).ads)
+                .unwrap(),
+            summary(&period).ads
+        );
+        assert_eq!(summary(&shopee_only).ads, brl("3.10"));
+    });
+}
+
 fn margin_of(sale: &Sale) -> Money {
     sale.margin.margin.unwrap().amount
 }

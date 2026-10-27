@@ -36,9 +36,11 @@ use crate::kit;
 use crate::listing_copy;
 use crate::listings;
 use crate::mercado_livre;
+use crate::preferences;
 use crate::pricing;
 use crate::sales_channels;
 use crate::stock;
+use crate::work_context;
 
 /// A draft went out to its Sales Channel: the listings need reading again.
 pub struct DraftPublished;
@@ -120,7 +122,9 @@ impl EventEmitter<DraftPublished> for DraftsSection {}
 impl DraftsSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
-            channel: SalesChannelKind::MercadoLivre,
+            channel: preferences::work_context(cx)
+                .sales_channel()
+                .unwrap_or(SalesChannelKind::MercadoLivre),
             drafts: Vec::new(),
             products: Vec::new(),
             product_pick: picker(window, cx),
@@ -129,6 +133,18 @@ impl DraftsSection {
             reads: 0,
             outcome: None,
         }
+    }
+
+    /// Follows a new Work Context: a new draft goes to its channel, and an
+    /// editor open on another channel closes without sending; the draft
+    /// stays saved.
+    pub fn follow_context(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        if let Some(kind) = context.sales_channel() {
+            self.channel = kind;
+        }
+        work_context::close_outside(&mut self.editor, context, |editor| Some(editor.channel));
+        cx.notify();
     }
 
     /// Reads the drafts again, as when the screen comes into view.
@@ -1092,7 +1108,23 @@ impl DraftsSection {
     }
 
     fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
-        let channels = publishing_channels(cx);
+        let t = look(cx).tokens;
+        // A Platform's context fixes where a new draft goes.
+        let channels = match preferences::work_context(cx).sales_channel() {
+            None => publishing_channels(cx),
+            Some(kind) if publishing_channels(cx).contains(&kind) => Vec::new(),
+            Some(kind) => {
+                return div()
+                    .text_sm()
+                    .text_color(t.text2)
+                    .child(format!(
+                        "O app ainda não publica anúncios novos {}: crie no painel do canal e \
+                         sincronize para trazê-los.",
+                        sales_channels::on(kind)
+                    ))
+                    .into_any_element();
+            }
+        };
         h_flex()
             .flex_wrap()
             .gap_2()
@@ -1943,7 +1975,11 @@ impl DraftsSection {
 impl Render for DraftsSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
-        let heading = match self.drafts.len() {
+        let context = preferences::work_context(cx);
+        let shown: Vec<usize> = (0..self.drafts.len())
+            .filter(|index| context.shows_channel(self.drafts[*index].channel))
+            .collect();
+        let heading = match shown.len() {
             0 => "Rascunhos".to_owned(),
             count => format!("Rascunhos ({count})"),
         };
@@ -1963,7 +1999,7 @@ impl Render for DraftsSection {
             .when(self.editor.is_none(), |section| {
                 section.children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
             })
-            .children((0..self.drafts.len()).map(|index| self.render_draft(index, cx)))
+            .children(shown.into_iter().map(|index| self.render_draft(index, cx)))
     }
 }
 

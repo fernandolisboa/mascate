@@ -7,6 +7,9 @@ use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{AnyElement, App, SharedString, Window};
+use mascate_kernel::SalesChannelKind;
+
+use crate::work_context::WorkContext;
 
 /// What picking one of `T` runs.
 pub type OnPick<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
@@ -40,6 +43,18 @@ pub struct PlaceGroup {
     /// `None` for the group that opens the navigation, which needs none.
     pub name: Option<&'static str>,
     pub places: &'static [Place],
+}
+
+impl PlaceGroup {
+    /// Its places the Work Context shows, in order; a group left empty
+    /// goes from the navigation with its heading.
+    pub fn shown(&self, context: WorkContext) -> Vec<Place> {
+        self.places
+            .iter()
+            .copied()
+            .filter(|place| place.shows_in(context))
+            .collect()
+    }
 }
 
 impl Place {
@@ -80,6 +95,35 @@ impl Place {
     /// The places kept apart at the end: the sidebar's foot, the tab bar's
     /// right side.
     pub const PINNED: [Place; 1] = [Place::Settings];
+
+    /// Whether the navigation lists this place in `context` (ADR 0037,
+    /// decision 2). The sales screens show on the Sales Channels, and the
+    /// rest everywhere: the stock is one, split across the Listings.
+    pub fn shows_in(self, context: WorkContext) -> bool {
+        if context == WorkContext::All {
+            return true;
+        }
+        match self {
+            Place::Listings | Place::Quality | Place::Promotions | Place::Orders | Place::Sales => {
+                context.sales_channel().is_some()
+            }
+            // Only Mercado Livre's buyers ask questions and rate the seller
+            // through a port the app reads.
+            Place::Questions | Place::Reputation => {
+                context.sales_channel() == Some(SalesChannelKind::MercadoLivre)
+            }
+            Place::Today
+            | Place::Opportunities
+            | Place::Offers
+            | Place::Products
+            | Place::Dashboard
+            | Place::Purchases
+            | Place::Stock
+            | Place::Affiliate
+            | Place::Promotion
+            | Place::Settings => true,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -137,6 +181,8 @@ pub enum AppState {
 /// The places, the one on screen, and what picking one does.
 pub struct Navigation {
     pub current: Place,
+    /// Which places the navigation lists.
+    pub context: WorkContext,
     pub state: AppState,
     pub on_pick: OnPick<Place>,
 }
@@ -231,6 +277,103 @@ mod tests {
         assert_eq!(group_of(Place::Dashboard), Some("Pedidos e finanças"));
         assert_eq!(group_of(Place::Promotion), Some("Afiliação"));
         assert_eq!(group_of(Place::Settings), None);
+    }
+
+    /// What ADR 0037 decision 2 lists in each context, in the navigation's
+    /// order.
+    fn expected(context: WorkContext) -> Vec<Place> {
+        use Place::*;
+        let everywhere = [
+            Today,
+            Opportunities,
+            Offers,
+            Products,
+            Purchases,
+            Stock,
+            Dashboard,
+            Affiliate,
+            Promotion,
+            Settings,
+        ];
+        let selling = [Listings, Quality, Promotions, Orders, Sales];
+        let mercado_livre_only = [Questions, Reputation];
+        EVERY_PLACE
+            .into_iter()
+            .filter(|place| match context {
+                WorkContext::All => true,
+                WorkContext::MercadoLivre => true,
+                WorkContext::Shopee | WorkContext::Amazon | WorkContext::Magalu => {
+                    everywhere.contains(place) || selling.contains(place)
+                }
+                WorkContext::Hotmart
+                | WorkContext::Kiwify
+                | WorkContext::Monetizze
+                | WorkContext::Eduzz => everywhere.contains(place),
+            })
+            .inspect(|place| {
+                assert!(
+                    everywhere.contains(place)
+                        || selling.contains(place)
+                        || mercado_livre_only.contains(place),
+                    "{} has no rule",
+                    place.name()
+                );
+            })
+            .collect()
+    }
+
+    fn navigation_in(context: WorkContext) -> Vec<Place> {
+        let mut listed: Vec<Place> = Place::GROUPS
+            .iter()
+            .flat_map(|group| group.shown(context))
+            .chain(
+                Place::PINNED
+                    .into_iter()
+                    .filter(|place| place.shows_in(context)),
+            )
+            .collect();
+        let order = |place: &Place| EVERY_PLACE.iter().position(|every| every == place);
+        listed.sort_by_key(order);
+        listed
+    }
+
+    #[test]
+    fn each_context_lists_exactly_the_places_that_apply_to_it() {
+        for context in WorkContext::ALL {
+            assert_eq!(
+                navigation_in(context),
+                expected(context),
+                "{}",
+                context.name()
+            );
+        }
+    }
+
+    #[test]
+    fn today_and_settings_show_in_every_context() {
+        for context in WorkContext::ALL {
+            assert!(Place::Today.shows_in(context), "{}", context.name());
+            for place in Place::PINNED {
+                assert!(place.shows_in(context), "{}", context.name());
+            }
+        }
+    }
+
+    #[test]
+    fn a_context_that_only_promotes_hides_the_whole_sales_areas() {
+        let named: Vec<&str> = Place::GROUPS
+            .iter()
+            .filter(|group| !group.shown(WorkContext::Hotmart).is_empty())
+            .filter_map(|group| group.name)
+            .collect();
+        assert_eq!(
+            named,
+            ["Descoberta", "Estoque", "Pedidos e finanças", "Afiliação"]
+        );
+        assert_eq!(
+            Place::GROUPS[4].shown(WorkContext::Hotmart),
+            [Place::Dashboard]
+        );
     }
 
     /// The app ships only gpui-kit's default icons: any other draws nothing.

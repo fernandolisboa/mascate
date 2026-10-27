@@ -58,9 +58,10 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
     // Sixteen places as tabs need more than a window's width, so each area
     // folds into a menu of its places; the one holding the current place
     // shows as picked. Only the unnamed first area stays as tabs.
-    let area = |ix: usize, name: &'static str, places: &'static [Place]| {
+    let area = |ix: usize, name: &'static str, places: Vec<Place>| {
         let pick = Rc::clone(&nav.on_pick);
         let current = nav.current;
+        let held = places.contains(&current);
         let menu = Button::new(("area", ix))
             .ghost()
             .small()
@@ -85,7 +86,7 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
             .rounded(t.radius)
             .border(t.border_width)
             .map(|frame| {
-                if places.contains(&current) {
+                if held {
                     frame.bg(t.raised).border_color(t.border_strong)
                 } else {
                     frame.border_color(gpui_kit::transparent_black())
@@ -94,17 +95,17 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
             .child(menu)
             .into_any_element()
     };
-    let entries = Place::GROUPS
-        .iter()
-        .enumerate()
-        .flat_map(|(ix, group)| match group.name {
-            Some(name) => vec![area(ix, name, group.places)],
-            None => group
-                .places
-                .iter()
-                .map(|place| tab(*place).into_any_element())
+    let entries = Place::GROUPS.iter().enumerate().flat_map(|(ix, group)| {
+        let places = group.shown(nav.context);
+        match group.name {
+            _ if places.is_empty() => Vec::new(),
+            Some(name) => vec![area(ix, name, places)],
+            None => places
+                .into_iter()
+                .map(|place| tab(place).into_any_element())
                 .collect(),
-        });
+        }
+    });
     h_flex()
         .flex_none()
         .w_full()
@@ -126,10 +127,12 @@ fn tabs(nav: &Navigation, cx: &App) -> AnyElement {
                 .children(entries),
         )
         .child(
-            h_flex()
-                .flex_none()
-                .gap_1()
-                .children(Place::PINNED.map(tab)),
+            h_flex().flex_none().gap_1().children(
+                Place::PINNED
+                    .into_iter()
+                    .filter(|place| place.shows_in(nav.context))
+                    .map(tab),
+            ),
         )
         .into_any_element()
 }

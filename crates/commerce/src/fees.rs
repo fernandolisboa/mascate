@@ -237,6 +237,27 @@ pub struct SalesPeriod {
     pub unplaced_ads: Vec<AdCost>,
 }
 
+impl SalesPeriod {
+    /// The same period on one Sales Channel only: its sales and the Product
+    /// Ads on it that no sale took.
+    pub fn on(&self, channel: SalesChannelKind) -> Self {
+        Self {
+            sales: self
+                .sales
+                .iter()
+                .filter(|sale| sale.order.channel == channel)
+                .cloned()
+                .collect(),
+            unplaced_ads: self
+                .unplaced_ads
+                .iter()
+                .filter(|ad| ad.channel == channel)
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
 /// Several sales together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SalesSummary {

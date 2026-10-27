@@ -8,6 +8,7 @@
 //! Reputation unlocks them, Shopee's once Shopee lets the shop's ads be
 //! read.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use chrono::{Datelike, Local, Months, NaiveDate, TimeZone, Utc};
@@ -30,6 +31,7 @@ use crate::kit;
 use crate::layout;
 use crate::orders::{self, OrderSyncs, sold_text};
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::pricing;
 use crate::reputation::reputation;
 use crate::sales_channels;
@@ -310,9 +312,9 @@ impl SalesScreen {
             .into_any_element()
     }
 
-    fn render_summary(&self, cx: &App) -> AnyElement {
+    fn render_summary(&self, sold: &SalesPeriod, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
-        let summary = match SalesSummary::of(&self.sold, Currency::Brl) {
+        let summary = match SalesSummary::of(sold, Currency::Brl) {
             Ok(summary) => summary,
             Err(error) => {
                 return kit::error_notice(format!("Vendas em moedas diferentes: {error}"), cx)
@@ -386,16 +388,16 @@ impl SalesScreen {
             .into_any_element()
     }
 
-    fn render_table(&self, cx: &App) -> AnyElement {
+    fn render_table(&self, sold: &SalesPeriod, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
-        let sales = &self.sold.sales;
+        let sales = &sold.sales;
         if sales.is_empty() {
             return div()
                 .text_sm()
                 .text_color(t.text2)
                 .child(
-                    "Nenhuma venda neste período. Os pedidos do Mercado Livre chegam pelo Sync de \
-                     pedidos, e as tarifas, pelo faturamento do Mercado Livre logo depois.",
+                    "Nenhuma venda neste período. Os pedidos chegam pelo Sync de pedidos, e as \
+                     tarifas, pelo faturamento do canal de venda logo depois.",
                 )
                 .into_any_element();
         }
@@ -478,11 +480,20 @@ impl SalesScreen {
     /// why, until the Reputation unlocks them, and a channel's without an
     /// account with how to get one; then each Product's ROAS against its
     /// break-even, and each campaign.
-    fn render_ads(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_ads(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = look(cx).tokens;
         let note = |text: String| div().text_sm().text_color(t.text2).child(text);
+        let context = preferences::work_context(cx);
+        let shown: Vec<&(SalesChannelKind, AdsView)> = self
+            .ads
+            .iter()
+            .filter(|(kind, _)| context.shows_channel(*kind))
+            .collect();
+        if shown.is_empty() {
+            return None;
+        }
         let mut section = v_flex().gap_3().child(kit::section_heading("Product Ads"));
-        for (kind, view) in &self.ads {
+        for (kind, view) in shown {
             let body = match view {
                 AdsView::Locked => note(format!(
                     "O Product Ads libera com {}. Até lá esta parte fica oculta; quando a \
@@ -508,7 +519,7 @@ impl SalesScreen {
                     .child(body),
             );
         }
-        section.into_any_element()
+        Some(section.into_any_element())
     }
 
     fn render_report(
@@ -754,18 +765,29 @@ impl Render for SalesScreen {
         if let Some(outcome) = &self.outcome {
             parts.notices.push(notice(outcome, cx));
         }
-        parts.content.push(self.render_summary(cx));
+        // A Platform's context shows its channel's sales and the Product Ads
+        // on it that no sale took.
+        let context_channel = preferences::work_context(cx).sales_channel();
+        let sold = match context_channel {
+            Some(kind) => Cow::Owned(self.sold.on(kind)),
+            None => Cow::Borrowed(&self.sold),
+        };
+        parts.content.push(self.render_summary(&sold, cx));
+        let mut heading = match sold.sales.len() {
+            1 => "1 venda".to_owned(),
+            count => format!("{count} vendas"),
+        };
+        if let Some(kind) = context_channel {
+            heading = format!("{heading} {}", sales_channels::on(kind));
+        }
         parts.content.push(
             v_flex()
                 .gap_3()
-                .child(kit::section_heading(match self.sold.sales.len() {
-                    1 => "1 venda".to_owned(),
-                    count => format!("{count} vendas"),
-                }))
-                .child(self.render_table(cx))
+                .child(kit::section_heading(heading))
+                .child(self.render_table(&sold, cx))
                 .into_any_element(),
         );
-        parts.content.push(self.render_ads(cx));
+        parts.content.extend(self.render_ads(cx));
         layout::screen(parts, cx)
     }
 }

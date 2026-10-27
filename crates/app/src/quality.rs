@@ -32,6 +32,7 @@ use crate::layout;
 use crate::listings::{self, listings};
 use crate::orders::{self, orders};
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::sales_channels::{self, ChannelFilter, ChannelPorts, Reach};
 
 /// The app's Listing Quality; absent when the database did not open.
@@ -334,6 +335,11 @@ impl QualityScreen {
     }
 
     /// The channels the panel holds rows of.
+    /// The owner's chip in All, the Work Context's channel otherwise.
+    fn shown_filter(&self, cx: &App) -> ChannelFilter {
+        self.filter.in_context(preferences::work_context(cx))
+    }
+
     fn held(&self) -> BTreeSet<SalesChannelKind> {
         self.rows.iter().map(|row| row.listing.channel).collect()
     }
@@ -484,7 +490,7 @@ impl QualityScreen {
         let shown: Vec<&ShopPerformance> = self
             .performances
             .iter()
-            .filter(|shop| self.filter.shows(shop.channel, &held))
+            .filter(|shop| self.shown_filter(cx).shows(shop.channel, &held))
             .collect();
         if shown.is_empty() {
             return None;
@@ -550,7 +556,9 @@ impl Render for QualityScreen {
             return layout::screen(parts, cx);
         }
         parts.actions.push(self.render_sync(cx));
-        for text in sales_channels::connection_notices(&self.connections) {
+        let context = preferences::work_context(cx);
+        let states = sales_channels::shown_states(&self.connections, context);
+        for text in sales_channels::connection_notices(&states) {
             parts
                 .notices
                 .push(kit::info_notice(text, cx).into_any_element());
@@ -559,8 +567,11 @@ impl Render for QualityScreen {
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         let held = self.held();
+        let filter = self.shown_filter(cx);
+        // Each row names its channel while the list shows more than one.
+        let several = held.len() > 1 && filter.only(&held).is_none();
         let shown: Vec<usize> = (0..self.rows.len())
-            .filter(|index| self.filter.shows(self.rows[*index].listing.channel, &held))
+            .filter(|index| filter.shows(self.rows[*index].listing.channel, &held))
             .collect();
         let pending = shown
             .iter()
@@ -573,7 +584,7 @@ impl Render for QualityScreen {
         };
         parts
             .content
-            .extend(self.filter.chips("quality-channel", &held, cx, Self::pick));
+            .extend(filter.chips("quality-channel", &held, cx, Self::pick));
         parts.content.extend(self.render_performance(cx));
         parts.content.push(
             v_flex()
@@ -595,7 +606,7 @@ impl Render for QualityScreen {
                 .children(
                     shown
                         .into_iter()
-                        .map(|index| self.render_row(index, held.len() > 1, cx)),
+                        .map(|index| self.render_row(index, several, cx)),
                 )
                 .into_any_element(),
         );

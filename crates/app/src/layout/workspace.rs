@@ -52,20 +52,23 @@ fn sidebar(nav: Navigation, cx: &App) -> AnyElement {
             .on_click(move |_, window, cx| pick(place, window, cx))
     };
 
-    let groups = Place::GROUPS.map(|group| {
-        v_flex()
-            .gap_0p5()
-            .children(group.name.map(|name| {
-                div()
-                    .px_2()
-                    .pt_3()
-                    .pb_1()
-                    .text_xs()
-                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .text_color(t.text2)
-                    .child(name.to_uppercase())
-            }))
-            .children(group.places.iter().copied().map(row))
+    let groups = Place::GROUPS.iter().filter_map(|group| {
+        let places = group.shown(nav.context);
+        (!places.is_empty()).then(|| {
+            v_flex()
+                .gap_0p5()
+                .children(group.name.map(|name| {
+                    div()
+                        .px_2()
+                        .pt_3()
+                        .pb_1()
+                        .text_xs()
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                        .text_color(t.text2)
+                        .child(name.to_uppercase())
+                }))
+                .children(places.into_iter().map(row))
+        })
     });
 
     v_flex()
@@ -91,7 +94,12 @@ fn sidebar(nav: Navigation, cx: &App) -> AnyElement {
                 .pt_2()
                 .border_t(t.border_width)
                 .border_color(t.border)
-                .children(Place::PINNED.map(row)),
+                .children(
+                    Place::PINNED
+                        .into_iter()
+                        .filter(|place| place.shows_in(nav.context))
+                        .map(row),
+                ),
         )
         .into_any_element()
 }

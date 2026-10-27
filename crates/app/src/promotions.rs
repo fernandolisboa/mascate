@@ -43,6 +43,7 @@ use crate::kit;
 use crate::layout;
 use crate::listings::{self, breakdown_line, listings, price_failure};
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::pricing;
 use crate::reputation::reputation;
 use crate::sales_channels::{self, ChannelPorts, of_channel, on, opening, to};
@@ -359,7 +360,9 @@ impl PromotionsScreen {
             coupon_percent: false,
         };
         let mut screen = Self {
-            channel: SalesChannelKind::MercadoLivre,
+            channel: preferences::work_context(cx)
+                .sales_channel()
+                .unwrap_or(SalesChannelKind::MercadoLivre),
             promotions: Vec::new(),
             offers: Vec::new(),
             listings: Vec::new(),
@@ -502,7 +505,17 @@ impl PromotionsScreen {
         refill(&self.fields.listing, choices, window, cx);
     }
 
-    /// Shows the channel `kind`.
+    /// Follows a new Work Context: a Platform's context shows its channel,
+    /// closing what was open on another without sending it; All keeps the
+    /// channel on screen.
+    pub fn follow_context(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(kind) = preferences::work_context(cx).sales_channel() {
+            self.pick_channel(kind, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows the channel `kind`, closing what was open on the one before.
     fn pick_channel(
         &mut self,
         kind: SalesChannelKind,
@@ -1728,7 +1741,10 @@ impl Render for PromotionsScreen {
         parts
             .notices
             .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        parts.content.push(self.render_channels(cx));
+        // A Platform's context fixes the channel: no tabs to pick another.
+        if preferences::work_context(cx).sales_channel().is_none() {
+            parts.content.push(self.render_channels(cx));
+        }
         if offered {
             parts.content.push(self.render_new(cx));
             parts.content.push(self.render_promotions(cx));

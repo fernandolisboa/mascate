@@ -41,6 +41,7 @@ use crate::layout;
 use crate::low_stock;
 use crate::mercado_livre;
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::pricing;
 use crate::promotions;
 use crate::purchases::units_text;
@@ -52,6 +53,7 @@ use crate::sales_channels::{self, ChannelFilter, ChannelPorts};
 use crate::shopee_seller;
 use crate::stock::product_label;
 use crate::stock_mirror;
+use crate::work_context;
 
 /// The app's Orders; absent when the database did not open.
 pub struct AppOrders(pub Arc<Orders>);
@@ -660,6 +662,20 @@ impl OrdersScreen {
         cx.notify();
     }
 
+    /// Follows a new Work Context: a shipment form of an Order on a channel
+    /// it does not show closes without sending.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        let orders = &self.orders;
+        work_context::close_outside(&mut self.shipping, context, |form| {
+            orders
+                .iter()
+                .find(|order| order.id == form.order)
+                .map(|order| order.channel)
+        });
+        cx.notify();
+    }
+
     fn connected_on(&self, kind: SalesChannelKind) -> bool {
         self.states
             .iter()
@@ -1221,7 +1237,18 @@ impl Render for OrdersScreen {
             return layout::screen(parts, cx);
         }
         parts.actions.push(self.render_sync(cx));
-        for notice_text in sales_channels::connection_notices(&self.states) {
+        let context = preferences::work_context(cx);
+        let filter = self.channel_filter.in_context(context);
+        let held: BTreeSet<SalesChannelKind> =
+            self.orders.iter().map(|order| order.channel).collect();
+        let shown: Vec<(usize, &Order)> = self
+            .orders
+            .iter()
+            .enumerate()
+            .filter(|(_, order)| filter.shows(order.channel, &held))
+            .collect();
+        let states = sales_channels::shown_states(&self.states, context);
+        for notice_text in sales_channels::connection_notices(&states) {
             parts
                 .notices
                 .push(kit::info_notice(notice_text, cx).into_any_element());
@@ -1237,10 +1264,9 @@ impl Render for OrdersScreen {
                     }),
             ),
         }
-        let short = self
-            .orders
+        let short = shown
             .iter()
-            .flat_map(|order| &order.lines)
+            .flat_map(|(_, order)| &order.lines)
             .filter(|line| matches!(line.stock, LineStock::Short(_)))
             .count();
         if short > 0 {
@@ -1255,26 +1281,22 @@ impl Render for OrdersScreen {
                 .into_any_element(),
             );
         }
-        let held: BTreeSet<SalesChannelKind> =
-            self.orders.iter().map(|order| order.channel).collect();
-        let cards: Vec<AnyElement> = self
-            .orders
-            .iter()
-            .enumerate()
-            .filter(|(_, order)| self.channel_filter.shows(order.channel, &held))
+        let cards: Vec<AnyElement> = shown
+            .into_iter()
             .map(|(index, order)| self.render_order(index, order, cx))
             .collect();
-        let heading = match cards.len() {
+        let mut heading = match cards.len() {
             0 => "Pedidos".to_owned(),
             1 => "1 pedido".to_owned(),
             count => format!("{count} pedidos"),
         };
-        let chips =
-            self.channel_filter
-                .chips("order-channel", &held, cx, |this: &mut Self, filter, cx| {
-                    this.channel_filter = filter;
-                    cx.notify();
-                });
+        if let Some(only) = filter.only(&held) {
+            heading = format!("{heading} {}", sales_channels::on(only));
+        }
+        let chips = filter.chips("order-channel", &held, cx, |this: &mut Self, filter, cx| {
+            this.channel_filter = filter;
+            cx.notify();
+        });
         parts.content.push(
             v_flex()
                 .gap_3()

@@ -626,7 +626,7 @@ impl AdCampaignsPanel {
                     .gap_2()
                     .child(
                         Button::new("accept-loss")
-                            .label("Enviar mesmo assim")
+                            .label("Enviar ao Mercado Livre mesmo assim")
                             .danger()
                             .small()
                             .loading(self.busy)

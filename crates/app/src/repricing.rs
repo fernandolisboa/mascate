@@ -545,7 +545,10 @@ impl RepricingPanel {
                         .gap_2()
                         .child(
                             Button::new("confirm-repricing")
-                                .label("Confirmar e ligar")
+                                .label(format!(
+                                    "Confirmar e ligar {}",
+                                    sales_channels::on(self.kind)
+                                ))
                                 .icon(IconName::Check)
                                 .primary()
                                 .small()
