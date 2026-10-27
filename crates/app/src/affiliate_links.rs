@@ -166,6 +166,9 @@ async fn read(affiliate: &Affiliate) -> Result<Snapshot, AffiliateError> {
 /// A link was created: the sales carrying its marking join its channel.
 pub struct AffiliateLinkCreated;
 
+/// A Program was added by hand: its rules can be read and edited.
+pub struct ProgramAdded;
+
 pub struct AffiliateLinksSection {
     links: Vec<AffiliateLink>,
     programs: Vec<Program>,
@@ -196,6 +199,8 @@ pub struct AffiliateLinksSection {
 }
 
 impl EventEmitter<AffiliateLinkCreated> for AffiliateLinksSection {}
+
+impl EventEmitter<ProgramAdded> for AffiliateLinksSection {}
 
 impl EventEmitter<StartPost> for AffiliateLinksSection {}
 
@@ -357,6 +362,7 @@ impl AffiliateLinksSection {
             move |affiliate| async move { affiliate.add_program(&new).await },
             move |this, program: Program, _, cx| {
                 this.adding = false;
+                cx.emit(ProgramAdded);
                 if tagger(program.platform, cx).is_some() {
                     this.creating = Some(program.id);
                     this.channel = None;
@@ -805,7 +811,9 @@ impl AffiliateLinksSection {
             .bg(t.raised)
             .child(div().font_medium().child("Nova afiliação"))
             .child(div().text_sm().text_color(t.text2).child(
-                "Cadastre a afiliação que você acabou de pegar, como aparece na página de                  afiliação, para criar o link e divulgar antes da primeira venda. Quando a                  primeira venda chegar, o app pergunta se é desta afiliação.",
+                "Cadastre a afiliação que você acabou de pegar, como aparece na página de \
+                 afiliação, para criar o link e divulgar antes da primeira venda. Quando a \
+                 primeira venda chegar, o app pergunta se é desta afiliação.",
             ))
             .child(
                 v_flex()
@@ -818,7 +826,8 @@ impl AffiliateLinksSection {
                     .text_xs()
                     .text_color(t.text2)
                     .child(format!(
-                        "Na {platform_name} a afiliação é uma só para todos os produtos: o                          link entra nela."
+                        "Na {platform_name} a afiliação é uma só para todos os produtos: o \
+                         link entra nela."
                     ))
                     .into_any_element()
             } else {
@@ -827,7 +836,8 @@ impl AffiliateLinksSection {
             .child(field("Produto", &self.product))
             .child(field("Link de afiliado", &self.pasted).child(
                 div().text_xs().text_color(t.text2).child(format!(
-                    "O HotLink ou o link que a {platform_name} dá na página de afiliação.                      Pode deixar para o próximo passo."
+                    "O HotLink ou o link que a {platform_name} dá na página de afiliação. \
+                     Pode deixar para o próximo passo."
                 )),
             ))
             .children(self.form.as_ref().map(|outcome| notice(outcome, cx)))

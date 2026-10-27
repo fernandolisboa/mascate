@@ -37,7 +37,7 @@ use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
 use mascate_marketing::PromotionChannel;
 use mascate_platform::Flags;
 
-use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection};
+use crate::affiliate_links::{AffiliateLinkCreated, AffiliateLinksSection, ProgramAdded};
 use crate::affiliate_panels::{self, AffiliatePanelsSection, PanelRead, Panels};
 use crate::amazon_import::{AmazonImportSection, CommissionsImported};
 use crate::appearance::{Tokens, look};
@@ -470,7 +470,7 @@ impl AffiliateScreen {
         let import = cx.new(|_| AmazonImportSection::default());
         let links = cx.new(|cx| ProductLinksSection::new(window, cx));
         let affiliate_links = cx.new(|cx| AffiliateLinksSection::new(window, cx));
-        let joins = cx.new(|_| ProgramJoinsSection::default());
+        let joins = cx.new(|cx| ProgramJoinsSection::new(window, cx));
         let rules = cx.new(|cx| PromotionRulesSection::new(window, cx));
         let panels = cx.new(|_| AffiliatePanelsSection::default());
         let subscriptions = vec![
@@ -515,6 +515,13 @@ impl AffiliateScreen {
                 &affiliate_links,
                 window,
                 |this, _, _: &AffiliateLinkCreated, window, cx| this.read_commissions(window, cx),
+            ),
+            cx.subscribe_in(
+                &affiliate_links,
+                window,
+                |this, _, _: &ProgramAdded, window, cx| {
+                    this.rules.update(cx, |rules, cx| rules.refresh(window, cx))
+                },
             ),
             // A sale joined to a Program added by hand changes its Program
             // everywhere.

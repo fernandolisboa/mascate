@@ -10,11 +10,11 @@ use chrono::Local;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, EventEmitter, Window, div};
+use gpui_kit::{AnyElement, EventEmitter, Subscription, Window, div};
 use mascate_affiliate::{Affiliate, AffiliateError, ProgramJoin};
 use mascate_kernel::RecordId;
 
-use crate::affiliate::{affiliate, failure};
+use crate::affiliate::{CommissionChanges, affiliate, failure};
 use crate::appearance::look;
 use crate::forms::{Outcome, day_text, notice};
 use crate::kit;
@@ -23,18 +23,32 @@ use crate::preferences;
 /// The owner joined two Programs: the sale's Commissions changed Program.
 pub struct ProgramsJoined;
 
-#[derive(Default)]
 pub struct ProgramJoinsSection {
     joins: Vec<ProgramJoin>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<ProgramsJoined> for ProgramJoinsSection {}
 
 impl ProgramJoinsSection {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let subscriptions = vec![
+            // A Commission by hand may be the first sale of a new product.
+            cx.observe_global_in::<CommissionChanges>(window, Self::refresh),
+        ];
+        Self {
+            joins: Vec::new(),
+            busy: false,
+            reads: 0,
+            outcome: None,
+            _subscriptions: subscriptions,
+        }
+    }
+
     /// Reads the joins waiting for the owner again.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(()) }, |_, _| {});
