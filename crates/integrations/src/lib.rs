@@ -33,6 +33,7 @@ mod shopee_affiliate;
 mod shopee_seller;
 mod short_io;
 mod single_use_tokens;
+mod spend_reports;
 mod spreadsheet;
 mod telegram;
 
@@ -41,7 +42,7 @@ pub use amazon::{API_URL as AMAZON_API_URL, AUTH_URL as AMAZON_AUTH_URL, Amazon}
 pub use amazon_crawler::{AMAZON_CRAWLER, AmazonCrawler, SEARCH_URL as AMAZON_SEARCH_URL};
 pub use amazon_earnings::{
     EarningsImport, EarningsReport, LINKS as AMAZON_LINKS, PLATFORM as AMAZON_PLATFORM,
-    ReportError, SkippedRow, read_earnings_report,
+    ReportError, read_earnings_report,
 };
 pub use anthropic::{API_URL as ANTHROPIC_API_URL, Anthropic};
 pub use browser::{BrowserSession, installed_browser};
@@ -96,6 +97,8 @@ pub use shopee_seller::{
 pub use short_io::{
     API_URL as SHORT_IO_API_URL, STATISTICS_URL as SHORT_IO_STATISTICS_URL, ShortIo,
 };
+pub use spend_reports::{SpendReading, SpendReportError, read_spend_report};
+pub use spreadsheet::SkippedRow;
 pub use telegram::{
     API_URL as TELEGRAM_API_URL, MAX_PHOTO_BYTES as TELEGRAM_MAX_PHOTO_BYTES, Telegram,
 };

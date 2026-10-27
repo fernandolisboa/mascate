@@ -1,6 +1,6 @@
 //! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost
 //! and Ad Campaigns, Listing Copy,
-//! Promotion Channels and Offer Posts with their Pitch, published through a destination's port
+//! Promotion Channels with their Promotion Spends and Offer Posts with their Pitch, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
@@ -13,6 +13,7 @@ mod merge;
 mod offer_posts;
 mod performance;
 mod pitch;
+mod promotion_spends;
 mod publishing;
 mod quality;
 mod questions;
@@ -59,6 +60,10 @@ pub use performance::{
 };
 pub use pitch::{
     PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, PitchError, PitchProblem, PitchedDraft, check_pitch,
+};
+pub use promotion_spends::{
+    CampaignLink, ChannelSpend, ImportedSpends, NewPromotionSpend, PromotionSpend, PromotionSpends,
+    ReportedSpend, SavedSpend, SpendError, SpendOrigin, SpendReport,
 };
 pub use publishing::{
     ConfirmedPost, DestinationCheck, DestinationStanding, PostDestination, PostFate,
@@ -133,6 +138,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         campaigns::MANAGE_AD_CAMPAIGNS,
         ad_groups::KEEP_AD_GROUPS,
         ads::SYNC_ADS_BY_CHANNEL,
+        promotion_spends::CREATE_PROMOTION_SPENDS,
     ],
 };
 

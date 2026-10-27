@@ -4,11 +4,14 @@
 //! peculiar to Brazilian exports (`;` separators, Latin-1) is handled here,
 //! what a value means is the report reader's.
 
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::io::Cursor;
 use std::str::FromStr;
 
 use calamine::{Data, Reader as _, Xlsx};
 use chrono::{NaiveDate, NaiveDateTime, TimeDelta};
+use mascate_kernel::{fold, parse_amount};
 use rust_decimal::Decimal;
 
 /// One cell, as the file holds it. CSV only has text; XLSX also has
@@ -46,6 +49,13 @@ pub(crate) struct TableRow {
     /// numbers it.
     pub(crate) line: usize,
     pub(crate) cells: Vec<Cell>,
+}
+
+/// A row an import leaves out, and why, as the owner reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRow {
+    pub line: usize,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -157,14 +167,38 @@ fn read_xlsx(bytes: &[u8], is_header: impl Fn(&[String]) -> bool) -> Result<Tabl
     }
 }
 
-/// UTF-8, with or without a BOM; anything else is Windows-1252, the
-/// Latin-1 that Excel on Windows writes for Brazilian Portuguese.
+/// UTF-8, with or without a BOM; UTF-16 with its BOM, as Google Ads writes
+/// its "Excel .csv"; anything else is Windows-1252, the Latin-1 that Excel
+/// on Windows writes for Brazilian Portuguese.
 fn decoded(bytes: &[u8]) -> String {
+    if let Some(text) = utf16(bytes) {
+        return text;
+    }
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     match std::str::from_utf8(bytes) {
         Ok(text) => text.to_owned(),
         Err(_) => bytes.iter().map(|&byte| windows_1252(byte)).collect(),
     }
+}
+
+fn utf16(bytes: &[u8]) -> Option<String> {
+    let little_endian = match bytes.get(..2)? {
+        b"\xFF\xFE" => true,
+        b"\xFE\xFF" => false,
+        _ => return None,
+    };
+    let units: Vec<u16> = bytes[2..]
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = [pair[0], pair[1]];
+            if little_endian {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            }
+        })
+        .collect();
+    Some(String::from_utf16_lossy(&units))
 }
 
 /// Windows-1252 matches Latin-1 except for 0x80-0x9F, where it has the
@@ -238,4 +272,83 @@ fn iso_date(text: &str) -> Option<NaiveDateTime> {
                 .ok()?
                 .and_hms_opt(0, 0, 0)
         })
+}
+
+/// The columns at their positions in `names`, each known by any of its
+/// names in `known`, when every `required` one is there.
+pub(crate) fn columns_of<C: Copy + Eq + Hash>(
+    names: &[String],
+    known: &[(C, &[&str])],
+    required: &[C],
+) -> Option<HashMap<C, usize>> {
+    let mut found = HashMap::new();
+    for (index, name) in names.iter().enumerate() {
+        let name = folded_header(name);
+        if let Some((column, _)) = known
+            .iter()
+            .find(|(_, names)| names.iter().any(|known| folded_header(known) == name))
+        {
+            found.entry(*column).or_insert(index);
+        }
+    }
+    required
+        .iter()
+        .all(|column| found.contains_key(column))
+        .then_some(found)
+}
+
+/// A header name without its currency suffix, as letters and digits only:
+/// `Ad Fees($)`, `Amount spent (BRL)` and `ad fees` read as their names.
+pub(crate) fn folded_header(name: &str) -> String {
+    let name = match name.find('(') {
+        Some(start) => &name[..start],
+        None => name,
+    };
+    name.chars().filter_map(fold).collect()
+}
+
+/// The currency suffix of a header, as in `Amount spent (BRL)`.
+pub(crate) fn header_suffix(name: &str) -> Option<&str> {
+    let start = name.find('(')? + 1;
+    let end = start + name[start..].find(')')?;
+    Some(name[start..end].trim()).filter(|suffix| !suffix.is_empty())
+}
+
+/// A money or count cell: a number in XLSX, text in CSV written either way,
+/// `1.234,56` or `1234.56`.
+pub(crate) fn decimal(cell: &Cell) -> Option<Decimal> {
+    match cell {
+        Cell::Number(number) => Some(*number),
+        Cell::Text(text) => parse_amount(text),
+        Cell::Empty | Cell::Date(_) => None,
+    }
+}
+
+/// A date cell: a date in XLSX (or its serial number when the cell is not
+/// formatted as a date), text in CSV in the ways the Platforms and Excel
+/// write it.
+pub(crate) fn date_time(cell: &Cell) -> Option<NaiveDateTime> {
+    const WITH_TIME: [&str; 5] = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+    ];
+    const DAY_ONLY: [&str; 2] = ["%Y-%m-%d", "%d/%m/%Y"];
+    match cell {
+        Cell::Date(date) => Some(*date),
+        Cell::Number(serial) => excel_serial(serial.to_string().parse().ok()?),
+        Cell::Text(text) => WITH_TIME
+            .iter()
+            .find_map(|format| NaiveDateTime::parse_from_str(text, format).ok())
+            .or_else(|| {
+                DAY_ONLY.iter().find_map(|format| {
+                    NaiveDate::parse_from_str(text, format)
+                        .ok()?
+                        .and_hms_opt(0, 0, 0)
+                })
+            }),
+        Cell::Empty => None,
+    }
 }

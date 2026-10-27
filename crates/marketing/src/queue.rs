@@ -107,6 +107,7 @@ fn pace(kind: ChannelKind) -> Option<Pace> {
         ChannelKind::WhatsAppGroup
         | ChannelKind::TikTok
         | ChannelKind::PaidSearch
+        | ChannelKind::PaidSocial
         | ChannelKind::Other => None,
     }
 }

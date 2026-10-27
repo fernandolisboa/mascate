@@ -24,6 +24,7 @@ use crate::affiliate::{affiliate, failure};
 use crate::appearance::look;
 use crate::forms::{Outcome, notice};
 use crate::kit;
+use crate::merge_import::file_name;
 
 /// Commissions came in from a file.
 pub struct CommissionsImported;
@@ -59,26 +60,13 @@ impl EventEmitter<CommissionsImported> for AmazonImportSection {}
 
 impl AmazonImportSection {
     fn choose(&mut self, cx: &mut Context<Self>) {
-        let picking = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Ler este relatório".into()),
+        pick_report(cx, |this, picked, cx| match picked {
+            Ok(path) => this.read(path, cx),
+            Err(why) => {
+                this.outcome = Some(Outcome::Failed(why.into()));
+                cx.notify();
+            }
         });
-        cx.spawn(async move |this, cx| {
-            let picked = picking.await;
-            let _ = this.update(cx, |this, cx| match picked {
-                Ok(Ok(Some(mut paths))) if !paths.is_empty() => this.read(paths.swap_remove(0), cx),
-                Ok(Err(error)) => {
-                    this.outcome = Some(Outcome::Failed(
-                        format!("Não consegui abrir o seletor de arquivos: {error}").into(),
-                    ));
-                    cx.notify();
-                }
-                _ => {}
-            });
-        })
-        .detach();
     }
 
     /// Reads the file off the UI thread and previews its import.
@@ -279,7 +267,7 @@ impl Render for AmazonImportSection {
 }
 
 /// The rows left out, each with its line and why; nothing without one.
-fn skipped_list(skipped: &[SkippedRow], cx: &App) -> Option<AnyElement> {
+pub(crate) fn skipped_list(skipped: &[SkippedRow], cx: &App) -> Option<AnyElement> {
     if skipped.is_empty() {
         return None;
     }
@@ -312,12 +300,47 @@ async fn planned(
     Ok(report.conversions(&readings))
 }
 
-fn read_file(path: &Path) -> Result<EarningsReport, String> {
+/// Asks the owner for one report file and hands `picked` its path, or why
+/// the file picker did not open; nothing when the owner closes it.
+pub(crate) fn pick_report<V: 'static>(
+    cx: &mut Context<V>,
+    picked: impl FnOnce(&mut V, Result<PathBuf, String>, &mut Context<V>) + 'static,
+) {
+    let picking = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Ler este relatório".into()),
+    });
+    cx.spawn(async move |this, cx| {
+        let chosen = picking.await;
+        let _ = this.update(cx, |this, cx| match chosen {
+            Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
+                picked(this, Ok(paths.swap_remove(0)), cx)
+            }
+            Ok(Err(error)) => picked(
+                this,
+                Err(format!("Não consegui abrir o seletor de arquivos: {error}")),
+                cx,
+            ),
+            _ => {}
+        });
+    })
+    .detach();
+}
+
+/// The bytes of a report file the owner picked; one over 50 MB is not
+/// `what`.
+pub(crate) fn report_bytes(path: &Path, what: &str) -> Result<Vec<u8>, String> {
     let unreadable = |error: std::io::Error| format!("Não consegui ler o arquivo: {error}");
     if std::fs::metadata(path).map_err(unreadable)?.len() > LARGEST_FILE {
-        return Err("O arquivo passa de 50 MB: não é um relatório de ganhos.".into());
+        return Err(format!("O arquivo passa de 50 MB: não é {what}."));
     }
-    let bytes = std::fs::read(path).map_err(unreadable)?;
+    std::fs::read(path).map_err(unreadable)
+}
+
+fn read_file(path: &Path) -> Result<EarningsReport, String> {
+    let bytes = report_bytes(path, "um relatório de ganhos")?;
     read_earnings_report(&bytes).map_err(|error| match error {
         ReportError::NotEarningsReport => "Este arquivo não é o relatório de ganhos da Amazon: \
              no Associates Central, exporte Relatórios › Ganhos em CSV ou Excel. Nada foi gravado."
@@ -328,15 +351,8 @@ fn read_file(path: &Path) -> Result<EarningsReport, String> {
     })
 }
 
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
-}
-
 /// "1 venda", "3 vendas".
-fn count(count: usize, one: &str, many: &str) -> String {
+pub(crate) fn count(count: usize, one: &str, many: &str) -> String {
     match count {
         1 => format!("1 {one}"),
         count => format!("{count} {many}"),

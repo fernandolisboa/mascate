@@ -156,6 +156,26 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             ])
             .platform_ids(&["message_id"])
             .label(&["channel_id", "product"]),
+        // A typed spend is a fact of the machine it was typed on; a day
+        // read from a report is the same day on both.
+        TableMerge::new(
+            "marketing_promotion_spends",
+            "Gasto de divulgação",
+            Keys(&[UniqueKey::live(&[
+                Column("origin"),
+                Column("campaign"),
+                Column("first_day"),
+            ])]),
+        )
+        .references(&[TO_CHANNEL])
+        .label(&["channel_id", "first_day", "last_day"]),
+        TableMerge::new(
+            "marketing_report_campaigns",
+            "Campanha de relatório de anúncios",
+            Keys(&[UniqueKey::live(&[Column("report"), Column("campaign")])]),
+        )
+        .references(&[TO_CHANNEL])
+        .label(&["campaign"]),
         TableMerge::new("marketing_queue_settings", "Fila de publicação", SingleRow),
         // The common dates each machine recorded on its first calendar:
         // the same name and rule are the same date.

@@ -27,6 +27,7 @@ pub(crate) fn destination_name(kind: ChannelKind) -> Option<&'static str> {
         ChannelKind::WhatsAppGroup
         | ChannelKind::TikTok
         | ChannelKind::PaidSearch
+        | ChannelKind::PaidSocial
         | ChannelKind::Other => None,
     }
 }
