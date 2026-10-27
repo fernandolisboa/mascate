@@ -40,11 +40,13 @@ use crate::layout;
 use crate::listings::{self, listings};
 use crate::orders::{self, OrderSyncs};
 use crate::parts::ScreenParts;
+use crate::preferences;
 use crate::pricing;
 use crate::resell_or_promote::{self, Compared};
 use crate::sales::{amount_text, margin_cell, money_cell, orders_text, table_row};
 use crate::span::{SpanChanged, SpanPicker};
 use crate::stock;
+use crate::work_context::WorkContext;
 
 /// What a read of the dashboard brings.
 struct Snapshot {
@@ -90,7 +92,12 @@ impl SaleSources {
         })
     }
 
-    pub(crate) async fn read(&self, during: Range<Timestamp>) -> Result<SoldPeriod, String> {
+    /// The sales of `during` that `context` shows, line by line.
+    pub(crate) async fn read(
+        &self,
+        during: Range<Timestamp>,
+        context: WorkContext,
+    ) -> Result<SoldPeriod, String> {
         let tax = self
             .taxes
             .rate()
@@ -102,6 +109,7 @@ impl SaleSources {
             .sales(tax, during, &ad_costs)
             .await
             .map_err(|e| orders::failure(&e))?;
+        let period = context.sales_in(&period);
         let sold_as = SoldAs::read(&self.listings, &self.catalog).await?;
         let lines = period
             .sales
@@ -135,8 +143,15 @@ impl Sources {
     }
 }
 
-async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, String> {
-    let sold = sources.sales.read(during.clone()).await?;
+/// The Painel of `during` in `context`: its Sales Channel's sales and
+/// wallet, its affiliate Platform's Commissions, and the stock, which
+/// belongs to every context.
+async fn read(
+    sources: Sources,
+    during: Range<Timestamp>,
+    context: WorkContext,
+) -> Result<Snapshot, String> {
+    let sold = sources.sales.read(during.clone(), context).await?;
     let summary = SalesSummary::of(&sold.period, Currency::Brl)
         .map_err(|e| format!("Vendas em moedas diferentes: {e}"))?;
     let by_channel = SalesSummary::by_channel(&sold.period, Currency::Brl)
@@ -152,7 +167,10 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         .find(|value| value.currency() == Currency::Brl)
         .unwrap_or(Money::zero(Currency::Brl));
     let mut releases = Vec::new();
-    for channel in SalesChannelKind::ALL {
+    for channel in SalesChannelKind::ALL
+        .into_iter()
+        .filter(|&channel| context.shows_channel(channel))
+    {
         let payments: Vec<MoneyRelease> = sources
             .sales
             .orders
@@ -166,6 +184,7 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
                 on: payment.release_at,
             })
             .collect();
+        // The Mercado Pago shows even empty, for the money it will hold.
         if payments.is_empty() && channel != SalesChannelKind::MercadoLivre {
             continue;
         }
@@ -173,7 +192,8 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
             .map_err(|e| format!("Valores {} em moedas diferentes: {e}", wallet(channel).of))?;
         releases.push((channel, summary));
     }
-    let commissions = resell_or_promote::earned(&sources.affiliate, during).await?;
+    let mut commissions = resell_or_promote::earned(&sources.affiliate, during).await?;
+    commissions.retain(|commission| context.shows_platform(commission.platform));
     let earned: Vec<EarnedCommission> = commissions
         .iter()
         .map(|commission| EarnedCommission {
@@ -182,7 +202,7 @@ async fn read(sources: Sources, during: Range<Timestamp>) -> Result<Snapshot, St
         })
         .collect();
     let compared =
-        resell_or_promote::compare_linked(&sources.affiliate, &sold, &commissions).await?;
+        resell_or_promote::compare_linked(&sources.affiliate, &sold, &commissions, context).await?;
     Ok(Snapshot {
         summary,
         by_channel,
@@ -323,11 +343,12 @@ impl DashboardScreen {
             return;
         };
         let during = self.span.read(cx).during();
+        let context = preferences::work_context(cx);
         self.reads += 1;
         let read_number = self.reads;
         let reading = cx
             .background_executor()
-            .spawn(async move { read(sources, during).await });
+            .spawn(async move { read(sources, during, context).await });
         cx.spawn(async move |this, cx| {
             let read_back = reading.await;
             let _ = this.update(cx, |this, cx| {
@@ -364,8 +385,11 @@ impl DashboardScreen {
         }
     }
 
+    /// The period's figures; a Work Context that only promotes has no
+    /// sales to show.
     fn render_figures(&self, snapshot: &Snapshot, cx: &App) -> AnyElement {
         let t = look(cx).tokens;
+        let sells = preferences::work_context(cx).sells();
         let summary = &snapshot.summary;
         let margin = summary
             .margin
@@ -376,13 +400,13 @@ impl DashboardScreen {
             _ => t.text,
         };
         let mut caveats = Vec::new();
-        if summary.provisional > 0 {
+        if sells && summary.provisional > 0 {
             caveats.push(format!(
                 "{} com margem provisória: o canal de venda ainda não faturou as tarifas.",
                 orders_text(summary.provisional)
             ));
         }
-        if summary.without_cost > 0 {
+        if sells && summary.without_cost > 0 {
             caveats.push(format!(
                 "{} fora da margem por não ter custo: as unidades não saíram do estoque do app.",
                 orders_text(summary.without_cost)
@@ -395,14 +419,19 @@ impl DashboardScreen {
                     .flex_wrap()
                     .items_stretch()
                     .gap_3()
-                    .child(figure("Receita", summary.revenue.to_pt_br(), &t))
-                    .child(
-                        figure("Margem realizada", margin, &t)
-                            .min_w(px(260.))
-                            .text_color(margin_ink),
-                    )
+                    .when(sells, |figures| {
+                        figures
+                            .child(figure("Receita", summary.revenue.to_pt_br(), &t))
+                            .child(
+                                figure("Margem realizada", margin, &t)
+                                    .min_w(px(260.))
+                                    .text_color(margin_ink),
+                            )
+                    })
                     .children(commission_figures(&snapshot.commissions, &t))
-                    .child(figure("Pedidos", summary.orders.to_string(), &t))
+                    .when(sells, |figures| {
+                        figures.child(figure("Pedidos", summary.orders.to_string(), &t))
+                    })
                     .child(
                         figure("Capital em estoque", snapshot.capital.to_pt_br(), &t).child(
                             div()
@@ -770,9 +799,11 @@ impl Render for DashboardScreen {
             return layout::screen(parts, cx);
         };
         parts.content.push(self.render_figures(&snapshot, cx));
-        parts.content.push(self.render_volume(&snapshot.volume, cx));
-        parts.content.extend(self.render_channels(&snapshot, cx));
-        parts.content.push(self.render_margins(cx));
+        if preferences::work_context(cx).sells() {
+            parts.content.push(self.render_volume(&snapshot.volume, cx));
+            parts.content.extend(self.render_channels(&snapshot, cx));
+            parts.content.push(self.render_margins(cx));
+        }
         parts
             .content
             .extend(resell_or_promote::painel_section(&snapshot.compared, cx));
@@ -812,5 +843,130 @@ fn wallet(channel: SalesChannelKind) -> Wallet {
                    informa para o pagamento, lido depois de cada Sync de pedidos. Outras \
                    entradas da conta do Mercado Pago não entram aqui.",
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::executor::block_on;
+    use mascate_finance::SalesVolume;
+
+    use super::*;
+    use crate::testing::{
+        HOTMART_EARNED, MERCADO_LIVRE_SOLD, SHOPEE_EARNED, SHOPEE_SOLD, Store, brl,
+    };
+
+    fn sources(store: &Store) -> Sources {
+        let (database, clock, ids) = (&store.database, &store.clock, &store.ids);
+        let taxes = Arc::new(Taxes::new(database.clone(), clock.clone(), ids.clone()));
+        Sources {
+            sales: SaleSources {
+                orders: store.orders.clone(),
+                taxes: taxes.clone(),
+                listings: Arc::new(Listings::new(database.clone(), clock.clone(), ids.clone())),
+                catalog: Arc::new(Catalog::new(
+                    database.clone(),
+                    store.files(),
+                    clock.clone(),
+                    ids.clone(),
+                )),
+                product_ads: None,
+            },
+            inventory: store.inventory.clone(),
+            volume: VolumeSources {
+                orders: store.orders.clone(),
+                taxes,
+                volume: Arc::new(SalesVolume::new(
+                    database.clone(),
+                    clock.clone(),
+                    ids.clone(),
+                )),
+                product_ads: None,
+            },
+            affiliate: store.affiliate.clone(),
+        }
+    }
+
+    /// The Painel of every sale and Commission the store has, in `context`.
+    fn painel(store: &Store, context: WorkContext) -> Snapshot {
+        block_on(read(
+            sources(store),
+            Timestamp::MIN_UTC..Timestamp::MAX_UTC,
+            context,
+        ))
+        .unwrap()
+    }
+
+    fn earned(snapshot: &Snapshot) -> Vec<Money> {
+        snapshot
+            .commissions
+            .iter()
+            .map(CommissionIncome::earned)
+            .collect()
+    }
+
+    fn channels(snapshot: &Snapshot) -> Vec<SalesChannelKind> {
+        snapshot
+            .by_channel
+            .iter()
+            .map(|(channel, _)| *channel)
+            .collect()
+    }
+
+    #[test]
+    fn the_painel_in_all_totals_every_platform() {
+        let store = block_on(Store::selling_and_promoting());
+
+        let all = painel(&store, WorkContext::All);
+
+        let everything = block_on(
+            sources(&store)
+                .sales
+                .read(Timestamp::MIN_UTC..Timestamp::MAX_UTC, WorkContext::All),
+        )
+        .unwrap();
+        assert_eq!(
+            all.summary,
+            SalesSummary::of(&everything.period, Currency::Brl).unwrap()
+        );
+        assert_eq!(all.summary.revenue, brl(MERCADO_LIVRE_SOLD + SHOPEE_SOLD));
+        assert_eq!(all.summary.orders, 2);
+        assert_eq!(
+            channels(&all),
+            [SalesChannelKind::MercadoLivre, SalesChannelKind::Shopee]
+        );
+        assert_eq!(earned(&all), [brl(HOTMART_EARNED + SHOPEE_EARNED)]);
+    }
+
+    #[test]
+    fn the_painel_in_a_platform_s_context_totals_only_that_platform() {
+        let store = block_on(Store::selling_and_promoting());
+
+        let mercado_livre = painel(&store, WorkContext::MercadoLivre);
+        assert_eq!(mercado_livre.summary.revenue, brl(MERCADO_LIVRE_SOLD));
+        assert_eq!(mercado_livre.summary.orders, 1);
+        assert_eq!(channels(&mercado_livre), [SalesChannelKind::MercadoLivre]);
+        assert_eq!(earned(&mercado_livre), []);
+        let wallets: Vec<SalesChannelKind> = mercado_livre
+            .releases
+            .iter()
+            .map(|(channel, _)| *channel)
+            .collect();
+        assert_eq!(wallets, [SalesChannelKind::MercadoLivre]);
+
+        let shopee = painel(&store, WorkContext::Shopee);
+        assert_eq!(shopee.summary.revenue, brl(SHOPEE_SOLD));
+        assert_eq!(channels(&shopee), [SalesChannelKind::Shopee]);
+        assert_eq!(earned(&shopee), [brl(SHOPEE_EARNED)]);
+        // The Mercado Pago is Mercado Livre's wallet.
+        assert!(shopee.releases.is_empty());
+
+        let hotmart = painel(&store, WorkContext::Hotmart);
+        assert_eq!(hotmart.summary.orders, 0);
+        assert_eq!(hotmart.summary.revenue, Money::zero(Currency::Brl));
+        assert!(hotmart.by_channel.is_empty() && hotmart.releases.is_empty());
+        assert_eq!(earned(&hotmart), [brl(HOTMART_EARNED)]);
+        // The stock belongs to every context.
+        assert_eq!(hotmart.capital, mercado_livre.capital);
     }
 }

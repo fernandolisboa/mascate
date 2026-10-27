@@ -26,6 +26,7 @@ use crate::appearance::{Tokens, look};
 use crate::catalog::day_and_time;
 use crate::kit;
 use crate::sales::{money_cell, table_row};
+use crate::work_context::WorkContext;
 
 /// What the groups gather.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -92,6 +93,22 @@ pub struct Clicks {
     pub affiliate_links: Vec<AffiliateLink>,
     /// When the clicks were last read through.
     pub read_at: Option<Timestamp>,
+}
+
+impl Clicks {
+    /// The clicks on the links of the Platforms `context` shows; in All,
+    /// those of deleted links too.
+    pub fn in_context(mut self, context: WorkContext) -> Self {
+        if context == WorkContext::All {
+            return self;
+        }
+        self.affiliate_links
+            .retain(|link| context.shows_platform(link.program.platform));
+        let shown = &self.affiliate_links;
+        self.links
+            .retain(|clicks| shown.iter().any(|link| link.id == clicks.link));
+        self
+    }
 }
 
 #[derive(Default)]
@@ -482,6 +499,8 @@ impl Render for CommissionDashboard {
 
 #[cfg(test)]
 mod tests {
+    use mascate_affiliate::{AffiliatePlatform, ProgramRef};
+
     use super::*;
 
     fn group(clicks: u64, commissions: usize) -> ClickGroup<()> {
@@ -490,6 +509,66 @@ mod tests {
             clicks,
             commissions,
         }
+    }
+
+    fn link(id: u128, platform: AffiliatePlatform) -> AffiliateLink {
+        AffiliateLink {
+            id: RecordId::from_u128(id),
+            program: ProgramRef {
+                id: RecordId::from_u128(id + 100),
+                platform,
+                name: platform.name().into(),
+            },
+            product: "Curso".into(),
+            channel: RecordId::from_u128(9),
+            tag: "canal".into(),
+            pasted: String::new(),
+            tagged: String::new(),
+            short: None,
+            created_at: Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    fn clicked(link: u128) -> LinkClicks {
+        LinkClicks {
+            link: RecordId::from_u128(link),
+            channel: RecordId::from_u128(9),
+            shortened_at: Timestamp::UNIX_EPOCH,
+            clicks: 5,
+        }
+    }
+
+    /// The live Hotmart and Kiwify links and a deleted one, each clicked.
+    fn clicks() -> Clicks {
+        Clicks {
+            links: vec![clicked(1), clicked(2), clicked(3)],
+            affiliate_links: vec![
+                link(1, AffiliatePlatform::Hotmart),
+                link(2, AffiliatePlatform::Kiwify),
+            ],
+            read_at: None,
+        }
+    }
+
+    fn clicked_links(clicks: &Clicks) -> Vec<RecordId> {
+        clicks.links.iter().map(|clicks| clicks.link).collect()
+    }
+
+    #[test]
+    fn a_platform_s_context_counts_only_the_clicks_on_its_links() {
+        let hotmart = clicks().in_context(WorkContext::Hotmart);
+        assert_eq!(clicked_links(&hotmart), [RecordId::from_u128(1)]);
+        assert_eq!(
+            hotmart.affiliate_links,
+            [link(1, AffiliatePlatform::Hotmart)]
+        );
+        let shopee = clicks().in_context(WorkContext::Shopee);
+        assert!(shopee.links.is_empty() && shopee.affiliate_links.is_empty());
+        // All keeps the clicks of a deleted link too.
+        assert_eq!(
+            clicked_links(&clicks().in_context(WorkContext::All)),
+            clicked_links(&clicks())
+        );
     }
 
     #[test]

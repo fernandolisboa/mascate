@@ -20,7 +20,9 @@ use crate::affiliate::{affiliate, failure};
 use crate::appearance::look;
 use crate::forms::{Outcome, input, notice};
 use crate::kit;
+use crate::preferences;
 use crate::sales::table_row;
+use crate::work_context;
 
 pub(crate) fn practice_name(practice: Practice) -> &'static str {
     match practice {
@@ -127,6 +129,16 @@ impl PromotionRulesSection {
     /// Reads the Programs again.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(()) });
+    }
+
+    /// Follows a new Work Context: rules being edited for a Program of a
+    /// Platform it does not show close unsaved.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        work_context::close_outside_platform(&mut self.editing, context, |draft| {
+            Some(draft.platform)
+        });
+        cx.notify();
     }
 
     /// Runs `change` off the UI thread, then reads the Programs again.
@@ -417,7 +429,14 @@ impl Render for PromotionRulesSection {
                  uma divulgação quebrar uma delas.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        if self.programs.is_empty() {
+        let context = preferences::work_context(cx);
+        let programs: Vec<Program> = self
+            .programs
+            .iter()
+            .filter(|program| context.shows_platform(program.platform))
+            .cloned()
+            .collect();
+        if programs.is_empty() {
             return section.child(
                 div()
                     .text_sm()
@@ -425,9 +444,7 @@ impl Render for PromotionRulesSection {
                     .child("Nenhum programa ainda: eles aparecem aqui com a primeira comissão."),
             );
         }
-        let rows: Vec<AnyElement> = self
-            .programs
-            .clone()
+        let rows: Vec<AnyElement> = programs
             .iter()
             .enumerate()
             .map(|(index, program)| self.render_row(index, program, cx))

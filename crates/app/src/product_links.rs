@@ -20,7 +20,9 @@ use crate::appearance::look;
 use crate::catalog::{self, product_choice};
 use crate::forms::{Outcome, Picker, input, notice, picker, refill};
 use crate::kit;
+use crate::preferences;
 use crate::sales::table_row;
+use crate::work_context;
 
 /// The rows shown before the owner searches.
 const SHOWN: usize = 20;
@@ -79,6 +81,20 @@ impl ProductLinksSection {
     /// Reads the promoted products and the Catalog again.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(false) });
+    }
+
+    /// Follows a new Work Context: picking the Product of a promoted product
+    /// it does not show stops, linking nothing.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        let promoted = &self.promoted;
+        work_context::close_outside_platform(&mut self.picking, context, |(program, _)| {
+            promoted
+                .iter()
+                .find(|promoted| promoted.program.id == *program)
+                .map(|promoted| promoted.program.platform)
+        });
+        cx.notify();
     }
 
     /// Runs `change` off the UI thread, then reads the promoted products
@@ -188,11 +204,14 @@ impl ProductLinksSection {
 
     /// The promoted products the search finds, the linked ones first, then
     /// those with the most Commissions.
+    /// The promoted products of the Work Context the search names.
     fn found(&self, cx: &App) -> Vec<&PromotedProduct> {
         let words = folded_words(&self.search.read(cx).value());
+        let context = preferences::work_context(cx);
         let mut found: Vec<&PromotedProduct> = self
             .promoted
             .iter()
+            .filter(|promoted| context.shows_platform(promoted.program.platform))
             .filter(|promoted| {
                 let named = folded_words(&format!(
                     "{} {} {}",
@@ -360,7 +379,12 @@ impl Render for ProductLinksSection {
                  divulgá-lo. Cada produto divulgado se liga a um produto do catálogo, no máximo.",
             ))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        if self.promoted.is_empty() {
+        let context = preferences::work_context(cx);
+        if !self
+            .promoted
+            .iter()
+            .any(|promoted| context.shows_platform(promoted.program.platform))
+        {
             return section.child(div().text_sm().text_color(t.text2).child(
                 "Nenhum produto divulgado ainda: eles aparecem aqui com a primeira comissão.",
             ));

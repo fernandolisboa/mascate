@@ -29,8 +29,8 @@ use gpui_kit::{
     Window, div, img, px,
 };
 use mascate_affiliate::{
-    Affiliate, AffiliateError, AffiliateLink, Practice, Program, PromotionRules, RuleWarning,
-    ShownPrice, Standing, short_link_flag,
+    Affiliate, AffiliateError, AffiliateLink, AffiliatePlatform, Practice, Program, PromotionRules,
+    RuleWarning, ShownPrice, Standing, short_link_flag,
 };
 use mascate_catalog::Catalog;
 use mascate_commerce::is_picture;
@@ -53,9 +53,11 @@ use crate::kit;
 use crate::listing_copy::{anthropic_state, listing_copy, writer_failure, writing_off};
 use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
+use crate::preferences;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::sales::table_row;
 use crate::sales_events::{event_date_text, sales_events};
+use crate::work_context::{self, WorkContext};
 
 /// The app's Offer Posts; absent when the database did not open.
 pub struct AppOfferPosts(pub Arc<OfferPosts>);
@@ -76,6 +78,8 @@ impl Global for PostChanges {}
 /// Asks Divulgação to start a post from an Affiliate Link.
 pub struct StartPost {
     pub link: RecordId,
+    /// The link's Platform, which the Work Context has to show.
+    pub platform: AffiliatePlatform,
     /// The price a Platform gave, as Shopee's search does.
     pub found: Option<OfferPrice>,
     /// The Platform's picture of the product.
@@ -90,6 +94,8 @@ const IMAGE_ON_CLIPBOARD: bool = cfg!(any(target_os = "windows", target_os = "ma
 /// A post waiting for the owner to confirm it goes out, now or at a time.
 struct Confirming {
     request: PublishRequest,
+    /// The Platform of the post's Program, as the post names it.
+    platform: String,
     /// Set when it is to be scheduled.
     schedule: Option<ScheduleChoice>,
 }
@@ -577,6 +583,45 @@ impl OfferPostsSection {
             });
         })
         .detach();
+    }
+
+    /// The affiliate Platform of `post`: its link's Program's, or the one it
+    /// names when the link is gone.
+    fn platform_of(&self, post: &OfferPost) -> Option<AffiliatePlatform> {
+        let facts = &post.draft.facts;
+        self.links
+            .iter()
+            .find(|link| link.id == facts.link_id)
+            .map(|link| link.program.platform)
+            .or_else(|| named_platform(&facts.platform))
+    }
+
+    /// Whether `post` shows in the Work Context.
+    fn shown(&self, post: &OfferPost, cx: &App) -> bool {
+        let context = preferences::work_context(cx);
+        self.platform_of(post)
+            .map_or(context == WorkContext::All, |platform| {
+                context.shows_platform(platform)
+            })
+    }
+
+    /// Follows a new Work Context: the editor and a confirmation of a post
+    /// of a Platform it does not show close without sending anything; the
+    /// saved posts and the queue stay as they were.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        work_context::close_outside_platform(&mut self.editor, context, |editor| {
+            editor
+                .offer
+                .as_ref()
+                .map(|offer| offer.program.platform)
+                .or_else(|| named_platform(&editor.facts.platform))
+        });
+        work_context::close_outside_platform(&mut self.confirming, context, |confirming| {
+            named_platform(&confirming.platform)
+        });
+        self.deleting = None;
+        cx.notify();
     }
 
     fn channel_name(&self, id: RecordId) -> String {
@@ -1085,8 +1130,9 @@ impl OfferPostsSection {
         let calendar = sales_events(cx);
         let working = cx.background_executor().spawn(async move {
             let request = posts.prepare(id).await?;
+            let draft = posts.post(id).await?.draft;
             let schedule = if scheduling {
-                let channel = posts.post(id).await?.draft.channel;
+                let channel = draft.channel;
                 let next_free = posts.next_free(channel, Some(id)).await?;
                 let mut events = match calendar {
                     // The dates only help to pick: an unreadable calendar
@@ -1110,7 +1156,11 @@ impl OfferPostsSection {
             } else {
                 None
             };
-            Ok::<_, PostError>(Confirming { request, schedule })
+            Ok::<_, PostError>(Confirming {
+                request,
+                platform: draft.facts.platform,
+                schedule,
+            })
         });
         cx.spawn_in(window, async move |this, cx| {
             let prepared = working.await;
@@ -1287,6 +1337,7 @@ impl OfferPostsSection {
         let Some(Confirming {
             request,
             schedule: Some(choice),
+            ..
         }) = self.confirming.as_ref()
         else {
             return;
@@ -1454,8 +1505,9 @@ impl OfferPostsSection {
             Some(PostImage::Url(url)) => format!("Foto da plataforma: {url}"),
             None => "Sem foto: o Telegram mostra a prévia do link.".to_owned(),
         };
+        let offer = offer_line(&confirming.platform);
         let Some(choice) = confirming.schedule.as_ref() else {
-            return self.render_publish_now(request, picture, off, cx);
+            return self.render_publish_now(request, offer, picture, off, cx);
         };
         let pick = |label: String, picking: bool, index: usize| {
             let chip = Button::new(("schedule-choice", index))
@@ -1523,6 +1575,7 @@ impl OfferPostsSection {
                     .font_medium()
                     .child(format!("Agendar {}?", where_it_goes(request))),
             )
+            .child(div().text_sm().child(offer))
             .children(
                 pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
             )
@@ -1592,6 +1645,7 @@ impl OfferPostsSection {
     fn render_publish_now(
         &self,
         request: &PublishRequest,
+        offer: String,
         picture: String,
         off: Option<&'static str>,
         cx: &mut Context<Self>,
@@ -1609,6 +1663,7 @@ impl OfferPostsSection {
                     .font_medium()
                     .child(format!("Publicar agora {}?", where_it_goes(request))),
             )
+            .child(div().text_sm().child(offer))
             .children(
                 pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
             )
@@ -1945,13 +2000,16 @@ impl OfferPostsSection {
 
     fn render_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
+        let context = preferences::work_context(cx);
         let rows: Vec<AnyElement> = self
             .links
             .iter()
+            .filter(|link| context.shows_platform(link.program.platform))
             .enumerate()
             .map(|(index, link)| {
                 let start = StartPost {
                     link: link.id,
+                    platform: link.program.platform,
                     found: None,
                     image: None,
                 };
@@ -2349,6 +2407,18 @@ fn where_it_goes(request: &PublishRequest) -> String {
     }
 }
 
+/// Whose offer a confirmed post carries: "Oferta da plataforma Hotmart."
+fn offer_line(platform: &str) -> String {
+    format!("Oferta da plataforma {platform}.")
+}
+
+/// The affiliate Platform a post names, for a post whose link was deleted.
+fn named_platform(name: &str) -> Option<AffiliatePlatform> {
+    AffiliatePlatform::ALL
+        .into_iter()
+        .find(|platform| platform.name() == name)
+}
+
 /// What a Pin carries besides the text and the photo.
 fn pin_detail(request: &PublishRequest) -> Option<String> {
     (request.kind() == ChannelKind::Pinterest).then(|| {
@@ -2430,6 +2500,7 @@ impl Render for OfferPostsSection {
             ("Com falha", &queue.failed),
             ("Publicados hoje", &queue.published_today),
         ] {
+            let posts: Vec<&OfferPost> = posts.iter().filter(|post| self.shown(post, cx)).collect();
             if posts.is_empty() {
                 continue;
             }
@@ -2446,12 +2517,13 @@ impl Render for OfferPostsSection {
             }
         }
         let mut rows: Vec<AnyElement> = Vec::new();
-        for post in self
+        let unqueued: Vec<OfferPost> = self
             .posts
-            .clone()
             .iter()
-            .filter(|post| !queue.holds(post.id))
-        {
+            .filter(|post| !queue.holds(post.id) && self.shown(post, cx))
+            .cloned()
+            .collect();
+        for post in &unqueued {
             rows.push(self.render_post(index, post, cx));
             index += 1;
         }
@@ -2839,6 +2911,15 @@ mod tests {
             assert!(text.contains("?tag=mascate-tg-20"), "{text}");
             assert!(!text.contains("short.gy"), "{text}");
         });
+    }
+
+    /// A post whose link was deleted still shows in its Platform's context.
+    #[test]
+    fn a_post_s_named_platform_reads_back() {
+        for platform in AffiliatePlatform::ALL {
+            assert_eq!(named_platform(platform.name()), Some(platform));
+        }
+        assert_eq!(named_platform("Tudo"), None);
     }
 
     #[test]

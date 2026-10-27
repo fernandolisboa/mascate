@@ -460,6 +460,7 @@ impl ShopeeSearch {
                                 .on_click(cx.listener(move |_, _, _, cx| {
                                     cx.emit(StartPost {
                                         link,
+                                        platform: AffiliatePlatform::Shopee,
                                         found,
                                         image: image.clone(),
                                     })

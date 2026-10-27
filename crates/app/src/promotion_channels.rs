@@ -200,6 +200,13 @@ impl PromotionScreen {
         self.run(window, cx, |_| async { Ok(()) }, |_, _, _, _| {});
     }
 
+    /// Follows a new Work Context: the posts follow it, and the Promotion
+    /// Channels, which promote on several Platforms, stay as they are.
+    pub fn follow_context(&mut self, cx: &mut Context<Self>) {
+        self.posts.update(cx, OfferPostsSection::follow_context);
+        cx.notify();
+    }
+
     /// Opens a new post from an Affiliate Link, as Afiliação and Ofertas ask.
     pub fn start_post(&mut self, start: &StartPost, window: &mut Window, cx: &mut Context<Self>) {
         self.posts

@@ -49,6 +49,7 @@ use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::payouts::{PayoutsChanged, PayoutsSection};
+use crate::preferences;
 use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSection};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::PromotionRulesSection;
@@ -387,6 +388,31 @@ pub(crate) fn platform_select<V: 'static>(
     cx.new(|cx| SelectState::new(choices, Some(IndexPath::new(0)), window, cx))
 }
 
+/// The Platform a form records for: the Work Context's, fixed, or the one
+/// picked in All.
+pub(crate) fn form_platform(select: &PlatformSelect, cx: &App) -> Option<AffiliatePlatform> {
+    preferences::work_context(cx)
+        .affiliate_platform()
+        .or_else(|| select.read(cx).selected_value().copied())
+}
+
+/// A form's Platform field: the picker in All, the Work Context's Platform,
+/// fixed, in one.
+pub(crate) fn platform_field(select: &PlatformSelect, cx: &App) -> AnyElement {
+    match preferences::work_context(cx).affiliate_platform() {
+        Some(platform) => {
+            let t = look(cx).tokens;
+            div()
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .child(kit::tag(platform.name(), t.accent_text, cx))
+                .into_any_element()
+        }
+        None => Select::new(select).small().into_any_element(),
+    }
+}
+
 /// What one read of the screen brings.
 struct Snapshot {
     commissions: Vec<Commission>,
@@ -545,6 +571,34 @@ impl AffiliateScreen {
             .update(cx, |panels, cx| panels.refresh(window, cx));
     }
 
+    /// Follows a new Work Context: the form stops editing a Commission of a
+    /// Platform it does not show, each section closes what it had open on
+    /// one without sending it, and everything is read again for the
+    /// context.
+    pub fn follow_context(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context = preferences::work_context(cx);
+        let editing = self.editing.and_then(|id| {
+            self.commissions
+                .iter()
+                .find(|commission| commission.id == id)
+        });
+        if editing.is_some_and(|commission| !context.shows_platform(commission.platform)) {
+            self.clear_form(window, cx);
+            self.form = None;
+        }
+        self.deleting = None;
+        self.payouts.update(cx, PayoutsSection::follow_context);
+        self.links.update(cx, ProductLinksSection::follow_context);
+        self.affiliate_links
+            .update(cx, AffiliateLinksSection::follow_context);
+        self.rules.update(cx, PromotionRulesSection::follow_context);
+        self.panels.update(cx, |_, cx| cx.notify());
+        if !context.shows_platform(AffiliatePlatform::Amazon) {
+            self.import.update(cx, AmazonImportSection::cancel);
+        }
+        self.refresh(window, cx);
+    }
+
     fn read_commissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |_| async { Ok(None) }, |_, _: (), _, _| {});
     }
@@ -621,7 +675,11 @@ impl AffiliateScreen {
                 if this.reads == read {
                     this.busy = false;
                     match snapshot {
-                        Ok(snapshot) => {
+                        Ok(mut snapshot) => {
+                            let context = preferences::work_context(cx);
+                            snapshot
+                                .commissions
+                                .retain(|commission| context.shows_platform(commission.platform));
                             let channels = match snapshot.channels {
                                 Ok(channels) => Some(channels),
                                 Err(error) => {
@@ -638,7 +696,7 @@ impl AffiliateScreen {
                                 dashboard.show(
                                     snapshot.commissions.clone(),
                                     channels,
-                                    snapshot.clicks,
+                                    snapshot.clicks.in_context(context),
                                     cx,
                                 )
                             });
@@ -699,9 +757,11 @@ impl AffiliateScreen {
         let running = cx
             .try_global::<CommissionSyncs>()
             .is_some_and(|syncs| syncs.running);
+        let context = preferences::work_context(cx);
         let when = self
             .synced
             .iter()
+            .filter(|(platform, _)| context.shows_platform(*platform))
             .map(|(platform, last)| match last {
                 Some(last) => format!(
                     "{} sincronizada em {}",
@@ -762,11 +822,7 @@ impl AffiliateScreen {
 
     /// The Commission the form describes, or why it cannot be one yet.
     fn written(&self, cx: &App) -> Result<ManualCommission, &'static str> {
-        let platform = *self
-            .platform
-            .read(cx)
-            .selected_value()
-            .ok_or("Escolha a plataforma.")?;
+        let platform = form_platform(&self.platform, cx).ok_or("Escolha a plataforma.")?;
         let product = self.product.read(cx).value().trim().to_owned();
         if product.is_empty() {
             return Err("Digite o produto da venda.");
@@ -965,10 +1021,11 @@ impl AffiliateScreen {
                     .flex_wrap()
                     .gap_3()
                     .items_end()
-                    .child(div().w(px(180.)).child(field(
-                        "Plataforma",
-                        Select::new(&self.platform).small().into_any_element(),
-                    )))
+                    .child(
+                        div()
+                            .w(px(180.))
+                            .child(field("Plataforma", platform_field(&self.platform, cx))),
+                    )
                     .child(div().w(px(200.)).child(field(
                         "Programa",
                         Input::new(&self.program).small().into_any_element(),
@@ -1319,7 +1376,12 @@ impl Render for AffiliateScreen {
                 .push(kit::error_notice(NO_DATABASE, cx).into_any_element());
             return layout::screen(parts, cx);
         }
-        if !self.synced.is_empty() {
+        let context = preferences::work_context(cx);
+        if self
+            .synced
+            .iter()
+            .any(|(platform, _)| context.shows_platform(*platform))
+        {
             parts.actions.push(self.render_sync(cx));
         }
         parts.actions.push(self.span.clone().into_any_element());
@@ -1381,7 +1443,9 @@ impl Render for AffiliateScreen {
             .push(self.affiliate_links.clone().into_any_element());
         parts.content.push(self.rules.clone().into_any_element());
         parts.content.push(self.panels.clone().into_any_element());
-        parts.content.push(self.import.clone().into_any_element());
+        if context.shows_platform(AffiliatePlatform::Amazon) {
+            parts.content.push(self.import.clone().into_any_element());
+        }
         parts.content.push(self.render_form(cx));
         parts.content.push(self.payouts.clone().into_any_element());
         layout::screen(parts, cx)
