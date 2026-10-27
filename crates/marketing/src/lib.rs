@@ -27,9 +27,9 @@ pub use ad_groups::{
     AdChange, AdChangeKind, AdGroupKind, AdRequest, AdState, AdStatus, ChannelAdGroup, ConfirmedAd,
 };
 pub use ads::{
-    ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics,
-    AdsError, AdsReport, AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds,
-    CampaignStatus, ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
+    ADS_HISTORY_DAYS, ADS_REFRESH_MINUTES, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsError, AdsReport,
+    AdsSync, AdsSyncState, AdvertisedListing, AdvertisedProducts, CampaignAds, CampaignStatus,
+    ChannelAd, ChannelAds, ChannelCampaign, ProductAds, ProductRoas,
 };
 pub use campaigns::{
     AdCampaigns, BudgetSpend, CampaignChange, CampaignPlan, CampaignProduct, CampaignRequest,
@@ -62,7 +62,7 @@ pub use pitch::{
     PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, PitchError, PitchProblem, PitchedDraft, check_pitch,
 };
 pub use promotion_spends::{
-    CampaignLink, ChannelSpend, ImportedSpends, NewPromotionSpend, PromotionSpend, PromotionSpends,
+    CampaignLink, ImportedSpends, NewPromotionSpend, PromotionSpend, PromotionSpends,
     ReportedSpend, SavedSpend, SpendError, SpendOrigin, SpendReport,
 };
 pub use publishing::{

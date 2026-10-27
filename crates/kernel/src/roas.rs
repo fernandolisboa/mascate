@@ -4,7 +4,20 @@
 
 use rust_decimal::{Decimal, RoundingStrategy};
 
-use crate::{CurrencyMismatch, Margin, Money};
+use crate::{Currency, CurrencyMismatch, Margin, Money};
+
+/// The least spent on ads in a period before a loss suggests pausing them:
+/// R$ 20,00, so a few clicks never judge an ad. One rule for Product Ads
+/// below their Break-even ROAS and for a Promotion Channel spending more
+/// than it earns (ADR 0037).
+pub const ADS_LOSS_MIN_COST: Money =
+    Money::new(Decimal::from_parts(20, 0, 0, false, 0), Currency::Brl);
+
+/// Whether `cost` is enough to judge the ads it paid for: at least
+/// [`ADS_LOSS_MIN_COST`], in its currency.
+pub fn spent_enough_to_judge(cost: Money) -> bool {
+    cost.currency() == ADS_LOSS_MIN_COST.currency() && cost.amount() >= ADS_LOSS_MIN_COST.amount()
+}
 
 /// Sales brought in for each unit of money spent on ads: `4` is 4x.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

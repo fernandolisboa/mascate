@@ -4,7 +4,10 @@
 //! amount. Reversals show in red and stay out of what was earned; cancelled
 //! sales never count. The sums are Affiliate's (`CommissionReport`); the
 //! screen hands over the period's Commissions and the channels it read from
-//! the Marketing, which name the channel groups. Below them, the clicks on
+//! the Marketing, which name the channel groups. With the period's
+//! Promotion Spends, each group also shows its spend, profit and ROAS, and
+//! a loss worth judging suggests pausing the campaign on the Platform that
+//! runs it (#196); the app never pauses anything. Below them, the clicks on
 //! Short Links by link and by channel, beside the Commissions they brought
 //! (#159; `ClickReport`).
 
@@ -18,8 +21,8 @@ use mascate_affiliate::{
     AffiliateLink, ClickGroup, ClickReport, Commission, CommissionGroup, CommissionReport,
     CurrencyTotals, GroupOrder, LinkClicks,
 };
-use mascate_kernel::{RecordId, Timestamp};
-use mascate_marketing::PromotionChannel;
+use mascate_kernel::{ChannelSpend, Money, RecordId, Timestamp};
+use mascate_marketing::{ChannelKind, PromotionChannel};
 use rust_decimal::RoundingStrategy;
 
 use crate::appearance::{Tokens, look};
@@ -59,8 +62,9 @@ impl Grouping {
     }
 }
 
-const ORDERS: [(GroupOrder, &str); 4] = [
+const ORDERS: [(GroupOrder, &str); 5] = [
     (GroupOrder::Earned, "Maior ganho"),
+    (GroupOrder::Profit, "Maior lucro"),
     (GroupOrder::Pending, "Maior pendente"),
     (GroupOrder::Reversed, "Maior estorno"),
     (GroupOrder::Name, "Nome"),
@@ -119,20 +123,24 @@ pub struct CommissionDashboard {
     link_names: HashMap<RecordId, (String, RecordId)>,
     click_grouping: ClickGrouping,
     click_report: ClickReport,
-    /// Each live Promotion Channel's name; `None` until the Marketing
+    /// Each live Promotion Channel, by id; `None` until the Marketing
     /// answered.
-    channels: Option<HashMap<RecordId, String>>,
+    channels: Option<HashMap<RecordId, PromotionChannel>>,
+    /// What each channel spent in the period, the context's part of it.
+    spends: Vec<ChannelSpend>,
     grouping: Grouping,
     order: GroupOrder,
     reports: Vec<CommissionReport>,
 }
 
 impl CommissionDashboard {
-    /// Sums up `commissions`, the period's, of every status, naming their
-    /// channels from `channels` when the Marketing could be read.
+    /// Sums up `commissions`, the period's, of every status, against what
+    /// each channel spent, naming their channels from `channels` when the
+    /// Marketing could be read.
     pub fn show(
         &mut self,
         commissions: Vec<Commission>,
+        spends: Vec<ChannelSpend>,
         channels: Option<Vec<PromotionChannel>>,
         clicks: Clicks,
         cx: &mut Context<Self>,
@@ -145,11 +153,12 @@ impl CommissionDashboard {
             .collect();
         self.clicks = clicks;
         self.commissions = commissions;
+        self.spends = spends;
         if let Some(channels) = channels {
             self.channels = Some(
                 channels
                     .into_iter()
-                    .map(|channel| (channel.id, channel.name))
+                    .map(|channel| (channel.id, channel))
                     .collect(),
             );
         }
@@ -158,7 +167,7 @@ impl CommissionDashboard {
 
     fn sort(&mut self, order: GroupOrder, cx: &mut Context<Self>) {
         self.order = order;
-        let mut reports = CommissionReport::of(&self.commissions, order);
+        let mut reports = CommissionReport::of(&self.commissions, &self.spends, order);
         for report in &mut reports {
             report.arrange_channels(order, |id| self.channel_name(id));
         }
@@ -169,10 +178,9 @@ impl CommissionDashboard {
     /// A channel no longer in the Marketing was deleted there.
     fn channel_name(&self, id: RecordId) -> String {
         match &self.channels {
-            Some(names) => names
+            Some(channels) => channels
                 .get(&id)
-                .cloned()
-                .unwrap_or_else(|| "Canal apagado".into()),
+                .map_or_else(|| "Canal apagado".into(), |channel| channel.name.clone()),
             None => "Canal (nome não lido)".into(),
         }
     }
@@ -269,6 +277,7 @@ impl CommissionDashboard {
             .gap_2()
             .children(self.reports.iter().map(|report| {
                 let total = &report.totals;
+                let spent = !report.spent.amount().is_zero();
                 h_flex()
                     .flex_wrap()
                     .gap_3()
@@ -296,10 +305,39 @@ impl CommissionDashboard {
                         reversed_ink(total, &t),
                         &t,
                     ))
+                    .when(spent, |figures| {
+                        figures
+                            .child(figure(
+                                label("Gasto com divulgação", total),
+                                report.spent.to_pt_br(),
+                                t.text,
+                                &t,
+                            ))
+                            .child(figure(
+                                label("Lucro", total),
+                                report.profit().to_pt_br(),
+                                profit_ink(Some(report.profit()), &t),
+                                &t,
+                            ))
+                            .child(figure(
+                                label("ROAS", total),
+                                roas_text(report.roas()),
+                                t.text,
+                                &t,
+                            ))
+                            .child(figure(
+                                label("Lucro se as pendentes aprovarem", total),
+                                report.profit_if_pending_approve().to_pt_br(),
+                                profit_ink(Some(report.profit_if_pending_approve()), &t),
+                                &t,
+                            ))
+                    })
             }))
             .child(div().text_xs().text_color(t.text2).child(
                 "Ganho soma as comissões aprovadas e pagas; os estornos ficam fora dele e as \
-                 vendas canceladas não entram em nada. Cada moeda soma à parte, sem conversão.",
+                 vendas canceladas não entram em nada. Lucro é o ganho menos o gasto com \
+                 divulgação lançado em Divulgação para os mesmos dias, e ROAS é o ganho dividido \
+                 pelo gasto. Cada moeda soma à parte, sem conversão.",
             ))
             .into_any_element()
     }
@@ -336,23 +374,40 @@ impl CommissionDashboard {
                     ),
             )
             .children(self.reports.iter().map(|report| {
+                let spent = !report.spent.amount().is_zero();
+                let table = Table { spent, t: &t };
                 let rows = match self.grouping {
-                    Grouping::Platform => rows(&report.by_platform, &t, |of| of.name().to_owned()),
-                    Grouping::Program => rows(&report.by_program, &t, |of| {
-                        if of.name == of.platform.name() {
+                    Grouping::Platform => {
+                        table.rows(&report.by_platform, |of| (of.name().to_owned(), None))
+                    }
+                    Grouping::Program => table.rows(&report.by_program, |of| {
+                        let name = if of.name == of.platform.name() {
                             of.name.clone()
                         } else {
                             format!("{} · {}", of.name, of.platform.name())
-                        }
+                        };
+                        (name, Some(PAUSE_PROMOTION))
                     }),
-                    Grouping::Product => rows(&report.by_product, &t, Clone::clone),
-                    Grouping::Tracking => rows(&report.by_tracking, &t, |of| {
-                        of.clone().unwrap_or_else(|| "sem marcação".into())
+                    Grouping::Product => {
+                        table.rows(&report.by_product, |of| (of.clone(), Some(PAUSE_PROMOTION)))
+                    }
+                    Grouping::Tracking => table.rows(&report.by_tracking, |of| {
+                        (of.clone().unwrap_or_else(|| "sem marcação".into()), None)
                     }),
-                    Grouping::Channel => rows(&report.by_channel, &t, |of| {
-                        of.map_or_else(|| "sem canal".into(), |id| self.channel_name(id))
+                    Grouping::Channel => table.rows(&report.by_channel, |of| match of {
+                        Some(id) => (self.channel_name(*id), Some(self.pause_text(*id))),
+                        None => ("sem canal".into(), None),
                     }),
                 };
+                let unshared = (self.grouping != Grouping::Channel
+                    && !report.unshared.amount().is_zero())
+                .then(|| {
+                    div().text_xs().text_color(t.text2).child(format!(
+                        "{} gastos em canais sem ganho no período não caem em nenhum grupo \
+                         daqui; veja em Canal.",
+                        report.unshared.to_pt_br()
+                    ))
+                });
                 v_flex()
                     .gap_2()
                     .when(several, |table| {
@@ -363,33 +418,151 @@ impl CommissionDashboard {
                                 .child(format!("Em {}", report.currency.code())),
                         )
                     })
-                    .child(header(self.grouping.name(), &t))
+                    .child(header(self.grouping.name(), spent, &t))
                     .children(rows)
+                    .children(unshared)
             }))
             .child(div().text_xs().text_color(t.text2).child(
                 "Marcação é o que vai no link de afiliado: os subIds da Shopee, o src ou sck da \
                  Hotmart, o src da Monetizze, o sck ou src da Kiwify, o utm_content ou tracker da \
                  Eduzz, o tracking id da Amazon. Os links criados aqui levam a marcação do canal \
                  de divulgação, e Canal junta as vendas pela marcação do link, mesmo as que \
-                 chegaram antes de o link existir; uma marcação sem link fica em \"sem canal\".",
+                 chegaram antes de o link existir; uma marcação sem link fica em \"sem canal\". \
+                 O gasto de um canal com vários produtos é dividido entre eles pelo que cada um \
+                 ganhou no período; um produto sem ganho não recebe parte.",
             ))
             .into_any_element()
     }
 }
 
-/// A row per group, named by `name`, in their order.
-fn rows<K>(
-    groups: &[CommissionGroup<K>],
-    t: &Tokens,
-    name: impl Fn(&K) -> String,
-) -> Vec<AnyElement> {
-    groups
-        .iter()
-        .map(|group| row(name(&group.of), group, t))
-        .collect()
+/// What a pause suggests outside a channel: a product or Program may run
+/// on several.
+const PAUSE_PROMOTION: &str = "Gasto maior que o ganho: pause a divulgação paga dele no painel \
+                               do anúncio.";
+
+impl CommissionDashboard {
+    /// Where to pause a losing channel, by the Platform it runs on.
+    fn pause_text(&self, id: RecordId) -> &'static str {
+        let kind = self
+            .channels
+            .as_ref()
+            .and_then(|channels| channels.get(&id))
+            .map(|channel| channel.kind);
+        match kind {
+            Some(ChannelKind::PaidSocial) => {
+                "Gasto maior que o ganho: pausar campanha no painel da Meta (ou do TikTok)."
+            }
+            Some(ChannelKind::PaidSearch) => {
+                "Gasto maior que o ganho: pausar campanha no painel do Google Ads."
+            }
+            _ => "Gasto maior que o ganho: pausar a divulgação paga deste canal.",
+        }
+    }
 }
 
-fn header(first: &'static str, t: &Tokens) -> AnyElement {
+/// One currency's table of groups.
+struct Table<'a> {
+    /// Something was spent in the currency, so profit shows.
+    spent: bool,
+    t: &'a Tokens,
+}
+
+impl Table<'_> {
+    /// A row per group, in their order, named by `name` with what to say
+    /// when it suggests pausing.
+    fn rows<K>(
+        &self,
+        groups: &[CommissionGroup<K>],
+        name: impl Fn(&K) -> (String, Option<&'static str>),
+    ) -> Vec<AnyElement> {
+        groups
+            .iter()
+            .map(|group| {
+                let (name, pause) = name(&group.of);
+                self.row(name, pause.filter(|_| group.suggests_pausing()), group)
+            })
+            .collect()
+    }
+
+    fn row<K>(
+        &self,
+        name: String,
+        pause: Option<&'static str>,
+        group: &CommissionGroup<K>,
+    ) -> AnyElement {
+        let t = self.t;
+        let totals = &group.totals;
+        let detail = (self.spent && (!group.spent.amount().is_zero() || group.mixed_currencies))
+            .then(|| div().text_xs().text_color(t.text2).child(spend_text(group)));
+        let pause = pause.map(|text| div().text_xs().text_color(t.danger).child(text));
+        table_row(t)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(div().truncate().font_medium().child(name))
+                    .children(detail)
+                    .children(pause),
+            )
+            .child(money_cell(group.commissions.to_string()))
+            .child(money_cell(totals.pending.to_pt_br()))
+            .child(money_cell(totals.earned().to_pt_br()).font_semibold())
+            .child(money_cell(totals.reversed.to_pt_br()).text_color(reversed_ink(totals, t)))
+            .when(self.spent, |row| {
+                row.child(
+                    money_cell(money_text(group.profit()))
+                        .font_semibold()
+                        .text_color(profit_ink(group.profit(), t)),
+                )
+            })
+            .into_any_element()
+    }
+}
+
+/// "Gasto R$ 90,00 · ROAS 2,22x · R$ 22,50 por venda · R$ 150,00 se as
+/// pendentes aprovarem".
+fn spend_text<K>(group: &CommissionGroup<K>) -> String {
+    if group.mixed_currencies {
+        return format!(
+            "Gasto {} · ganho e gasto em moedas diferentes: sem lucro, nada é convertido",
+            group.spent.to_pt_br()
+        );
+    }
+    let mut parts = vec![
+        format!("Gasto {}", group.spent.to_pt_br()),
+        format!("ROAS {}", roas_text(group.roas())),
+    ];
+    if let Some(per_sale) = group.spent_per_sale() {
+        parts.push(format!("{} por venda", per_sale.to_pt_br()));
+    }
+    if !group.totals.pending.amount().is_zero() {
+        parts.push(format!(
+            "{} se as pendentes aprovarem",
+            money_text(group.profit_if_pending_approve())
+        ));
+    }
+    parts.join(" · ")
+}
+
+fn money_text(money: Option<Money>) -> String {
+    money.map_or_else(|| "–".into(), Money::to_pt_br)
+}
+
+/// `2,22x`, or a dash with nothing spent.
+fn roas_text(roas: Option<mascate_kernel::Roas>) -> String {
+    roas.map_or_else(|| "–".into(), |roas| roas.to_pt_br())
+}
+
+fn profit_ink(profit: Option<Money>, t: &Tokens) -> Hsla {
+    if profit.is_some_and(|profit| profit.is_negative()) {
+        t.danger
+    } else {
+        t.text
+    }
+}
+
+fn header(first: &'static str, spent: bool, t: &Tokens) -> AnyElement {
     h_flex()
         .gap_3()
         .px_3()
@@ -400,24 +573,7 @@ fn header(first: &'static str, t: &Tokens) -> AnyElement {
         .child(money_cell("Pendente"))
         .child(money_cell("Ganho"))
         .child(money_cell("Estornada"))
-        .into_any_element()
-}
-
-fn row<K>(name: String, group: &CommissionGroup<K>, t: &Tokens) -> AnyElement {
-    let totals = &group.totals;
-    table_row(t)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .font_medium()
-                .child(name),
-        )
-        .child(money_cell(group.commissions.to_string()))
-        .child(money_cell(totals.pending.to_pt_br()))
-        .child(money_cell(totals.earned().to_pt_br()).font_semibold())
-        .child(money_cell(totals.reversed.to_pt_br()).text_color(reversed_ink(totals, t)))
+        .when(spent, |header| header.child(money_cell("Lucro")))
         .into_any_element()
 }
 
@@ -500,8 +656,90 @@ impl Render for CommissionDashboard {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{AffiliatePlatform, ProgramRef};
+    use mascate_kernel::Currency;
+    use rust_decimal::Decimal;
 
     use super::*;
+
+    fn brl(amount: &str) -> Money {
+        Money::new(amount.parse::<Decimal>().unwrap(), Currency::Brl)
+    }
+
+    fn promotion_channel(id: u128, kind: ChannelKind) -> PromotionChannel {
+        PromotionChannel {
+            id: RecordId::from_u128(id),
+            name: format!("Canal {id}"),
+            kind,
+            default_tag: format!("canal{id}"),
+            keywords: Vec::new(),
+            telegram_chat: None,
+            posting_times: Vec::new(),
+            pinterest_board: None,
+        }
+    }
+
+    #[test]
+    fn a_losing_channel_points_to_the_panel_of_the_platform_that_runs_it() {
+        let dashboard = CommissionDashboard {
+            channels: Some(
+                [
+                    promotion_channel(1, ChannelKind::PaidSocial),
+                    promotion_channel(2, ChannelKind::PaidSearch),
+                    promotion_channel(3, ChannelKind::Instagram),
+                ]
+                .into_iter()
+                .map(|channel| (channel.id, channel))
+                .collect(),
+            ),
+            ..CommissionDashboard::default()
+        };
+        let pause = |id| dashboard.pause_text(RecordId::from_u128(id));
+
+        assert!(pause(1).contains("painel da Meta"));
+        assert!(pause(2).contains("painel do Google Ads"));
+        assert!(pause(3).contains("divulgação paga deste canal"));
+        // A deleted channel's kind is not known any more.
+        assert_eq!(pause(4), pause(3));
+    }
+
+    fn spending(spent: &str, sales: usize, mixed: bool) -> CommissionGroup<()> {
+        let mut totals = CurrencyTotals {
+            currency: Currency::Brl,
+            pending: brl("40"),
+            approved: brl("150"),
+            paid: brl("50"),
+            reversed: brl("0"),
+            cancelled: 0,
+        };
+        if sales == 0 {
+            totals.pending = brl("0");
+        }
+        CommissionGroup {
+            of: (),
+            totals,
+            commissions: sales,
+            sales,
+            spent: brl(spent),
+            mixed_currencies: mixed,
+        }
+    }
+
+    #[test]
+    fn a_group_s_spend_reads_with_its_roas_cost_per_sale_and_pending_profit() {
+        assert_eq!(
+            spend_text(&spending("90", 4, false)),
+            "Gasto R$ 90,00 · ROAS 2,22x · R$ 22,50 por venda · R$ 150,00 se as pendentes \
+             aprovarem"
+        );
+        assert_eq!(
+            spend_text(&spending("90", 0, false)),
+            "Gasto R$ 90,00 · ROAS 2,22x"
+        );
+        assert_eq!(
+            spend_text(&spending("90", 4, true)),
+            "Gasto R$ 90,00 · ganho e gasto em moedas diferentes: sem lucro, nada é convertido"
+        );
+    }
 
     fn group(clicks: u64, commissions: usize) -> ClickGroup<()> {
         ClickGroup {

@@ -1,7 +1,7 @@
 //! The days a screen sums up: the last 7, 30 or 90 days, or the days the
 //! owner types (#28, #81). The picker tells its screen when the days change.
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use chrono::{Local, NaiveDate, TimeDelta};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -35,14 +35,15 @@ impl Span {
     }
 }
 
-/// From the start of `from` to the end of `to`, by the computer's calendar.
-fn days(from: NaiveDate, to: NaiveDate) -> Range<Timestamp> {
-    day_start(from)..day_start(to + TimeDelta::days(1))
+/// From the start of the first day to the end of the last, by the
+/// computer's calendar.
+fn time_of(days: RangeInclusive<NaiveDate>) -> Range<Timestamp> {
+    day_start(*days.start())..day_start(*days.end() + TimeDelta::days(1))
 }
 
 /// The last `count` days, `today` included.
-fn last_days(count: u16, today: NaiveDate) -> Range<Timestamp> {
-    days(today - TimeDelta::days(i64::from(count) - 1), today)
+fn last_days(count: u16, today: NaiveDate) -> RangeInclusive<NaiveDate> {
+    today - TimeDelta::days(i64::from(count) - 1)..=today
 }
 
 /// The days changed.
@@ -82,9 +83,14 @@ impl SpanPicker {
 
     /// The time picked.
     pub fn during(&self) -> Range<Timestamp> {
+        time_of(self.days())
+    }
+
+    /// The days picked, both ends included.
+    pub fn days(&self) -> RangeInclusive<NaiveDate> {
         match self.span {
             Span::Days(count) => last_days(count, Local::now().date_naive()),
-            Span::Custom => days(self.custom.0, self.custom.1),
+            Span::Custom => self.custom.0..=self.custom.1,
         }
     }
 
@@ -180,6 +186,8 @@ mod tests {
                 .with_timezone(&Utc)
         };
 
-        assert_eq!(last_days(7, today), local(9, 29)..local(10, 6));
+        let week = last_days(7, today);
+        assert_eq!(week, NaiveDate::from_ymd_opt(2026, 9, 29).unwrap()..=today);
+        assert_eq!(time_of(week), local(9, 29)..local(10, 6));
     }
 }

@@ -33,7 +33,7 @@ use mascate_affiliate::{
     TagRefusal,
 };
 use mascate_integrations::{Connection, ConnectionState};
-use mascate_kernel::{Currency, Money, PlatformError, RecordId, parse_amount};
+use mascate_kernel::{ChannelSpend, Currency, Money, PlatformError, RecordId, parse_amount};
 use mascate_marketing::PromotionChannel;
 use mascate_platform::Flags;
 
@@ -54,6 +54,7 @@ use crate::product_links::{CreateLinkFor, ProductLinksChanged, ProductLinksSecti
 use crate::program_joins::{ProgramJoinsSection, ProgramsJoined};
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
 use crate::promotion_rules::PromotionRulesSection;
+use crate::promotion_spends;
 use crate::restricted::AppFlags;
 use crate::sales::day_start;
 use crate::short_io;
@@ -421,6 +422,8 @@ struct Snapshot {
     synced: Vec<(AffiliatePlatform, Option<LastSync>)>,
     /// The Promotion Channels' names, from the Marketing.
     channels: Result<Vec<PromotionChannel>, String>,
+    /// What each channel spent in the period, from the Marketing (#196).
+    spends: Result<Vec<ChannelSpend>, String>,
 }
 
 pub struct AffiliateScreen {
@@ -639,7 +642,9 @@ impl AffiliateScreen {
             return;
         };
         let channels = promotion_channels(cx);
+        let spending = promotion_spends::promotion_spends(cx);
         let sold = self.span.read(cx).during();
+        let days = self.span.read(cx).days();
         let mut platforms: Vec<AffiliatePlatform> = sources(cx)
             .iter()
             .map(|(_, source)| source.platform())
@@ -678,11 +683,19 @@ impl AffiliateScreen {
                     Some(channels) => channels.channels().await.map_err(|error| error.to_string()),
                     None => Ok(Vec::new()),
                 };
+                let spends = match spending {
+                    Some(spending) => spending
+                        .spent(days)
+                        .await
+                        .map_err(|error| error.to_string()),
+                    None => Ok(Vec::new()),
+                };
                 Ok::<_, AffiliateError>(Snapshot {
                     commissions,
                     clicks,
                     synced,
                     channels,
+                    spends,
                 })
             }
             .await;
@@ -696,6 +709,22 @@ impl AffiliateScreen {
                     match snapshot {
                         Ok(mut snapshot) => {
                             let context = preferences::work_context(cx);
+                            // A Platform's part of each spend weighs it
+                            // against the Commissions of every Platform.
+                            let spends = match &snapshot.spends {
+                                Ok(spends) => context.spends_in(
+                                    spends,
+                                    &snapshot.commissions,
+                                    &snapshot.clicks.affiliate_links,
+                                ),
+                                Err(error) => {
+                                    this.outcome = Some(Outcome::Failed(
+                                        format!("Não consegui ler o gasto com divulgação: {error}")
+                                            .into(),
+                                    ));
+                                    Vec::new()
+                                }
+                            };
                             snapshot
                                 .commissions
                                 .retain(|commission| context.shows_platform(commission.platform));
@@ -714,6 +743,7 @@ impl AffiliateScreen {
                             this.dashboard.update(cx, |dashboard, cx| {
                                 dashboard.show(
                                     snapshot.commissions.clone(),
+                                    spends,
                                     channels,
                                     snapshot.clicks.in_context(context),
                                     cx,

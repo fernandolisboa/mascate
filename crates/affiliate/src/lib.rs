@@ -11,6 +11,7 @@ mod report;
 mod rules;
 mod short_links;
 mod source;
+mod spending;
 mod tagging;
 mod totals;
 
@@ -37,6 +38,7 @@ pub use source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedPayout,
     ReportedProgram,
 };
+pub use spending::spends_on;
 pub use tagging::{LinkTagger, TagRefusal};
 pub use totals::{CurrencyTotals, totals_by_currency};
 

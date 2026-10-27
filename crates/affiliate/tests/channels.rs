@@ -190,7 +190,7 @@ fn a_sale_recorded_before_its_link_joins_the_channel_once_the_link_exists() {
             Some(telegram)
         );
         let report =
-            CommissionReport::of(&fixture.commissions().await, GroupOrder::Earned).remove(0);
+            CommissionReport::of(&fixture.commissions().await, &[], GroupOrder::Earned).remove(0);
         assert_eq!(
             report
                 .by_channel
@@ -259,7 +259,8 @@ fn the_same_tag_on_two_platforms_maps_to_each_platforms_own_link() {
                 .await,
             None
         );
-        let report = CommissionReport::of(&fixture.commissions().await, GroupOrder::Name).remove(0);
+        let report =
+            CommissionReport::of(&fixture.commissions().await, &[], GroupOrder::Name).remove(0);
         assert_eq!(report.by_channel.last().unwrap().of, None);
         assert_eq!(report.by_tracking.len(), 1);
         assert_eq!(report.by_tracking[0].commissions, 3);
@@ -383,7 +384,7 @@ fn channels_come_most_earned_first_with_the_sales_without_a_channel_last() {
                 .collect::<Vec<_>>()
         };
 
-        let mut report = CommissionReport::of(&commissions, GroupOrder::Earned).remove(0);
+        let mut report = CommissionReport::of(&commissions, &[], GroupOrder::Earned).remove(0);
         assert_eq!(
             by_channel(&report),
             vec![
