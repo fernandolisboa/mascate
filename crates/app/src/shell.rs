@@ -11,6 +11,7 @@ use crate::backups::AppBackups;
 use crate::dashboard::DashboardScreen;
 use crate::drafts::StartDraft;
 use crate::event_alerts::OpenCalendar;
+use crate::guided_flow::GuidedFlowScreen;
 use crate::home::Home;
 use crate::layout;
 use crate::listings::ListingsScreen;
@@ -56,6 +57,7 @@ pub struct Shell {
     dashboard: Entity<DashboardScreen>,
     purchases: Entity<PurchasesScreen>,
     stock: Entity<StockScreen>,
+    guided: Entity<GuidedFlowScreen>,
     affiliate: Entity<AffiliateScreen>,
     promotion: Entity<PromotionScreen>,
     settings: Entity<SettingsScreen>,
@@ -76,7 +78,7 @@ impl Shell {
         {
             Place::Settings
         } else {
-            Place::Today
+            Place::first(preferences::work_context(cx))
         };
         let home = cx.new(|cx| Home::new(problem, cx));
         let opportunities = cx.new(|cx| OpportunitiesScreen::new(window, cx));
@@ -92,6 +94,7 @@ impl Shell {
         let dashboard = cx.new(|cx| DashboardScreen::new(window, cx));
         let purchases = cx.new(|cx| PurchasesScreen::new(window, cx));
         let stock = cx.new(|cx| StockScreen::new(window, cx));
+        let guided = cx.new(|cx| GuidedFlowScreen::new(window, cx));
         let affiliate = cx.new(|cx| AffiliateScreen::new(window, cx));
         let promotion = cx.new(|cx| PromotionScreen::new(window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(window, cx));
@@ -218,6 +221,7 @@ impl Shell {
             dashboard,
             purchases,
             stock,
+            guided,
             affiliate,
             promotion,
             settings,
@@ -292,6 +296,9 @@ impl Shell {
                         Place::Stock => shell
                             .stock
                             .update(cx, |stock, cx| stock.refresh(window, cx)),
+                        Place::GuidedFlow => shell
+                            .guided
+                            .update(cx, |guided, cx| guided.refresh(window, cx)),
                         Place::Affiliate => shell
                             .affiliate
                             .update(cx, |affiliate, cx| affiliate.refresh(window, cx)),
@@ -311,7 +318,7 @@ impl Shell {
 impl Shell {
     /// Shows `context` from the next frame on: each screen closes what it
     /// had open on another channel or Platform without sending it, and a
-    /// place the context does not list gives way to Hoje.
+    /// place the context does not list gives way to its first place.
     fn switch_context(
         &mut self,
         context: WorkContext,
@@ -336,14 +343,21 @@ impl Shell {
             .update(cx, |promotions, cx| promotions.follow_context(window, cx));
         self.affiliate
             .update(cx, |affiliate, cx| affiliate.follow_context(window, cx));
+        self.guided
+            .update(cx, |guided, cx| guided.follow_context(window, cx));
         self.promotion.update(cx, PromotionScreen::follow_context);
         self.dashboard.update(cx, DashboardScreen::refresh);
         self.quality.update(cx, |_, cx| cx.notify());
         self.sales.update(cx, |_, cx| cx.notify());
         self.home.update(cx, |_, cx| cx.notify());
         if !self.place.shows_in(context) {
-            self.place = Place::Today;
-            self.home.update(cx, Home::refresh);
+            self.place = Place::first(context);
+            match self.place {
+                Place::GuidedFlow => self
+                    .guided
+                    .update(cx, |guided, cx| guided.refresh(window, cx)),
+                _ => self.home.update(cx, Home::refresh),
+            }
         }
         cx.notify();
     }
@@ -368,6 +382,7 @@ impl Render for Shell {
             Place::Dashboard => self.dashboard.clone().into_any_element(),
             Place::Purchases => self.purchases.clone().into_any_element(),
             Place::Stock => self.stock.clone().into_any_element(),
+            Place::GuidedFlow => self.guided.clone().into_any_element(),
             Place::Affiliate => self.affiliate.clone().into_any_element(),
             Place::Promotion => self.promotion.clone().into_any_element(),
             Place::Settings => self.settings.clone().into_any_element(),

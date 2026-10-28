@@ -4,7 +4,8 @@
 //! the Meta Ads Manager or Google Ads exports broken down by day. A campaign
 //! the app has not seen asks once which channel it is. The app records the
 //! spend and never spends or pauses anything; the rules live in the
-//! Marketing, the reading in Integrations.
+//! Marketing, the reading in Integrations. Focused on one product's paid
+//! channels, the section is the Passo a passo's Gasto step (#198).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
+use gpui_kit::{AnyElement, App, Entity, Global, Subscription, Window, div, px};
 use mascate_integrations::{SpendReading, SpendReportError, read_spend_report};
 use mascate_kernel::{ChannelSpend, Currency, Money, RecordId, channel_day, parse_amount};
 use mascate_marketing::{
@@ -39,6 +40,17 @@ impl Global for AppPromotionSpends {}
 pub(crate) fn promotion_spends(cx: &App) -> Option<Arc<PromotionSpends>> {
     cx.try_global::<AppPromotionSpends>()
         .map(|app| app.0.clone())
+}
+
+/// Counts the changes to the Promotion Spends, so every section showing
+/// them, and the Passo a passo, reads them again.
+#[derive(Default)]
+pub struct SpendChanges(pub u64);
+
+impl Global for SpendChanges {}
+
+fn spends_changed(cx: &mut App) {
+    cx.update_default_global::<SpendChanges, _>(|changes, _| changes.0 += 1);
 }
 
 /// How many days back "what each channel spent" looks, today included.
@@ -238,10 +250,13 @@ pub struct SpendsSection {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
+    /// Set on the Passo a passo's section: the channels it shows.
+    focused: Option<Vec<RecordId>>,
+    _changes: Subscription,
 }
 
 impl SpendsSection {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             channels: Vec::new(),
             recent: HashMap::new(),
@@ -252,7 +267,30 @@ impl SpendsSection {
             busy: false,
             reads: 0,
             outcome: None,
+            focused: None,
+            _changes: cx.observe_global::<SpendChanges>(Self::refresh),
         }
+    }
+
+    /// The section as a step of the Passo a passo: only the channels it
+    /// focuses on; a report still links its campaigns to any channel.
+    pub fn focused(cx: &mut Context<Self>) -> Self {
+        let mut section = Self::new(cx);
+        section.focused = Some(Vec::new());
+        section
+    }
+
+    /// Focuses a focused section on `channels`.
+    pub fn focus(&mut self, channels: Vec<RecordId>, cx: &mut Context<Self>) {
+        if self
+            .form
+            .as_ref()
+            .is_some_and(|form| !channels.contains(&form.channel))
+        {
+            self.form = None;
+        }
+        self.focused = Some(channels);
+        cx.notify();
     }
 
     /// Takes the channels as Divulgação read them, and reads their spends
@@ -420,7 +458,7 @@ impl SpendsSection {
                             Some(warning) => Outcome::Failed(format!("{done} {warning}").into()),
                             None => Outcome::Done(done.into()),
                         });
-                        this.refresh(cx);
+                        spends_changed(cx);
                     }
                     Err(error) => {
                         if let Some(form) = this.form.as_mut() {
@@ -455,7 +493,7 @@ impl SpendsSection {
                 if this.form.as_ref().and_then(|form| form.editing) == Some(id) {
                     this.form = None;
                 }
-                this.refresh(cx);
+                spends_changed(cx);
             });
         })
         .detach();
@@ -598,7 +636,7 @@ impl SpendsSection {
                             )
                             .into(),
                         ));
-                        this.refresh(cx);
+                        spends_changed(cx);
                     }
                     Err(error) => {
                         this.outcome = Some(Outcome::Failed(failure(&error).into()));
@@ -982,7 +1020,12 @@ impl Render for SpendsSection {
             return div().into_any_element();
         }
         let mut rows: Vec<AnyElement> = Vec::new();
-        for (index, channel) in self.channels.clone().iter().enumerate() {
+        let shown = self.channels.iter().filter(|channel| {
+            self.focused
+                .as_ref()
+                .is_none_or(|focused| focused.contains(&channel.id))
+        });
+        for (index, channel) in shown.cloned().collect::<Vec<_>>().iter().enumerate() {
             rows.push(self.render_channel(index, channel, cx));
             if let Some(form) = self.form.as_ref().filter(|form| form.channel == channel.id) {
                 rows.push(self.render_form(form, cx));

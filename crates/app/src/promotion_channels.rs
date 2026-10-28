@@ -57,7 +57,7 @@ pub struct ChannelChanges(pub u64);
 
 impl Global for ChannelChanges {}
 
-fn failure(error: &ChannelError) -> String {
+pub(crate) fn failure(error: &ChannelError) -> String {
     match error {
         ChannelError::BadName => {
             format!("Dê um nome ao canal, com até {CHANNEL_NAME_MAX_CHARS} caracteres.")
@@ -84,7 +84,7 @@ fn failure(error: &ChannelError) -> String {
 }
 
 /// What a kind of channel needs, under the form.
-fn kind_note(kind: ChannelKind) -> &'static str {
+pub(crate) fn kind_note(kind: ChannelKind) -> &'static str {
     match kind {
         ChannelKind::TelegramChannel => {
             "Com o chat do canal e o token do bot em Configurações › Conexões › Telegram, os \
@@ -178,7 +178,7 @@ impl PromotionScreen {
         let mut screen = Self {
             posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
             calendar: cx.new(|cx| CalendarSection::new(window, cx)),
-            spends: cx.new(|_| SpendsSection::new()),
+            spends: cx.new(SpendsSection::new),
             text_check: cx.new(|cx| TextCheckSection::new(window, cx)),
             channels: Vec::new(),
             template: None,
@@ -541,25 +541,13 @@ impl PromotionScreen {
     }
 
     fn typed(&self, cx: &App) -> NewPromotionChannel {
-        let name = self.name.read(cx).value().to_string();
-        let tag = self.tag.read(cx).value().trim().to_owned();
-        NewPromotionChannel {
-            default_tag: if tag.is_empty() {
-                suggested_tag(&name)
-            } else {
-                tag
-            },
-            name,
-            kind: self.kind,
-            keywords: self
-                .keywords
-                .read(cx)
-                .value()
-                .split(',')
-                .map(str::to_owned)
-                .collect(),
-            telegram_chat: Some(self.chat.read(cx).value().to_string()),
-        }
+        typed_channel(
+            self.name.read(cx).value().to_string(),
+            &self.tag.read(cx).value(),
+            self.kind,
+            &self.keywords.read(cx).value(),
+            self.chat.read(cx).value().to_string(),
+        )
     }
 
     fn changed(cx: &mut Context<Self>) {
@@ -1075,6 +1063,29 @@ impl PromotionScreen {
                     }),
             )
             .into_any_element()
+    }
+}
+
+/// A channel as the owner typed it: an empty marking comes from the name,
+/// the keywords are separated by commas.
+pub(crate) fn typed_channel(
+    name: String,
+    tag: &str,
+    kind: ChannelKind,
+    keywords: &str,
+    chat: String,
+) -> NewPromotionChannel {
+    let tag = tag.trim();
+    NewPromotionChannel {
+        default_tag: if tag.is_empty() {
+            suggested_tag(&name)
+        } else {
+            tag.to_owned()
+        },
+        name,
+        kind,
+        keywords: keywords.split(',').map(str::to_owned).collect(),
+        telegram_chat: Some(chat),
     }
 }
 

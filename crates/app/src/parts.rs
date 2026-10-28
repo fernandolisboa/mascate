@@ -32,6 +32,7 @@ pub enum Place {
     Dashboard,
     Purchases,
     Stock,
+    GuidedFlow,
     Affiliate,
     Promotion,
     Settings,
@@ -89,12 +90,23 @@ impl Place {
         },
         PlaceGroup {
             name: Some("Afiliação"),
-            places: &[Place::Affiliate, Place::Promotion],
+            places: &[Place::GuidedFlow, Place::Affiliate, Place::Promotion],
         },
     ];
     /// The places kept apart at the end: the sidebar's foot, the tab bar's
     /// right side.
     pub const PINNED: [Place; 1] = [Place::Settings];
+
+    /// Where the app opens in `context`, and what a place the context does
+    /// not list gives way to: the Passo a passo on a Platform the owner
+    /// only promotes, Hoje elsewhere (ADR 0037, decision 2).
+    pub fn first(context: WorkContext) -> Place {
+        if context.sells() {
+            Place::Today
+        } else {
+            Place::GuidedFlow
+        }
+    }
 
     /// Whether the navigation lists this place in `context` (ADR 0037,
     /// decision 2). The sales screens show on the Sales Channels, and the
@@ -119,6 +131,7 @@ impl Place {
             | Place::Dashboard
             | Place::Purchases
             | Place::Stock
+            | Place::GuidedFlow
             | Place::Affiliate
             | Place::Promotion
             | Place::Settings => true,
@@ -141,6 +154,7 @@ impl Place {
             Place::Dashboard => "Painel",
             Place::Purchases => "Compras",
             Place::Stock => "Estoque",
+            Place::GuidedFlow => "Passo a passo",
             Place::Affiliate => "Afiliação",
             Place::Promotion => "Divulgação",
             Place::Settings => "Configurações",
@@ -163,6 +177,7 @@ impl Place {
             Place::Dashboard => IconName::Frame,
             Place::Purchases => IconName::FileText,
             Place::Stock => IconName::GalleryVerticalEnd,
+            Place::GuidedFlow => IconName::Map,
             Place::Affiliate => IconName::Network,
             Place::Promotion => IconName::Heart,
             Place::Settings => IconName::Settings,
@@ -216,7 +231,7 @@ mod tests {
 
     use super::*;
 
-    const EVERY_PLACE: [Place; 17] = [
+    const EVERY_PLACE: [Place; 18] = [
         Place::Today,
         Place::Opportunities,
         Place::Offers,
@@ -231,6 +246,7 @@ mod tests {
         Place::Dashboard,
         Place::Purchases,
         Place::Stock,
+        Place::GuidedFlow,
         Place::Affiliate,
         Place::Promotion,
         Place::Settings,
@@ -276,6 +292,7 @@ mod tests {
         assert_eq!(group_of(Place::Questions), Some("Canais de venda"));
         assert_eq!(group_of(Place::Dashboard), Some("Pedidos e finanças"));
         assert_eq!(group_of(Place::Promotion), Some("Afiliação"));
+        assert_eq!(group_of(Place::GuidedFlow), Some("Afiliação"));
         assert_eq!(group_of(Place::Settings), None);
     }
 
@@ -291,6 +308,7 @@ mod tests {
             Purchases,
             Stock,
             Dashboard,
+            GuidedFlow,
             Affiliate,
             Promotion,
             Settings,
@@ -343,6 +361,20 @@ mod tests {
             assert_eq!(
                 navigation_in(context),
                 expected(context),
+                "{}",
+                context.name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_context_that_only_promotes_opens_on_the_guided_flow() {
+        for context in WorkContext::ALL {
+            let first = Place::first(context);
+            assert!(first.shows_in(context), "{}", context.name());
+            assert_eq!(
+                first == Place::GuidedFlow,
+                context.affiliate_platform().is_some() && context.sales_channel().is_none(),
                 "{}",
                 context.name()
             );

@@ -25,6 +25,7 @@ mod event_alerts;
 mod finance;
 mod forms;
 mod found_offers;
+mod guided_flow;
 mod home;
 mod hotmart;
 mod instagram;
