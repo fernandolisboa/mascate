@@ -65,7 +65,7 @@ Regra pela qual o estoque de cada Listing publicado e ligado a um Product segue 
 _Avoid_: sincronização de estoque (Sync é leitura), estoque automático
 
 **On-Order Listing**:
-Listing do Mercado Livre que o Fernando marca como sob encomenda: mostra no canal um prazo de disponibilidade (1 a 60 dias) e aceita um número de encomendas ao mesmo tempo. Não recebe Stock Share; o estoque dele no canal são as encomendas que ainda cabem. Cada venda nele pede uma Purchase Order, e o produto passa pela casa do Fernando antes do despacho. Só o Fernando marca e desmarca.
+Listing do Mercado Livre que o Fernando marca como sob encomenda: mostra no canal um prazo de disponibilidade (1 a 60 dias) e aceita um número de encomendas ao mesmo tempo. Não recebe Stock Share; o estoque dele no canal são as encomendas que ainda cabem. Cada venda nele pede uma Purchase Order, e o produto passa pela casa do Fernando antes do despacho. Só o Fernando marca e desmarca. Quando mais um cancelamento ou despacho com atraso tira o verde da Reputation (ou um já tirou), Hoje avisa e oferece pausar todos de uma vez; pausar mantém a marca e nada pausa sem o clique dele.
 _Avoid_: dropshipping, pré-venda, anúncio sem estoque
 
 **Stock Share**:

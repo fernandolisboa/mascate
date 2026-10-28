@@ -134,6 +134,9 @@ pub struct Channel {
     /// Refuses the days to be ready while set, as Mercado Livre does on a
     /// listing with Flex or in Full.
     pub availability_refusal: Mutex<Option<PlatformError>>,
+    /// Refuses pausing or activating this listing id, and only it, while
+    /// set.
+    pub status_refusal: Mutex<Option<(String, PlatformError)>>,
 }
 
 impl Default for Channel {
@@ -179,6 +182,7 @@ impl Default for Channel {
             shipments_confirmed: Mutex::default(),
             availability_set: Mutex::default(),
             availability_refusal: Mutex::default(),
+            status_refusal: Mutex::default(),
         }
     }
 }
@@ -272,6 +276,13 @@ impl Channel {
         match self.failure.lock().unwrap().clone() {
             Some(error) => Err(error),
             None => Ok(()),
+        }
+    }
+
+    fn check_status(&self, id: &str) -> Result<(), PlatformError> {
+        match self.status_refusal.lock().unwrap().clone() {
+            Some((refused, error)) if refused == id => Err(error),
+            _ => Ok(()),
         }
     }
 }
@@ -389,6 +400,7 @@ impl SalesChannel for Channel {
 
     fn pause(&self, id: &str) -> Result<(), PlatformError> {
         self.check()?;
+        self.check_status(id)?;
         self.statuses_set
             .lock()
             .unwrap()
@@ -406,6 +418,7 @@ impl SalesChannel for Channel {
 
     fn activate(&self, id: &str) -> Result<(), PlatformError> {
         self.check()?;
+        self.check_status(id)?;
         self.statuses_set
             .lock()
             .unwrap()

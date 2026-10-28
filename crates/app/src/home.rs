@@ -7,6 +7,7 @@ use crate::backups;
 use crate::event_alerts::EventAlertsArea;
 use crate::layout;
 use crate::low_stock::LowStockArea;
+use crate::on_order_risk::OnOrderRiskArea;
 use crate::order_alerts::OrderAlertsArea;
 use crate::parts::{Place, ScreenParts};
 use crate::preferences;
@@ -22,15 +23,17 @@ enum Area {
     Orders,
     Questions,
     Reputation,
+    OnOrderRisk,
     LowStock,
     SalesEvents,
 }
 
 impl Area {
-    const ALL: [Area; 5] = [
+    const ALL: [Area; 6] = [
         Area::Orders,
         Area::Questions,
         Area::Reputation,
+        Area::OnOrderRisk,
         Area::LowStock,
         Area::SalesEvents,
     ];
@@ -42,7 +45,7 @@ impl Area {
         match self {
             Area::Orders => Place::Orders.shows_in(context),
             Area::Questions => Place::Questions.shows_in(context),
-            Area::Reputation => Place::Reputation.shows_in(context),
+            Area::Reputation | Area::OnOrderRisk => Place::Reputation.shows_in(context),
             Area::LowStock | Area::SalesEvents => true,
         }
     }
@@ -50,7 +53,8 @@ impl Area {
 
 /// The first screen: what needs attention today (Orders to dispatch or
 /// returns to receive, questions waiting for an answer, tools the
-/// Reputation unlocked, low Reviews, low stock and the Sales Events inside
+/// Reputation unlocked, low Reviews, the Reputation close to losing the
+/// green while On-Order Listings sell, low stock and the Sales Events inside
 /// their lead time), a newer version of the app at its top and the
 /// Reminders at its foot. A Platform's Work Context shows only its own
 /// besides what belongs to everyone.
@@ -61,6 +65,7 @@ pub struct Home {
     pub order_alerts: Entity<OrderAlertsArea>,
     pub question_alerts: Entity<QuestionAlertsArea>,
     pub reputation_alerts: Entity<ReputationAlertsArea>,
+    on_order_risk: Entity<OnOrderRiskArea>,
     pub low_stock: Entity<LowStockArea>,
     pub event_alerts: Entity<EventAlertsArea>,
     reminders: Entity<RemindersArea>,
@@ -73,6 +78,7 @@ impl Home {
         let order_alerts = cx.new(OrderAlertsArea::new);
         let question_alerts = cx.new(QuestionAlertsArea::new);
         let reputation_alerts = cx.new(ReputationAlertsArea::new);
+        let on_order_risk = cx.new(OnOrderRiskArea::new);
         let event_alerts = cx.new(EventAlertsArea::new);
         // Whether anything needs attention decides what the screen shows.
         let subscriptions = vec![
@@ -80,6 +86,7 @@ impl Home {
             cx.observe(&order_alerts, |_, _, cx| cx.notify()),
             cx.observe(&question_alerts, |_, _, cx| cx.notify()),
             cx.observe(&reputation_alerts, |_, _, cx| cx.notify()),
+            cx.observe(&on_order_risk, |_, _, cx| cx.notify()),
             cx.observe(&event_alerts, |_, _, cx| cx.notify()),
         ];
         Self {
@@ -88,6 +95,7 @@ impl Home {
             order_alerts,
             question_alerts,
             reputation_alerts,
+            on_order_risk,
             low_stock,
             event_alerts,
             reminders: cx.new(RemindersArea::new),
@@ -101,6 +109,7 @@ impl Home {
         self.question_alerts.update(cx, QuestionAlertsArea::refresh);
         self.reputation_alerts
             .update(cx, ReputationAlertsArea::refresh);
+        self.on_order_risk.update(cx, OnOrderRiskArea::refresh);
         self.low_stock.update(cx, LowStockArea::refresh);
         self.event_alerts.update(cx, EventAlertsArea::refresh);
     }
@@ -138,6 +147,10 @@ impl Render for Home {
                 Area::Reputation => (
                     self.reputation_alerts.read(cx).is_empty(),
                     self.reputation_alerts.clone().into_any_element(),
+                ),
+                Area::OnOrderRisk => (
+                    self.on_order_risk.read(cx).is_empty(),
+                    self.on_order_risk.clone().into_any_element(),
                 ),
                 Area::LowStock => (
                     self.low_stock.read(cx).is_empty(),

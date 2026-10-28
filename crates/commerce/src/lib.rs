@@ -40,7 +40,8 @@ pub use listings::{
 };
 pub use merge::MERGE;
 pub use on_order::{
-    ListingAvailability, MAX_AVAILABILITY_DAYS, OnOrderListing, OnOrderSale, OnOrderTerms,
+    ListingAvailability, MAX_AVAILABILITY_DAYS, OnOrderListing, OnOrderSale, OnOrderStatusChange,
+    OnOrderTerms,
 };
 pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
