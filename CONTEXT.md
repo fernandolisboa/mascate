@@ -194,6 +194,10 @@ _Avoid_: post, copy (sozinho), anúncio
 Frase curta que vende o produto num Offer Post, na variável `{chamada}` do modelo, escrita pela IA ou à mão. Nunca traz preço, desconto, link ou contato: isso vem dos fatos do post. Na tela, "chamada".
 _Avoid_: copy (sozinho), gancho, slogan
 
+**Result Promise**:
+Trecho de um texto de divulgação que promete resultado: ganho de dinheiro, perda de peso ou cura, resultado garantido, ausência de risco, antes e depois. As Platforms de anúncio reprovam e podem bloquear a conta. O app avisa no Offer Post e em "Conferir texto", nunca bloqueia; só o Pitch da IA é recusado. Cada padrão tem a fonte ao lado (Meta, Google Ads, CONAR).
+_Avoid_: promessa (sozinho), claim, termo proibido
+
 **Promotion Spend**:
 Dinheiro que o Fernando gastou para divulgar num Promotion Channel em alguns dias (anúncio na Meta, no Google, post impulsionado), digitado ou lido do relatório exportado pela Platform do anúncio. Entra no lucro e no ROAS de cada canal e de cada produto. Diferente do custo do Product Ads, que é de um Listing.
 _Avoid_: custo (sozinho), investimento, verba

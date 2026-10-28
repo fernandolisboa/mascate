@@ -36,6 +36,7 @@ use crate::offer_posts::{
 use crate::parts::ScreenParts;
 use crate::post_queue::{times_text, typed_times};
 use crate::promotion_spends::SpendsSection;
+use crate::result_promises::TextCheckSection;
 use crate::sales::table_row;
 use crate::sales_events::CalendarSection;
 use crate::{pinterest, telegram};
@@ -144,6 +145,7 @@ pub struct PromotionScreen {
     posts: Entity<OfferPostsSection>,
     calendar: Entity<CalendarSection>,
     spends: Entity<SpendsSection>,
+    text_check: Entity<TextCheckSection>,
     channels: Vec<PromotionChannel>,
     template: Option<TemplateEditor>,
     times: Option<TimesEditor>,
@@ -177,6 +179,7 @@ impl PromotionScreen {
             posts: cx.new(|cx| OfferPostsSection::new(window, cx)),
             calendar: cx.new(|cx| CalendarSection::new(window, cx)),
             spends: cx.new(|_| SpendsSection::new()),
+            text_check: cx.new(|cx| TextCheckSection::new(window, cx)),
             channels: Vec::new(),
             template: None,
             times: None,
@@ -1135,6 +1138,9 @@ impl Render for PromotionScreen {
         );
         parts.content.push(self.spends.clone().into_any_element());
         parts.content.push(self.render_form(cx));
+        parts
+            .content
+            .push(self.text_check.clone().into_any_element());
         layout::screen(parts, cx)
     }
 }

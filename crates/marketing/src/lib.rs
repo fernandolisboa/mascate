@@ -1,6 +1,6 @@
 //! Marketing: Listing quality and shop performance, questions, reputation, Promotions, Ads cost
 //! and Ad Campaigns, Listing Copy,
-//! Promotion Channels with their Promotion Spends and Offer Posts with their Pitch, published through a destination's port
+//! Promotion Channels with their Promotion Spends and Offer Posts with their Pitch and the Result Promises they are warned of, published through a destination's port
 //! now or from the queue at a time the owner confirmed, and the Sales Events
 //! calendar they are planned around.
 
@@ -13,6 +13,7 @@ mod merge;
 mod offer_posts;
 mod performance;
 mod pitch;
+mod promises;
 mod promotion_spends;
 mod publishing;
 mod quality;
@@ -61,6 +62,7 @@ pub use performance::{
 pub use pitch::{
     PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, PitchError, PitchProblem, PitchedDraft, check_pitch,
 };
+pub use promises::{PromiseKind, PromiseSource, ResultPromise, promises_in};
 pub use promotion_spends::{
     CampaignLink, ImportedSpends, NewPromotionSpend, PromotionSpend, PromotionSpends,
     ReportedSpend, SavedSpend, SpendError, SpendOrigin, SpendReport,

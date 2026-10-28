@@ -237,6 +237,37 @@ fn a_confirmed_post_reaches_the_channel_once_and_keeps_its_link() {
 }
 
 #[test]
+fn a_post_that_promises_a_result_is_warned_and_still_reaches_the_channel_once_confirmed() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let channel = f.channel(ChannelKind::TelegramChannel, Some(CHAT)).await;
+        let post = f.post(&channel, &facts()).await;
+        let mut draft = post.draft.clone();
+        draft.text = format!("Ganhe R$ 500 por dia com fotos!\n\n{}", draft.text);
+
+        let problems = f.posts.check(&draft).await.unwrap();
+        assert!(
+            matches!(problems.as_slice(), [PostProblem::Promise(promise)]
+                if promise.phrase == "Ganhe R$ 500 por dia"),
+            "{problems:?}"
+        );
+        assert!(!problems[0].blocks() && !problems[0].blocks_publishing());
+
+        f.later();
+        let saved = f.posts.update(post.id, &draft).await.unwrap();
+        let destination = f.destination(&saved, vec![sent("43")]);
+        let request = f.posts.prepare(saved.id).await.unwrap();
+        let published = f
+            .posts
+            .publish(&destination, request.confirm())
+            .await
+            .unwrap();
+        assert_eq!(published.status, PostStatus::Sent);
+        assert_eq!(destination.calls()[0].text, draft.text);
+    });
+}
+
+#[test]
 fn only_a_telegram_channel_with_its_chat_has_a_destination() {
     block_on(async {
         let f = Fixture::new().await;

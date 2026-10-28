@@ -24,7 +24,7 @@ pub use platform::{
 pub use record::Record;
 pub use roas::{ADS_LOSS_MIN_COST, BreakEven, Roas, spent_enough_to_judge};
 pub use spend::ChannelSpend;
-pub use text::{fold, folded_words};
+pub use text::{fold, folded_word_spans, folded_words};
 
 #[cfg(feature = "test-support")]
 pub mod testing;

@@ -40,7 +40,7 @@ use mascate_marketing::{
     OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, POST_PITCH,
     POST_VARIABLES, PRICE_KEEPS_HOURS, PitchError, PitchProblem, PostDraft, PostError, PostImage,
     PostProblem, PostQueue, PostStatus, PostTime, PromotionChannel, PublishFailure, PublishRequest,
-    UpcomingEvent, check_post, post_limits,
+    UpcomingEvent, check_post, post_limits, promises_in,
 };
 use mascate_platform::Flag;
 
@@ -55,6 +55,7 @@ use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
 use crate::preferences;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
+use crate::result_promises::promise_text;
 use crate::sales::table_row;
 use crate::sales_events::{event_date_text, sales_events};
 use crate::work_context::{self, WorkContext};
@@ -407,6 +408,7 @@ pub(crate) fn problem_text(problem: &PostProblem) -> String {
             "O texto tem {}, e este programa proíbe esse contato ou ainda não tem os termos lidos.",
             contact.name()
         ),
+        PostProblem::Promise(promise) => promise_text(promise),
     }
 }
 
@@ -1491,7 +1493,30 @@ impl OfferPostsSection {
         cx.notify();
     }
 
+    /// What will go out, with the Result Promises of its text said again
+    /// right before the owner confirms.
     fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
+        let promises = promises_in(confirming.request.text());
+        let choice = self.render_confirmation_choice(confirming, cx);
+        if promises.is_empty() {
+            return choice;
+        }
+        v_flex()
+            .gap_2()
+            .children(
+                promises
+                    .iter()
+                    .map(|promise| kit::info_notice(promise_text(promise), cx)),
+            )
+            .child(choice)
+            .into_any_element()
+    }
+
+    fn render_confirmation_choice(
+        &self,
+        confirming: &Confirming,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = look(cx).tokens;
         let request = &confirming.request;
         let off = post_destinations::publishing_off(request.kind(), cx);

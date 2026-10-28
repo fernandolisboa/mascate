@@ -69,6 +69,7 @@ mod reputation;
 mod reputation_alerts;
 mod resell_or_promote;
 mod restricted;
+mod result_promises;
 mod sales;
 mod sales_channels;
 mod sales_events;
