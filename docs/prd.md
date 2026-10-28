@@ -12,7 +12,7 @@ Um app desktop (Windows primeiro, Linux para testes) que roda localmente, sem se
 
 1. **Venda com estoque local e descoberta.** O app encontra Opportunities cruzando Supplier Offers da Shopee com a demanda no Mercado Livre, mostra a Estimated Margin, ajuda a comprar (Purchase Order registrada à mão), controla o estoque do espaço, cria rascunhos de Listing com Listing Copy gerada por IA, sugere preço, sincroniza Orders e mostra a Realized Margin de cada venda. Marketing aqui é o próprio anúncio: qualidade, perguntas, Promotions com guarda de margem e leitura do custo de Ads.
 2. **Afiliação.** Commissions de Hotmart, Shopee, Kiwify, Monetizze e Eduzz por API, e de Amazon, ML e Magalu por arquivo ou lançamento manual, num painel único com status, estornos e Payouts. Divulgação com Offer Posts, Affiliate Links por Promotion Channel e postagem automática num canal do Telegram.
-3. **Expansão.** Dropshipping, novos Sales Channels (Shopee, Magalu, Amazon), Restricted Features (crawlers, automação de painel), Instagram e Pinterest por API, encurtador com cliques, Merge Import e sincronização entre máquinas.
+3. **Expansão.** Venda sob encomenda no ML (ADR 0038), novos Sales Channels (Shopee, Magalu, Amazon), Restricted Features (crawlers, automação de painel), Instagram e Pinterest por API, encurtador com cliques, Merge Import e sincronização entre máquinas.
 
 Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 0006); questões fiscais e jurídicas viram Reminders e nunca bloqueiam.
 
@@ -135,9 +135,9 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 
 ### Expansão (fase 3)
 
-92. Como Fernando, quero vender em dropshipping com o Fulfillment Mode `dropship` e o prazo de disponibilidade do ML, desligado por padrão, para testar sem estoque quando eu decidir.
-93. Como Fernando, quero registrar a Purchase Order ao Supplier a partir de um Order em dropship, para não esquecer de comprar.
-94. Como Fernando, quero conectar fornecedores com API de compra (AliExpress, fornecedores nacionais), para automatizar o dropshipping.
+92. Como Fernando, quero marcar um anúncio do ML como sob encomenda, com o prazo de disponibilidade e quantas encomendas aceito, para testar um produto sem comprar estoque antes.
+93. Como Fernando, quero criar a Purchase Order ao Supplier a partir da venda de um anúncio sob encomenda, com o prazo de despacho à vista, para não esquecer de comprar.
+94. (Retirada em 28/10/2026, ADR 0038: fornecedor que envia direto ao comprador fica fora do plano.)
 95. Como Fernando, quero vender também na Shopee, Magalu e Amazon com o mesmo estoque, para alcançar mais compradores.
 96. Como Fernando, quero que o estoque seja compartilhado entre Sales Channels sem vender duas vezes o mesmo item, para não cancelar pedidos.
 97. Como Fernando, quero reprecificação automática dentro de limites mínimo e máximo, desligada por padrão, para reagir à concorrência sem estar no app.
@@ -157,6 +157,7 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 111. Como Fernando, quero ver lucro e ROAS por produto e por Promotion Channel, com a sugestão de pausar o que dá prejuízo, para pôr dinheiro só no que volta.
 112. Como Fernando, quero uma tela Passo a passo que leva um produto de afiliado do cadastro ao resultado, para divulgar sem procurar cada coisa em uma tela.
 113. Como Fernando, quero ser avisado quando um texto promete resultado (renda, saúde, garantia), para não ter anúncio reprovado nem conta bloqueada.
+114. Como Fernando, quero ser avisado quando um atraso ou cancelamento a mais tira o verde da minha reputação no ML, com um botão para pausar os anúncios sob encomenda, para não perder exposição em todos os anúncios.
 
 ## Implementation Decisions
 
@@ -173,7 +174,7 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 - Todo registro tem ID UUIDv7, `created_at`, `updated_at` e exclusão lógica (ADR 0004).
 - Dinheiro é sempre decimal com moeda explícita; nunca float. Arredondamento só na apresentação e em valores enviados às Platforms.
 - Estoque como ledger imutável de Stock Movements; saldo derivado; Average Cost por média ponderada móvel, com frete da Purchase Order rateado por valor (ADR 0005).
-- `fulfillment_mode` (`own_stock` | `dropship`) existe no Order desde a fase 1.
+- `fulfillment_mode` (`own_stock` | `dropship`) existe no Order desde a fase 1. A venda sob encomenda é `own_stock`; `dropship` fica sem uso (ADR 0038).
 - Commission tem status derivado no adapter a partir do status da transação de cada Platform (pendente, aprovada, paga, estornada) com as datas de cada transição.
 - Idempotência por chave natural de cada Platform (por exemplo, `transaction` na Hotmart, `conversionId` + item na Shopee, id do pedido no ML); reprocessar ou reimportar nunca duplica.
 - Dados pessoais de compradores: só o necessário para envio e suporte, com retenção configurável.
