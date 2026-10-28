@@ -1596,6 +1596,15 @@ mod tests {
                 // On-Order Listings arrive after 0.6.0: every listing of a
                 // released sample sells from stock.
                 assert!(listings.on_order().await.unwrap().is_empty(), "{name}");
+                // Purchase Orders bought for a sale on order arrive after
+                // 0.6.0 too: no released sample has a sale waiting for one.
+                let sales = mascate_commerce::Orders::new(
+                    database.clone(),
+                    inventory.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                );
+                assert!(sales.on_order_sales().await.unwrap().is_empty(), "{name}");
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.
@@ -1625,6 +1634,7 @@ mod tests {
                         PurchaseOrderStatus::PartlyReceived,
                         "{name}"
                     );
+                    assert_eq!(order.order_line, None, "{name}");
                     let stock = inventory.stock().await.unwrap();
                     let on_hand = i64::from(SAMPLE_RECEIVED - SAMPLE_LOST);
                     assert_eq!(stock.products[0].valuation.quantity(), on_hand, "{name}");

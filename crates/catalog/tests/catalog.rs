@@ -533,6 +533,50 @@ fn a_folder_already_named_after_a_typed_sku_is_adopted_with_its_files() {
 }
 
 #[test]
+fn a_products_latest_offer_is_the_most_recently_priced_at_any_of_its_links() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let shopee = f.supplier("Loja Shopee").await;
+        let wholesale = f.supplier("Atacado SP").await;
+        let first = f.offer(&shopee, SHOPEE_FONE, "39.90").await;
+        let product = f
+            .catalog
+            .create_product(first.id, "Fone TWS", "FONE-TWS")
+            .await
+            .unwrap();
+        assert_eq!(
+            f.catalog.latest_offer(product.id).await.unwrap(),
+            Some(f.catalog.offer(first.id).await.unwrap())
+        );
+
+        f.a_day_later();
+        let wholesaler = f
+            .offer(&wholesale, "https://atacadosp.example/fone-tws", "45.00")
+            .await;
+        f.catalog
+            .link_offer(wholesaler.id, product.id)
+            .await
+            .unwrap();
+        f.a_day_later();
+        // A new price at the first link is the latest, whatever the other
+        // link asks.
+        let repriced = f.offer(&shopee, SHOPEE_FONE, "49.90").await;
+
+        let latest = f.catalog.latest_offer(product.id).await.unwrap().unwrap();
+        assert_eq!(latest.id, repriced.id);
+        assert_eq!(latest.supplier.name, "Loja Shopee");
+        assert_eq!(latest.price, repriced.price);
+
+        let alone = f
+            .catalog
+            .add_product("Cabo USB-C", "CABO-USBC")
+            .await
+            .unwrap();
+        assert_eq!(f.catalog.latest_offer(alone.id).await.unwrap(), None);
+    });
+}
+
+#[test]
 fn a_products_cheapest_offer_is_the_lowest_of_each_suppliers_latest_price() {
     block_on(async {
         let f = Fixture::new().await;

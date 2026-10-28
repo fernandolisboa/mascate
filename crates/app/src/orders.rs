@@ -7,8 +7,11 @@
 //! tracking code the owner shipped it with, and shows when it is late or
 //! close; units on their way back wait for the owner to say they arrived
 //! (ADR 0019). After each Sync the app asks each channel's billing for the
-//! Orders' Fees, and each Order shows its Realized Margin (ADR 0020). Settings › Pedidos sets how often, how long the buyer's data stays
-//! and how early the warning comes. The rules live in Commerce.
+//! Orders' Fees, and each Order shows its Realized Margin (ADR 0020). A
+//! sale on an On-Order Listing asks for its purchase, which opens in
+//! Compras filled in for it (#208). Settings › Pedidos sets how often, how
+//! long the buyer's data stays and how early the warning comes. The rules
+//! live in Commerce.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -20,13 +23,14 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Entity, Global, Hsla, Subscription, SystemNotification, Task, Window, div, px,
+    AnyElement, App, Entity, EventEmitter, Global, Hsla, SharedString, Subscription,
+    SystemNotification, Task, Window, div, px,
 };
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
-    DispatchDue, LineStock, Order, OrderError, OrderLine, OrderSettings, OrderStatus, OrderSync,
-    Orders, RealizedMargin, Receiver, ReturnReceipt, Sale, ShipmentStatus, ShippingLabel,
-    SoldWithoutStock, StockMirror, StockSend, StockShort,
+    DispatchDue, LineStock, OnOrderSale, Order, OrderError, OrderLine, OrderSettings, OrderStatus,
+    OrderSync, Orders, RealizedMargin, Receiver, ReturnReceipt, Sale, ShipmentStatus,
+    ShippingLabel, SoldOnOrder, SoldWithoutStock, StockMirror, StockSend, StockShort,
 };
 use mascate_integrations::ConnectionState;
 use mascate_kernel::{RecordId, SalesChannelKind, Timestamp};
@@ -44,7 +48,7 @@ use crate::parts::ScreenParts;
 use crate::preferences;
 use crate::pricing;
 use crate::promotions;
-use crate::purchases::units_text;
+use crate::purchases::{BuyForSale, units_text};
 use crate::questions;
 use crate::repricing;
 use crate::reputation;
@@ -288,6 +292,7 @@ fn add(total: &mut OrderSync, part: OrderSync) {
     total.taken += part.taken;
     total.short += part.short;
     total.sold_without_stock.extend(part.sold_without_stock);
+    total.sold_on_order.extend(part.sold_on_order);
     total
         .reached_reorder_point
         .extend(part.reached_reorder_point);
@@ -310,6 +315,9 @@ pub fn finished(outcome: &RoundOutcome, cx: &mut App) {
         notify_arrived(&round.synced.arrived, cx);
         for sold in &round.synced.sold_without_stock {
             notify_sold_without_stock(sold, cx);
+        }
+        for sold in &round.synced.sold_on_order {
+            notify_sold_on_order(sold, cx);
         }
         for low in &round.synced.reached_reorder_point {
             low_stock::notify(*low, &round.products, cx);
@@ -349,7 +357,7 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
     }
     for order in arrived {
         let mut body = format!("{} · {}", sold_text(order), order.sold.total.to_pt_br());
-        if let Some(by) = dispatch_by(order) {
+        if let Some(by) = order.dispatch_by() {
             body.push_str(&format!(". Despachar até {}", catalog::day_and_time(by)));
         }
         cx.show_system_notification(SystemNotification {
@@ -364,30 +372,71 @@ fn notify_arrived(arrived: &[Order], cx: &App) {
 /// "Vendido sem estoque", once for each line the units on hand could not
 /// cover (ADR 0033): the owner buys the units or cancels the sale.
 fn notify_sold_without_stock(sold: &SoldWithoutStock, cx: &App) {
-    let line = &sold.line.sold;
-    let title = match &line.variation_name {
-        Some(variation) => format!("{} · {variation}", line.title),
-        None => line.title.clone(),
-    };
     cx.show_system_notification(SystemNotification {
-        tag: format!(
-            "sold-without-stock-{}-{}-{}",
-            sold.order.sold.id,
-            line.item,
-            line.variation.as_deref().unwrap_or_default()
-        )
-        .into(),
+        tag: format!("sold-without-stock-{}", sold.line.id).into(),
         title: "Vendido sem estoque".into(),
         body: format!(
-            "{}× {title} {}, pedido {}. O app não tem essas unidades: compre-as ou cancele a \
-             venda.",
-            line.quantity,
+            "{} {}, pedido {}. O app não tem essas unidades: compre-as ou cancele a venda.",
+            line_text(&sold.line),
             sales_channels::on(sold.order.channel),
             sold.order.sold.id
         )
         .into(),
         actions: Vec::new(),
     });
+}
+
+/// "Comprar para este pedido", once for each sale on an On-Order Listing
+/// the units on hand could not cover (ADR 0038), in place of "Vendido sem
+/// estoque".
+fn notify_sold_on_order(sold: &SoldOnOrder, cx: &App) {
+    let mut body = format!(
+        "{} sob encomenda {}, pedido {}.",
+        line_text(&sold.line),
+        sales_channels::on(sold.order.channel),
+        sold.order.sold.id
+    );
+    if let Some(by) = sold.order.dispatch_by() {
+        body.push_str(&format!(" Despachar até {}.", catalog::day_and_time(by)));
+    }
+    cx.show_system_notification(SystemNotification {
+        tag: format!("sold-on-order-{}", sold.line.id).into(),
+        title: "Comprar para este pedido".into(),
+        body: body.into(),
+        actions: Vec::new(),
+    });
+}
+
+/// "2× Fone Bluetooth · Cor: Preto".
+pub fn line_text(line: &OrderLine) -> String {
+    let sold = &line.sold;
+    match &sold.variation_name {
+        Some(variation) => format!("{}× {} · {variation}", sold.quantity, sold.title),
+        None => format!("{}× {}", sold.quantity, sold.title),
+    }
+}
+
+/// Where a sale on an On-Order Listing stands: what to buy, or bought,
+/// with the time to dispatch it by.
+pub fn on_order_text(sale: &OnOrderSale) -> String {
+    let by = sale
+        .order
+        .dispatch_by()
+        .map(|by| format!("despachar até {}", catalog::day_and_time(by)));
+    match (sale.purchase, sale.missing, by) {
+        (Some(_), _, Some(by)) => format!("Comprado; {by}"),
+        (Some(_), _, None) => "Comprado; a baixa sai quando as unidades entrarem no estoque".into(),
+        (None, 0, _) => "As unidades já estão no estoque; a baixa sai no próximo Sync".into(),
+        (None, missing, Some(by)) => {
+            format!("Comprar para este pedido: {}; {by}", units_text(missing))
+        }
+        (None, missing, None) => format!("Comprar para este pedido: {}", units_text(missing)),
+    }
+}
+
+/// Whether the sale still asks the owner to buy its units.
+pub fn asks_to_buy(sale: &OnOrderSale) -> bool {
+    sale.purchase.is_none() && sale.missing > 0
 }
 
 /// "5 pedidos novos no Mercado Livre", or with no channel when they came
@@ -417,15 +466,6 @@ pub fn sold_text(order: &Order) -> String {
         more => text.push_str(&format!(" + {more} itens")),
     }
     text
-}
-
-fn dispatch_by(order: &Order) -> Option<Timestamp> {
-    order
-        .sold
-        .shipment
-        .as_ref()
-        .filter(|shipment| shipment.status.awaits_dispatch())
-        .and_then(|shipment| shipment.dispatch_by)
 }
 
 /// "3 pedidos novos. 2 itens baixados do estoque." What is still short
@@ -515,6 +555,7 @@ fn items_text(count: usize) -> String {
 /// Everything the screen shows, read in one go off the UI thread.
 struct Snapshot {
     sales: Vec<Sale>,
+    on_order: Vec<OnOrderSale>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
     settings: OrderSettings,
@@ -533,6 +574,8 @@ const USUAL_CARRIER: &str = "Correios";
 
 pub struct OrdersScreen {
     orders: Vec<Order>,
+    /// The sales on On-Order Listings still waiting for their units.
+    on_order: Vec<OnOrderSale>,
     /// Each Order's Realized Margin, by the Order.
     margins: BTreeMap<RecordId, RealizedMargin>,
     products: Vec<Product>,
@@ -561,6 +604,7 @@ impl OrdersScreen {
         ];
         let mut screen = Self {
             orders: Vec::new(),
+            on_order: Vec::new(),
             margins: BTreeMap::new(),
             products: Vec::new(),
             last_sync: None,
@@ -601,6 +645,7 @@ impl OrdersScreen {
                     .await
                     .map_err(|e| failure(&e))?
                     .sales,
+                on_order: orders.on_order_sales().await.map_err(|e| failure(&e))?,
                 products: catalog.products().await.map_err(|e| catalog::failure(&e))?,
                 last_sync: orders.last_sync().await.map_err(|e| failure(&e))?,
                 settings: orders.settings().await.map_err(|e| failure(&e))?,
@@ -621,6 +666,7 @@ impl OrdersScreen {
                             .map(|sale| (sale.order.id, sale.margin.clone()))
                             .collect();
                         this.orders = snapshot.sales.into_iter().map(|sale| sale.order).collect();
+                        this.on_order = snapshot.on_order;
                         this.products = snapshot.products;
                         this.last_sync = snapshot.last_sync;
                         this.settings = snapshot.settings;
@@ -1077,14 +1123,31 @@ impl OrdersScreen {
         self.settings.keep_buyer_data_days
     }
 
-    fn render_line(&self, line: &OrderLine, cx: &App) -> AnyElement {
+    fn render_line(&self, line: &OrderLine, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let sold = &line.sold;
         let mut title = format!("{}× {}", sold.quantity, sold.title);
         if let Some(variation) = &sold.variation_name {
             title.push_str(&format!(" ({variation})"));
         }
-        let (stock, ink) = self.stock_text(line, &t);
+        let on_order = self
+            .on_order
+            .iter()
+            .find(|sale| sale.line.id == line.id)
+            .filter(|_| line.stock == LineStock::Short(StockShort::OnOrder));
+        let (stock, ink) = match on_order {
+            Some(sale) => (on_order_text(sale), t.accent_text),
+            None => self.stock_text(line, &t),
+        };
+        let buy = on_order.filter(|sale| asks_to_buy(sale)).map(|sale| {
+            let sale = sale.clone();
+            Button::new(SharedString::from(format!("buy-for-sale-{}", line.id)))
+                .label("Comprar para este pedido")
+                .icon(IconName::Plus)
+                .primary()
+                .small()
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(BuyForSale(sale.clone()))))
+        });
         h_flex()
             .gap_3()
             .items_start()
@@ -1097,7 +1160,8 @@ impl OrdersScreen {
                     .min_w_0()
                     .gap_0p5()
                     .child(div().text_sm().truncate().child(title))
-                    .child(div().text_xs().text_color(ink).child(stock)),
+                    .child(div().text_xs().text_color(ink).child(stock))
+                    .children(buy.map(|button| div().pt_1().child(button))),
             )
             .child(
                 div()
@@ -1150,6 +1214,11 @@ impl OrdersScreen {
                  entrada ou a contagem em Estoque; a baixa sai no próximo Sync."
                     .into(),
                 t.danger,
+            ),
+            LineStock::Short(StockShort::OnOrder) => (
+                "Sob encomenda: a baixa sai quando as unidades compradas entrarem no estoque."
+                    .into(),
+                t.accent_text,
             ),
             LineStock::BeforeFirstSync => (
                 "Vendido antes do primeiro Sync de pedidos: o estoque já não tinha estas \
@@ -1226,6 +1295,8 @@ fn shipment_ink(status: ShipmentStatus, t: &Tokens) -> Hsla {
     }
 }
 
+impl EventEmitter<BuyForSale> for OrdersScreen {}
+
 impl Render for OrdersScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
@@ -1264,10 +1335,14 @@ impl Render for OrdersScreen {
                     }),
             ),
         }
+        // A sale on order waits for its purchase by design; its line says
+        // so.
         let short = shown
             .iter()
             .flat_map(|(_, order)| &order.lines)
-            .filter(|line| matches!(line.stock, LineStock::Short(_)))
+            .filter(|line| {
+                matches!(line.stock, LineStock::Short(short) if short != StockShort::OnOrder)
+            })
             .count();
         if short > 0 {
             parts.notices.push(
@@ -1484,6 +1559,37 @@ mod tests {
             short,
             ..OrderSync::default()
         }
+    }
+
+    #[test]
+    fn a_sale_on_order_says_what_to_buy_then_that_it_was_bought_with_the_time_to_dispatch() {
+        let mut sale = crate::testing::sold_on_order(10);
+        let by = catalog::day_and_time(sale.order.dispatch_by().unwrap());
+        sale.missing = 2;
+        assert_eq!(
+            on_order_text(&sale),
+            format!("Comprar para este pedido: 2 unidades; despachar até {by}")
+        );
+        assert!(asks_to_buy(&sale));
+
+        sale.purchase = Some(RecordId::from_u128(50));
+        assert_eq!(
+            on_order_text(&sale),
+            format!("Comprado; despachar até {by}")
+        );
+        assert!(!asks_to_buy(&sale));
+
+        sale.purchase = None;
+        sale.missing = 0;
+        assert_eq!(
+            on_order_text(&sale),
+            "As unidades já estão no estoque; a baixa sai no próximo Sync"
+        );
+        assert!(!asks_to_buy(&sale));
+
+        sale.order.sold.shipment = None;
+        sale.missing = 1;
+        assert_eq!(on_order_text(&sale), "Comprar para este pedido: 1 unidade");
     }
 
     #[test]

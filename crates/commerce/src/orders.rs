@@ -463,14 +463,18 @@ pub enum StockShort {
     NoProduct,
     /// The app has fewer units on hand than were sold.
     NotEnoughStock,
+    /// Sold on an On-Order Listing (ADR 0038): the units come with a
+    /// Purchase Order bought for the sale.
+    OnOrder,
 }
 
 impl StockShort {
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             StockShort::NoListing => "no_listing",
             StockShort::NoProduct => "no_product",
             StockShort::NotEnoughStock => "not_enough_stock",
+            StockShort::OnOrder => "on_order",
         }
     }
 
@@ -479,6 +483,7 @@ impl StockShort {
             StockShort::NoListing,
             StockShort::NoProduct,
             StockShort::NotEnoughStock,
+            StockShort::OnOrder,
         ]
         .into_iter()
         .find(|short| short.code() == code)
@@ -518,6 +523,7 @@ pub struct UnitsBack {
 /// One item of an Order, with what became of its stock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderLine {
+    pub id: RecordId,
     pub sold: ChannelOrderLine,
     pub stock: LineStock,
     /// Units that left the stock and are coming back, or came; only lines
@@ -549,6 +555,16 @@ impl Order {
     /// Units on their way back that the owner has yet to say arrived.
     pub fn units_awaiting_return(&self) -> u32 {
         self.lines.iter().map(|line| line.back.awaiting).sum()
+    }
+
+    /// When the owner has to dispatch the Order by, while it waits for
+    /// them to.
+    pub fn dispatch_by(&self) -> Option<Timestamp> {
+        self.sold
+            .shipment
+            .as_ref()
+            .filter(|shipment| shipment.status.awaits_dispatch())
+            .and_then(|shipment| shipment.dispatch_by)
     }
 
     /// Whether the Order is late to dispatch, or will be within `warning`
@@ -628,6 +644,10 @@ pub struct OrderSync {
     /// on hand, to tell the owner about once: each comes here the first
     /// time only, and waits like any line still to leave the stock.
     pub sold_without_stock: Vec<SoldWithoutStock>,
+    /// Lines sold on an On-Order Listing found in this Sync without the
+    /// units on hand, to ask the owner once to buy them (ADR 0038): each
+    /// comes here the first time only, never in `sold_without_stock`.
+    pub sold_on_order: Vec<SoldOnOrder>,
     /// Products the units leaving took to their Reorder Point.
     pub reached_reorder_point: Vec<LowStock>,
     /// Orders cancelled before shipping whose units went back on the shelf
@@ -640,6 +660,14 @@ pub struct OrderSync {
 /// take a lowering. The owner buys the units or cancels the sale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoldWithoutStock {
+    pub order: Order,
+    pub line: OrderLine,
+}
+
+/// A line sold on an On-Order Listing that the units on hand do not cover:
+/// the owner buys the units for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoldOnOrder {
     pub order: Order,
     pub line: OrderLine,
 }
@@ -753,7 +781,7 @@ const ORDER_COLUMNS: &str = "id, channel_order_id, channel_pack_id, status, fulf
 
 const LINE_COLUMNS: &str = "order_id, channel_item_id, channel_variation_id, title,
      variation_name, quantity, unit_price, sale_fee, currency, listing_type, product_id,
-     stock_movement_id, stock_short, restocked, unsellable
+     stock_movement_id, stock_short, restocked, unsellable, id
      FROM commerce_order_lines WHERE deleted_at IS NULL";
 
 const RETURN_COLUMNS: &str = "order_id, channel_return_id, status, channel_item_id,
@@ -879,7 +907,7 @@ impl Orders {
             .take_stock(&transaction, on, first_synced_at, started)
             .await?;
         report.taken = taken.lines;
-        let sold_without_stock = taken.sold_without_stock;
+        let newly_short = taken.newly_short;
         report.reached_reorder_point = taken.reached_reorder_point;
         report.restocked = self.restock_cancelled(&transaction, started).await?;
         erase_buyer_data(&transaction, keep_since, started).await?;
@@ -902,21 +930,19 @@ impl Orders {
             .flat_map(|order| &order.lines)
             .filter(|line| matches!(line.stock, LineStock::Short(_)))
             .count();
-        for (order, item, variation) in sold_without_stock {
-            let found = orders
-                .iter()
-                .find(|known| known.id == order)
-                .and_then(|known| {
-                    let line = known
-                        .lines
-                        .iter()
-                        .find(|line| line.sold.item == item && line.sold.variation == variation)?;
-                    Some(SoldWithoutStock {
-                        order: known.clone(),
-                        line: line.clone(),
-                    })
-                });
-            report.sold_without_stock.extend(found);
+        for (line, short) in newly_short {
+            let Some((order, line)) = orders.iter().find_map(|known| {
+                let found = known.lines.iter().find(|kept| kept.id == line)?;
+                Some((known.clone(), found.clone()))
+            }) else {
+                continue;
+            };
+            match short {
+                StockShort::OnOrder => report.sold_on_order.push(SoldOnOrder { order, line }),
+                _ => report
+                    .sold_without_stock
+                    .push(SoldWithoutStock { order, line }),
+            }
         }
         report.arrived = orders
             .into_iter()
@@ -1395,7 +1421,9 @@ impl Orders {
     /// Takes out of the stock the units of every line of `channel` still
     /// to take: sold since its first Sync, from the owner's stock, in an
     /// Order not cancelled. A line whose Listing has no Product, or whose
-    /// Product has too few units, keeps why and waits for the next Sync.
+    /// Product has too few units, keeps why and waits for the next Sync;
+    /// one sold while its Listing was an On-Order Listing waits for the
+    /// purchase instead of counting as sold without stock (ADR 0038).
     async fn take_stock(
         &self,
         on: &Connection,
@@ -1406,7 +1434,12 @@ impl Orders {
         let mut rows = on
             .query(
                 "SELECT line.id, line.order_id, line.channel_item_id,
-                     line.channel_variation_id, line.quantity, listing.id, listing.product_id
+                     line.channel_variation_id, line.quantity, listing.id, listing.product_id,
+                     EXISTS (SELECT 1 FROM commerce_on_order_listings mark
+                             WHERE mark.listing_id = listing.id
+                                 AND mark.created_at <= ord.ordered_at
+                                 AND (mark.deleted_at IS NULL
+                                      OR mark.deleted_at > ord.ordered_at))
                  FROM commerce_order_lines line
                  JOIN commerce_orders ord ON ord.id = line.order_id AND ord.deleted_at IS NULL
                  LEFT JOIN commerce_listings listing
@@ -1432,11 +1465,10 @@ impl Orders {
             due.push(DueLine {
                 line: row.id_at(0)?,
                 order: row.id_at(1)?,
-                item: row.get(2)?,
-                variation: row.get(3)?,
                 quantity: row.get(4)?,
                 listed: row.optional_id_at(5)?.is_some(),
                 product: row.optional_id_at(6)?,
+                on_order: row.get::<i64>(7)? != 0,
             });
         }
         let mut taken = Taken::default();
@@ -1453,6 +1485,9 @@ impl Orders {
                     };
                     match self.inventory.record_exit(on, &exit).await {
                         Ok(exited) => Ok((product, exited)),
+                        Err(InventoryError::NotEnoughStock { .. }) if due.on_order => {
+                            Err(StockShort::OnOrder)
+                        }
                         Err(InventoryError::NotEnoughStock { .. }) => {
                             Err(StockShort::NotEnoughStock)
                         }
@@ -1490,10 +1525,10 @@ impl Orders {
                             params![short.code(), stored(now), due.line.to_string()],
                         )
                         .await?;
-                    if changed > 0 && short == StockShort::NotEnoughStock {
-                        taken
-                            .sold_without_stock
-                            .push((due.order, due.item, due.variation));
+                    if changed > 0
+                        && matches!(short, StockShort::NotEnoughStock | StockShort::OnOrder)
+                    {
+                        taken.newly_short.push((due.line, short));
                     }
                 }
             }
@@ -1506,21 +1541,21 @@ impl Orders {
 struct DueLine {
     line: RecordId,
     order: RecordId,
-    item: String,
-    variation: Option<String>,
     quantity: u32,
     /// Whether the listing sold is among the Listings.
     listed: bool,
     product: Option<RecordId>,
+    /// Whether the Listing was an On-Order Listing when the Order was
+    /// bought.
+    on_order: bool,
 }
 
 #[derive(Default)]
 struct Taken {
     lines: usize,
     reached_reorder_point: Vec<LowStock>,
-    /// The Order, item and variation of each line just found short of
-    /// units on hand.
-    sold_without_stock: Vec<(RecordId, String, Option<String>)>,
+    /// Each line just found short of units on hand, and why.
+    newly_short: Vec<(RecordId, StockShort)>,
 }
 
 /// How units on their way back were settled.
@@ -1842,6 +1877,7 @@ pub(crate) async fn load_orders(
         order.lines = kept
             .into_iter()
             .map(|(sold, kept)| OrderLine {
+                id: kept.line,
                 back: units_back(&order.sold, &sold, &kept),
                 stock: line_stock(order, &kept, first_syncs.get(&order.channel).copied()),
                 sold,
@@ -1854,6 +1890,7 @@ pub(crate) async fn load_orders(
 /// What a line kept of its stock: the Product and movement, or why not,
 /// and what came back of it.
 struct KeptStock {
+    line: RecordId,
     taken: Option<(RecordId, RecordId)>,
     short: Option<StockShort>,
     restocked: u32,
@@ -1900,6 +1937,7 @@ async fn read_lines(
                 listing_type: listing_type.and_then(|code| ListingType::from_code(&code)),
             },
             KeptStock {
+                line: row.id_at(15)?,
                 taken,
                 short,
                 restocked: row.get(13)?,

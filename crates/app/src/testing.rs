@@ -8,13 +8,15 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_affiliate::{Affiliate, AffiliatePlatform, CommissionStatus, ManualCommission};
 use mascate_commerce::{
-    ChannelOrder, ChannelOrderLine, ChannelOrders, OnSalesChannel, OrderStatus, Orders, Shipment,
-    ShipmentStatus,
+    ChannelOrder, ChannelOrderLine, ChannelOrders, FulfillmentMode, LineStock, OnOrderSale,
+    OnSalesChannel, Order, OrderLine, OrderStatus, Orders, Shipment, ShipmentStatus, StockShort,
+    UnitsBack,
 };
 use mascate_inventory::Inventory;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{
-    Clock, Currency, IdGenerator, ListingType, Money, PlatformError, SalesChannelKind, Timestamp,
+    Clock, Currency, IdGenerator, ListingType, Money, PlatformError, RecordId, SalesChannelKind,
+    Timestamp,
 };
 use mascate_platform::{Database, migrate};
 use rust_decimal::Decimal;
@@ -57,7 +59,8 @@ impl ChannelOrders for OneOrder {
     }
 }
 
-fn late_order(id: &str, title: &str, total: i64) -> ChannelOrder {
+/// One unit sold a day ago for R$ `total`, paid and late to dispatch.
+pub fn late_order(id: &str, title: &str, total: i64) -> ChannelOrder {
     let sold_at = now() - TimeDelta::days(1);
     ChannelOrder {
         id: id.into(),
@@ -87,6 +90,33 @@ fn late_order(id: &str, title: &str, total: i64) -> ChannelOrder {
             seller_cost: None,
         }),
         returns: Vec::new(),
+    }
+}
+
+/// The Order `id`, paid and late to dispatch, with one line sold on an
+/// On-Order Listing still to buy.
+pub fn sold_on_order(id: u128) -> OnOrderSale {
+    let sold = late_order(&id.to_string(), "Fone Bluetooth", 90);
+    let line = OrderLine {
+        id: RecordId::from_u128(id + 1),
+        sold: sold.lines[0].clone(),
+        stock: LineStock::Short(StockShort::OnOrder),
+        back: UnitsBack::default(),
+    };
+    OnOrderSale {
+        order: Order {
+            id: RecordId::from_u128(id),
+            channel: SalesChannelKind::MercadoLivre,
+            lines: vec![line.clone()],
+            sold,
+            fulfillment_mode: FulfillmentMode::OwnStock,
+            buyer_data_erased_at: None,
+            synced_at: now(),
+        },
+        line,
+        product: RecordId::from_u128(99),
+        missing: 1,
+        purchase: None,
     }
 }
 

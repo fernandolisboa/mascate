@@ -39,13 +39,15 @@ pub use listings::{
     SentPrice, SentPriceState, SuggestedBy, Variation,
 };
 pub use merge::MERGE;
-pub use on_order::{ListingAvailability, MAX_AVAILABILITY_DAYS, OnOrderListing, OnOrderTerms};
+pub use on_order::{
+    ListingAvailability, MAX_AVAILABILITY_DAYS, OnOrderListing, OnOrderSale, OnOrderTerms,
+};
 pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
     DispatchDue, FulfillmentMode, LabelError, LineStock, Order, OrderError, OrderLine,
     OrderSettings, OrderStatus, OrderSync, Orders, Receiver, ReturnReceipt, ReturnReceived,
     ReturnStatus, ReturnedItem, Shipment, ShipmentStatus, ShippingLabel, ShippingLabels,
-    SoldWithoutStock, StockShort, UnitsBack,
+    SoldOnOrder, SoldWithoutStock, StockShort, UnitsBack,
 };
 pub use pricing::{
     CostSource, DraftPrice, FeeBasis, MarginCheck, PriceAssumptions, PriceBreakdown, PriceScenario,
@@ -161,5 +163,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         listings::ADD_SENT_PRICES,
         repricing::CREATE_PRICE_HISTORY,
         on_order::CREATE_ON_ORDER_LISTINGS,
+        purchase_orders::LINK_TO_ORDER_LINES,
     ],
 };
