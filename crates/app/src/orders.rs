@@ -1161,7 +1161,7 @@ impl OrdersScreen {
                     .gap_0p5()
                     .child(div().text_sm().truncate().child(title))
                     .child(div().text_xs().text_color(ink).child(stock))
-                    .children(buy.map(|button| div().pt_1().child(button))),
+                    .children(buy.map(|button| h_flex().pt_1().child(button))),
             )
             .child(
                 div()
