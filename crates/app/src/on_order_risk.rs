@@ -44,6 +44,8 @@ pub struct OnOrderRiskArea {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     error: Option<SharedString>,
+    /// Why the last pause or reactivation did not run, until the next one.
+    failure: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -61,6 +63,7 @@ impl OnOrderRiskArea {
             outcome: None,
             reads: 0,
             error: None,
+            failure: None,
             _subscriptions: subscriptions,
         };
         area.refresh(cx);
@@ -69,6 +72,7 @@ impl OnOrderRiskArea {
 
     pub fn is_empty(&self) -> bool {
         self.error.is_none()
+            && self.failure.is_none()
             && self.outcome.is_none()
             && (self.on_order.is_empty() || (self.at_risk.is_empty() && self.paused() == 0))
     }
@@ -132,6 +136,7 @@ impl OnOrderRiskArea {
     fn ask(&mut self, action: Action, cx: &mut Context<Self>) {
         self.confirming = Some(action);
         self.outcome = None;
+        self.failure = None;
         cx.notify();
     }
 
@@ -168,7 +173,7 @@ impl OnOrderRiskArea {
                         }
                         this.outcome = Some((action, change));
                     }
-                    Err(error) => this.error = Some(channel_failure(CHANNEL, &error).into()),
+                    Err(error) => this.failure = Some(channel_failure(CHANNEL, &error).into()),
                 }
                 this.refresh(cx);
             });
@@ -443,6 +448,9 @@ impl Render for OnOrderRiskArea {
             })
             .when_some(done, |area, done| area.child(kit::success_notice(done, cx)))
             .children(failed.into_iter().map(|line| kit::error_notice(line, cx)))
+            .when_some(self.failure.clone(), |area, failure| {
+                area.child(kit::error_notice(failure, cx))
+            })
             .into_any_element()
     }
 }
