@@ -124,8 +124,8 @@ Princípio: nada jurídico bloqueia planejamento ou issues, e o app não faz nad
 | Crawler de vitrines de infoproduto (Hotmart, Kiwify, Eduzz, Monetizze) | Hotmart proíbe robôs (3.5(m)) [C]; demais sem cláusula encontrada ou não lidos [I] | Construído, **desativado** (Hotmart); demais desativados até ler os termos |
 | Crawler Magalu | Sem cláusula encontrada no termo de compra [C]; demais termos não lidos | Construído, desativado até ler os termos |
 | Automação de painel logado (qualquer plataforma) | Proibida nos termos da Hotmart e Shopee [C]; risco de perder a conta | Construído na fase 3 (baixa prioridade), **desativado**, com aviso de risco ao ativar |
-| Amazon como canal de venda com compra em outro varejista | Proibido pela política de dropshipping da Amazon [C] | Flag `dropship` do canal Amazon construída e **desativada**; venda com estoque próprio liberada |
-| Dropshipping no ML e Shopee | Permitido com prazo de disponibilidade/pré-venda [T] (flag de produto, não jurídica) | Construído na fase 3, desativado por padrão até você decidir usar |
+| Amazon como canal de venda com compra em outro varejista | Proibido pela política de dropshipping da Amazon [C] | Não construída: o Fernando não quer dropshipping em nenhum canal (ADR 0038); venda com estoque próprio liberada |
+| Dropshipping no ML e Shopee | Permitido com prazo de disponibilidade/pré-venda [T] (flag de produto, não jurídica) | Substituído pelo anúncio sob encomenda no ML, que o Fernando marca (ADR 0038); fornecedor que envia direto fica fora |
 | Venda sem CNPJ/NF-e | ⚠️ Lembrete fiscal: pode gerar questionamento e algumas modalidades (Full, Flex) exigem NF | Não bloqueia; lembrete no painel quando o volume de vendas passar de um limite configurável |
 | LGPD (dados de compradores) | ⚠️ Lembrete: nome, endereço e telefone são dados pessoais | Guardar só o necessário para despacho e suporte, com retenção configurável |
 

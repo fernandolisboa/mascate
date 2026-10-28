@@ -64,6 +64,10 @@ _Avoid_: anúncio de catálogo (no Mercado Livre é outra coisa), cadastro de pr
 Regra pela qual o estoque de cada Listing publicado e ligado a um Product segue o saldo dele no app. Depois de cada Stock Movement e de cada Sync, o app envia ao Sales Channel a Stock Share que mudou desde o último envio, as que diminuem antes das que aumentam; o que não foi fica na fila de reenvio, com o motivo. Um Product que nunca entrou no estoque ainda não é espelhado.
 _Avoid_: sincronização de estoque (Sync é leitura), estoque automático
 
+**On-Order Listing**:
+Listing do Mercado Livre que o Fernando marca como sob encomenda: mostra no canal um prazo de disponibilidade (1 a 60 dias) e aceita um número de encomendas ao mesmo tempo. Não recebe Stock Share; o estoque dele no canal são as encomendas que ainda cabem. Cada venda nele pede uma Purchase Order, e o produto passa pela casa do Fernando antes do despacho. Só o Fernando marca e desmarca.
+_Avoid_: dropshipping, pré-venda, anúncio sem estoque
+
 **Stock Share**:
 Parte do saldo de um Product que um Listing mostra no Sales Channel. O saldo é dividido uma unidade por vez, em rodízio, entre os Listings à venda (ou pausados pelo canal por falta de estoque), na ordem dos Sales Channels e, dentro de um canal, do Listing mais antigo para o mais novo. A soma das partes é sempre o saldo, então a mesma unidade nunca está à venda em dois lugares; com 1 unidade só o primeiro Listing mostra.
 _Avoid_: reserva, cota, estoque do canal
@@ -85,11 +89,11 @@ Hora até a qual o Fernando precisa despachar um Order, informada pelo Sales Cha
 _Avoid_: prazo de entrega (é do comprador), SLA
 
 **Fulfillment Mode**:
-De onde sai o item de um Order: `own_stock` (estoque local) ou `dropship` (o Supplier envia).
+De onde sai o item de um Order: `own_stock` (estoque local) ou `dropship` (o Supplier envia). O app só usa `own_stock`, inclusive na venda de um On-Order Listing; `dropship` fica no modelo sem tela que o escolha (ADR 0038).
 _Avoid_: modalidade, tipo de venda
 
 **Purchase Order**:
-Compra que o Fernando faz a um Supplier para repor estoque ou atender um Order em dropship.
+Compra que o Fernando faz a um Supplier para repor estoque ou atender a venda de um On-Order Listing, à qual fica ligada.
 _Avoid_: pedido (sozinho), compra ao fornecedor
 
 **Fee**:
