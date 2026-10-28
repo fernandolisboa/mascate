@@ -12,9 +12,10 @@ use mascate_commerce::{
     AttributeValue, BilledOrder, Buyer, CatalogItem, CatalogProduct, CategoryAttribute,
     CategoryPrediction, ChannelBilling, ChannelCategory, ChannelIssue, ChannelListing,
     ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelPayments, ChannelShipments, ChannelStock,
-    FeeBasis, Gtin, LabelError, ListingPublisher, ListingStatus, ListingToPublish, OnSalesChannel,
-    OrderStatus, PaymentRelease, PublishedListing, PublishedVariation, Receiver, Requirement,
-    SaleFee, SalesChannel, SentShipment, Shipment, ShipmentStatus, ShippingLabels, Variation,
+    FeeBasis, Gtin, LabelError, ListingAvailability, ListingPublisher, ListingStatus,
+    ListingToPublish, OnSalesChannel, OrderStatus, PaymentRelease, PublishedListing,
+    PublishedVariation, Receiver, Requirement, SaleFee, SalesChannel, SentShipment, Shipment,
+    ShipmentStatus, ShippingLabels, Variation,
 };
 use mascate_kernel::{
     Currency, ListingType, Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp,
@@ -127,6 +128,12 @@ pub struct Channel {
     /// Each Order whose shipment was confirmed, with what was sent, in
     /// order.
     pub shipments_confirmed: Mutex<Vec<(String, SentShipment)>>,
+    /// Each listing id and the days to be ready it was told to show, in
+    /// order; `None` took them off.
+    pub availability_set: Mutex<Vec<(String, Option<u32>)>>,
+    /// Refuses the days to be ready while set, as Mercado Livre does on a
+    /// listing with Flex or in Full.
+    pub availability_refusal: Mutex<Option<PlatformError>>,
 }
 
 impl Default for Channel {
@@ -170,6 +177,8 @@ impl Default for Channel {
             payments: Mutex::default(),
             payments_asked: Mutex::default(),
             shipments_confirmed: Mutex::default(),
+            availability_set: Mutex::default(),
+            availability_refusal: Mutex::default(),
         }
     }
 }
@@ -280,6 +289,20 @@ impl Channel {
 impl OnSalesChannel for Channel {
     fn sales_channel(&self) -> SalesChannelKind {
         self.kind
+    }
+}
+
+impl ListingAvailability for Channel {
+    fn set_availability(&self, id: &str, days: Option<u32>) -> Result<(), PlatformError> {
+        self.check()?;
+        if let Some(error) = self.availability_refusal.lock().unwrap().clone() {
+            return Err(error);
+        }
+        self.availability_set
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), days));
+        Ok(())
     }
 }
 

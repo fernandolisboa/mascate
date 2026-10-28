@@ -263,6 +263,10 @@ pub enum ListingError {
     NotPaused,
     #[error("the listing has no units available to sell")]
     NoStockToSell,
+    #[error("an on-order listing takes 1 to 60 days to have the item ready")]
+    InvalidAvailability,
+    #[error("an on-order listing accepts at least one order")]
+    NoOrdersAccepted,
     #[error("the Listing is on {listing:?}, not on {channel:?}")]
     OtherChannel {
         listing: SalesChannelKind,

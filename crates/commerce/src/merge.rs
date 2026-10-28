@@ -58,6 +58,13 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         .references(&[TO_LISTING])
         .label(&["listing_id"]),
         TableMerge::new(
+            "commerce_on_order_listings",
+            "Anúncio sob encomenda",
+            Keys(&[UniqueKey::live(&[Column("listing_id")])]),
+        )
+        .references(&[TO_LISTING])
+        .label(&["listing_id", "availability_days"]),
+        TableMerge::new(
             "commerce_target_margins",
             "Margem-alvo",
             Keys(&[UniqueKey::every_row(&[Column("product_id")])]),

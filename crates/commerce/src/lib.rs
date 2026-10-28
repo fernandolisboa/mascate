@@ -1,5 +1,5 @@
-//! Commerce: Listings and their drafts, prices, their history and Automatic
-//! Repricing, Promotions, Orders with their Fees and
+//! Commerce: Listings and their drafts, On-Order Listings, prices, their
+//! history and Automatic Repricing, Promotions, Orders with their Fees and
 //! Money Releases, Purchase Orders and shipping on each Sales Channel, and
 //! the order the owner ranks the channels in.
 
@@ -9,6 +9,7 @@ mod fees;
 mod freight;
 mod listings;
 mod merge;
+mod on_order;
 mod orders;
 mod pricing;
 mod promotions;
@@ -38,6 +39,7 @@ pub use listings::{
     SentPrice, SentPriceState, SuggestedBy, Variation,
 };
 pub use merge::MERGE;
+pub use on_order::{ListingAvailability, MAX_AVAILABILITY_DAYS, OnOrderListing, OnOrderTerms};
 pub use orders::{
     Buyer, ChannelOrder, ChannelOrderLine, ChannelOrders, ChannelReturn, DispatchAlert,
     DispatchDue, FulfillmentMode, LabelError, LineStock, Order, OrderError, OrderLine,
@@ -67,7 +69,9 @@ pub use repricing::{
     RepricingRound, RepricingStatus, RepricingWay,
 };
 pub use shipments::{ChannelShipments, SentShipment};
-pub use stock_mirror::{MirroredStock, StockMirror, StockNotSent, StockSend, StockSent};
+pub use stock_mirror::{
+    MirroredStock, OrderSlots, StockMirror, StockNotSent, StockSend, StockSent,
+};
 
 use mascate_platform::{Flag, ModuleMigrations, Reminder, ReminderShows, ReminderTopic};
 
@@ -156,5 +160,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         drafts::ADD_DRAFT_VARIATIONS,
         listings::ADD_SENT_PRICES,
         repricing::CREATE_PRICE_HISTORY,
+        on_order::CREATE_ON_ORDER_LISTINGS,
     ],
 };

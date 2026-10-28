@@ -254,6 +254,7 @@ mod tests {
                 quality: None,
                 promotions: None,
                 ads: None,
+                availability: None,
             }
         }
 

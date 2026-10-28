@@ -335,6 +335,8 @@ fn main() {
                     promotions: Some(mercado_livre.clone()),
                     // Product Ads.
                     ads: Some(mercado_livre.clone()),
+                    // On-Order Listings' days to be ready.
+                    availability: Some(mercado_livre.clone()),
                 },
                 // The owner sends Amazon's Orders by a carrier of their
                 // own and confirms each shipment here: no label to download.
@@ -357,6 +359,7 @@ fn main() {
                     // Ads API is apart from SP-API (ADR 0036).
                     promotions: None,
                     ads: None,
+                    availability: None,
                 },
                 // Shopee prints the label once the shipment is arranged, and
                 // the label arranges it: no shipment to confirm.
@@ -378,6 +381,7 @@ fn main() {
                     promotions: Some(shopee_seller.clone()),
                     // Shopee Ads, read once Shopee grants the permission.
                     ads: Some(shopee_seller.clone()),
+                    availability: None,
                 },
                 // The owner sends the NF-e and ships in Magalu's panel:
                 // nothing to print or confirm here. Publishing is out of the
@@ -397,6 +401,7 @@ fn main() {
                     quality: None,
                     promotions: None,
                     ads: None,
+                    availability: None,
                 },
             ]));
             cx.set_global(AppShopeeSeller(shopee_seller));

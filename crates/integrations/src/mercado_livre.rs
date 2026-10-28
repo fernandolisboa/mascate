@@ -5,11 +5,12 @@
 //! publishes drafts, reads the owner's Orders and runs the channel's own
 //! price automation for Automatic Repricing (ADR 0013, ADR 0033). Only
 //! official endpoints; it writes on the owner's click (a listing's price,
-//! its status, a draft, a confirmed answer, Promotion or repricing) and the
-//! stock that follows the app's (ADR 0017).
+//! its status or days to be ready, a draft, a confirmed answer, Promotion or
+//! repricing) and the stock that follows the app's (ADR 0017).
 
 mod ads;
 mod answers;
+mod availability;
 mod billing;
 mod copy;
 mod orders;

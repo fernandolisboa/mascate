@@ -268,6 +268,9 @@ recursos vizinhos (conferir no regression pass):
 | `error-404-pricing-automation.json`, `error-412-not-automatizable.json` | um item sem automação (404) e um item que não aceita automação (412 `item_not_automatizable`) | Automatizações de preços (Possíveis erros) |
 | `error-400-price-not-modifiable.json` | `PUT /items/{id}` com preço num item com automação ativa (400 `item.price.not_modifiable`, o exemplo da página) | Automatizações de preços |
 | `price-to-win-MLB4100000001.json` | `GET /items/{id}/price_to_win?version=v2` de um item de catálogo competindo | Concorrência em catálogo |
+| `category-sale-terms-MLB3697.json`, `category-sale-terms-without-manufacturing-time.json` | `GET /categories/{id}/sale_terms`: uma categoria com `MANUFACTURING_TIME` (`number_unit`, `allowed_units` e `default_unit`) e outra sem ele | Sincronização de publicações (Disponibilidade de estoque) |
+| `item-manufacturing-time-set.json`, `item-manufacturing-time-dropped.json` | `PUT /items/{id}` com `sale_terms` `MANUFACTURING_TIME`: o item com o prazo, e o mesmo num item no Full com o aviso `cause_id` 2110 `delete.item.sale_terms.manufacturing_time` | Sincronização de publicações (Disponibilidade de estoque) |
+| `error-400-manufacturing-time.json` | o mesmo `PUT` com mais de 60 dias (400, com `cause`) | Sincronização de publicações / erros |
 - Listing Copy (#17): a página de categorias mostra `settings` com `max_title_length` e
   `max_description_length` num exemplo `MLA`; os valores de `category-MLB196208.json` (60 e
   50.000) são os usuais no MLB e foram escritos à mão. Sem eles (como em `category-MLB3697.json`),
@@ -283,3 +286,15 @@ recursos vizinhos (conferir no regression pass):
   o `DELETE` responde 200 ou 204, se um item fora do catálogo responde 404 ao `price_to_win` e se
   o `POST` de um item que já tem automação responde 412 `automation_already_created` (o adapter lê
   a automação antes e usa `PUT`).
+- Anúncio sob encomenda (#207, ADR 0038), consultado em 28/10/2026 na página pt-BR de
+  sincronização de publicações: o prazo vai em `sale_terms` com `MANUFACTURING_TIME` e
+  `value_name` "15 días" (número e uma das `allowed_units` da categoria, que o app lê antes em
+  `/categories/{id}/sale_terms`); tirar o prazo manda `value_id` e `value_name` nulos. A página
+  mostra a lista de `sale_terms` de uma categoria `MLA` com a unidade "días"; a lista de
+  `category-sale-terms-MLB3697.json` (com as garantias) é montada a partir desse exemplo. Ela diz
+  que Flex e Full não aceitam o prazo e que essa validação não acontece na hora: a resposta traz um
+  aviso com `cause_id` 2110 e `code` `delete.item.sale_terms.manufacturing_time`, e o prazo some em
+  segundo plano. O lugar do aviso na resposta (`warnings` do item) e os textos dos avisos e de
+  `error-400-manufacturing-time.json` são inventados; o adapter também procura o aviso em `cause`.
+  Conferir no regression pass: a unidade das categorias MLB, o lugar e o texto do aviso 2110 e a
+  resposta a mais de 60 dias.

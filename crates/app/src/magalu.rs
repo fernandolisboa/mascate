@@ -264,6 +264,7 @@ mod tests {
                 quality: None,
                 promotions: None,
                 ads: None,
+                availability: None,
             };
 
             let round = orders::round(&orders, &mirror, &catalog, &[ports])
@@ -360,6 +361,7 @@ mod tests {
                 quality: None,
                 promotions: None,
                 ads: None,
+                availability: None,
             };
             orders::round(&self.orders, &self.mirror, &self.catalog, &[ports])
                 .await

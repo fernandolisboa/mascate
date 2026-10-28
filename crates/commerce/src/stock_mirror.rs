@@ -4,7 +4,8 @@
 //! send is derived from the ledger every time, so a failed send is never
 //! lost and sending the same stock twice writes nothing (ADR 0017). The
 //! units of a Product are dealt across its Listings, so the same unit is
-//! never on sale in two places (ADR 0033).
+//! never on sale in two places (ADR 0033). An On-Order Listing takes no
+//! share: it shows the orders it still takes (ADR 0038).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use mascate_platform::{Database, Migration, StoredRow, stored};
 
 use crate::{
     ChannelRanking, ChannelStock, ListingError, ListingStatus, Listings, OrderStatus, SalesChannel,
+    ShipmentStatus,
 };
 
 pub(crate) const ADD_STOCK_SENT: Migration = Migration {
@@ -55,21 +57,42 @@ pub struct StockNotSent {
     pub at: Timestamp,
 }
 
+/// The orders an On-Order Listing takes at once, in place of a Stock
+/// Share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderSlots {
+    /// How many the owner accepts.
+    pub accepted: u32,
+    /// Units sold on the listing, in Orders not cancelled, still waiting
+    /// for dispatch.
+    pub waiting: u32,
+}
+
+impl OrderSlots {
+    /// The orders that still fit: what the channel is to show.
+    pub fn open(self) -> u32 {
+        self.accepted.saturating_sub(self.waiting)
+    }
+}
+
 /// How a Listing's stock follows the app's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirroredStock {
     pub listing: RecordId,
     /// Units on hand of the Listing's Product, all Stock Locations together.
-    /// `None` when the stock is not mirrored: a Listing without a Product,
-    /// neither on sale nor paused by the channel for lack of stock, or whose
-    /// Product never moved in stock.
+    /// `None` when the Listing takes no Stock Share: a Listing without a
+    /// Product, neither on sale nor paused by the channel for lack of stock,
+    /// whose Product never moved in stock, or an On-Order Listing.
     pub on_hand: Option<u32>,
     /// The Listing's Stock Share of those units: what the channel is to
     /// show. The shares of a Product's Listings add up to its units on hand.
     pub share: Option<u32>,
-    /// The units still to send: the share, when it differs from the last
-    /// sent (or, before the first send, from the channel's) or from that
-    /// less the units the Orders sold since.
+    /// Set on an On-Order Listing: the orders it takes, whose open ones the
+    /// channel is to show while it is on sale or paused for lack of stock.
+    pub on_order: Option<OrderSlots>,
+    /// The units still to send: the share, or the open orders, when it
+    /// differs from the last sent (or, before the first send, from the
+    /// channel's) or from that less the units the Orders sold since.
     pub to_send: Option<u32>,
     pub last_sent: Option<StockSent>,
     /// Set while the stock still to send last failed to reach the channel.
@@ -100,6 +123,8 @@ struct Mirrored {
     item: String,
     variation: Option<String>,
     product: Option<RecordId>,
+    /// Shows open orders, so its sends never hold or wait for a Stock Share.
+    on_order: bool,
     /// The stock last sent or, before the first send, the channel's.
     baseline: u32,
     /// What the channel shows now as far as the app knows: the baseline
@@ -119,7 +144,7 @@ impl Mirrored {
 struct Read {
     mirrored: Mirrored,
     /// On sale, or paused by the channel for lack of stock.
-    takes_share: bool,
+    follows: bool,
     created_at: Timestamp,
 }
 
@@ -181,15 +206,16 @@ impl StockMirror {
             let mirrored = self.read().await?;
             let lowering: BTreeSet<RecordId> = mirrored
                 .iter()
-                .filter(|mirrored| mirrored.lowers())
+                .filter(|mirrored| mirrored.lowers() && !mirrored.on_order)
                 .filter_map(|mirrored| mirrored.product)
                 .collect();
             sending.held.clear();
             let mut raises = Vec::new();
             for mirrored in self.due(&mirrored, channels, &sending, |due| !due.lowers()) {
-                if mirrored
-                    .product
-                    .is_some_and(|product| lowering.contains(&product))
+                if !mirrored.on_order
+                    && mirrored
+                        .product
+                        .is_some_and(|product| lowering.contains(&product))
                 {
                     sending.held.insert(mirrored.stock.listing);
                 } else {
@@ -408,14 +434,35 @@ impl StockMirror {
                           AND line.channel_item_id = listing.channel_item_id
                           AND COALESCE(line.channel_variation_id, '') =
                               COALESCE(listing.channel_variation_id, '')
-                          AND ord.ordered_at >= COALESCE(stock.stock_sent_at, listing.synced_at))
+                          AND ord.ordered_at >= COALESCE(stock.stock_sent_at, listing.synced_at)),
+                     on_order.accepted_orders,
+                     CASE WHEN on_order.id IS NULL THEN 0 ELSE
+                     (SELECT COALESCE(SUM(line.quantity), 0)
+                      FROM commerce_order_lines line
+                      JOIN commerce_orders ord
+                          ON ord.id = line.order_id AND ord.deleted_at IS NULL
+                      WHERE line.deleted_at IS NULL AND ord.status <> ?1
+                          AND ord.sales_channel = listing.sales_channel
+                          AND line.channel_item_id = listing.channel_item_id
+                          AND COALESCE(line.channel_variation_id, '') =
+                              COALESCE(listing.channel_variation_id, '')
+                          AND COALESCE(ord.shipment_status, '') NOT IN (?2, ?3, ?4, ?5))
+                     END
                  FROM commerce_listings listing
                  LEFT JOIN commerce_listing_stock stock
                      ON stock.listing_id = listing.id AND stock.deleted_at IS NULL
+                 LEFT JOIN commerce_on_order_listings on_order
+                     ON on_order.listing_id = listing.id AND on_order.deleted_at IS NULL
                  WHERE listing.deleted_at IS NULL AND listing.channel_item_id IS NOT NULL
                  ORDER BY listing.title COLLATE NOCASE, listing.variation_name COLLATE NOCASE,
                      listing.sales_channel, listing.channel_item_id",
-                params![OrderStatus::Cancelled.code()],
+                params![
+                    OrderStatus::Cancelled.code(),
+                    ShipmentStatus::Shipped.code(),
+                    ShipmentStatus::Delivered.code(),
+                    ShipmentStatus::NotDelivered.code(),
+                    ShipmentStatus::Cancelled.code()
+                ],
             )
             .await?;
         let mut read = Vec::new();
@@ -425,25 +472,36 @@ impl StockMirror {
         let shares = shares(&read, &on_hand, &ranking);
         Ok(read
             .into_iter()
-            .map(|Read { mut mirrored, .. }| {
-                let listing = mirrored.stock.listing;
-                if let Some(&share) = shares.get(&listing) {
-                    mirrored.stock.on_hand = mirrored
-                        .product
-                        .and_then(|product| on_hand.get(&product).copied());
-                    mirrored.stock.share = Some(share);
-                    // A sale the Orders know of took units the share may
-                    // give back to the channel; one they do not know of yet
-                    // is never undone, since the baseline stays.
-                    mirrored.stock.to_send = Some(share)
-                        .filter(|&units| units != mirrored.baseline || units != mirrored.shown);
-                }
-                // A failure for stock no longer due is history.
-                if mirrored.stock.to_send.is_none() {
-                    mirrored.stock.last_failure = None;
-                }
-                mirrored
-            })
+            .map(
+                |Read {
+                     mut mirrored,
+                     follows,
+                     ..
+                 }| {
+                    let listing = mirrored.stock.listing;
+                    let due = match (mirrored.stock.on_order, shares.get(&listing)) {
+                        (Some(slots), _) => follows.then_some(slots.open()),
+                        (None, Some(&share)) => {
+                            mirrored.stock.on_hand = mirrored
+                                .product
+                                .and_then(|product| on_hand.get(&product).copied());
+                            mirrored.stock.share = Some(share);
+                            Some(share)
+                        }
+                        (None, None) => None,
+                    };
+                    // A sale the Orders know of took units the share may give
+                    // back to the channel; one they do not know of yet is never
+                    // undone, since the baseline stays.
+                    mirrored.stock.to_send =
+                        due.filter(|&units| units != mirrored.baseline || units != mirrored.shown);
+                    // A failure for stock no longer due is history.
+                    if mirrored.stock.to_send.is_none() {
+                        mirrored.stock.last_failure = None;
+                    }
+                    mirrored
+                },
+            )
             .collect())
     }
 }
@@ -493,7 +551,10 @@ fn shares(
             .unwrap_or(ranking.len())
     };
     let mut by_product: BTreeMap<RecordId, Vec<&Read>> = BTreeMap::new();
-    for listing in read.iter().filter(|listing| listing.takes_share) {
+    for listing in read
+        .iter()
+        .filter(|listing| listing.follows && !listing.mirrored.on_order)
+    {
         if let Some(product) = listing.mirrored.product
             && on_hand.contains_key(&product)
         {
@@ -541,12 +602,20 @@ fn read_from(row: &Row) -> Result<Read, ListingError> {
     };
     let baseline = last_sent.map_or(in_channel, |sent| sent.quantity);
     let sold_since: u32 = row.get(13)?;
+    let on_order = match row.get::<Option<u32>>(14)? {
+        Some(accepted) => Some(OrderSlots {
+            accepted,
+            waiting: row.get(15)?,
+        }),
+        None => None,
+    };
     Ok(Read {
         mirrored: Mirrored {
             stock: MirroredStock {
                 listing: row.id_at(0)?,
                 on_hand: None,
                 share: None,
+                on_order,
                 to_send: None,
                 last_sent,
                 last_failure,
@@ -555,10 +624,11 @@ fn read_from(row: &Row) -> Result<Read, ListingError> {
             item: row.get(1)?,
             variation: row.get(2)?,
             product: row.optional_id_at(3)?,
+            on_order: on_order.is_some(),
             baseline,
             shown: baseline.saturating_sub(sold_since),
         },
-        takes_share: matches!(status, ListingStatus::Active | ListingStatus::OutOfStock),
+        follows: matches!(status, ListingStatus::Active | ListingStatus::OutOfStock),
         created_at: row.time_at(12)?,
     })
 }

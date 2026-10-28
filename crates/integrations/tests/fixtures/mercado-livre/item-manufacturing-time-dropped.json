@@ -1,0 +1,34 @@
+{
+  "id": "MLB4100000001",
+  "site_id": "MLB",
+  "title": "Fone De Ouvido Bluetooth Tws Pro Preto",
+  "category_id": "MLB3697",
+  "price": 89.9,
+  "currency_id": "BRL",
+  "available_quantity": 12,
+  "status": "active",
+  "shipping": {
+    "mode": "me2",
+    "logistic_type": "fulfillment"
+  },
+  "sale_terms": [
+    {
+      "id": "MANUFACTURING_TIME",
+      "name": "Tiempo de elaboración",
+      "value_id": null,
+      "value_name": "15 días"
+    }
+  ],
+  "warnings": [
+    {
+      "department": "items",
+      "cause_id": 2110,
+      "type": "warning",
+      "code": "delete.item.sale_terms.manufacturing_time",
+      "references": [
+        "item.sale_terms"
+      ],
+      "message": "MANUFACTURING_TIME will be deleted because the item is in fulfillment"
+    }
+  ]
+}

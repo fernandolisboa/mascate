@@ -1593,6 +1593,9 @@ mod tests {
                     1 + usize::from(since_0_5_0),
                     "{name}"
                 );
+                // On-Order Listings arrive after 0.6.0: every listing of a
+                // released sample sells from stock.
+                assert!(listings.on_order().await.unwrap().is_empty(), "{name}");
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.

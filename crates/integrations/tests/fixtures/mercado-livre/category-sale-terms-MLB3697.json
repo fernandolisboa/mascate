@@ -1,0 +1,76 @@
+[
+  {
+    "id": "WARRANTY_TYPE",
+    "name": "Tipo de garantia",
+    "tags": {
+      "hidden": true
+    },
+    "hierarchy": "SALE_TERMS",
+    "relevance": 2,
+    "value_type": "list",
+    "values": [
+      {
+        "id": "2230279",
+        "name": "Garantia de fábrica"
+      },
+      {
+        "id": "2230280",
+        "name": "Garantia do vendedor"
+      },
+      {
+        "id": "6150835",
+        "name": "Sem garantia"
+      }
+    ],
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "WARRANTY_TIME",
+    "name": "Tempo de garantia",
+    "tags": {
+      "hidden": true
+    },
+    "hierarchy": "SALE_TERMS",
+    "relevance": 2,
+    "value_type": "number_unit",
+    "value_max_length": 255,
+    "allowed_units": [
+      {
+        "id": "dias",
+        "name": "dias"
+      },
+      {
+        "id": "meses",
+        "name": "meses"
+      },
+      {
+        "id": "anos",
+        "name": "anos"
+      }
+    ],
+    "default_unit": "meses",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  },
+  {
+    "id": "MANUFACTURING_TIME",
+    "name": "Tiempo de elaboración",
+    "tags": {
+      "hidden": true
+    },
+    "hierarchy": "SALE_TERMS",
+    "relevance": 2,
+    "value_type": "number_unit",
+    "value_max_length": 255,
+    "allowed_units": [
+      {
+        "id": "días",
+        "name": "días"
+      }
+    ],
+    "default_unit": "días",
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Otros"
+  }
+]

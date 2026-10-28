@@ -239,6 +239,44 @@ pub(super) struct SaleFeeDetails {
     pub fixed_fee: Option<Number>,
 }
 
+/// A listing's category, as `GET /items/{id}` reports it.
+#[derive(Deserialize)]
+pub(super) struct ItemCategory {
+    pub category_id: Option<String>,
+}
+
+/// One of the sale terms a category takes, from
+/// `GET /categories/{id}/sale_terms`.
+#[derive(Deserialize)]
+pub(super) struct SaleTermAnswer {
+    pub id: String,
+    pub default_unit: Option<String>,
+    #[serde(default)]
+    pub allowed_units: Vec<UnitAnswer>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct UnitAnswer {
+    pub id: String,
+}
+
+/// The notices in Mercado Livre's answer to a change of a listing, where it
+/// tells a change it will undo in the background.
+#[derive(Deserialize)]
+pub(super) struct ChangeNotices {
+    #[serde(default)]
+    pub warnings: Vec<ChangeNotice>,
+    #[serde(default)]
+    pub cause: Vec<ChangeNotice>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ChangeNotice {
+    pub code: Option<String>,
+    pub cause_id: Option<u64>,
+    pub message: Option<String>,
+}
+
 /// A listing's variation ids, as `GET /items/{id}` reports them.
 #[derive(Deserialize)]
 pub(super) struct ItemVariationIds {
