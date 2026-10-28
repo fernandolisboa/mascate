@@ -521,7 +521,9 @@ mod tests {
         SpendReport, default_posting_times,
     };
     use mascate_platform::testing::MemorySecretStore;
-    use mascate_platform::{FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance};
+    use mascate_platform::{
+        FollowUp, LayoutId, Side, UiTheme, UiThemePreference, save_appearance, save_work_context,
+    };
 
     use super::*;
 
@@ -771,15 +773,26 @@ mod tests {
         }
 
         fn ad_groups(&self, _: &str) -> Result<Vec<ChannelAdGroup>, PlatformError> {
-            Ok(vec![ChannelAdGroup {
-                id: "1".into(),
-                kind: AdGroupKind::Item,
-                title: None,
-                listings: vec![sample_listing().id],
-                campaign: Some("1".into()),
-                status: AdStatus::Active,
-            }])
+            Ok(vec![sample_ad_group()])
         }
+    }
+
+    /// What 0.6.0 saves: the sample listing's Ad Group in the sample
+    /// campaign.
+    fn sample_ad_group() -> ChannelAdGroup {
+        ChannelAdGroup {
+            id: "1".into(),
+            kind: AdGroupKind::Item,
+            title: None,
+            listings: vec![sample_listing().id],
+            campaign: Some("1".into()),
+            status: AdStatus::Active,
+        }
+    }
+
+    /// What 0.6.0 saves: a Maximum Daily Budget below the default.
+    fn sample_maximum_daily_budget() -> Money {
+        Money::new(30.into(), Currency::Brl)
     }
 
     /// The sample listing with a price discount, and nothing else.
@@ -851,6 +864,45 @@ mod tests {
             .with(Practice::BoostedPosts, Standing::Allowed);
         rules.brand_keywords = vec!["mercado livre".into()];
         rules
+    }
+
+    /// What 0.6.0 saves: a Program added before its first sale.
+    fn sample_added_program() -> NewProgram {
+        NewProgram {
+            platform: AffiliatePlatform::Kiwify,
+            name: "Curso guardado".into(),
+            product: "Curso guardado".into(),
+        }
+    }
+
+    /// What 0.6.0 saves: the Work Context the owner picked.
+    const SAMPLE_WORK_CONTEXT: WorkContext = WorkContext::Shopee;
+
+    fn september(day: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 9, day).unwrap()
+    }
+
+    /// What 0.6.0 saves: a Promotion Spend the owner typed on `channel`.
+    fn sample_typed_spend(channel: RecordId) -> NewPromotionSpend {
+        NewPromotionSpend {
+            channel,
+            first_day: september(1),
+            last_day: september(10),
+            amount: Money::new(30.into(), Currency::Brl),
+        }
+    }
+
+    const SAMPLE_SPEND_CAMPAIGN: &str = "Campanha de setembro";
+
+    /// What 0.6.0 saves: a Google Ads report's day, its campaign linked to
+    /// the channel of the typed spend.
+    fn sample_reported_spend() -> ReportedSpend {
+        ReportedSpend {
+            report: SpendReport::GoogleAds,
+            campaign: SAMPLE_SPEND_CAMPAIGN.into(),
+            day: september(20),
+            amount: Money::new(rust_decimal::Decimal::new(1234, 2), Currency::Brl),
+        }
     }
 
     fn sample_channel() -> NewPromotionChannel {
@@ -1032,6 +1084,14 @@ mod tests {
             )
             .await
             .unwrap();
+            save_work_context(
+                &database,
+                clock.as_ref(),
+                ids.as_ref(),
+                SAMPLE_WORK_CONTEXT.code(),
+            )
+            .await
+            .unwrap();
             let flags = Flags::new(
                 database.clone(),
                 Registry::new(MODULE_FLAGS).unwrap(),
@@ -1169,6 +1229,15 @@ mod tests {
                 .sync(&SampleAds)
                 .await
                 .unwrap();
+            AdCampaigns::new(
+                database.clone(),
+                clock.clone(),
+                ids.clone(),
+                SalesChannelKind::MercadoLivre,
+            )
+            .save_maximum_daily_budget(sample_maximum_daily_budget())
+            .await
+            .unwrap();
             let affiliate = Affiliate::new(database.clone(), clock.clone(), ids.clone());
             let commission = affiliate.record_manual(sample_commission()).await.unwrap();
             affiliate
@@ -1179,10 +1248,30 @@ mod tests {
                 .set_promotion_rules(commission.program, &sample_rules())
                 .await
                 .unwrap();
+            affiliate
+                .add_program(&sample_added_program())
+                .await
+                .unwrap();
             let channels = PromotionChannels::new(database.clone(), clock.clone(), ids.clone());
             let channel = channels.create(&sample_channel()).await.unwrap();
             let channel = channels
                 .set_posting_times(channel.id, &sample_posting_times())
+                .await
+                .unwrap();
+            let spends = PromotionSpends::new(database.clone(), clock.clone(), ids.clone());
+            spends
+                .record(&sample_typed_spend(channel.id))
+                .await
+                .unwrap();
+            spends
+                .import(
+                    &[sample_reported_spend()],
+                    &[CampaignLink {
+                        report: SpendReport::GoogleAds,
+                        campaign: SAMPLE_SPEND_CAMPAIGN.into(),
+                        channel: channel.id,
+                    }],
+                )
                 .await
                 .unwrap();
             let pinterest = channels.create(&sample_pinterest_channel()).await.unwrap();
@@ -1395,8 +1484,14 @@ mod tests {
                     },
                     "{name}"
                 );
-                // No released version kept a Work Context: each opens in All.
-                assert_eq!(load_work_context(&database).await.unwrap(), None, "{name}");
+                // The Work Context arrived in 0.6.0: older samples open in
+                // All.
+                let since_0_6_0 = Version::parse(released) >= Version::parse("0.6.0");
+                assert_eq!(
+                    load_work_context(&database).await.unwrap().as_deref(),
+                    since_0_6_0.then_some(SAMPLE_WORK_CONTEXT.code()),
+                    "{name}"
+                );
                 let flags = Flags::new(
                     database.clone(),
                     Registry::new(MODULE_FLAGS).unwrap(),
@@ -1684,6 +1779,26 @@ mod tests {
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
+                let campaigns = AdCampaigns::new(
+                    database.clone(),
+                    Arc::new(SystemClock),
+                    Arc::new(UuidV7Generator),
+                    SalesChannelKind::MercadoLivre,
+                );
+                // Ad Groups and each campaign's budget, strategy and Target
+                // ROAS arrived in 0.6.0, kept by its ads Sync; older samples
+                // read them in the next one.
+                let ad_groups = campaigns.ad_groups().await.unwrap();
+                if since_0_6_0 {
+                    assert_eq!(
+                        campaigns.campaigns().await.unwrap(),
+                        [sample_campaign()],
+                        "{name}"
+                    );
+                    assert_eq!(ad_groups, [sample_ad_group()], "{name}");
+                } else {
+                    assert!(ad_groups.is_empty(), "{name}");
+                }
                 ads.sync(&SampleAds).await.unwrap();
                 let costs = ads.costs().await.unwrap();
                 assert!(!costs.is_empty(), "{name}");
@@ -1692,8 +1807,8 @@ mod tests {
                         && day.channel == SalesChannelKind::MercadoLivre),
                     "{name}"
                 );
-                // Each channel's ads Sync arrived after 0.5.0: the one kept
-                // was Mercado Livre's.
+                // Each channel's ads Sync arrived in 0.6.0: the one kept
+                // before was Mercado Livre's.
                 assert!(
                     ads.last_sync(SalesChannelKind::MercadoLivre)
                         .await
@@ -1706,23 +1821,25 @@ mod tests {
                     None,
                     "{name}"
                 );
-                // Ad Campaign settings arrived after 0.5.0: the next Sync
-                // reads each campaign's budget, strategy and Target ROAS,
-                // and the Maximum Daily Budget starts at R$ 50,00.
-                let campaigns = AdCampaigns::new(
-                    database.clone(),
-                    Arc::new(SystemClock),
-                    Arc::new(UuidV7Generator),
-                    SalesChannelKind::MercadoLivre,
-                );
                 assert_eq!(
                     campaigns.campaigns().await.unwrap(),
                     [sample_campaign()],
                     "{name}"
                 );
                 assert_eq!(
+                    campaigns.ad_groups().await.unwrap(),
+                    [sample_ad_group()],
+                    "{name}"
+                );
+                // The Maximum Daily Budget arrived in 0.6.0 too: older
+                // samples start at R$ 50,00.
+                assert_eq!(
                     campaigns.maximum_daily_budget().await.unwrap(),
-                    DEFAULT_MAXIMUM_DAILY_BUDGET,
+                    if since_0_6_0 {
+                        sample_maximum_daily_budget()
+                    } else {
+                        DEFAULT_MAXIMUM_DAILY_BUDGET
+                    },
                     "{name}"
                 );
                 // Category names and the sales volume limit arrived after
@@ -1817,10 +1934,32 @@ mod tests {
                     sample_rules(),
                     "{name}"
                 );
-                // Programs added before their first sale arrived after
-                // 0.5.0: every kept Program was born from a sale, and the
-                // first sale of an added one waits for the owner.
+                // Programs added before their first sale arrived in 0.6.0:
+                // the sample's waits for a sale, and the first sale of an
+                // added one waits for the owner.
                 assert!(!program.provisional, "{name}");
+                let added_before: Vec<_> = affiliate
+                    .programs()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .filter(|program| program.provisional)
+                    .collect();
+                if since_0_6_0 {
+                    assert_eq!(added_before.len(), 1, "{name}");
+                    assert_eq!(
+                        added_before[0].platform,
+                        sample_added_program().platform,
+                        "{name}"
+                    );
+                    assert_eq!(
+                        added_before[0].product.as_deref(),
+                        Some(sample_added_program().product.as_str()),
+                        "{name}"
+                    );
+                } else {
+                    assert!(added_before.is_empty(), "{name}");
+                }
                 assert!(affiliate.joins().await.unwrap().is_empty(), "{name}");
                 let added = affiliate
                     .add_program(&NewProgram {
@@ -1883,17 +2022,38 @@ mod tests {
                 assert_eq!(kept[0].kind, ChannelKind::TelegramChannel, "{name}");
                 // The board arrived with Pinterest; older channels have none.
                 assert_eq!(kept[0].pinterest_board, None, "{name}");
-                // Promotion Spends arrived after 0.5.0: a kept channel has
-                // none, then keeps a typed one and a report's day once.
+                // Promotion Spends arrived in 0.6.0: the sample's channel
+                // has a typed one and a report's day, whose campaign stays
+                // linked; it then keeps another of each, the report's day
+                // once.
                 let spends = PromotionSpends::new(
                     database.clone(),
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                assert!(
-                    spends.spends(kept[0].id).await.unwrap().is_empty(),
-                    "{name}"
-                );
+                let saved_spends = spends.spends(kept[0].id).await.unwrap();
+                if since_0_6_0 {
+                    assert_eq!(saved_spends.len(), 2, "{name}");
+                    assert_eq!(
+                        spends.spent(september(1)..=september(30)).await.unwrap(),
+                        vec![ChannelSpend {
+                            channel: kept[0].id,
+                            amount: Money::new(rust_decimal::Decimal::new(4234, 2), Currency::Brl),
+                        }],
+                        "{name}"
+                    );
+                    assert_eq!(
+                        spends
+                            .import(&[sample_reported_spend()], &[])
+                            .await
+                            .unwrap()
+                            .unchanged,
+                        1,
+                        "{name}"
+                    );
+                } else {
+                    assert!(saved_spends.is_empty(), "{name}");
+                }
                 let october = |day| chrono::NaiveDate::from_ymd_opt(2026, 10, day).unwrap();
                 let reais = |cents| Money::new(rust_decimal::Decimal::new(cents, 2), Currency::Brl);
                 spends
