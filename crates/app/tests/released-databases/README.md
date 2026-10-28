@@ -19,3 +19,6 @@ atual, com Backup antes, e confere que o que o dono salvou continua lá.
   um Program da Kiwify adicionado antes da primeira venda, uma Promotion Spend digitada e um dia
   do relatório do Google Ads no canal do Telegram, o Maximum Daily Budget baixado e o Ad Group
   da campanha.
+- `0.7.0.db`: os anúncios sob encomenda, com o anúncio do Mercado Livre marcado sob encomenda
+  (15 dias, 2 pedidos de cada vez), uma venda nele com mais unidades do que há no estoque e a
+  compra feita para essa venda.
