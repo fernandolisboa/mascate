@@ -499,16 +499,18 @@ mod tests {
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
-        ChannelCategory, ChannelListing, ChannelOffer, ChannelPromotion, ChannelPromotions,
-        ChannelStock, FeeBasis, Listing, ListingStatus, NewPurchaseLine, NewPurchaseOrder,
-        OfferToJoin, OnSalesChannel, PriceChangeReason, PromotionKind, PromotionPlan,
-        PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel,
+        Buyer, ChannelCategory, ChannelListing, ChannelOffer, ChannelOrder, ChannelOrderLine,
+        ChannelOrders, ChannelPromotion, ChannelPromotions, ChannelStock, FeeBasis, Listing,
+        ListingAvailability, ListingStatus, NewPurchaseLine, NewPurchaseOrder, OfferToJoin,
+        OnOrderTerms, OnSalesChannel, OrderStatus, PriceChangeReason, PromotionKind, PromotionPlan,
+        PromotionStatus, PurchaseOrderStatus, Receiving, SaleFee, SalesChannel, Shipment,
+        ShipmentStatus,
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
         ChannelSpend, Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
-        Roas, SalesChannelKind,
+        Roas, SalesChannelKind, Timestamp,
     };
     use mascate_marketing::{
         AdGroupKind, AdMetrics, AdStatus, CampaignLink, CampaignStatus, CampaignStrategy,
@@ -639,6 +641,77 @@ mod tests {
                 id: id.into(),
                 name: "Categoria de exemplo".into(),
             })
+        }
+    }
+
+    impl ListingAvailability for SampleChannel {
+        fn set_availability(&self, _: &str, _: Option<u32>) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    /// What 0.7.0 saves: the sample listing on Mercado Livre sold on order.
+    fn sample_on_order_terms() -> OnOrderTerms {
+        OnOrderTerms {
+            availability_days: 15,
+            accepted_orders: 2,
+        }
+    }
+
+    /// More than the sample's stock on hand, so the sale waits for a
+    /// purchase.
+    const SAMPLE_SOLD_ON_ORDER: u32 = 2;
+
+    /// What 0.7.0 saves: a sale on the On-Order Listing made at `at`.
+    fn sample_order(at: Timestamp) -> ChannelOrder {
+        let unit_price = sample_listing().price;
+        let total = unit_price.times(SAMPLE_SOLD_ON_ORDER.into());
+        ChannelOrder {
+            id: "2000000000001".into(),
+            pack: None,
+            status: OrderStatus::Paid,
+            ordered_at: at,
+            updated_at: at,
+            lines: vec![ChannelOrderLine {
+                item: sample_listing().id,
+                variation: None,
+                title: sample_listing().title,
+                variation_name: None,
+                quantity: SAMPLE_SOLD_ON_ORDER,
+                unit_price,
+                sale_fee: None,
+                listing_type: sample_listing().listing_type,
+            }],
+            total,
+            paid: Some(total),
+            shipping_paid: None,
+            refunded: None,
+            buyer: Some(Buyer {
+                nickname: Some("COMPRADOR.EXEMPLO".into()),
+                receiver: None,
+            }),
+            shipment: Some(Shipment {
+                id: "42000000001".into(),
+                status: ShipmentStatus::ReadyToShip,
+                dispatch_by: Some(at + chrono::TimeDelta::days(16)),
+                seller_cost: None,
+            }),
+            returns: Vec::new(),
+        }
+    }
+
+    /// Mercado Livre's Orders, as many as given.
+    struct SampleOrders(Vec<ChannelOrder>);
+
+    impl OnSalesChannel for SampleOrders {
+        fn sales_channel(&self) -> SalesChannelKind {
+            SalesChannelKind::MercadoLivre
+        }
+    }
+
+    impl ChannelOrders for SampleOrders {
+        fn orders_changed_since(&self, _: Timestamp) -> Result<Vec<ChannelOrder>, PlatformError> {
+            Ok(self.0.clone())
         }
     }
 
@@ -1200,6 +1273,15 @@ mod tests {
                 .change_price(shopee.id, sample_shopee_price(), &SampleChannel::Shopee)
                 .await
                 .unwrap();
+            sell_on_order(
+                &database,
+                &inventory,
+                &orders,
+                &listings,
+                listing.id,
+                supplier.id,
+            )
+            .await;
             ListingQuality::new(database.clone(), clock.clone(), ids.clone())
                 .sync(&SampleQuality, &[sample_listing().id])
                 .await
@@ -1356,6 +1438,57 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    /// What 0.7.0 saves: `listing` marked as on-order and sold after the
+    /// mark, with more units than on hand, and the purchase the owner made
+    /// for the sale.
+    async fn sell_on_order(
+        database: &Arc<Database>,
+        inventory: &Arc<Inventory>,
+        purchases: &PurchaseOrders,
+        listings: &Listings,
+        listing: RecordId,
+        supplier: RecordId,
+    ) {
+        listings
+            .mark_on_order(
+                listing,
+                sample_on_order_terms(),
+                &SampleChannel::MercadoLivre,
+            )
+            .await
+            .unwrap();
+        let sales = mascate_commerce::Orders::new(
+            database.clone(),
+            inventory.clone(),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        );
+        // Only what sells after the first Sync takes stock.
+        sales.sync(&SampleOrders(Vec::new())).await.unwrap();
+        let synced = sales
+            .sync(&SampleOrders(vec![sample_order(SystemClock.now())]))
+            .await
+            .unwrap();
+        assert_eq!(synced.sold_on_order.len(), 1);
+        let sale = sales.on_order_sales().await.unwrap().remove(0);
+        purchases
+            .create_for_order_line(
+                sale.line.id,
+                NewPurchaseOrder {
+                    supplier,
+                    ordered_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
+                    freight: Money::zero(Currency::Brl),
+                    lines: vec![NewPurchaseLine {
+                        product: sale.product,
+                        quantity: sale.missing,
+                        unit_price: Money::new(29.into(), Currency::Brl),
+                    }],
+                },
+            )
+            .await
+            .unwrap();
     }
 
     /// The sample's Listing on `channel`, when it has one.
@@ -1593,18 +1726,50 @@ mod tests {
                     1 + usize::from(since_0_5_0),
                     "{name}"
                 );
-                // On-Order Listings arrive after 0.6.0: every listing of a
-                // released sample sells from stock.
-                assert!(listings.on_order().await.unwrap().is_empty(), "{name}");
-                // Purchase Orders bought for a sale on order arrive after
-                // 0.6.0 too: no released sample has a sale waiting for one.
+                // On-Order Listings arrived in 0.7.0: the Mercado Livre
+                // listing keeps its mark; older samples sell from stock.
+                let since_0_7_0 = Version::parse(released) >= Version::parse("0.7.0");
+                let on_order = listings.on_order().await.unwrap();
+                if since_0_7_0 {
+                    let listing = listing_on(&listings, SalesChannelKind::MercadoLivre)
+                        .await
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(on_order.len(), 1, "{name}");
+                    assert_eq!(on_order[0].listing, listing.id, "{name}");
+                    assert_eq!(on_order[0].terms, sample_on_order_terms(), "{name}");
+                } else {
+                    assert!(on_order.is_empty(), "{name}");
+                }
+                // Purchase Orders bought for a sale on order arrived in
+                // 0.7.0 too: the sample's sale still waits for the units the
+                // stock lacks, with the purchase made for it.
                 let sales = mascate_commerce::Orders::new(
                     database.clone(),
                     inventory.clone(),
                     Arc::new(SystemClock),
                     Arc::new(UuidV7Generator),
                 );
-                assert!(sales.on_order_sales().await.unwrap().is_empty(), "{name}");
+                let on_order_sales = sales.on_order_sales().await.unwrap();
+                let bought_for_sale = orders
+                    .purchase_orders()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|order| order.order_line.is_some());
+                if since_0_7_0 {
+                    assert_eq!(on_order_sales.len(), 1, "{name}");
+                    let sale = &on_order_sales[0];
+                    assert_eq!(sale.line.sold.quantity, SAMPLE_SOLD_ON_ORDER, "{name}");
+                    let on_hand = SAMPLE_RECEIVED - SAMPLE_LOST;
+                    assert_eq!(sale.missing, SAMPLE_SOLD_ON_ORDER - on_hand, "{name}");
+                    let bought = bought_for_sale.unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(bought.order_line, Some(sale.line.id), "{name}");
+                    assert_eq!(bought.units(), sale.missing, "{name}");
+                    assert_eq!(sale.purchase, Some(bought.id), "{name}");
+                } else {
+                    assert!(on_order_sales.is_empty(), "{name}");
+                    assert!(bought_for_sale.is_none(), "{name}");
+                }
                 // The catalog, Purchase Orders, stock, its adjustments,
                 // Reorder Points, discovery settings and the tax rate arrived
                 // in 0.2.0; older samples have none.
@@ -1628,13 +1793,21 @@ mod tests {
                         .iter()
                         .find(|product| product.sku.as_str() == SAMPLE_SKU)
                         .unwrap_or_else(|| panic!("{name}"));
-                    let order = orders.purchase_orders().await.unwrap().remove(0);
+                    let purchase_orders = orders.purchase_orders().await.unwrap();
                     assert_eq!(
-                        order.status(),
+                        purchase_orders.len(),
+                        1 + usize::from(since_0_7_0),
+                        "{name}"
+                    );
+                    let restock = purchase_orders
+                        .iter()
+                        .find(|order| order.order_line.is_none())
+                        .unwrap_or_else(|| panic!("{name}"));
+                    assert_eq!(
+                        restock.status(),
                         PurchaseOrderStatus::PartlyReceived,
                         "{name}"
                     );
-                    assert_eq!(order.order_line, None, "{name}");
                     let stock = inventory.stock().await.unwrap();
                     let on_hand = i64::from(SAMPLE_RECEIVED - SAMPLE_LOST);
                     assert_eq!(stock.products[0].valuation.quantity(), on_hand, "{name}");
