@@ -423,12 +423,11 @@ impl Listings {
             read: fresh.len(),
             ..ListingSync::default()
         };
-        let zero_pause = channel.pauses_with_zero_stock();
         for listing in &known {
             let key = key_of(&listing.listed);
             let reported = fresh
                 .remove(&key)
-                .map(|reported| owner_pause_stands(reported, &listing.listed, zero_pause));
+                .map(|reported| owner_pause_stands(reported, &listing.listed));
             let sent_shown = matches!(
                 (&listing.sent_price, &reported),
                 (Some(sent), Some(reported)) if reported.price == sent.price
@@ -838,7 +837,7 @@ impl Listings {
         self.set_status(on, &listed.id, ListingStatus::Active).await
     }
 
-    async fn set_status(
+    pub(crate) async fn set_status(
         &self,
         channel: SalesChannelKind,
         id: &str,
@@ -971,18 +970,13 @@ impl Listings {
     }
 }
 
-/// What `reported` says of a Listing known as `known`. On a channel that
-/// pauses with zero units, the owner's pause reads back as out of stock:
-/// it stays the owner's, so the Stock Share never puts it back on sale.
-fn owner_pause_stands(
-    mut reported: ChannelListing,
-    known: &ChannelListing,
-    zero_pause: bool,
-) -> ChannelListing {
-    if zero_pause
-        && known.status == ListingStatus::Paused
-        && reported.status == ListingStatus::OutOfStock
-    {
+/// What `reported` says of a Listing known as `known`. The owner's pause
+/// of a listing without units reads back as out of stock: always on a
+/// channel that pauses with zero units, and on Mercado Livre, whose
+/// sub-status `out_of_stock` stays alongside the pause. It stays the
+/// owner's, so the Stock Mirror never puts it back on sale.
+fn owner_pause_stands(mut reported: ChannelListing, known: &ChannelListing) -> ChannelListing {
+    if known.status == ListingStatus::Paused && reported.status == ListingStatus::OutOfStock {
         reported.status = ListingStatus::Paused;
     }
     reported

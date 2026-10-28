@@ -2,7 +2,8 @@
 //! Livre listing to sell before buying; the channel shows the days to be
 //! ready and the listing shows the orders that still fit instead of a
 //! Stock Share. A sale on it asks for the purchase, linked to the Order
-//! line, and waits for its units. Through commerce's public interface with a real temporary
+//! line, and waits for its units. The owner can take them all off sale and
+//! back, keeping the mark. Through commerce's public interface with a real temporary
 //! database, the real Inventory and an in-memory Sales Channel.
 
 mod common;
@@ -12,10 +13,11 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelOrder, ChannelStock, LineStock, ListingError, Listings, MirroredStock,
-    NewPurchaseLine, NewPurchaseOrder, OnOrderSale, OnOrderTerms, OrderSlots, OrderStatus,
-    OrderSync, Orders, PurchaseOrder, PurchaseOrderError, PurchaseOrderStatus, PurchaseOrders,
-    Receiving, SalesChannel, ShipmentStatus, StockMirror, StockShort,
+    ChannelListing, ChannelOrder, ChannelStock, LineStock, ListingError, ListingStatus, Listings,
+    MirroredStock, NewPurchaseLine, NewPurchaseOrder, OnOrderSale, OnOrderStatusChange,
+    OnOrderTerms, OrderSlots, OrderStatus, OrderSync, Orders, PurchaseOrder, PurchaseOrderError,
+    PurchaseOrderStatus, PurchaseOrders, Receiving, SalesChannel, ShipmentStatus, StockMirror,
+    StockShort,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -248,6 +250,41 @@ impl Fixture {
     fn days_sent(&self) -> Vec<(String, Option<u32>)> {
         self.ml.availability_set.lock().unwrap().clone()
     }
+
+    /// The Listings read what the channel shows now.
+    async fn sync_listings(&self) {
+        self.later();
+        self.listings.sync(&self.ml).await.unwrap();
+    }
+
+    async fn status_of(&self, item: &str) -> ListingStatus {
+        let id = self.id_of(item, None).await;
+        self.listings.listing(id).await.unwrap().listed.status
+    }
+
+    /// Each listing id paused (`true`) or activated on the channel, in
+    /// order.
+    fn statuses_sent(&self) -> Vec<(String, bool)> {
+        self.ml.statuses_set.lock().unwrap().clone()
+    }
+
+    async fn pause_all(&self) -> OnOrderStatusChange {
+        self.later();
+        self.listings.pause_on_order(&self.ml).await.unwrap()
+    }
+
+    async fn reactivate_all(&self) -> OnOrderStatusChange {
+        self.later();
+        self.listings.reactivate_on_order(&self.ml).await.unwrap()
+    }
+}
+
+fn items(change: &OnOrderStatusChange) -> Vec<&str> {
+    change
+        .changed
+        .iter()
+        .map(|listing| listing.listed.id.as_str())
+        .collect()
 }
 
 /// `units` fones bought from the supplier at R$ 20,00 each.
@@ -761,4 +798,167 @@ proptest! {
             Ok(())
         })?;
     }
+}
+
+#[test]
+fn pausing_takes_each_on_order_listing_off_sale_once_and_keeps_the_mark() {
+    block_on(async {
+        let fx =
+            Fixture::selling(vec![empty("MLB1"), empty("MLB2"), listing("MLB3", "Fone")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        fx.mark("MLB2", terms(20, 2)).await.unwrap();
+        fx.send().await;
+
+        let paused = fx.pause_all().await;
+
+        assert_eq!(items(&paused), ["MLB1", "MLB2"]);
+        assert!(paused.failed.is_empty());
+        assert_eq!(
+            fx.statuses_sent(),
+            [("MLB1".to_owned(), true), ("MLB2".to_owned(), true)]
+        );
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::Paused);
+        assert_eq!(fx.status_of("MLB3").await, ListingStatus::Active);
+        assert_eq!(fx.listings.on_order().await.unwrap().len(), 2);
+
+        let again = fx.pause_all().await;
+        fx.sync_listings().await;
+
+        assert!(again.changed.is_empty() && again.failed.is_empty());
+        assert_eq!(fx.statuses_sent().len(), 2);
+        assert_eq!(fx.status_of("MLB2").await, ListingStatus::Paused);
+    });
+}
+
+#[test]
+fn reactivating_puts_the_paused_ones_back_on_sale_once() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1"), empty("MLB2")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        fx.mark("MLB2", terms(15, 3)).await.unwrap();
+        fx.send().await;
+        fx.sync_listings().await;
+        fx.pause_all().await;
+
+        let back = fx.reactivate_all().await;
+        let again = fx.reactivate_all().await;
+
+        assert_eq!(items(&back), ["MLB1", "MLB2"]);
+        assert!(again.changed.is_empty() && again.failed.is_empty());
+        assert_eq!(
+            fx.statuses_sent()[2..],
+            [("MLB1".to_owned(), false), ("MLB2".to_owned(), false)]
+        );
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::Active);
+        assert_eq!(fx.listings.on_order().await.unwrap().len(), 2);
+    });
+}
+
+#[test]
+fn a_listing_with_variations_pauses_and_comes_back_in_one_call() {
+    block_on(async {
+        let shirt = listing("MLB3", "Camiseta");
+        let fx = Fixture::selling(vec![
+            variation(&shirt, "175000000031", "Cor: Preto"),
+            variation(&shirt, "175000000032", "Cor: Branco"),
+        ])
+        .await;
+        let black = fx.id_of("MLB3", Some("175000000031")).await;
+        fx.listings
+            .mark_on_order(black, terms(7, 2), &fx.ml)
+            .await
+            .unwrap();
+
+        assert_eq!(items(&fx.pause_all().await), ["MLB3"]);
+        assert_eq!(items(&fx.reactivate_all().await), ["MLB3"]);
+        assert_eq!(
+            fx.statuses_sent(),
+            [("MLB3".to_owned(), true), ("MLB3".to_owned(), false)]
+        );
+    });
+}
+
+#[test]
+fn a_refused_pause_names_the_listing_and_why_and_the_others_go_on() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1"), empty("MLB2")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        fx.mark("MLB2", terms(15, 3)).await.unwrap();
+        fx.send().await;
+        *fx.ml.status_refusal.lock().unwrap() = Some((
+            "MLB1".into(),
+            PlatformError::Refused("anúncio em revisão".into()),
+        ));
+
+        let paused = fx.pause_all().await;
+
+        assert_eq!(items(&paused), ["MLB2"]);
+        assert_eq!(paused.failed.len(), 1);
+        let (refused, why) = &paused.failed[0];
+        assert_eq!(refused.listed.id, "MLB1");
+        assert!(matches!(
+            why,
+            ListingError::Platform(PlatformError::Refused(text)) if text == "anúncio em revisão"
+        ));
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::Active);
+        assert_eq!(fx.status_of("MLB2").await, ListingStatus::Paused);
+
+        *fx.ml.status_refusal.lock().unwrap() = None;
+        assert_eq!(items(&fx.pause_all().await), ["MLB1"]);
+    });
+}
+
+#[test]
+fn a_full_on_order_listing_stays_off_sale_when_a_slot_opens_until_reactivated() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 2)).await.unwrap();
+        fx.send().await;
+        let order = fx.buys("MLB1", 2).await;
+        fx.sync_listings().await;
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::OutOfStock);
+
+        // The channel shows nothing to sell already: nothing goes to it.
+        assert_eq!(items(&fx.pause_all().await), ["MLB1"]);
+        assert!(fx.statuses_sent().is_empty());
+        fx.order_changes(&order, |order| {
+            order.shipment.as_mut().unwrap().status = ShipmentStatus::Shipped;
+        })
+        .await;
+        fx.send().await;
+        fx.sync_listings().await;
+        assert_eq!(fx.shown("MLB1"), 0);
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::Paused);
+
+        // Back to waiting for the orders that fit, which the channel puts
+        // on sale by itself.
+        assert_eq!(items(&fx.reactivate_all().await), ["MLB1"]);
+        assert!(fx.statuses_sent().is_empty());
+        fx.send().await;
+        fx.sync_listings().await;
+        assert_eq!(fx.shown("MLB1"), 2);
+        assert_eq!(fx.status_of("MLB1").await, ListingStatus::Active);
+    });
+}
+
+#[test]
+fn listings_not_on_order_or_on_another_channel_are_never_paused() {
+    block_on(async {
+        let fx = Fixture::selling(vec![listing("MLB1", "Fone")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        let shopee = common::Channel::on(SalesChannelKind::Shopee);
+
+        let paused = fx.listings.pause_on_order(&shopee).await.unwrap();
+
+        assert!(paused.changed.is_empty() && paused.failed.is_empty());
+        assert!(shopee.statuses_set.lock().unwrap().is_empty());
+        assert_eq!(
+            fx.listings
+                .on_order_on(SalesChannelKind::MercadoLivre)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    });
 }

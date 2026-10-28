@@ -265,7 +265,7 @@ fn average_text(average: Decimal) -> String {
         .replace('.', ",")
 }
 
-fn count_text(count: u32, one: &str, many: &str) -> String {
+pub(crate) fn count_text(count: u32, one: &str, many: &str) -> String {
     match count {
         1 => format!("1 {one}"),
         count => format!("{count} {many}"),

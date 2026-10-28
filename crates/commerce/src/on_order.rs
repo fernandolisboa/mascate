@@ -4,17 +4,19 @@
 //! owner accepts: the Stock Mirror sends it the orders that still fit
 //! instead of a Stock Share. Only the owner marks and unmarks; the app
 //! never does it by itself. A sale on it waits for the units of a Purchase
-//! Order the owner buys for it (#208).
+//! Order the owner buys for it (#208). When the Reputation is close to
+//! losing the green, the owner can take them all off sale and back with
+//! one click each, keeping the mark (#209).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use libsql::{Connection, TransactionBehavior, params};
-use mascate_kernel::{PlatformError, RecordId, Timestamp};
+use mascate_kernel::{PlatformError, RecordId, SalesChannelKind, Timestamp};
 use mascate_platform::{Migration, StoredRow, stored};
 
 use crate::{
-    LineStock, ListingError, Listings, OnSalesChannel, Order, OrderError, OrderLine, OrderStatus,
-    Orders, StockShort,
+    LineStock, Listing, ListingError, ListingStatus, Listings, OnSalesChannel, Order, OrderError,
+    OrderLine, OrderStatus, Orders, SalesChannel, StockShort,
 };
 
 pub(crate) const CREATE_ON_ORDER_LISTINGS: Migration = Migration {
@@ -192,6 +194,113 @@ impl Listings {
             marks.extend(read_marks(self.database.connection(), Some(*listing)).await?);
         }
         Ok(marks)
+    }
+}
+
+/// What pausing or reactivating the On-Order Listings did, one entry per
+/// channel listing: its variations go together.
+#[derive(Debug, Default)]
+pub struct OnOrderStatusChange {
+    /// The channel listings now paused, or back on sale.
+    pub changed: Vec<Listing>,
+    /// Each one left as it was, with why.
+    pub failed: Vec<(Listing, ListingError)>,
+}
+
+impl OnOrderStatusChange {
+    fn record(&mut self, listing: Listing, outcome: Result<Vec<Listing>, ListingError>) {
+        match outcome {
+            Ok(changed) => self
+                .changed
+                .push(changed.into_iter().next().unwrap_or(listing)),
+            Err(error) => self.failed.push((listing, error)),
+        }
+    }
+}
+
+impl Listings {
+    /// The On-Order Listings on `channel`, one per channel listing (its
+    /// first variation stands for the others), oldest mark first; a closed
+    /// one is left out.
+    pub async fn on_order_on(
+        &self,
+        channel: SalesChannelKind,
+    ) -> Result<Vec<Listing>, ListingError> {
+        let listings = self.listings().await?;
+        let mut items = HashSet::new();
+        let mut found = Vec::new();
+        for mark in self.on_order().await? {
+            let Some(listing) = listings.iter().find(|listing| listing.id == mark.listing) else {
+                continue;
+            };
+            if listing.channel == channel
+                && listing.listed.status != ListingStatus::Closed
+                && items.insert(listing.listed.id.clone())
+            {
+                found.push(listing.clone());
+            }
+        }
+        Ok(found)
+    }
+
+    /// Takes every On-Order Listing on `channel` off sale, keeping the
+    /// mark (ADR 0038, decision 5). An active one is paused on the
+    /// channel. One the channel paused for want of stock shows nothing to
+    /// sell already, so it is only kept paused here, which stops the Stock
+    /// Mirror from sending it the orders that fit again. A paused one sends
+    /// nothing, so pausing twice changes nothing. A refusal leaves that
+    /// listing as it was and the others go on. Only the owner's own action
+    /// calls this.
+    pub async fn pause_on_order(
+        &self,
+        channel: &dyn SalesChannel,
+    ) -> Result<OnOrderStatusChange, ListingError> {
+        let on = channel.sales_channel();
+        let mut change = OnOrderStatusChange::default();
+        for listing in self.on_order_on(on).await? {
+            let paused = match listing.listed.status {
+                ListingStatus::Active => self.pause(listing.id, channel).await,
+                ListingStatus::OutOfStock => {
+                    self.set_status(on, &listing.listed.id, ListingStatus::Paused)
+                        .await
+                }
+                _ => continue,
+            };
+            change.record(listing, paused);
+        }
+        Ok(change)
+    }
+
+    /// Puts every paused On-Order Listing on `channel` back on sale. One
+    /// that shows units goes back through the channel; one that shows none
+    /// was only kept paused here, so it waits again for the orders that
+    /// fit, which the Stock Mirror sends and the channel puts on sale by
+    /// itself. One on sale sends nothing. A refusal leaves that listing as
+    /// it was and the others go on. Only the owner's own action calls this.
+    pub async fn reactivate_on_order(
+        &self,
+        channel: &dyn SalesChannel,
+    ) -> Result<OnOrderStatusChange, ListingError> {
+        let on = channel.sales_channel();
+        let mut change = OnOrderStatusChange::default();
+        for listing in self.on_order_on(on).await? {
+            if listing.listed.status != ListingStatus::Paused {
+                continue;
+            }
+            let shows_units = self
+                .sharing_price(on, &listing.listed.id)
+                .await?
+                .iter()
+                .any(|variation| variation.listed.available_quantity > 0);
+            let back = if shows_units || channel.pauses_with_zero_stock() {
+                self.reactivate(listing.id, channel).await
+            } else {
+                self.set_status(on, &listing.listed.id, ListingStatus::OutOfStock)
+                    .await
+            };
+            change.record(listing, back);
+        }
+        Ok(change)
     }
 }
 

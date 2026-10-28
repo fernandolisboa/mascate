@@ -11,9 +11,10 @@ use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Percentage, PlatformError, Timestamp};
 use mascate_marketing::{
-    ChannelReputation, ChannelReview, ListingReviews, MIGRATIONS, MetricReading,
+    ChannelReputation, ChannelReview, GreenAtRisk, ListingReviews, MIGRATIONS, MetricReading,
     PRODUCT_ADS_MIN_SALES, ProductReviews, REFRESH_MINUTES, Reputation, ReputationColor,
-    ReputationError, ReputationMetric, ReputationSource, ReviewedItem, SellerTool,
+    ReputationError, ReputationMetric, ReputationSource, ReputationStanding, ReviewedItem,
+    SellerTool,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -532,6 +533,135 @@ fn nothing_is_kept_when_the_reviews_of_a_listing_fail() {
     });
 }
 
+impl Fixture {
+    /// The Reputation after a Sync that read `reputation`.
+    async fn standing_after(&self, reputation: ChannelReputation) -> ReputationStanding {
+        self.channel.rates(reputation);
+        self.sync(&[]).await;
+        self.reputation.standing().await.unwrap().unwrap()
+    }
+}
+
+/// A green seller with 200 sales in 60 days: the green takes 3
+/// cancellations (1.5%) and 20 late dispatches (10%).
+fn green_with(cancellations: u32, delayed: u32) -> ChannelReputation {
+    ChannelReputation {
+        sales: 200,
+        cancellations: reading("0", cancellations),
+        delayed_handling: reading("0", delayed),
+        ..seller(Some(ReputationColor::Green), 400)
+    }
+}
+
+#[test]
+fn room_for_one_more_cancellation_and_one_more_late_dispatch_warns_of_nothing() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        let standing = fixture.standing_after(green_with(2, 19)).await;
+
+        assert_eq!(standing.green_at_risk(), []);
+    });
+}
+
+#[test]
+fn one_more_case_taking_the_green_away_warns_with_the_numbers() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        let standing = fixture.standing_after(green_with(3, 19)).await;
+
+        let at_risk = standing.green_at_risk();
+        assert_eq!(
+            at_risk,
+            [GreenAtRisk {
+                metric: ReputationMetric::Cancellations,
+                sales: 200,
+                period_days: Some(60),
+                cases: 3,
+                allowed: 3,
+            }]
+        );
+        assert!(!at_risk[0].lost());
+    });
+}
+
+#[test]
+fn a_metric_past_the_limit_warns_that_the_green_is_lost_and_comes_first() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        let standing = fixture.standing_after(green_with(3, 23)).await;
+
+        let at_risk = standing.green_at_risk();
+        let metrics: Vec<_> = at_risk.iter().map(|risk| risk.metric).collect();
+        assert_eq!(
+            metrics,
+            [
+                ReputationMetric::DelayedHandling,
+                ReputationMetric::Cancellations
+            ]
+        );
+        assert_eq!((at_risk[0].cases, at_risk[0].allowed), (23, 20));
+        assert!(at_risk[0].lost());
+    });
+}
+
+#[test]
+fn claims_never_warn_since_an_on_order_sale_does_not_bring_them() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        let standing = fixture
+            .standing_after(ChannelReputation {
+                claims: reading("5", 10),
+                ..green_with(0, 0)
+            })
+            .await;
+
+        assert_eq!(standing.metrics[0].room, Some(-6));
+        assert_eq!(standing.green_at_risk(), []);
+    });
+}
+
+#[test]
+fn no_sales_in_the_period_leave_nothing_to_measure_and_warn_of_nothing() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        let standing = fixture
+            .standing_after(ChannelReputation {
+                sales: 0,
+                ..green_with(0, 0)
+            })
+            .await;
+
+        assert_eq!(standing.green_at_risk(), []);
+    });
+}
+
+#[test]
+fn a_small_seller_is_one_cancellation_from_losing_the_green() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+
+        // 1.5% of 40 sales is 0.6: not even one cancellation fits.
+        let standing = fixture
+            .standing_after(ChannelReputation {
+                sales: 40,
+                ..green_with(0, 0)
+            })
+            .await;
+
+        let at_risk = standing.green_at_risk();
+        assert_eq!(at_risk.len(), 1);
+        assert_eq!(
+            (at_risk[0].metric, at_risk[0].cases, at_risk[0].allowed),
+            (ReputationMetric::Cancellations, 0, 0)
+        );
+    });
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -560,6 +690,32 @@ proptest! {
                 prop_assert!(rate(last) <= limit);
             }
             prop_assert!(rate(last + 1) > limit);
+            Ok(())
+        })?;
+    }
+
+    /// A metric warns exactly when the green does not survive one more
+    /// case: at the room the property above checks, room 0 or less.
+    #[test]
+    fn the_warning_comes_exactly_when_one_more_case_passes_the_green_limit(
+        sales in 1u32..5_000,
+        cancellations in 0u32..200,
+    ) {
+        block_on(async {
+            let fixture = Fixture::new().await;
+            let standing = fixture
+                .standing_after(ChannelReputation {
+                    sales,
+                    cancellations: MetricReading { rate: Percentage::ZERO, count: cancellations },
+                    ..seller(None, 0)
+                })
+                .await;
+            let rate = |cases: u32| Decimal::from(cases) * Decimal::ONE_HUNDRED / Decimal::from(sales);
+            let warns = standing
+                .green_at_risk()
+                .iter()
+                .any(|risk| risk.metric == ReputationMetric::Cancellations);
+            prop_assert_eq!(warns, rate(cancellations + 1) > Decimal::new(15, 1));
             Ok(())
         })?;
     }

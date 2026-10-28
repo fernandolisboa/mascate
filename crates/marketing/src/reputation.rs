@@ -404,6 +404,67 @@ impl ReputationStanding {
     }
 }
 
+/// A metric where the green hangs on the next case (ADR 0038, decision 5):
+/// one more makes the rate pass the green limit, or it is past it already.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GreenAtRisk {
+    pub metric: ReputationMetric,
+    /// Sales completed in the period.
+    pub sales: u32,
+    /// The days the period covers; `None` when the channel counts every
+    /// sale.
+    pub period_days: Option<u32>,
+    /// The cases the metric counted in the period.
+    pub cases: u32,
+    /// The most cases the period's sales take keeping the green.
+    pub allowed: u32,
+}
+
+impl GreenAtRisk {
+    /// Whether the green is gone already, not only one case away.
+    pub fn lost(&self) -> bool {
+        self.cases > self.allowed
+    }
+}
+
+impl ReputationStanding {
+    /// The metrics a sale bought only after it is sold can hurt: it can
+    /// leave late or be cancelled for want of the item.
+    pub const ON_ORDER_METRICS: [ReputationMetric; 2] = [
+        ReputationMetric::Cancellations,
+        ReputationMetric::DelayedHandling,
+    ];
+
+    /// Each of [`Self::ON_ORDER_METRICS`] where one more case takes the
+    /// green away or one took it already, the furthest past the limit
+    /// first: what warns the owner while On-Order Listings sell. Without
+    /// sales in the period the channel has nothing to measure yet, so
+    /// nothing is at risk.
+    pub fn green_at_risk(&self) -> Vec<GreenAtRisk> {
+        let mut at_risk: Vec<(i64, GreenAtRisk)> = self
+            .metrics
+            .iter()
+            .filter(|standing| Self::ON_ORDER_METRICS.contains(&standing.metric))
+            .filter_map(|standing| {
+                let room = standing.room.filter(|room| *room <= 0)?;
+                let cases = standing.reading.count;
+                Some((
+                    room,
+                    GreenAtRisk {
+                        metric: standing.metric,
+                        sales: self.reputation.sales,
+                        period_days: self.reputation.period_days,
+                        cases,
+                        allowed: u32::try_from(i64::from(cases) + room).unwrap_or(0),
+                    },
+                ))
+            })
+            .collect();
+        at_risk.sort_by_key(|(room, _)| *room);
+        at_risk.into_iter().map(|(_, risk)| risk).collect()
+    }
+}
+
 /// A listing the owner has in the channel and the Product it sells, as the
 /// caller knows them.
 #[derive(Debug, Clone, PartialEq, Eq)]
