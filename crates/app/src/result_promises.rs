@@ -12,11 +12,14 @@ use mascate_marketing::{ResultPromise, promises_in};
 use crate::appearance::look;
 use crate::kit;
 
-/// A Result Promise of a text, as the owner reads it.
+/// What the owner reads under the Result Promises of a text.
+const ONLY_A_WARNING: &str = "A plataforma do anúncio pode reprovar o texto ou bloquear a conta; é \
+                              só um aviso, e você decide se usa assim.";
+
+/// A Result Promise of a post, as the owner reads it.
 pub(crate) fn promise_text(promise: &ResultPromise) -> String {
     format!(
-        "O texto promete resultado: {}. A plataforma do anúncio pode reprovar o texto ou \
-         bloquear a conta; é só um aviso, e você decide se usa assim.",
+        "O texto promete resultado: {}. {ONLY_A_WARNING}",
         promise.describe()
     )
 }
@@ -30,7 +33,7 @@ fn findings(text: &str) -> Option<Result<(), Vec<String>>> {
     Some(if promises.is_empty() {
         Ok(())
     } else {
-        Err(promises.iter().map(promise_text).collect())
+        Err(promises.iter().map(ResultPromise::describe).collect())
     })
 }
 
@@ -84,6 +87,7 @@ impl Render for TextCheckSection {
                                 .into_iter()
                                 .map(|warning| kit::info_notice(warning, cx)),
                         )
+                        .child(div().text_sm().text_color(t.text2).child(ONLY_A_WARNING))
                         .into_any_element(),
                 }
             }))
@@ -108,14 +112,27 @@ mod tests {
         let Some(Err(warnings)) = findings("Ganhe R$ 500 por dia. Perca 10 kg!") else {
             panic!("two promises");
         };
-        assert_eq!(warnings.len(), 2);
-        assert!(
-            warnings[0].contains("“Ganhe R$ 500 por dia”"),
-            "{}",
-            warnings[0]
+        assert_eq!(
+            warnings,
+            [
+                "“Ganhe R$ 500 por dia” promete ganho de dinheiro; fonte: Padrões de Publicidade \
+                 da Meta, resultados irreais",
+                "“Perca 10 kg” promete perda de peso; fonte: Padrões de Publicidade da Meta, \
+                 resultados irreais",
+            ]
         );
-        assert!(warnings[0].contains("Padrões de Publicidade da Meta"));
-        assert!(warnings[1].contains("“Perca 10 kg”"), "{}", warnings[1]);
-        assert!(warnings[1].ends_with("você decide se usa assim."));
+    }
+
+    #[test]
+    fn a_post_s_promise_says_it_is_only_a_warning() {
+        let promise = promises_in("Risco zero").remove(0);
+
+        let text = promise_text(&promise);
+
+        assert!(
+            text.starts_with("O texto promete resultado: “Risco zero”"),
+            "{text}"
+        );
+        assert!(text.ends_with(ONLY_A_WARNING), "{text}");
     }
 }

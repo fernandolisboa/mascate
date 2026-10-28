@@ -361,6 +361,30 @@ const INSTAGRAM_CAPTION: &str = "O texto vira a legenda do post, uma vez, e o po
                                  conta: o app não apaga posts. No Instagram o link na legenda \
                                  não é clicável: quem vê precisa copiar e colar no navegador.";
 
+/// The text that will go out, with its Result Promises said again right
+/// before the owner confirms.
+fn going_out(request: &PublishRequest, cx: &App) -> AnyElement {
+    let t = look(cx).tokens;
+    v_flex()
+        .gap_1()
+        .child(
+            div()
+                .p_3()
+                .rounded(t.radius_lg)
+                .border(t.border_width)
+                .border_color(t.border)
+                .bg(t.surface)
+                .text_sm()
+                .child(request.text().to_owned()),
+        )
+        .children(
+            promises_in(request.text())
+                .iter()
+                .map(|promise| kit::info_notice(promise_text(promise), cx)),
+        )
+        .into_any_element()
+}
+
 /// A problem of the post, as the owner reads it.
 pub(crate) fn problem_text(problem: &PostProblem) -> String {
     match problem {
@@ -1493,30 +1517,7 @@ impl OfferPostsSection {
         cx.notify();
     }
 
-    /// What will go out, with the Result Promises of its text said again
-    /// right before the owner confirms.
     fn render_confirmation(&self, confirming: &Confirming, cx: &mut Context<Self>) -> AnyElement {
-        let promises = promises_in(confirming.request.text());
-        let choice = self.render_confirmation_choice(confirming, cx);
-        if promises.is_empty() {
-            return choice;
-        }
-        v_flex()
-            .gap_2()
-            .children(
-                promises
-                    .iter()
-                    .map(|promise| kit::info_notice(promise_text(promise), cx)),
-            )
-            .child(choice)
-            .into_any_element()
-    }
-
-    fn render_confirmation_choice(
-        &self,
-        confirming: &Confirming,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
         let t = look(cx).tokens;
         let request = &confirming.request;
         let off = post_destinations::publishing_off(request.kind(), cx);
@@ -1627,16 +1628,7 @@ impl OfferPostsSection {
                 )
             })
             .child(div().text_xs().text_color(t.text2).child(picture))
-            .child(
-                div()
-                    .p_3()
-                    .rounded(t.radius_lg)
-                    .border(t.border_width)
-                    .border_color(t.border)
-                    .bg(t.surface)
-                    .text_sm()
-                    .child(request.text().to_owned()),
-            )
+            .child(going_out(request, cx))
             .child(div().text_xs().text_color(t.text2).child(format!(
                 "Na hora marcada o post sai sozinho, uma vez, do jeito que está acima, com o app \
                  aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos sem ele \
@@ -1693,16 +1685,7 @@ impl OfferPostsSection {
                 pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
             )
             .child(div().text_xs().text_color(t.text2).child(picture))
-            .child(
-                div()
-                    .p_3()
-                    .rounded(t.radius_lg)
-                    .border(t.border_width)
-                    .border_color(t.border)
-                    .bg(t.surface)
-                    .text_sm()
-                    .child(request.text().to_owned()),
-            )
+            .child(going_out(request, cx))
             .child(div().text_xs().text_color(t.text2).child(match request.kind() {
                 ChannelKind::Pinterest => {
                     "O texto acima vira a descrição do Pin, uma vez, e o Pin fica na pasta: o app \
