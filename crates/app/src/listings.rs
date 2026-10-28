@@ -1682,7 +1682,7 @@ impl ListingsScreen {
                     .gap_x_2()
                     .text_xs()
                     .text_color(t.text2)
-                    .child(facts.join(" · "))
+                    .child(div().min_w_0().child(facts.join(" · ")))
                     .children(listed.link.clone().map(|link| {
                         div()
                             .id(gpui_kit::SharedString::from(format!("open-{id}")))
