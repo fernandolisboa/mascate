@@ -40,7 +40,7 @@ use mascate_marketing::{
     OfferFacts, OfferPost, OfferPosts, OfferPrice, PINTEREST_POSTS_PER_DAY, POST_PITCH,
     POST_VARIABLES, PRICE_KEEPS_HOURS, PitchError, PitchProblem, PostDraft, PostError, PostImage,
     PostProblem, PostQueue, PostStatus, PostTime, PromotionChannel, PublishFailure, PublishRequest,
-    UpcomingEvent, check_post, post_limits,
+    UpcomingEvent, check_post, post_limits, promises_in,
 };
 use mascate_platform::Flag;
 
@@ -55,6 +55,7 @@ use crate::post_destinations;
 use crate::post_queue::{post_time, typed_moment};
 use crate::preferences;
 use crate::promotion_channels::{ChannelChanges, promotion_channels};
+use crate::result_promises::promise_text;
 use crate::sales::table_row;
 use crate::sales_events::{event_date_text, sales_events};
 use crate::work_context::{self, WorkContext};
@@ -360,6 +361,30 @@ const INSTAGRAM_CAPTION: &str = "O texto vira a legenda do post, uma vez, e o po
                                  conta: o app não apaga posts. No Instagram o link na legenda \
                                  não é clicável: quem vê precisa copiar e colar no navegador.";
 
+/// The text that will go out, with its Result Promises said again right
+/// before the owner confirms.
+fn going_out(request: &PublishRequest, cx: &App) -> AnyElement {
+    let t = look(cx).tokens;
+    v_flex()
+        .gap_1()
+        .child(
+            div()
+                .p_3()
+                .rounded(t.radius_lg)
+                .border(t.border_width)
+                .border_color(t.border)
+                .bg(t.surface)
+                .text_sm()
+                .child(request.text().to_owned()),
+        )
+        .children(
+            promises_in(request.text())
+                .iter()
+                .map(|promise| kit::info_notice(promise_text(promise), cx)),
+        )
+        .into_any_element()
+}
+
 /// A problem of the post, as the owner reads it.
 pub(crate) fn problem_text(problem: &PostProblem) -> String {
     match problem {
@@ -407,6 +432,7 @@ pub(crate) fn problem_text(problem: &PostProblem) -> String {
             "O texto tem {}, e este programa proíbe esse contato ou ainda não tem os termos lidos.",
             contact.name()
         ),
+        PostProblem::Promise(promise) => promise_text(promise),
     }
 }
 
@@ -1602,16 +1628,7 @@ impl OfferPostsSection {
                 )
             })
             .child(div().text_xs().text_color(t.text2).child(picture))
-            .child(
-                div()
-                    .p_3()
-                    .rounded(t.radius_lg)
-                    .border(t.border_width)
-                    .border_color(t.border)
-                    .bg(t.surface)
-                    .text_sm()
-                    .child(request.text().to_owned()),
-            )
+            .child(going_out(request, cx))
             .child(div().text_xs().text_color(t.text2).child(format!(
                 "Na hora marcada o post sai sozinho, uma vez, do jeito que está acima, com o app \
                  aberto ou na bandeja. Se a hora passar de {LATE_AFTER_MINUTES} minutos sem ele \
@@ -1668,16 +1685,7 @@ impl OfferPostsSection {
                 pin_detail(request).map(|detail| div().text_xs().text_color(t.text2).child(detail)),
             )
             .child(div().text_xs().text_color(t.text2).child(picture))
-            .child(
-                div()
-                    .p_3()
-                    .rounded(t.radius_lg)
-                    .border(t.border_width)
-                    .border_color(t.border)
-                    .bg(t.surface)
-                    .text_sm()
-                    .child(request.text().to_owned()),
-            )
+            .child(going_out(request, cx))
             .child(div().text_xs().text_color(t.text2).child(match request.kind() {
                 ChannelKind::Pinterest => {
                     "O texto acima vira a descrição do Pin, uma vez, e o Pin fica na pasta: o app \

@@ -129,7 +129,7 @@ Critério: só entra o que o dono, sem saber marketing, usa toda semana e que me
 | Resposta automática de perguntas no ML sem confirmação | Não proibido; risco de resposta errada (flag de produto) | 1 | Desativado |
 | Autocompra pelo próprio link | Fraude, não funcionalidade | — | Não construído |
 
-Lembretes ⚠️ (não bloqueiam): identificação publicitária CONAR nos posts (ligada por padrão no gerador); "de/por" com preço inflado antes do desconto pode ser questionado pelo CDC/Procon [I]; fotos copiadas de vendedor da Shopee podem gerar denúncia de direito autoral no ML [I]; LGPD para qualquer lista de contatos.
+Lembretes ⚠️ (não bloqueiam): identificação publicitária CONAR nos posts (ligada por padrão no gerador); promessa de resultado (ganho, peso, cura, garantia, antes e depois) avisada no post e em "Conferir texto" (ADR 0037, decisão 9); "de/por" com preço inflado antes do desconto pode ser questionado pelo CDC/Procon [I]; fotos copiadas de vendedor da Shopee podem gerar denúncia de direito autoral no ML [I]; LGPD para qualquer lista de contatos.
 
 ## 7. Validar com conta real
 

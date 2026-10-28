@@ -21,6 +21,7 @@ use rust_decimal::{Decimal, RoundingStrategy};
 
 use crate::AD_DISCLOSURE;
 use crate::channels::{ChannelError, ChannelKind, PromotionChannel, PromotionChannels};
+use crate::promises::{ResultPromise, promises_in};
 use crate::publishing::{
     ConfirmedPost, PostDestination, PostFate, PublishFailure, PublishRequest, PublishedPost,
 };
@@ -443,6 +444,8 @@ pub enum PostProblem {
     /// The text carries a contact the Program forbids or has unread terms
     /// on.
     Contact(Contact),
+    /// The text promises a result the ad's Platform rejects.
+    Promise(ResultPromise),
 }
 
 impl PostProblem {
@@ -536,6 +539,7 @@ pub fn check_post(draft: &PostDraft, limits: Option<PostLimits>) -> Vec<PostProb
             .filter(|contact| facts.forbidden_contacts.contains(contact))
             .map(PostProblem::Contact),
     );
+    problems.extend(promises_in(&unlinked).into_iter().map(PostProblem::Promise));
     problems
 }
 

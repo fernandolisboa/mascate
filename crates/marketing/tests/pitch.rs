@@ -14,7 +14,7 @@ use mascate_marketing::{
     ChannelKind, Contact, CopyRequest, CopySettings, CopyShape, CopyWriter, DEFAULT_COPY_MODEL,
     DISCLOSURE, ListingCopy, MIGRATIONS, NewPromotionChannel, OfferFacts, OfferPosts, OfferPrice,
     PITCH_INSTRUCTIONS, PITCH_MAX_CHARS, POST_VARIABLES, PitchError, PitchProblem,
-    PromotionChannel, PromotionChannels, Written, WrittenCopy, check_pitch,
+    PromotionChannel, PromotionChannels, Written, WrittenCopy, check_pitch, promises_in,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;
@@ -328,6 +328,57 @@ fn a_pitch_with_a_price_a_percentage_a_link_or_a_contact_is_retried_then_fails()
             )
         );
     });
+}
+
+#[test]
+fn a_pitch_that_promises_a_result_is_retried_once_then_fails_without_touching_the_post() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let channel = f.channel(ChannelKind::TelegramChannel).await;
+        let draft = f.posts.draft(&facts(), &channel).await.unwrap();
+        let saved = f.posts.create(&draft).await.unwrap();
+        for promising in [
+            "Renda extra garantida com fotos de celular",
+            "Perca 10 kg fotografando a natureza",
+            "Veja o antes e depois das suas fotos",
+            "Sucesso garantido para iniciantes",
+        ] {
+            let writer = FakeWriter::pitching(&[promising]);
+
+            let failed = f.posts.write_pitch(&writer, &saved.draft, None).await;
+
+            let promise = promises_in(promising).remove(0);
+            assert!(
+                matches!(&failed, Err(PitchError::Rejected(problems))
+                    if problems.contains(&PitchProblem::Promise(promise.clone()))),
+                "{promising:?}: {failed:?}"
+            );
+            let requests = writer.requests();
+            assert_eq!(requests.len(), 2, "{promising:?}");
+            assert!(
+                requests[1].prompt.ends_with(&format!(
+                    "porque a chamada prometia resultado: {}. Escreva de novo, corrigindo isso.",
+                    promise.describe()
+                )),
+                "{}",
+                requests[1].prompt
+            );
+            assert_eq!(f.posts.post(saved.id).await.unwrap().draft, saved.draft);
+        }
+
+        let writer = FakeWriter::pitching(&["Renda extra garantida com fotos de celular", PITCH]);
+        let pitched = f
+            .posts
+            .write_pitch(&writer, &saved.draft, None)
+            .await
+            .unwrap();
+        assert_eq!(pitched.pitch, PITCH);
+    });
+}
+
+#[test]
+fn the_writer_is_told_never_to_promise_a_result() {
+    assert!(PITCH_INSTRUCTIONS.contains("Nunca prometa resultado"));
 }
 
 #[test]
