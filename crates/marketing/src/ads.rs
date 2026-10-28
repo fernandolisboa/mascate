@@ -16,11 +16,9 @@ use chrono::{NaiveDate, TimeDelta};
 use libsql::{Connection, TransactionBehavior, Value, params};
 use mascate_kernel::{
     BreakEven, Clock, Currency, CurrencyMismatch, IdGenerator, Money, PlatformError, Roas,
-    SalesChannelKind, Timestamp, channel_day, channel_day_start,
+    SalesChannelKind, Timestamp, channel_day, channel_day_start, spent_enough_to_judge,
 };
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
-
-use rust_decimal::Decimal;
 
 use crate::ad_groups::{ChannelAdGroup, write_ad_groups};
 use crate::campaigns::{CampaignProduct, CampaignStrategy};
@@ -87,12 +85,6 @@ pub const ADS_REFRESH_MINUTES: i64 = 24 * 60;
 
 /// Days the first Sync reads back: this month and the last, whole.
 pub const ADS_HISTORY_DAYS: i64 = 62;
-
-/// The least a Product's ads spend in a period before a ROAS below its
-/// Break-even ROAS suggests pausing them: R$ 20,00, so a few clicks never
-/// judge an ad.
-pub const ADS_LOSS_MIN_COST: Money =
-    Money::new(Decimal::from_parts(20, 0, 0, false, 0), Currency::Brl);
 
 /// Days read again in each Sync: a sale the channel attributes to a click
 /// can come some days after it. Not in the documentation consulted: to be
@@ -326,13 +318,10 @@ impl ProductRoas {
     }
 
     /// Whether to suggest pausing its ads: they lose money and spent at
-    /// least [`ADS_LOSS_MIN_COST`]. Only ever a suggestion: nothing pauses
-    /// without the owner's click.
+    /// least [`mascate_kernel::ADS_LOSS_MIN_COST`]. Only ever a suggestion:
+    /// nothing pauses without the owner's click.
     pub fn suggests_pausing(&self) -> bool {
-        let cost = self.metrics.cost;
-        self.loses()
-            && cost.currency() == ADS_LOSS_MIN_COST.currency()
-            && cost.amount() >= ADS_LOSS_MIN_COST.amount()
+        self.loses() && spent_enough_to_judge(self.metrics.cost)
     }
 }
 

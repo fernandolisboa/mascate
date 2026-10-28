@@ -18,10 +18,10 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Window, div, px};
 use mascate_integrations::{SpendReading, SpendReportError, read_spend_report};
-use mascate_kernel::{Currency, Money, RecordId, channel_day, parse_amount};
+use mascate_kernel::{ChannelSpend, Currency, Money, RecordId, channel_day, parse_amount};
 use mascate_marketing::{
-    CampaignLink, ChannelKind, ChannelSpend, ImportedSpends, NewPromotionSpend, PromotionChannel,
-    PromotionSpend, PromotionSpends, SavedSpend, SpendError, SpendOrigin, SpendReport,
+    CampaignLink, ChannelKind, ImportedSpends, NewPromotionSpend, PromotionChannel, PromotionSpend,
+    PromotionSpends, SavedSpend, SpendError, SpendOrigin, SpendReport,
 };
 
 use crate::amazon_import::{count, pick_report, report_bytes, skipped_list};
@@ -36,7 +36,7 @@ pub struct AppPromotionSpends(pub Arc<PromotionSpends>);
 
 impl Global for AppPromotionSpends {}
 
-fn promotion_spends(cx: &App) -> Option<Arc<PromotionSpends>> {
+pub(crate) fn promotion_spends(cx: &App) -> Option<Arc<PromotionSpends>> {
     cx.try_global::<AppPromotionSpends>()
         .map(|app| app.0.clone())
 }

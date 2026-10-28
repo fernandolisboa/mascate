@@ -12,13 +12,13 @@ use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{
-    BreakEven, Currency, Margin, Money, PlatformError, SalesChannelKind, Timestamp,
-    channel_day_start,
+    ADS_LOSS_MIN_COST, BreakEven, Currency, Margin, Money, PlatformError, SalesChannelKind,
+    Timestamp, channel_day_start,
 };
 use mascate_marketing::{
-    ADS_HISTORY_DAYS, ADS_LOSS_MIN_COST, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState,
-    AdvertisedListing, CampaignProduct, CampaignStatus, ChannelAd, ChannelAdGroup, ChannelAds,
-    ChannelCampaign, MIGRATIONS, ProductAds, ProductRoas,
+    ADS_HISTORY_DAYS, ADS_SETTLE_DAYS, AdDay, AdMetrics, AdsSync, AdsSyncState, AdvertisedListing,
+    CampaignProduct, CampaignStatus, ChannelAd, ChannelAdGroup, ChannelAds, ChannelCampaign,
+    MIGRATIONS, ProductAds, ProductRoas,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;

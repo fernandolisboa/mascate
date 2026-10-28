@@ -507,16 +507,16 @@ mod tests {
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
     use mascate_kernel::{
-        Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId, Roas,
-        SalesChannelKind,
+        ChannelSpend, Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
+        Roas, SalesChannelKind,
     };
     use mascate_marketing::{
         AdGroupKind, AdMetrics, AdStatus, CampaignLink, CampaignStatus, CampaignStrategy,
         ChannelAd, ChannelAdGroup, ChannelAds, ChannelCampaign, ChannelKind, ChannelQuality,
-        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, ChannelSpend,
-        CopySettings, DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews,
-        MetricReading, NewPromotionChannel, NewPromotionSpend, NewReplyTemplate, NewSalesEvent,
-        OfferFacts, OfferPrice, PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource,
+        ChannelQuestion, ChannelQuestions, ChannelReputation, ChannelReview, CopySettings,
+        DEFAULT_MAXIMUM_DAILY_BUDGET, DateRule, ListedItem, ListingReviews, MetricReading,
+        NewPromotionChannel, NewPromotionSpend, NewReplyTemplate, NewSalesEvent, OfferFacts,
+        OfferPrice, PinterestBoard, PostStatus, PostTime, QualityLevel, QualitySource,
         QuestionStatus, Rating, ReportedSpend, ReputationColor, ReputationSource, Score,
         SpendReport, default_posting_times,
     };

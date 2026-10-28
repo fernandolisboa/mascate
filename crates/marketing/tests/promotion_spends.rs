@@ -9,11 +9,11 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, RecordId};
+use mascate_kernel::{ChannelSpend, Currency, Money, RecordId};
 use mascate_marketing::{
-    CampaignLink, ChannelKind, ChannelSpend, ImportedSpends, MIGRATIONS, NewPromotionChannel,
-    NewPromotionSpend, PromotionChannel, PromotionChannels, PromotionSpends, ReportedSpend,
-    SpendError, SpendOrigin, SpendReport, suggested_tag,
+    CampaignLink, ChannelKind, ImportedSpends, MIGRATIONS, NewPromotionChannel, NewPromotionSpend,
+    PromotionChannel, PromotionChannels, PromotionSpends, ReportedSpend, SpendError, SpendOrigin,
+    SpendReport, suggested_tag,
 };
 use mascate_platform::{Database, migrate};
 use proptest::prelude::*;

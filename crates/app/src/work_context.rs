@@ -5,9 +5,9 @@
 //! knows the context itself.
 
 use gpui_kit::assets::IconName;
-use mascate_affiliate::AffiliatePlatform;
+use mascate_affiliate::{AffiliateLink, AffiliatePlatform, Commission, spends_on};
 use mascate_commerce::SalesPeriod;
-use mascate_kernel::SalesChannelKind;
+use mascate_kernel::{ChannelSpend, SalesChannelKind};
 
 /// Everything, or one Platform. Mercado Livre, Shopee, Amazon and Magalu
 /// are a Sales Channel and an affiliate Platform at once; the others are
@@ -151,6 +151,22 @@ impl WorkContext {
             },
         }
     }
+
+    /// The part of each Promotion Channel's spend the context shows (#196):
+    /// all of it in All, the Platform's part elsewhere, as Affiliate weighs
+    /// it against `commissions`, the period's of every Platform, and the
+    /// live `links`.
+    pub fn spends_in(
+        self,
+        spends: &[ChannelSpend],
+        commissions: &[Commission],
+        links: &[AffiliateLink],
+    ) -> Vec<ChannelSpend> {
+        match self.affiliate_platform() {
+            None => spends.to_vec(),
+            Some(platform) => spends_on(platform, spends, commissions, links),
+        }
+    }
 }
 
 /// Closes `open`, a form or a confirmation waiting on a screen, unless it
@@ -193,9 +209,22 @@ mod tests {
     use gpui_kit::AssetSource;
     use gpui_kit::assets::Assets;
     use mascate_commerce::{ChannelShipments, OnSalesChannel, SentShipment};
-    use mascate_kernel::{PlatformError, Timestamp};
+    use mascate_kernel::{Currency, Money, PlatformError, RecordId, Timestamp};
+    use rust_decimal::Decimal;
 
     use super::*;
+
+    #[test]
+    fn all_counts_every_spend_and_a_platform_only_its_part() {
+        let spends = [ChannelSpend {
+            channel: RecordId::from_u128(1),
+            amount: Money::new(Decimal::from(50), Currency::Brl),
+        }];
+
+        assert_eq!(WorkContext::All.spends_in(&spends, &[], &[]), spends);
+        // Nothing sold through the channel and it has no link to weigh by.
+        assert!(WorkContext::Hotmart.spends_in(&spends, &[], &[]).is_empty());
+    }
 
     /// A channel that counts each shipment it is told about.
     struct CountingShipments {

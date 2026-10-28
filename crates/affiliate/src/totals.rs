@@ -36,6 +36,14 @@ impl CurrencyTotals {
         Money::new(self.approved.amount() + self.paid.amount(), self.currency)
     }
 
+    /// What the owner earns should the pending Commissions be approved.
+    pub fn reachable(&self) -> Money {
+        Money::new(
+            self.earned().amount() + self.pending.amount(),
+            self.currency,
+        )
+    }
+
     /// The sum of the Commissions in `status`; `None` for cancelled ones,
     /// which hold no money.
     pub fn of(&self, status: CommissionStatus) -> Option<Money> {

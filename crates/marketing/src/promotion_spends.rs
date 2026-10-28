@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 use libsql::{Connection, TransactionBehavior, params};
-use mascate_kernel::{Clock, IdGenerator, Money, Record, RecordId, Timestamp};
+use mascate_kernel::{ChannelSpend, Clock, IdGenerator, Money, Record, RecordId, Timestamp};
 use mascate_platform::{Database, Migration, StoredRow, StoredValueError, stored};
 use rust_decimal::Decimal;
 
@@ -195,13 +195,6 @@ pub struct ImportedSpends {
     pub changed: usize,
     /// Days already in the app as the report has them.
     pub unchanged: usize,
-}
-
-/// What a channel spent in some days, in one currency.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelSpend {
-    pub channel: RecordId,
-    pub amount: Money,
 }
 
 #[derive(Debug, thiserror::Error)]

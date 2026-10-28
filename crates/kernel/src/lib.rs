@@ -9,6 +9,7 @@ mod pause;
 mod platform;
 mod record;
 mod roas;
+mod spend;
 mod text;
 
 pub use clock::{Clock, SystemClock, Timestamp};
@@ -21,7 +22,8 @@ pub use platform::{
     mercado_livre_link, shipping_paid_by_seller,
 };
 pub use record::Record;
-pub use roas::{BreakEven, Roas};
+pub use roas::{ADS_LOSS_MIN_COST, BreakEven, Roas, spent_enough_to_judge};
+pub use spend::ChannelSpend;
 pub use text::{fold, folded_words};
 
 #[cfg(feature = "test-support")]

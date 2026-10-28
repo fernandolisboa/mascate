@@ -198,7 +198,7 @@ fn a_periods_commissions_group_by_platform_program_product_and_tag_per_currency(
         let affiliate = affiliate(&dir).await;
         let commissions = recorded(&affiliate).await;
 
-        let reports = CommissionReport::of(&commissions, GroupOrder::Earned);
+        let reports = CommissionReport::of(&commissions, &[], GroupOrder::Earned);
 
         assert_eq!(
             reports
@@ -284,7 +284,7 @@ fn groups_sort_by_the_amount_asked_with_ties_by_name() {
         let affiliate = affiliate(&dir).await;
         let commissions = recorded(&affiliate).await;
 
-        let report = |order| CommissionReport::of(&commissions, order).remove(0);
+        let report = |order| CommissionReport::of(&commissions, &[], order).remove(0);
         let platforms = |order| {
             report(order)
                 .by_platform
@@ -354,8 +354,8 @@ fn only_cancelled_sales_make_no_report() {
             .await
             .unwrap();
 
-        assert!(CommissionReport::of(&commissions, GroupOrder::Earned).is_empty());
-        assert!(CommissionReport::of(&[], GroupOrder::Earned).is_empty());
+        assert!(CommissionReport::of(&commissions, &[], GroupOrder::Earned).is_empty());
+        assert!(CommissionReport::of(&[], &[], GroupOrder::Earned).is_empty());
     });
 }
 
@@ -444,7 +444,7 @@ proptest! {
         commissions in prop::collection::vec(any_commission(), 0..40),
         order in any_order(),
     ) {
-        for report in CommissionReport::of(&commissions, order) {
+        for report in CommissionReport::of(&commissions, &[], order) {
             let expected = (report.totals, report.commissions);
             prop_assert_eq!(added_up(&report.by_platform, report.currency), expected);
             prop_assert_eq!(added_up(&report.by_program, report.currency), expected);
@@ -460,7 +460,7 @@ proptest! {
         order in any_order(),
         names in prop::collection::vec("[a-c]{0,2}", 3),
     ) {
-        for mut report in CommissionReport::of(&commissions, order) {
+        for mut report in CommissionReport::of(&commissions, &[], order) {
             let expected = (report.totals, report.commissions);
             let none_last = |report: &CommissionReport| {
                 report.by_channel.iter().skip_while(|g| g.of.is_some()).all(|g| g.of.is_none())
@@ -482,7 +482,7 @@ proptest! {
             .filter(|c| c.status != CommissionStatus::Cancelled)
             .cloned()
             .collect();
-        let reports = CommissionReport::of(&commissions, order);
+        let reports = CommissionReport::of(&commissions, &[], order);
         prop_assert_eq!(
             reports.iter().map(|report| report.totals).collect::<Vec<_>>(),
             totals_by_currency(&counted)
@@ -507,19 +507,19 @@ proptest! {
     fn groups_come_most_first_by_the_amount_asked(
         commissions in prop::collection::vec(any_commission(), 0..40),
     ) {
-        for report in CommissionReport::of(&commissions, GroupOrder::Earned) {
+        for report in CommissionReport::of(&commissions, &[], GroupOrder::Earned) {
             let most_first = report.by_product.windows(2).all(|pair| {
                 pair[0].totals.earned().amount() >= pair[1].totals.earned().amount()
             });
             prop_assert!(most_first);
         }
-        for report in CommissionReport::of(&commissions, GroupOrder::Reversed) {
+        for report in CommissionReport::of(&commissions, &[], GroupOrder::Reversed) {
             let most_first = report.by_tracking.windows(2).all(|pair| {
                 pair[0].totals.reversed.amount() >= pair[1].totals.reversed.amount()
             });
             prop_assert!(most_first);
         }
-        for report in CommissionReport::of(&commissions, GroupOrder::Name) {
+        for report in CommissionReport::of(&commissions, &[], GroupOrder::Name) {
             let programs: Vec<&ProgramRef> = report.by_program.iter().map(|g| &g.of).collect();
             prop_assert!(programs.windows(2).all(|pair| pair[0].name <= pair[1].name));
         }
@@ -529,7 +529,7 @@ proptest! {
     fn a_blank_tag_is_no_tag(
         commissions in prop::collection::vec(any_commission(), 0..40),
     ) {
-        for report in CommissionReport::of(&commissions, GroupOrder::Name) {
+        for report in CommissionReport::of(&commissions, &[], GroupOrder::Name) {
             for group in &report.by_tracking {
                 prop_assert!(group.of.as_deref().is_none_or(|tag| !tag.trim().is_empty()));
             }

@@ -6,14 +6,16 @@
 //! Order's Money Releases (ADR 0026); the capital in stock is Inventory's,
 //! at the Average Cost. Next to the margin, the period's approved and paid
 //! affiliate Commissions, read from Affiliate and summed by Finance (#81),
-//! and each linked Product's sale margin against its Commissions (#86).
+//! less the period's Promotion Spends from the Marketing (#196), and each
+//! linked Product's sale margin against its Commissions (#86).
 //! Under the figures, the period's sales and margin by Sales Channel
 //! (#127).
 
 use std::collections::BTreeMap;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
 
+use chrono::NaiveDate;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -27,7 +29,7 @@ use mascate_finance::{
 };
 use mascate_inventory::Inventory;
 use mascate_kernel::{Currency, Money, RecordId, SalesChannelKind, Timestamp};
-use mascate_marketing::ProductAds;
+use mascate_marketing::{ProductAds, PromotionSpends};
 
 use crate::ads::{self, AdsSyncs};
 use crate::affiliate::{self, CommissionChanges};
@@ -42,6 +44,7 @@ use crate::orders::{self, OrderSyncs};
 use crate::parts::ScreenParts;
 use crate::preferences;
 use crate::pricing;
+use crate::promotion_spends;
 use crate::resell_or_promote::{self, Compared};
 use crate::sales::{amount_text, margin_cell, money_cell, orders_text, table_row};
 use crate::span::{SpanChanged, SpanPicker};
@@ -130,6 +133,7 @@ struct Sources {
     inventory: Arc<Inventory>,
     volume: VolumeSources,
     affiliate: Arc<Affiliate>,
+    promotion_spends: Arc<PromotionSpends>,
 }
 
 impl Sources {
@@ -139,16 +143,19 @@ impl Sources {
             inventory: stock::inventory(cx)?,
             volume: VolumeSources::of(cx)?,
             affiliate: affiliate::affiliate(cx)?,
+            promotion_spends: promotion_spends::promotion_spends(cx)?,
         })
     }
 }
 
-/// The Painel of `during` in `context`: its Sales Channel's sales and
-/// wallet, its affiliate Platform's Commissions, and the stock, which
-/// belongs to every context.
+/// The Painel of `during`, the time of `days`, in `context`: its Sales
+/// Channel's sales and wallet, its affiliate Platform's Commissions less
+/// its part of the Promotion Spends, and the stock, which belongs to every
+/// context.
 async fn read(
     sources: Sources,
     during: Range<Timestamp>,
+    days: RangeInclusive<NaiveDate>,
     context: WorkContext,
 ) -> Result<Snapshot, String> {
     let sold = sources.sales.read(during.clone(), context).await?;
@@ -193,6 +200,21 @@ async fn read(
         releases.push((channel, summary));
     }
     let mut commissions = resell_or_promote::earned(&sources.affiliate, during).await?;
+    let spends = sources
+        .promotion_spends
+        .spent(days)
+        .await
+        .map_err(|e| format!("Não consegui ler o gasto com divulgação: {e}"))?;
+    let links = sources
+        .affiliate
+        .links()
+        .await
+        .map_err(|e| affiliate::failure(&e))?;
+    let spent: Vec<Money> = context
+        .spends_in(&spends, &commissions, &links)
+        .into_iter()
+        .map(|spend| spend.amount)
+        .collect();
     commissions.retain(|commission| context.shows_platform(commission.platform));
     let earned: Vec<EarnedCommission> = commissions
         .iter()
@@ -211,7 +233,7 @@ async fn read(
         units: stock.units(),
         releases,
         volume: finance::volume(&sources.volume).await?,
-        commissions: CommissionIncome::of(&earned),
+        commissions: CommissionIncome::of(&earned, &spent),
         compared,
     })
 }
@@ -343,12 +365,13 @@ impl DashboardScreen {
             return;
         };
         let during = self.span.read(cx).during();
+        let days = self.span.read(cx).days();
         let context = preferences::work_context(cx);
         self.reads += 1;
         let read_number = self.reads;
         let reading = cx
             .background_executor()
-            .spawn(async move { read(sources, during, context).await });
+            .spawn(async move { read(sources, during, days, context).await });
         cx.spawn(async move |this, cx| {
             let read_back = reading.await;
             let _ = this.update(cx, |this, cx| {
@@ -448,9 +471,10 @@ impl DashboardScreen {
             )
             .child(div().text_xs().text_color(t.text2).child(
                 "Comissões de afiliado: as aprovadas e pagas das vendas do período, na moeda da \
-                 plataforma e sem conversão; estornos e vendas canceladas ficam fora. O detalhe \
-                 fica em Afiliação. Capital em estoque: as unidades de hoje pelo custo médio, \
-                 qualquer que seja o período.",
+                 plataforma e sem conversão; estornos e vendas canceladas ficam fora. Resultado \
+                 da afiliação: as comissões menos o gasto com divulgação lançado em Divulgação \
+                 para os mesmos dias, na mesma moeda. O detalhe fica em Afiliação. Capital em \
+                 estoque: as unidades de hoje pelo custo médio, qualquer que seja o período.",
             ))
             .into_any_element()
     }
@@ -687,8 +711,9 @@ fn figure(label: impl Into<SharedString>, text: String, t: &Tokens) -> Div {
         )
 }
 
-/// The period's earned Commissions, one figure per currency; none earned
-/// shows as zero reais.
+/// The period's earned Commissions, one figure per currency, each followed
+/// by what is left after the Promotion Spends when something was spent;
+/// none earned shows as zero reais.
 fn commission_figures(income: &[CommissionIncome], t: &Tokens) -> Vec<Div> {
     let several = income.len() > 1;
     if income.is_empty() {
@@ -698,21 +723,44 @@ fn commission_figures(income: &[CommissionIncome], t: &Tokens) -> Vec<Div> {
             t,
         )];
     }
+    let label = |name: &str, income: &CommissionIncome| {
+        if several {
+            format!("{name} em {}", income.currency.code())
+        } else {
+            name.to_owned()
+        }
+    };
     income
         .iter()
-        .map(|income| {
-            let label = if several {
-                format!("Comissões de afiliado em {}", income.currency.code())
-            } else {
-                "Comissões de afiliado".to_owned()
-            };
-            figure(label, income.earned().to_pt_br(), t).child(
-                div().text_xs().text_color(t.text2).child(format!(
-                    "aprovadas {} · pagas {}",
-                    income.approved.to_pt_br(),
-                    income.paid.to_pt_br()
-                )),
+        .flat_map(|income| {
+            let earned = figure(
+                label("Comissões de afiliado", income),
+                income.earned().to_pt_br(),
+                t,
             )
+            .child(div().text_xs().text_color(t.text2).child(format!(
+                "aprovadas {} · pagas {}",
+                income.approved.to_pt_br(),
+                income.paid.to_pt_br()
+            )));
+            let net = (!income.spent.amount().is_zero()).then(|| {
+                let ink = if income.net().is_negative() {
+                    t.danger
+                } else {
+                    t.text
+                };
+                figure(
+                    label("Resultado da afiliação", income),
+                    income.net().to_pt_br(),
+                    t,
+                )
+                .text_color(ink)
+                .child(div().text_xs().text_color(t.text2).child(format!(
+                    "comissões menos {} de gasto com divulgação",
+                    income.spent.to_pt_br()
+                )))
+            });
+            std::iter::once(earned).chain(net)
         })
         .collect()
 }
@@ -850,6 +898,9 @@ fn wallet(channel: SalesChannelKind) -> Wallet {
 mod tests {
     use futures::executor::block_on;
     use mascate_finance::SalesVolume;
+    use mascate_marketing::{
+        ChannelKind, NewPromotionChannel, NewPromotionSpend, PromotionChannels,
+    };
 
     use super::*;
     use crate::testing::{
@@ -884,7 +935,16 @@ mod tests {
                 product_ads: None,
             },
             affiliate: store.affiliate.clone(),
+            promotion_spends: Arc::new(PromotionSpends::new(
+                database.clone(),
+                clock.clone(),
+                ids.clone(),
+            )),
         }
+    }
+
+    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
     }
 
     /// The Painel of every sale and Commission the store has, in `context`.
@@ -892,9 +952,18 @@ mod tests {
         block_on(read(
             sources(store),
             Timestamp::MIN_UTC..Timestamp::MAX_UTC,
+            day(2000, 1, 1)..=day(2100, 12, 31),
             context,
         ))
         .unwrap()
+    }
+
+    fn net(snapshot: &Snapshot) -> Vec<(Money, Money)> {
+        snapshot
+            .commissions
+            .iter()
+            .map(|income| (income.spent, income.net()))
+            .collect()
     }
 
     fn earned(snapshot: &Snapshot) -> Vec<Money> {
@@ -968,5 +1037,47 @@ mod tests {
         assert_eq!(earned(&hotmart), [brl(HOTMART_EARNED)]);
         // The stock belongs to every context.
         assert_eq!(hotmart.capital, mercado_livre.capital);
+    }
+
+    #[test]
+    fn the_affiliate_result_is_what_was_earned_less_the_context_s_promotion_spend() {
+        let store = block_on(Store::selling_and_promoting());
+        let spends = sources(&store).promotion_spends;
+        block_on(async {
+            let channel = PromotionChannels::new(
+                store.database.clone(),
+                store.clock.clone(),
+                store.ids.clone(),
+            )
+            .create(&NewPromotionChannel {
+                name: "Anúncio na Meta".into(),
+                kind: ChannelKind::PaidSocial,
+                default_tag: "meta".into(),
+                keywords: Vec::new(),
+                telegram_chat: None,
+            })
+            .await
+            .unwrap();
+            spends
+                .record(&NewPromotionSpend {
+                    channel: channel.id,
+                    first_day: day(2026, 10, 1),
+                    last_day: day(2026, 10, 10),
+                    amount: brl(50),
+                })
+                .await
+                .unwrap();
+        });
+
+        let all = painel(&store, WorkContext::All);
+        assert_eq!(earned(&all), [brl(HOTMART_EARNED + SHOPEE_EARNED)]);
+        assert_eq!(
+            net(&all),
+            [(brl(50), brl(HOTMART_EARNED + SHOPEE_EARNED - 50))]
+        );
+        // Nothing sold through the campaign and it has no link: no
+        // Platform's context takes a part of it.
+        let hotmart = painel(&store, WorkContext::Hotmart);
+        assert_eq!(net(&hotmart), [(brl(0), brl(HOTMART_EARNED))]);
     }
 }
