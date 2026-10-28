@@ -1,0 +1,17 @@
+{
+  "message": "Validation error",
+  "error": "validation_error",
+  "status": 400,
+  "cause": [
+    {
+      "department": "items",
+      "cause_id": 2108,
+      "type": "error",
+      "code": "item.sale_terms.manufacturing_time.invalid",
+      "references": [
+        "item.sale_terms"
+      ],
+      "message": "MANUFACTURING_TIME cannot be greater than 60 days"
+    }
+  ]
+}

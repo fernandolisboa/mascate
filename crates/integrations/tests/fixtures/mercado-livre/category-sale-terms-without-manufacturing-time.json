@@ -1,0 +1,20 @@
+[
+  {
+    "id": "WARRANTY_TYPE",
+    "name": "Tipo de garantia",
+    "tags": {
+      "hidden": true
+    },
+    "hierarchy": "SALE_TERMS",
+    "relevance": 2,
+    "value_type": "list",
+    "values": [
+      {
+        "id": "2230280",
+        "name": "Garantia do vendedor"
+      }
+    ],
+    "attribute_group_id": "OTHERS",
+    "attribute_group_name": "Outros"
+  }
+]

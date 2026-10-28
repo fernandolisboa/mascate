@@ -5,7 +5,10 @@
 //! the price simulator. A price reaches Mercado Livre only when the owner
 //! sends it. The stock of each linked listing follows the app's (#18): the
 //! queue shows what is still to send and why it did not go, and each
-//! listing can be paused and reactivated.
+//! listing can be paused and reactivated. A Mercado Livre listing can be
+//! sold on order (#207, ADR 0038): the owner sets the days to be ready and
+//! how many orders it takes at once, and its stock becomes the orders that
+//! still fit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -21,12 +24,15 @@ use gpui_kit::{
 };
 use mascate_catalog::{Catalog, Product};
 use mascate_commerce::{
-    CatalogProduct, Listing, ListingError, ListingStatus, ListingSync, ListingToLink, Listings,
-    MirroredStock, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
+    CatalogProduct, Listing, ListingAvailability, ListingError, ListingStatus, ListingSync,
+    ListingToLink, Listings, MAX_AVAILABILITY_DAYS, MirroredStock, OnOrderListing, OnOrderTerms,
+    OrderSlots, PriceBreakdown, PriceScenario, PriceSuggestion, PricingError, SaleFee,
     SalesChannel, SentPrice, SentPriceState, StockSend, SuggestedBy,
 };
 use mascate_integrations::ConnectionState;
-use mascate_kernel::{Money, Percentage, RecordId, SalesChannelKind, Timestamp, parse_amount};
+use mascate_kernel::{
+    Money, Percentage, PlatformError, RecordId, SalesChannelKind, Timestamp, parse_amount,
+};
 use rust_decimal::Decimal;
 
 use crate::ad_groups;
@@ -230,6 +236,7 @@ impl Simulator {
 struct Snapshot {
     listings: Vec<Listing>,
     mirrored: Vec<MirroredStock>,
+    on_order: Vec<OnOrderListing>,
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
@@ -241,6 +248,8 @@ pub struct ListingsScreen {
     listings: Vec<Listing>,
     /// How each listing's stock follows the app's, by listing.
     mirrored: Vec<MirroredStock>,
+    /// The listings sold on order, with their terms.
+    on_order: Vec<OnOrderListing>,
     to_link: Vec<ListingToLink>,
     products: Vec<Product>,
     last_sync: Option<Timestamp>,
@@ -263,6 +272,10 @@ pub struct ListingsScreen {
     /// The outcome of the last step on a row.
     row_outcome: Option<Outcome>,
     price: Option<PricePanel>,
+    /// The listing whose on-order terms are open below its row.
+    on_order_form: Option<RecordId>,
+    on_order_days: Entity<InputState>,
+    on_order_accepted: Entity<InputState>,
     simulator: Simulator,
     drafts: Entity<DraftsSection>,
     channel_filter: ChannelFilter,
@@ -296,6 +309,7 @@ impl ListingsScreen {
         let mut screen = Self {
             listings: Vec::new(),
             mirrored: Vec::new(),
+            on_order: Vec::new(),
             to_link: Vec::new(),
             products: Vec::new(),
             last_sync: None,
@@ -311,6 +325,9 @@ impl ListingsScreen {
             outcome: None,
             row_outcome: None,
             price: None,
+            on_order_form: None,
+            on_order_days: input("15", window, cx),
+            on_order_accepted: input("3", window, cx),
             simulator,
             drafts,
             channel_filter: ChannelFilter::default(),
@@ -340,9 +357,11 @@ impl ListingsScreen {
                 .map(|listing| listing.channel)
         };
         let (mut step, mut price) = (self.step.take(), self.price.take());
+        let mut on_order_form = self.on_order_form.take();
         work_context::close_outside(&mut step, context, |(id, _)| channel_of(*id));
         work_context::close_outside(&mut price, context, |panel| channel_of(panel.listing));
-        (self.step, self.price) = (step, price);
+        work_context::close_outside(&mut on_order_form, context, |id| channel_of(*id));
+        (self.step, self.price, self.on_order_form) = (step, price, on_order_form);
         self.drafts
             .update(cx, |drafts, cx| drafts.follow_context(window, cx));
         cx.notify();
@@ -385,6 +404,7 @@ impl ListingsScreen {
                 Ok::<_, String>(Snapshot {
                     listings: listings.listings().await.map_err(|e| failure(&e))?,
                     mirrored: mirror.mirrored().await.map_err(|e| failure(&e))?,
+                    on_order: listings.on_order().await.map_err(|e| failure(&e))?,
                     to_link: listings.to_link(&known).await.map_err(|e| failure(&e))?,
                     last_sync: listings.last_sync().await.map_err(|e| failure(&e))?,
                     connections: reach.states(),
@@ -421,7 +441,7 @@ impl ListingsScreen {
     /// Shows a failure where the owner acted: the open row, or the screen.
     fn failed(&mut self, error: String) {
         let text = Outcome::Failed(error.into());
-        if self.step.is_some() || self.price.is_some() {
+        if self.row_open() {
             self.row_outcome = Some(text);
         } else {
             self.outcome = Some(text);
@@ -451,13 +471,27 @@ impl ListingsScreen {
         }) {
             self.price = None;
         }
+        if self.on_order_form.is_some_and(|open| {
+            !snapshot
+                .listings
+                .iter()
+                .any(|listing| listing.id == open && listing.listed.status != ListingStatus::Closed)
+        }) {
+            self.on_order_form = None;
+        }
         self.listings = snapshot.listings;
         self.mirrored = snapshot.mirrored;
+        self.on_order = snapshot.on_order;
         self.to_link = snapshot.to_link;
         self.products = snapshot.products;
         self.last_sync = snapshot.last_sync;
         self.connections = snapshot.connections;
         self.ads = snapshot.ads;
+    }
+
+    /// Whether a row is open below a listing, where its outcome shows.
+    fn row_open(&self) -> bool {
+        self.step.is_some() || self.price.is_some() || self.on_order_form.is_some()
     }
 
     /// Whether any Sales Channel is connected.
@@ -485,6 +519,7 @@ impl ListingsScreen {
         self.outcome = None;
         self.step = None;
         self.price = None;
+        self.on_order_form = None;
         self.syncing = true;
         self.run(
             window,
@@ -617,6 +652,7 @@ impl ListingsScreen {
         self.outcome = None;
         self.step = None;
         self.price = None;
+        self.on_order_form = None;
         self.run(
             window,
             cx,
@@ -645,6 +681,236 @@ impl ListingsScreen {
         );
     }
 
+    /// The on-order mark of `listing`, when it is sold on order.
+    fn on_order_of(&self, listing: RecordId) -> Option<&OnOrderListing> {
+        self.on_order.iter().find(|mark| mark.listing == listing)
+    }
+
+    /// The Sales Channel `listing` is on, with the port its days to be
+    /// ready go through; `None` on a channel that shows none.
+    fn availability_of(
+        &self,
+        listing: RecordId,
+        cx: &App,
+    ) -> Option<(SalesChannelKind, Arc<dyn ListingAvailability>)> {
+        let kind = self
+            .listings
+            .iter()
+            .find(|known| known.id == listing)?
+            .channel;
+        sales_channels::of(cx, kind)?
+            .availability
+            .map(|port| (kind, port))
+    }
+
+    /// Opens the on-order terms below the listing's row, filled with the
+    /// ones it has when it is sold on order already.
+    fn open_on_order(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        self.step = None;
+        self.price = None;
+        self.outcome = None;
+        self.row_outcome = None;
+        self.on_order_form = Some(listing);
+        let (days, accepted) = self
+            .on_order_of(listing)
+            .map(|mark| {
+                (
+                    mark.terms.availability_days.to_string(),
+                    mark.terms.accepted_orders.to_string(),
+                )
+            })
+            .unwrap_or_default();
+        self.on_order_days
+            .update(cx, |input, cx| input.set_value(days, window, cx));
+        self.on_order_accepted
+            .update(cx, |input, cx| input.set_value(accepted, window, cx));
+        cx.notify();
+    }
+
+    fn close_on_order(&mut self, cx: &mut Context<Self>) {
+        self.on_order_form = None;
+        self.row_outcome = None;
+        cx.notify();
+    }
+
+    /// Sells the listing on order with the terms typed, every variation of
+    /// it included: the days go to the channel only on the owner's click,
+    /// and its stock becomes the orders that still fit.
+    fn mark_on_order(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((kind, channel)) = self.availability_of(listing, cx) else {
+            return;
+        };
+        let typed = |field: &Entity<InputState>| field.read(cx).value().trim().parse::<u32>().ok();
+        let (Some(availability_days), Some(accepted_orders)) =
+            (typed(&self.on_order_days), typed(&self.on_order_accepted))
+        else {
+            self.row_outcome = Some(Outcome::Failed(
+                "Digite em números inteiros os dias para ter o produto (1 a 60) e quantas \
+                 encomendas o anúncio aceita ao mesmo tempo."
+                    .into(),
+            ));
+            cx.notify();
+            return;
+        };
+        let terms = OnOrderTerms {
+            availability_days,
+            accepted_orders,
+        };
+        self.row_outcome = None;
+        self.run(
+            window,
+            cx,
+            move |listings, _| async move {
+                listings
+                    .mark_on_order(listing, terms, channel.as_ref())
+                    .await
+                    .map(Some)
+                    .map_err(|e| on_order_failure(kind, &e))
+            },
+            move |this, marked: Vec<OnOrderListing>, _, cx| {
+                this.on_order_form = None;
+                // Its share goes to the product's other listings, and the
+                // orders that still fit go to it.
+                stock_mirror::send_after_movement(cx);
+                this.outcome = Some(Outcome::Done(marked_text(kind, terms, marked.len()).into()));
+            },
+        );
+    }
+
+    /// Stops selling the listing on order, every variation of it included:
+    /// the days leave the channel first, only on the owner's click.
+    fn unmark_on_order(&mut self, listing: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((kind, channel)) = self.availability_of(listing, cx) else {
+            return;
+        };
+        self.outcome = None;
+        self.step = None;
+        self.price = None;
+        self.on_order_form = None;
+        self.run(
+            window,
+            cx,
+            move |listings, _| async move {
+                listings
+                    .unmark_on_order(listing, channel.as_ref())
+                    .await
+                    .map(Some)
+                    .map_err(|e| on_order_failure(kind, &e))
+            },
+            move |this, unmarked: Vec<RecordId>, _, cx| {
+                stock_mirror::send_after_movement(cx);
+                let on = sales_channels::on(kind);
+                let variations = match unmarked.len() {
+                    0 | 1 => String::new(),
+                    count => format!(", com as {count} variações dele"),
+                };
+                this.outcome = Some(Outcome::Done(
+                    format!(
+                        "O anúncio deixou de vender sob encomenda {on}{variations}: o prazo saiu \
+                         do anúncio, e ele volta a receber parte do estoque do produto no \
+                         próximo envio."
+                    )
+                    .into(),
+                ));
+            },
+        );
+    }
+
+    /// The on-order terms of `listing`, below its row: what selling on
+    /// order does, the days and the orders accepted. On a channel without
+    /// days to be ready, why it is not offered.
+    fn render_on_order(&self, listing: &Listing, cx: &mut Context<Self>) -> AnyElement {
+        let t = look(cx).tokens;
+        let id = listing.id;
+        let kind = listing.channel;
+        let close = Button::new("close-on-order")
+            .label(if self.availability_of(id, cx).is_some() {
+                "Cancelar"
+            } else {
+                "Fechar"
+            })
+            .ghost()
+            .small()
+            .on_click(cx.listener(|this, _, _, cx| this.close_on_order(cx)));
+        let heading = div().font_medium().child("Vender sob encomenda");
+        let body = if self.availability_of(id, cx).is_none() {
+            v_flex()
+                .gap_2()
+                .child(kit::info_notice(
+                    format!(
+                        "Vender sob encomenda só funciona no Mercado Livre: {} não mostra, pela \
+                         API, um prazo para ter o produto no anúncio.",
+                        sales_channels::the(kind)
+                    ),
+                    cx,
+                ))
+                .child(h_flex().child(close))
+        } else {
+            let marked = self.on_order_of(id).is_some();
+            let siblings = self
+                .listings
+                .iter()
+                .filter(|other| other.channel == kind && other.listed.id == listing.listed.id)
+                .count();
+            let field = |label: &'static str, input: &Entity<InputState>| {
+                v_flex()
+                    .gap_1()
+                    .w(px(200.))
+                    .child(div().text_xs().font_medium().child(label))
+                    .child(Input::new(input).small())
+            };
+            v_flex()
+                .gap_2()
+                .child(div().text_xs().text_color(t.text2).child(format!(
+                    "Você vende antes e compra depois da venda; o produto passa pela sua casa e \
+                     sai com a etiqueta do Mercado Livre. O anúncio mostra o prazo para ter o \
+                     produto (até {MAX_AVAILABILITY_DAYS} dias) e deixa de receber parte do \
+                     estoque: o estoque dele no canal passa a ser as encomendas que ainda cabem. \
+                     O Mercado Livre mostra antes os anúncios com estoque e não aceita o prazo \
+                     em anúncio com Flex ou no Full."
+                )))
+                .when(siblings > 1, |form| {
+                    form.child(div().text_xs().text_color(t.text2).child(format!(
+                        "O prazo vale para as {siblings} variações do anúncio, e cada uma aceita \
+                         as suas encomendas."
+                    )))
+                })
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .items_end()
+                        .child(field("Dias para ter o produto", &self.on_order_days))
+                        .child(field("Encomendas ao mesmo tempo", &self.on_order_accepted))
+                        .child(
+                            Button::new("confirm-on-order")
+                                .label(if marked {
+                                    "Salvar"
+                                } else {
+                                    "Vender sob encomenda"
+                                })
+                                .primary()
+                                .small()
+                                .loading(self.busy)
+                                .disabled(self.busy || !self.connected())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.mark_on_order(id, window, cx)
+                                })),
+                        )
+                        .child(close),
+                )
+        };
+        v_flex()
+            .gap_2()
+            .pt_3()
+            .border_t(t.border_width)
+            .border_color(t.frame)
+            .child(heading)
+            .child(body)
+            .children(self.row_outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .into_any_element()
+    }
+
     fn open_step(
         &mut self,
         listing: RecordId,
@@ -654,6 +920,7 @@ impl ListingsScreen {
     ) {
         self.step = Some((listing, step));
         self.price = None;
+        self.on_order_form = None;
         self.row_outcome = None;
         self.outcome = None;
         let Some(entry) = self
@@ -792,6 +1059,7 @@ impl ListingsScreen {
         self.outcome = None;
         self.step = None;
         self.price = None;
+        self.on_order_form = None;
         self.run(
             window,
             cx,
@@ -823,6 +1091,7 @@ impl ListingsScreen {
             return;
         };
         self.step = None;
+        self.on_order_form = None;
         self.outcome = None;
         self.row_outcome = None;
         let products = self.products.clone();
@@ -1217,7 +1486,11 @@ impl ListingsScreen {
     /// one did.
     fn render_stock(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = look(cx).tokens;
-        if self.mirrored.iter().all(|stock| stock.on_hand.is_none()) {
+        if self
+            .mirrored
+            .iter()
+            .all(|stock| stock.on_hand.is_none() && stock.on_order.is_none())
+        {
             return None;
         }
         let queue: Vec<(&Listing, &MirroredStock)> = self
@@ -1284,9 +1557,14 @@ impl ListingsScreen {
                 None => listed.title.clone(),
             };
             let change = format!(
-                "{}: {} → parte: {}",
+                "{}: {} → {}: {}",
                 sales_channels::on(listing.channel),
                 listed.available_quantity,
+                if stock.on_order.is_some() {
+                    "encomendas"
+                } else {
+                    "parte"
+                },
                 stock.to_send.unwrap_or_default()
             );
             section = section.child(
@@ -1383,7 +1661,14 @@ impl ListingsScreen {
                         status_name(listed.status),
                         status_ink(listed.status, &t),
                         cx,
-                    )),
+                    ))
+                    .children(self.on_order_of(listing.id).map(|mark| {
+                        kit::tag(
+                            format!("Sob encomenda · {}", days(mark.terms.availability_days)),
+                            t.accent_text,
+                            cx,
+                        )
+                    })),
             )
             .children(
                 listed
@@ -1668,11 +1953,53 @@ impl ListingsScreen {
                         this.change_status(id, pause, window, cx)
                     }))
             });
-        let stock_line = listing
-            .product
-            .filter(|_| follows)
-            .map(|_| stock_line(listing, self.stock_of(id)))
-            .map(|text| div().text_xs().text_color(t.text2).child(text));
+        let on_order = self.on_order_of(id);
+        let stock_line = match (on_order, self.stock_of(id)) {
+            (Some(mark), Some(stock)) if follows => Some(on_order_line(listing, mark, stock)),
+            _ => listing
+                .product
+                .filter(|_| follows)
+                .map(|_| stock_line(listing, self.stock_of(id))),
+        }
+        .map(|text| div().text_xs().text_color(t.text2).child(text));
+        let on_order_actions = (listing.listed.status != ListingStatus::Closed).then(|| {
+            let sells_on_order = self.availability_of(id, cx).is_some();
+            h_flex().gap_2().flex_wrap().map(|row| match on_order {
+                Some(_) => row
+                    .child(
+                        Button::new(("change-on-order", index))
+                            .label("Mudar prazo ou encomendas")
+                            .ghost()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_on_order(id, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("unmark-on-order", index))
+                            .label("Deixar de vender sob encomenda")
+                            .ghost()
+                            .small()
+                            .disabled(self.busy || !self.connected())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.unmark_on_order(id, window, cx)
+                            })),
+                    ),
+                None => row.child(
+                    Button::new(("open-on-order", index))
+                        .label("Vender sob encomenda")
+                        .ghost()
+                        .small()
+                        .disabled(self.busy || (sells_on_order && !self.connected()))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_on_order(id, window, cx)
+                        })),
+                ),
+            })
+        });
+        let on_order_form =
+            (self.on_order_form == Some(id)).then(|| self.render_on_order(listing, cx));
         let panel = self
             .price
             .as_ref()
@@ -1683,7 +2010,7 @@ impl ListingsScreen {
             .p_3()
             .rounded(t.radius_lg)
             .border(t.border_width)
-            .border_color(if panel.is_some() {
+            .border_color(if panel.is_some() || on_order_form.is_some() {
                 t.accent_edge
             } else {
                 t.frame
@@ -1698,6 +2025,8 @@ impl ListingsScreen {
                     .children(status_button),
             )
             .children(stock_line)
+            .children(on_order_actions)
+            .children(on_order_form)
             .children(panel)
             .into_any_element()
     }
@@ -1721,7 +2050,7 @@ impl Render for ListingsScreen {
                 .notices
                 .push(kit::info_notice(text, cx).into_any_element());
         }
-        if self.step.is_none() && self.price.is_none() {
+        if !self.row_open() {
             parts
                 .notices
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
@@ -1901,6 +2230,84 @@ fn stock_line(listing: &Listing, stock: Option<&MirroredStock>) -> String {
     }
 }
 
+/// How an On-Order Listing's stock follows the orders it takes, in one
+/// line.
+fn on_order_line(listing: &Listing, mark: &OnOrderListing, stock: &MirroredStock) -> String {
+    let on = sales_channels::on(listing.channel);
+    let accepted = orders(mark.terms.accepted_orders);
+    if listing.listed.status == ListingStatus::Paused {
+        return format!(
+            "Sob encomenda, com prazo de {} e até {accepted} ao mesmo tempo. Pausado por você: \
+             ao reativar, mostra as encomendas que ainda cabem.",
+            days(mark.terms.availability_days)
+        );
+    }
+    let slots = stock.on_order.unwrap_or(OrderSlots {
+        accepted: mark.terms.accepted_orders,
+        waiting: 0,
+    });
+    let waiting = match slots.waiting {
+        0 => "nenhuma esperando despacho".to_owned(),
+        1 => "1 unidade esperando despacho".to_owned(),
+        count => format!("{count} unidades esperando despacho"),
+    };
+    let open = match slots.open() {
+        0 => format!("nenhuma vaga {on}"),
+        1 => format!("1 vaga {on}"),
+        count => format!("{count} vagas {on}"),
+    };
+    let shown = match (stock.to_send, stock.last_sent) {
+        (Some(_), _) => format!("{open}, na fila para enviar"),
+        (None, Some(sent)) => format!("{open}, enviadas em {}", catalog::day_and_time(sent.at)),
+        (None, None) => open,
+    };
+    format!(
+        "Sob encomenda: aceita até {accepted} ao mesmo tempo, {waiting}; {shown}. Não recebe \
+         parte do estoque do produto."
+    )
+}
+
+fn days(count: u32) -> String {
+    match count {
+        1 => "1 dia".into(),
+        count => format!("{count} dias"),
+    }
+}
+
+fn orders(count: u32) -> String {
+    match count {
+        1 => "1 encomenda".into(),
+        count => format!("{count} encomendas"),
+    }
+}
+
+/// What marking a listing as on-order did, in one line.
+fn marked_text(kind: SalesChannelKind, terms: OnOrderTerms, listings: usize) -> String {
+    let variations = match listings {
+        0 | 1 => String::new(),
+        count => format!(", com as {count} variações dele"),
+    };
+    format!(
+        "Anúncio à venda sob encomenda {}{variations}: prazo de {} para ter o produto e até {} \
+         ao mesmo tempo. O estoque dele no canal vai no próximo envio.",
+        sales_channels::on(kind),
+        days(terms.availability_days),
+        orders(terms.accepted_orders)
+    )
+}
+
+/// Why selling a listing on order, or no longer, failed, as the owner
+/// reads it.
+fn on_order_failure(kind: SalesChannelKind, error: &ListingError) -> String {
+    match error {
+        ListingError::Platform(PlatformError::Refused(why)) => format!(
+            "{} recusou o prazo para ter o produto: {why}. O anúncio continua como estava.",
+            sales_channels::opening(kind)
+        ),
+        _ => channel_failure(kind, error),
+    }
+}
+
 fn units(count: u32) -> String {
     match count {
         1 => "1 unidade".into(),
@@ -1994,6 +2401,12 @@ pub(crate) fn channel_failure(kind: SalesChannelKind, error: &ListingError) -> S
              continuaria pausado. Dê entrada no estoque em Compras: quando o estoque chega ao \
              anúncio, o Mercado Livre reativa sozinho o que pausou por falta de estoque."
             .into(),
+        ListingError::InvalidAvailability => {
+            format!("O prazo para ter o produto vai de 1 a {MAX_AVAILABILITY_DAYS} dias.")
+        }
+        ListingError::NoOrdersAccepted => {
+            "O anúncio precisa aceitar pelo menos 1 encomenda ao mesmo tempo.".into()
+        }
         ListingError::OtherChannel { listing, channel } => format!(
             "Esse anúncio é {}, não {}; a lista foi atualizada.",
             sales_channels::of_channel(*listing),

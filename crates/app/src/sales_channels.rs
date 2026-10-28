@@ -13,8 +13,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Global, Window, div, px};
 use mascate_commerce::{
     ChannelBilling, ChannelOrders, ChannelPayments, ChannelPriceAutomation, ChannelPromotions,
-    ChannelRanking, ChannelShipments, FeaturedOfferPrices, ListingPublisher, RepricingPort,
-    SalesChannel, ShippingLabels,
+    ChannelRanking, ChannelShipments, FeaturedOfferPrices, ListingAvailability, ListingPublisher,
+    RepricingPort, SalesChannel, ShippingLabels,
 };
 use mascate_integrations::{Connection, ConnectionState, Connections};
 use mascate_kernel::{PlatformError, SalesChannelKind};
@@ -50,6 +50,9 @@ pub struct ChannelPorts {
     /// What the owner's ads cost (#27, #183); absent where the channel
     /// has no ads API.
     pub ads: Option<Arc<dyn ChannelAds>>,
+    /// Where an On-Order Listing's days to be ready go (#207); only
+    /// Mercado Livre shows them.
+    pub availability: Option<Arc<dyn ListingAvailability>>,
 }
 
 /// The port a Sales Channel reprices through (#135).
