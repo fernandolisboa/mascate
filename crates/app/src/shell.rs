@@ -26,7 +26,7 @@ use crate::preferences;
 use crate::products::ProductsScreen;
 use crate::promotion_channels::PromotionScreen;
 use crate::promotions::PromotionsScreen;
-use crate::purchases::PurchasesScreen;
+use crate::purchases::{BuyForSale, PurchasesScreen};
 use crate::quality::QualityScreen;
 use crate::question_alerts::OpenQuestions;
 use crate::questions::QuestionsScreen;
@@ -178,6 +178,14 @@ impl Shell {
                 },
             ),
             cx.subscribe_in(
+                &home.read(cx).order_alerts.clone(),
+                window,
+                |shell, _, buy: &BuyForSale, window, cx| shell.buy_for(buy, window, cx),
+            ),
+            cx.subscribe_in(&orders, window, |shell, _, buy: &BuyForSale, window, cx| {
+                shell.buy_for(buy, window, cx)
+            }),
+            cx.subscribe_in(
                 &home.read(cx).event_alerts.clone(),
                 window,
                 |shell, _, _: &OpenCalendar, window, cx| {
@@ -236,6 +244,16 @@ impl Shell {
             self.switch_context(WorkContext::All, window, cx);
         }
         self.place = place;
+    }
+
+    /// Opens Compras with a new Purchase Order filled in for a sale on an
+    /// On-Order Listing.
+    fn buy_for(&mut self, buy: &BuyForSale, window: &mut Window, cx: &mut Context<Self>) {
+        self.purchases.update(cx, |purchases, cx| {
+            purchases.buy_for(buy.0.clone(), window, cx)
+        });
+        self.go(Place::Purchases, window, cx);
+        cx.notify();
     }
 
     fn open_product(&mut self, product: RecordId, window: &mut Window, cx: &mut Context<Self>) {

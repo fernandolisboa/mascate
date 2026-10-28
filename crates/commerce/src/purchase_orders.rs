@@ -1,4 +1,6 @@
-//! Purchase Orders to Suppliers, and receiving them into stock.
+//! Purchase Orders to Suppliers, and receiving them into stock. One bought
+//! for a sale on an On-Order Listing stays linked to the Order line it
+//! serves (ADR 0038).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -116,6 +118,8 @@ pub struct PurchaseOrder {
     pub receipts: Vec<Receipt>,
     pub shipped_at: Option<Timestamp>,
     pub cancelled_at: Option<Timestamp>,
+    /// The Order line it was bought for, if any.
+    pub order_line: Option<RecordId>,
 }
 
 impl PurchaseOrder {
@@ -182,6 +186,10 @@ pub enum PurchaseOrderError {
     Currencies(#[from] CurrencyMismatch),
     #[error("no Purchase Order {0}")]
     UnknownPurchaseOrder(RecordId),
+    #[error("no Order line {0}")]
+    UnknownOrderLine(RecordId),
+    #[error("the Order line already has a Purchase Order not cancelled")]
+    AlreadyBought,
     #[error("the Purchase Order has no item {0}")]
     UnknownLine(RecordId),
     #[error("units of this Purchase Order already came into stock")]
@@ -261,6 +269,28 @@ pub(crate) const CREATE_PURCHASE_ORDERS: Migration = Migration {
         ON commerce_purchase_receipt_lines (receipt_id);",
 };
 
+/// A table of its own, not a column on the Purchase Order: the Order line
+/// points to its Stock Movement, which points back to the Purchase Order
+/// it came in with, and the Merge Import needs references that never go
+/// round.
+pub(crate) const LINK_TO_ORDER_LINES: Migration = Migration {
+    version: 17,
+    name: "link purchase orders to the order line they serve",
+    risky: false,
+    sql: "CREATE TABLE commerce_purchase_order_sales (
+        id                TEXT PRIMARY KEY,
+        purchase_order_id TEXT NOT NULL REFERENCES commerce_purchase_orders (id),
+        order_line_id     TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL,
+        deleted_at        TEXT
+    );
+    CREATE UNIQUE INDEX commerce_purchase_order_sales_by_order
+        ON commerce_purchase_order_sales (purchase_order_id) WHERE deleted_at IS NULL;
+    CREATE INDEX commerce_purchase_order_sales_by_line
+        ON commerce_purchase_order_sales (order_line_id) WHERE deleted_at IS NULL;",
+};
+
 /// Purchase Orders, and the Inventory their receipts bring units into.
 pub struct PurchaseOrders {
     database: Arc<Database>,
@@ -304,12 +334,34 @@ impl PurchaseOrders {
         &self,
         order: NewPurchaseOrder,
     ) -> Result<PurchaseOrder, PurchaseOrderError> {
+        self.insert(order, None).await
+    }
+
+    /// Registers a Purchase Order bought for the sale on `order_line`, as
+    /// purchased, linked to it; the line takes one not cancelled at a
+    /// time.
+    pub async fn create_for_order_line(
+        &self,
+        order_line: RecordId,
+        order: NewPurchaseOrder,
+    ) -> Result<PurchaseOrder, PurchaseOrderError> {
+        self.insert(order, Some(order_line)).await
+    }
+
+    async fn insert(
+        &self,
+        order: NewPurchaseOrder,
+        order_line: Option<RecordId>,
+    ) -> Result<PurchaseOrder, PurchaseOrderError> {
         check(&order)?;
         let record = self.new_record();
         let connection = self.writer().await?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
+        if let Some(line) = order_line {
+            refuse_link(&transaction, line).await?;
+        }
         let at = stored(record.created_at);
         transaction
             .execute(
@@ -322,10 +374,25 @@ impl PurchaseOrders {
                     day(order.ordered_on),
                     order.freight.amount().to_string(),
                     order.freight.currency().code(),
-                    at
+                    at.clone()
                 ],
             )
             .await?;
+        if let Some(line) = order_line {
+            transaction
+                .execute(
+                    "INSERT INTO commerce_purchase_order_sales
+                         (id, purchase_order_id, order_line_id, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![
+                        self.ids.next_id().to_string(),
+                        record.id.to_string(),
+                        line.to_string(),
+                        at
+                    ],
+                )
+                .await?;
+        }
         self.insert_lines(&transaction, record.id, &order.lines)
             .await?;
         transaction.commit().await?;
@@ -583,6 +650,35 @@ fn check(order: &NewPurchaseOrder) -> Result<(), PurchaseOrderError> {
     Ok(())
 }
 
+/// Refuses to link a new Purchase Order to `line` when the line is
+/// unknown or already has one not cancelled.
+async fn refuse_link(on: &Connection, line: RecordId) -> Result<(), PurchaseOrderError> {
+    let mut rows = on
+        .query(
+            "SELECT EXISTS (SELECT 1 FROM commerce_order_lines
+                            WHERE id = ?1 AND deleted_at IS NULL),
+                    EXISTS (SELECT 1 FROM commerce_purchase_order_sales sale
+                            JOIN commerce_purchase_orders purchase
+                                ON purchase.id = sale.purchase_order_id
+                            WHERE sale.order_line_id = ?1 AND sale.deleted_at IS NULL
+                                AND purchase.deleted_at IS NULL
+                                AND purchase.cancelled_at IS NULL)",
+            params![line.to_string()],
+        )
+        .await?;
+    let (known, bought) = match rows.next().await? {
+        Some(row) => (row.get::<i64>(0)? != 0, row.get::<i64>(1)? != 0),
+        None => (false, false),
+    };
+    if !known {
+        Err(PurchaseOrderError::UnknownOrderLine(line))
+    } else if bought {
+        Err(PurchaseOrderError::AlreadyBought)
+    } else {
+        Ok(())
+    }
+}
+
 fn refuse_cancelled(order: &PurchaseOrder) -> Result<(), PurchaseOrderError> {
     match order.status() {
         PurchaseOrderStatus::Cancelled => Err(PurchaseOrderError::Cancelled),
@@ -617,10 +713,13 @@ async fn read(
     let only = only.map(|id| id.to_string());
     let mut rows = on
         .query(
-            "SELECT id, supplier_id, ordered_on, freight, currency, shipped_at, cancelled_at
-             FROM commerce_purchase_orders
-             WHERE deleted_at IS NULL AND (?1 IS NULL OR id = ?1)
-             ORDER BY ordered_on DESC, created_at DESC, id DESC",
+            "SELECT o.id, o.supplier_id, o.ordered_on, o.freight, o.currency, o.shipped_at,
+                 o.cancelled_at, sale.order_line_id
+             FROM commerce_purchase_orders o
+             LEFT JOIN commerce_purchase_order_sales sale
+                 ON sale.purchase_order_id = o.id AND sale.deleted_at IS NULL
+             WHERE o.deleted_at IS NULL AND (?1 IS NULL OR o.id = ?1)
+             ORDER BY o.ordered_on DESC, o.created_at DESC, o.id DESC",
             params![only.clone()],
         )
         .await?;
@@ -638,6 +737,7 @@ async fn read(
             receipts: Vec::new(),
             shipped_at: row.optional_time_at(5)?,
             cancelled_at: row.optional_time_at(6)?,
+            order_line: row.optional_id_at(7)?,
         });
     }
 

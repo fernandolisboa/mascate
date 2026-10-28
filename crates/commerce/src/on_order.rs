@@ -3,13 +3,19 @@
 //! takes to be ready, and the listing takes as many orders at once as the
 //! owner accepts: the Stock Mirror sends it the orders that still fit
 //! instead of a Stock Share. Only the owner marks and unmarks; the app
-//! never does it by itself.
+//! never does it by itself. A sale on it waits for the units of a Purchase
+//! Order the owner buys for it (#208).
+
+use std::collections::HashMap;
 
 use libsql::{Connection, TransactionBehavior, params};
 use mascate_kernel::{PlatformError, RecordId, Timestamp};
 use mascate_platform::{Migration, StoredRow, stored};
 
-use crate::{ListingError, Listings, OnSalesChannel};
+use crate::{
+    LineStock, ListingError, Listings, OnSalesChannel, Order, OrderError, OrderLine, OrderStatus,
+    Orders, StockShort,
+};
 
 pub(crate) const CREATE_ON_ORDER_LISTINGS: Migration = Migration {
     version: 16,
@@ -214,4 +220,127 @@ async fn read_marks(
         });
     }
     Ok(marks)
+}
+
+/// A sale on an On-Order Listing whose units have not left the stock yet
+/// (ADR 0038, decision 4): the owner buys them, and the next Sync after
+/// they come in takes them. Gone once the units leave or the Order is
+/// cancelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnOrderSale {
+    pub order: Order,
+    pub line: OrderLine,
+    /// The Product the Listing sold.
+    pub product: RecordId,
+    /// Units the stock does not cover: the units on hand go to the older
+    /// sales still waiting for theirs first.
+    pub missing: u32,
+    /// The Purchase Order bought for the sale, while not cancelled.
+    pub purchase: Option<RecordId>,
+}
+
+/// A line still waiting for its units, as the purchase it asks for sees
+/// it.
+struct Waiting {
+    line: RecordId,
+    product: RecordId,
+    quantity: u32,
+    purchase: Option<RecordId>,
+}
+
+impl Orders {
+    /// Every sale on an On-Order Listing still waiting for its units, the
+    /// closest to its Dispatch Deadline first.
+    pub async fn on_order_sales(&self) -> Result<Vec<OnOrderSale>, OrderError> {
+        let waiting = waiting_lines(self.database.connection()).await?;
+        let mut on_hand: HashMap<RecordId, u32> = self
+            .inventory
+            .stock()
+            .await?
+            .products
+            .into_iter()
+            .map(|stock| {
+                let units = stock.valuation.quantity().max(0);
+                (stock.product, u32::try_from(units).unwrap_or(u32::MAX))
+            })
+            .collect();
+        let mut missing = HashMap::new();
+        for line in &waiting {
+            let left = on_hand.entry(line.product).or_default();
+            let covered = line.quantity.min(*left);
+            *left -= covered;
+            missing.insert(line.line, line.quantity - covered);
+        }
+        let mut sales = Vec::new();
+        for order in self.orders().await? {
+            for line in &order.lines {
+                if line.stock != LineStock::Short(StockShort::OnOrder) {
+                    continue;
+                }
+                let Some(found) = waiting.iter().find(|found| found.line == line.id) else {
+                    continue;
+                };
+                sales.push(OnOrderSale {
+                    order: order.clone(),
+                    line: line.clone(),
+                    product: found.product,
+                    missing: missing[&line.id],
+                    purchase: found.purchase,
+                });
+            }
+        }
+        sales.sort_by(|a, b| {
+            let by = |sale: &OnOrderSale| {
+                let by = sale.order.dispatch_by();
+                (by.is_none(), by)
+            };
+            by(a)
+                .cmp(&by(b))
+                .then_with(|| a.order.sold.id.cmp(&b.order.sold.id))
+        });
+        Ok(sales)
+    }
+}
+
+/// The lines of Orders not cancelled still waiting for units on hand, the
+/// oldest Order first, with the Product their Listing sells and the
+/// Purchase Order bought for each, if any.
+async fn waiting_lines(on: &Connection) -> Result<Vec<Waiting>, OrderError> {
+    let mut rows = on
+        .query(
+            "SELECT line.id, listing.product_id, line.quantity,
+                 (SELECT purchase.id FROM commerce_purchase_order_sales sale
+                  JOIN commerce_purchase_orders purchase ON purchase.id = sale.purchase_order_id
+                  WHERE sale.order_line_id = line.id AND sale.deleted_at IS NULL
+                      AND purchase.deleted_at IS NULL AND purchase.cancelled_at IS NULL
+                  ORDER BY purchase.created_at DESC, purchase.id DESC LIMIT 1)
+             FROM commerce_order_lines line
+             JOIN commerce_orders ord ON ord.id = line.order_id AND ord.deleted_at IS NULL
+             JOIN commerce_listings listing
+                 ON listing.sales_channel = ord.sales_channel
+                 AND listing.channel_item_id = line.channel_item_id
+                 AND COALESCE(listing.channel_variation_id, '') =
+                     COALESCE(line.channel_variation_id, '')
+                 AND listing.deleted_at IS NULL
+             WHERE line.deleted_at IS NULL AND line.stock_movement_id IS NULL
+                 AND line.stock_short IN (?1, ?2) AND ord.status <> ?3
+                 AND listing.product_id IS NOT NULL
+             ORDER BY ord.ordered_at, ord.id, line.position",
+            params![
+                StockShort::NotEnoughStock.code(),
+                StockShort::OnOrder.code(),
+                OrderStatus::Cancelled.code()
+            ],
+        )
+        .await?;
+    let mut waiting = Vec::new();
+    while let Some(row) = rows.next().await? {
+        waiting.push(Waiting {
+            line: row.id_at(0)?,
+            product: row.id_at(1)?,
+            quantity: row.get(2)?,
+            purchase: row.optional_id_at(3)?,
+        });
+    }
+    Ok(waiting)
 }

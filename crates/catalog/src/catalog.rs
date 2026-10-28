@@ -401,6 +401,20 @@ impl Catalog {
         .await
     }
 
+    /// The Product's most recently priced Supplier Offer, at any of its
+    /// links: what a purchase for it starts from. `None` without offers.
+    pub async fn latest_offer(
+        &self,
+        product: RecordId,
+    ) -> Result<Option<SupplierOffer>, CatalogError> {
+        Ok(self
+            .product_offers(product)
+            .await?
+            .into_iter()
+            .next()
+            .map(|history| history.latest))
+    }
+
     /// What a unit of the Product costs delivered today from its cheapest
     /// Supplier: the lowest total among the latest offer at each of its
     /// links, in the currency of the first. `None` without offers.

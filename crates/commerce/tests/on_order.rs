@@ -1,7 +1,8 @@
-//! On-Order Listings (#207, ADR 0038): the owner marks a Mercado Livre
-//! listing to sell before buying; the channel shows the days to be ready
-//! and the listing shows the orders that still fit instead of a Stock
-//! Share. Through commerce's public interface with a real temporary
+//! On-Order Listings (#207, #208, ADR 0038): the owner marks a Mercado
+//! Livre listing to sell before buying; the channel shows the days to be
+//! ready and the listing shows the orders that still fit instead of a
+//! Stock Share. A sale on it asks for the purchase, linked to the Order
+//! line, and waits for its units. Through commerce's public interface with a real temporary
 //! database, the real Inventory and an in-memory Sales Channel.
 
 mod common;
@@ -11,9 +12,10 @@ use std::sync::Arc;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_commerce::{
-    ChannelListing, ChannelOrder, ChannelStock, ListingError, Listings, MirroredStock,
-    NewPurchaseLine, NewPurchaseOrder, OnOrderTerms, OrderSlots, OrderStatus, Orders,
-    PurchaseOrders, Receiving, SalesChannel, ShipmentStatus, StockMirror,
+    ChannelListing, ChannelOrder, ChannelStock, LineStock, ListingError, Listings, MirroredStock,
+    NewPurchaseLine, NewPurchaseOrder, OnOrderSale, OnOrderTerms, OrderSlots, OrderStatus,
+    OrderSync, Orders, PurchaseOrder, PurchaseOrderError, PurchaseOrderStatus, PurchaseOrders,
+    Receiving, SalesChannel, ShipmentStatus, StockMirror, StockShort,
 };
 use mascate_inventory::{HOME_LOCATION, Inventory};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
@@ -149,27 +151,20 @@ impl Fixture {
 
     async fn receive(&self, units: u32) {
         self.later();
-        let order = self
-            .purchases
-            .create(NewPurchaseOrder {
-                supplier: supplier(),
-                ordered_on: NaiveDate::from_ymd_opt(2026, 10, 27).unwrap(),
-                freight: brl("0"),
-                lines: vec![NewPurchaseLine {
-                    product: fone(),
-                    quantity: units,
-                    unit_price: brl("20.00"),
-                }],
-            })
-            .await
-            .unwrap();
+        let order = self.purchases.create(fones(units)).await.unwrap();
+        self.receive_all(&order).await;
+    }
+
+    /// Takes every unit of `order` into stock.
+    async fn receive_all(&self, order: &PurchaseOrder) {
+        self.later();
         self.purchases
             .receive(
                 order.id,
                 HOME_LOCATION,
                 &[Receiving {
                     line: order.lines[0].id,
-                    quantity: units,
+                    quantity: order.lines[0].quantity,
                 }],
             )
             .await
@@ -179,6 +174,12 @@ impl Fixture {
     /// A buyer buys `units` of `item`, which the Orders read; returns the
     /// Order's id.
     async fn buys(&self, item: &str, units: u32) -> String {
+        self.buys_and_syncs(item, units).await.0
+    }
+
+    /// A buyer buys `units` of `item`; returns the Order's id and what the
+    /// Order Sync that read it did.
+    async fn buys_and_syncs(&self, item: &str, units: u32) -> (String, OrderSync) {
         self.later();
         let id = {
             let mut sales = self.sales.lock().unwrap();
@@ -187,9 +188,24 @@ impl Fixture {
         };
         self.ml
             .sells(order(&id, self.clock.now(), vec![sold(item, None, units)]));
+        (id, self.sync().await)
+    }
+
+    async fn sync(&self) -> OrderSync {
         self.later();
-        self.orders.sync(&self.ml).await.unwrap();
-        id
+        self.orders.sync(&self.ml).await.unwrap()
+    }
+
+    async fn on_order_sales(&self) -> Vec<OnOrderSale> {
+        self.orders.on_order_sales().await.unwrap()
+    }
+
+    /// Buys the units `sale` misses, linked to its line.
+    async fn buy_for(&self, sale: &OnOrderSale) -> Result<PurchaseOrder, PurchaseOrderError> {
+        self.later();
+        self.purchases
+            .create_for_order_line(sale.line.id, fones(sale.missing))
+            .await
     }
 
     /// The channel changes the Order `id`, which the Orders read.
@@ -231,6 +247,20 @@ impl Fixture {
 
     fn days_sent(&self) -> Vec<(String, Option<u32>)> {
         self.ml.availability_set.lock().unwrap().clone()
+    }
+}
+
+/// `units` fones bought from the supplier at R$ 20,00 each.
+fn fones(units: u32) -> NewPurchaseOrder {
+    NewPurchaseOrder {
+        supplier: supplier(),
+        ordered_on: NaiveDate::from_ymd_opt(2026, 10, 27).unwrap(),
+        freight: brl("0"),
+        lines: vec![NewPurchaseLine {
+            product: fone(),
+            quantity: units,
+            unit_price: brl("20.00"),
+        }],
     }
 }
 
@@ -493,6 +523,203 @@ fn an_on_order_listing_paused_by_the_owner_gets_nothing_sent() {
 
         assert_eq!(stock.to_send, None);
         assert!(stock.on_order.is_some());
+    });
+}
+
+#[test]
+fn a_sale_on_an_on_order_listing_asks_for_the_purchase_never_says_sold_without_stock() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+
+        let (id, synced) = fx.buys_and_syncs("MLB1", 2).await;
+
+        assert!(synced.sold_without_stock.is_empty());
+        assert_eq!(synced.sold_on_order.len(), 1);
+        assert_eq!(synced.sold_on_order[0].order.sold.id, id);
+        let sales = fx.on_order_sales().await;
+        assert_eq!(sales.len(), 1);
+        let sale = &sales[0];
+        assert_eq!(sale.order.sold.id, id);
+        assert_eq!(sale.line.stock, LineStock::Short(StockShort::OnOrder));
+        assert_eq!(
+            (sale.product, sale.missing, sale.purchase),
+            (fone(), 2, None)
+        );
+        assert_eq!(
+            sale.order.dispatch_by(),
+            sale.order.sold.shipment.as_ref().unwrap().dispatch_by
+        );
+        // The next Syncs keep it waiting, and never tell it again.
+        let again = fx.sync().await;
+        assert!(again.sold_on_order.is_empty() && again.sold_without_stock.is_empty());
+        assert_eq!(fx.on_order_sales().await.len(), 1);
+    });
+}
+
+#[test]
+fn a_sale_before_the_mark_or_after_it_comes_off_stays_sold_without_stock() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        let (_, before) = fx.buys_and_syncs("MLB1", 1).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        let (_, marked) = fx.buys_and_syncs("MLB1", 1).await;
+        fx.unmark("MLB1").await.unwrap();
+        let (_, after) = fx.buys_and_syncs("MLB1", 1).await;
+
+        assert_eq!(before.sold_without_stock.len(), 1);
+        assert_eq!(marked.sold_on_order.len(), 1);
+        assert!(marked.sold_without_stock.is_empty());
+        assert_eq!(after.sold_without_stock.len(), 1);
+        assert!(after.sold_on_order.is_empty());
+        // The sale made on order still waits for its purchase once the
+        // listing sells from stock again.
+        let sales = fx.on_order_sales().await;
+        assert_eq!(sales.len(), 1);
+        assert_eq!(
+            sales[0].order.sold.id,
+            marked.sold_on_order[0].order.sold.id
+        );
+    });
+}
+
+#[test]
+fn the_units_on_hand_go_to_the_oldest_sales_first_and_the_rest_is_missing() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 5)).await.unwrap();
+        fx.buys("MLB1", 3).await;
+        fx.buys("MLB1", 2).await;
+        // One unit came in, too few for either sale to leave the stock.
+        fx.receive(1).await;
+        fx.sync().await;
+
+        let missing: Vec<u32> = fx
+            .on_order_sales()
+            .await
+            .iter()
+            .map(|sale| sale.missing)
+            .collect();
+
+        assert_eq!(missing, [2, 2]);
+    });
+}
+
+#[test]
+fn a_purchase_bought_for_the_sale_is_linked_and_its_receipt_lets_the_next_sync_take_the_units() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        let id = fx.buys("MLB1", 2).await;
+        let sale = fx.on_order_sales().await.remove(0);
+
+        let bought = fx.buy_for(&sale).await.unwrap();
+
+        assert_eq!(bought.order_line, Some(sale.line.id));
+        assert_eq!(bought.units(), 2);
+        let waiting = fx.on_order_sales().await.remove(0);
+        assert_eq!(waiting.purchase, Some(bought.id));
+        assert!(matches!(
+            fx.buy_for(&waiting).await,
+            Err(PurchaseOrderError::AlreadyBought)
+        ));
+
+        fx.receive_all(&bought).await;
+        let synced = fx.sync().await;
+
+        assert_eq!(synced.taken, 1);
+        assert!(fx.on_order_sales().await.is_empty());
+        let order = fx
+            .orders
+            .orders()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|order| order.sold.id == id)
+            .unwrap();
+        assert!(matches!(
+            order.lines[0].stock,
+            LineStock::Taken { product, .. } if product == fone()
+        ));
+    });
+}
+
+#[test]
+fn a_cancelled_purchase_lets_the_owner_buy_for_the_sale_again() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        fx.buys("MLB1", 1).await;
+        let sale = fx.on_order_sales().await.remove(0);
+        let first = fx.buy_for(&sale).await.unwrap();
+
+        fx.purchases.cancel(first.id).await.unwrap();
+
+        assert_eq!(fx.on_order_sales().await[0].purchase, None);
+        let second = fx.buy_for(&sale).await.unwrap();
+        assert_eq!(fx.on_order_sales().await[0].purchase, Some(second.id));
+        // Editing the purchase keeps it linked.
+        let edited = fx.purchases.update(second.id, fones(2)).await.unwrap();
+        assert_eq!(edited.order_line, Some(sale.line.id));
+    });
+}
+
+#[test]
+fn a_purchase_is_never_linked_to_a_line_the_orders_do_not_have() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        let unknown = RecordId::from_u128(9_999);
+
+        let refused = fx.purchases.create_for_order_line(unknown, fones(1)).await;
+
+        assert!(matches!(
+            refused,
+            Err(PurchaseOrderError::UnknownOrderLine(line)) if line == unknown
+        ));
+        assert!(fx.purchases.purchase_orders().await.unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_cancelled_order_drops_its_sale_and_leaves_its_purchase_as_the_owner_left_it() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        let id = fx.buys("MLB1", 1).await;
+        let sale = fx.on_order_sales().await.remove(0);
+        let bought = fx.buy_for(&sale).await.unwrap();
+
+        fx.order_changes(&id, |order| order.status = OrderStatus::Cancelled)
+            .await;
+
+        assert!(fx.on_order_sales().await.is_empty());
+        let kept = fx.purchases.purchase_order(bought.id).await.unwrap();
+        assert_eq!(kept.status(), PurchaseOrderStatus::Purchased);
+        assert_eq!(kept.order_line, Some(sale.line.id));
+    });
+}
+
+#[test]
+fn the_sale_closest_to_its_dispatch_deadline_comes_first() {
+    block_on(async {
+        let fx = Fixture::selling(vec![empty("MLB1")]).await;
+        fx.mark("MLB1", terms(15, 3)).await.unwrap();
+        let later = fx.buys("MLB1", 1).await;
+        let sooner = fx.buys("MLB1", 1).await;
+        fx.order_changes(&later, |order| {
+            let shipment = order.shipment.as_mut().unwrap();
+            shipment.dispatch_by = shipment.dispatch_by.map(|by| by + TimeDelta::days(10));
+        })
+        .await;
+
+        let ids: Vec<String> = fx
+            .on_order_sales()
+            .await
+            .into_iter()
+            .map(|sale| sale.order.sold.id)
+            .collect();
+
+        assert_eq!(ids, [sooner, later]);
     });
 }
 

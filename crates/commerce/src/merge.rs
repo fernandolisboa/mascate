@@ -209,6 +209,16 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             TO_PRODUCT,
         ])
         .label(&["purchase_order_id", "product_id"]),
+        TableMerge::new(
+            "commerce_purchase_order_sales",
+            "Compra para um pedido",
+            Keys(&[UniqueKey::live(&[Column("purchase_order_id")])]),
+        )
+        .references(&[
+            Reference::to("purchase_order_id", "commerce_purchase_orders"),
+            Reference::to("order_line_id", "commerce_order_lines"),
+        ])
+        .label(&["purchase_order_id", "order_line_id"]),
         TableMerge::new("commerce_purchase_receipts", "Recebimento", Id)
             .references(&[Reference::to(
                 "purchase_order_id",

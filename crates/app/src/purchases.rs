@@ -1,6 +1,9 @@
 //! Compras (#13): Purchase Orders to Suppliers with their items, freight
-//! and status, and receiving them into stock, whole or in part.
+//! and status, and receiving them into stock, whole or in part. A sale on
+//! an On-Order Listing opens the form filled in for it, and the order
+//! registered stays linked to the sale (#208).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Local;
@@ -10,10 +13,10 @@ use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, Window, div, px};
-use mascate_catalog::{Product, Supplier};
+use mascate_catalog::{Product, Supplier, SupplierOffer};
 use mascate_commerce::{
-    NewPurchaseLine, NewPurchaseOrder, PurchaseOrder, PurchaseOrderError, PurchaseOrderStatus,
-    PurchaseOrders, Receiving,
+    NewPurchaseLine, NewPurchaseOrder, OnOrderSale, PurchaseOrder, PurchaseOrderError,
+    PurchaseOrderStatus, PurchaseOrders, Receiving,
 };
 use mascate_inventory::HOME_LOCATION;
 use mascate_kernel::{Currency, Money, RecordId, parse_amount};
@@ -24,7 +27,9 @@ use crate::catalog::{self, NO_DATABASE, day, product_choice};
 use crate::forms::{Choice, Outcome, Picker, input, notice, parse_day, picker, refill};
 use crate::kit;
 use crate::layout;
+use crate::orders;
 use crate::parts::ScreenParts;
+use crate::sales_channels;
 use crate::stock::inventory_failure;
 use crate::stock_mirror;
 
@@ -38,13 +43,57 @@ pub fn purchase_orders(cx: &App) -> Option<Arc<PurchaseOrders>> {
         .map(|app| app.0.clone())
 }
 
+/// The owner asked to buy the units of a sale on an On-Order Listing.
+pub struct BuyForSale(pub OnOrderSale);
+
 /// An item of the order being written. The price takes the order's
 /// currency when it is saved.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DraftLine {
     product: RecordId,
     quantity: u32,
     unit_price: Decimal,
+}
+
+/// What the form starts with for a sale on an On-Order Listing: the
+/// Product and the units it misses, with the Supplier, currency and price
+/// of the Product's latest Supplier Offer when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Prefill {
+    supplier: Option<RecordId>,
+    currency: Currency,
+    product: RecordId,
+    quantity: u32,
+    unit_price: Option<Decimal>,
+}
+
+impl Prefill {
+    fn for_sale(product: RecordId, missing: u32, offer: Option<&SupplierOffer>) -> Self {
+        Self {
+            supplier: offer.map(|offer| offer.supplier.id),
+            currency: offer.map_or(Currency::Brl, |offer| offer.price.currency()),
+            product,
+            quantity: missing.max(1),
+            unit_price: offer.map(|offer| offer.price.amount()),
+        }
+    }
+
+    /// The item ready to add, once its price is known.
+    fn line(&self) -> Option<DraftLine> {
+        Some(DraftLine {
+            product: self.product,
+            quantity: self.quantity,
+            unit_price: self.unit_price?,
+        })
+    }
+}
+
+/// The sale the order being written is bought for.
+struct ForSale {
+    line: RecordId,
+    order: String,
+    /// "2× Fone Bluetooth sob encomenda no Mercado Livre, despachar até …".
+    text: String,
 }
 
 /// What the open order's row is asking for.
@@ -66,7 +115,11 @@ pub struct PurchasesScreen {
     draft: Vec<DraftLine>,
     /// The order the form is editing, if any.
     editing: Option<RecordId>,
+    /// The sale the new order is bought for, if any.
+    for_sale: Option<ForSale>,
     orders: Vec<PurchaseOrder>,
+    /// The channel's id of the Order each linked Order line belongs to.
+    sales: HashMap<RecordId, String>,
     suppliers: Vec<Supplier>,
     products: Vec<Product>,
     step: Option<(RecordId, Step)>,
@@ -91,7 +144,9 @@ impl PurchasesScreen {
             unit_price: input("29,90", window, cx),
             draft: Vec::new(),
             editing: None,
+            for_sale: None,
             orders: Vec::new(),
+            sales: HashMap::new(),
             suppliers: Vec::new(),
             products: Vec::new(),
             step: None,
@@ -126,6 +181,7 @@ impl PurchasesScreen {
         let (Some(orders), Some(catalog)) = (purchase_orders(cx), catalog::catalog(cx)) else {
             return;
         };
+        let sales = orders::orders(cx);
         self.reads += 1;
         let read = self.reads;
         self.busy = true;
@@ -138,7 +194,15 @@ impl PurchasesScreen {
                     .map_err(|e| catalog::failure(&e))?;
                 let products = catalog.products().await.map_err(|e| catalog::failure(&e))?;
                 let orders = orders.purchase_orders().await.map_err(|e| failure(&e))?;
-                Ok::<_, String>((suppliers, products, orders))
+                let mut lines = HashMap::new();
+                if let Some(sales) = sales {
+                    for order in sales.orders().await.map_err(|e| orders::failure(&e))? {
+                        for line in &order.lines {
+                            lines.insert(line.id, order.sold.id.clone());
+                        }
+                    }
+                }
+                Ok::<_, String>((suppliers, products, orders, lines))
             }
             .await;
             (changed, read)
@@ -149,7 +213,8 @@ impl PurchasesScreen {
                 if this.reads == read {
                     this.busy = false;
                     match read_back {
-                        Ok((suppliers, products, orders)) => {
+                        Ok((suppliers, products, orders, lines)) => {
+                            this.sales = lines;
                             this.show(suppliers, products, orders, window, cx)
                         }
                         Err(error) => this.outcome = Some(Outcome::Failed(error.into())),
@@ -228,6 +293,74 @@ impl PurchasesScreen {
             )
     }
 
+    /// Opens a new order for `sale`, filled in from the latest Supplier
+    /// Offer of its Product, read off the UI thread.
+    pub fn buy_for(&mut self, sale: OnOrderSale, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(catalog) = catalog::catalog(cx) else {
+            return;
+        };
+        self.clear_form(window, cx);
+        self.step = None;
+        self.form = None;
+        self.outcome = None;
+        let product = sale.product;
+        let missing = sale.missing;
+        let mut text = format!(
+            "{} sob encomenda {}",
+            orders::line_text(&sale.line),
+            sales_channels::on(sale.order.channel)
+        );
+        if let Some(by) = sale.order.dispatch_by() {
+            text.push_str(&format!(", despachar até {}", catalog::day_and_time(by)));
+        }
+        self.for_sale = Some(ForSale {
+            line: sale.line.id,
+            order: sale.order.sold.id.clone(),
+            text,
+        });
+        self.run(
+            window,
+            cx,
+            move |_| async move {
+                let offer = catalog.latest_offer(product).await.unwrap_or_else(|error| {
+                    eprintln!("could not read the Product's latest Supplier Offer: {error}");
+                    None
+                });
+                Ok(Some(offer))
+            },
+            move |this, offer: Option<SupplierOffer>, window, cx| {
+                this.prefill(
+                    Prefill::for_sale(product, missing, offer.as_ref()),
+                    window,
+                    cx,
+                )
+            },
+        );
+    }
+
+    /// Fills the form with `prefill`: the item goes in when its price is
+    /// known, or waits in the item's fields for the owner to type it.
+    fn prefill(&mut self, prefill: Prefill, window: &mut Window, cx: &mut Context<Self>) {
+        self.currency = prefill.currency;
+        if let Some(supplier) = prefill.supplier {
+            self.supplier.update(cx, |select, cx| {
+                select.set_selected_value(&supplier, window, cx)
+            });
+        }
+        match prefill.line() {
+            Some(line) => self.draft.push(line),
+            None => {
+                self.product.update(cx, |select, cx| {
+                    select.set_selected_value(&prefill.product, window, cx)
+                });
+                let quantity = prefill.quantity.to_string();
+                self.quantity
+                    .update(cx, |field, cx| field.set_value(quantity, window, cx));
+            }
+        }
+        cx.notify();
+    }
+
     fn add_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form = None;
         let Some(&product) = self.product.read(cx).selected_value() else {
@@ -304,21 +437,31 @@ impl PurchasesScreen {
         };
         self.form = None;
         let editing = self.editing;
+        let for_sale = self
+            .for_sale
+            .as_ref()
+            .map(|sale| (sale.line, sale.order.clone()));
+        let line = for_sale.as_ref().map(|(line, _)| *line);
         self.run(
             window,
             cx,
             move |orders| async move {
-                match editing {
-                    Some(id) => orders.update(id, order).await.map(Some),
-                    None => orders.create(order).await.map(Some),
+                match (editing, line) {
+                    (Some(id), _) => orders.update(id, order).await.map(Some),
+                    (None, Some(line)) => orders.create_for_order_line(line, order).await.map(Some),
+                    (None, None) => orders.create(order).await.map(Some),
                 }
             },
             move |this, _: PurchaseOrder, window, cx| {
                 this.clear_form(window, cx);
                 this.form = Some(Outcome::Done(
-                    match editing {
-                        Some(_) => "Ordem de compra atualizada.",
-                        None => "Ordem de compra registrada como comprada.",
+                    match (editing, for_sale) {
+                        (Some(_), _) => "Ordem de compra atualizada.".to_owned(),
+                        (None, Some((_, order))) => format!(
+                            "Ordem de compra registrada para o pedido {order}. Quando chegar, \
+                             use Receber: a baixa do pedido sai em seguida."
+                        ),
+                        (None, None) => "Ordem de compra registrada como comprada.".to_owned(),
                     }
                     .into(),
                 ));
@@ -328,6 +471,7 @@ impl PurchasesScreen {
 
     fn clear_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editing = None;
+        self.for_sale = None;
         self.draft.clear();
         self.ordered_on
             .update(cx, |field, cx| field.set_value(today(), window, cx));
@@ -346,6 +490,7 @@ impl PurchasesScreen {
         self.step = None;
         self.outcome = None;
         self.form = None;
+        self.for_sale = None;
         self.editing = Some(id);
         self.currency = order.currency();
         self.draft = order
@@ -569,16 +714,25 @@ impl PurchasesScreen {
             .p_4()
             .rounded(t.radius_lg)
             .border(t.border_width)
-            .border_color(if self.editing.is_some() {
+            .border_color(if self.editing.is_some() || self.for_sale.is_some() {
                 t.accent_edge
             } else {
                 t.frame
             })
             .bg(t.surface)
-            .child(kit::section_heading(if self.editing.is_some() {
-                "Editar ordem de compra"
-            } else {
-                "Nova ordem de compra"
+            .child(kit::section_heading(
+                match (self.editing.is_some(), &self.for_sale) {
+                    (true, _) => "Editar ordem de compra".to_owned(),
+                    (false, Some(sale)) => format!("Comprar para o pedido {}", sale.order),
+                    (false, None) => "Nova ordem de compra".to_owned(),
+                },
+            ))
+            .children(self.for_sale.as_ref().map(|sale| {
+                div().text_sm().text_color(t.text2).child(format!(
+                    "{}. A ordem de compra fica ligada ao pedido; quando ela chegar, use \
+                     Receber e a baixa do pedido sai em seguida.",
+                    sale.text
+                ))
             }))
             .child(
                 h_flex()
@@ -682,7 +836,7 @@ impl PurchasesScreen {
                             .disabled(self.busy)
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     )
-                    .when(self.editing.is_some(), |row| {
+                    .when(self.editing.is_some() || self.for_sale.is_some(), |row| {
                         row.child(
                             Button::new("stop-editing")
                                 .label("Descartar alterações")
@@ -721,6 +875,9 @@ impl PurchasesScreen {
         }
         if let Some(at) = order.cancelled_at {
             facts.push(format!("cancelada em {}", day(at)));
+        }
+        if let Some(sold) = order.order_line.and_then(|line| self.sales.get(&line)) {
+            facts.push(format!("para o pedido {sold}"));
         }
 
         let lines = order
@@ -996,6 +1153,12 @@ pub fn failure(error: &PurchaseOrderError) -> String {
         PurchaseOrderError::UnknownPurchaseOrder(_) | PurchaseOrderError::UnknownLine(_) => {
             "Essa ordem de compra mudou; a lista foi atualizada.".into()
         }
+        PurchaseOrderError::UnknownOrderLine(_) => {
+            "O pedido desta compra não está mais no app; sincronize os pedidos.".into()
+        }
+        PurchaseOrderError::AlreadyBought => "Este pedido já tem uma ordem de compra; cancele-a \
+                                              em Compras para registrar outra."
+            .into(),
         PurchaseOrderError::AlreadyReceiving => {
             "Unidades desta ordem já entraram no estoque, então ela não muda mais.".into()
         }
@@ -1054,6 +1217,61 @@ impl Render for PurchasesScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn offer(price: Money) -> SupplierOffer {
+        SupplierOffer {
+            id: RecordId::from_u128(30),
+            supplier: Supplier {
+                id: RecordId::from_u128(20),
+                name: "Loja Shopee".into(),
+            },
+            product: Some(RecordId::from_u128(10)),
+            source: mascate_catalog::ProductSource::Manual,
+            link: "https://shopee.com.br/fone".into(),
+            title: "Fone TWS".into(),
+            price,
+            shipping: Money::zero(price.currency()),
+            observed_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn a_sale_with_a_supplier_offer_fills_in_the_whole_item() {
+        let product = RecordId::from_u128(10);
+        let price = Money::new(Decimal::new(3990, 2), Currency::Usd);
+
+        let prefill = Prefill::for_sale(product, 2, Some(&offer(price)));
+
+        assert_eq!(prefill.supplier, Some(RecordId::from_u128(20)));
+        assert_eq!(prefill.currency, Currency::Usd);
+        assert_eq!(
+            prefill.line(),
+            Some(DraftLine {
+                product,
+                quantity: 2,
+                unit_price: Decimal::new(3990, 2),
+            })
+        );
+    }
+
+    #[test]
+    fn a_sale_without_a_supplier_offer_leaves_the_supplier_and_price_to_type() {
+        let product = RecordId::from_u128(10);
+
+        let prefill = Prefill::for_sale(product, 3, None);
+
+        assert_eq!(
+            prefill,
+            Prefill {
+                supplier: None,
+                currency: Currency::Brl,
+                product,
+                quantity: 3,
+                unit_price: None,
+            }
+        );
+        assert_eq!(prefill.line(), None);
+    }
 
     #[test]
     fn an_amount_reads_back_as_typed() {
