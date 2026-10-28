@@ -24,7 +24,7 @@ O épico #31 previa dropshipping: Order com Fulfillment Mode `dropship`, Purchas
 
 ## Consequences
 
-- O épico #31 é replanejado em três fatias verticais, nesta ordem: marcar e desmarcar o On-Order Listing com o estoque de vagas (Commerce v16); a compra ligada ao pedido e o aviso em Hoje (Commerce v17, depois da primeira); o aviso de reputação com o botão de pausar (depois da primeira). Todas `ready-for-agent` e `afk`.
+- O épico #31 é replanejado em três fatias verticais, nesta ordem: marcar e desmarcar o On-Order Listing com o estoque de vagas (#207, Commerce v16); a compra ligada ao pedido e o aviso em Hoje (#208, Commerce v17, depois da #207); o aviso de reputação com o botão de pausar (#209, depois da #207). Todas `ready-for-agent` e `afk`.
 - Sem dependência nova, sem crate novo e sem aresta nova no teste de arquitetura. O Marketing não migra.
 - Glossário: On-Order Listing entra no `CONTEXT.md`; Purchase Order e Fulfillment Mode são ajustados. O `docs/commerce-integrations.md` aponta para este ADR nas linhas de dropshipping.
 - Ficam para o regression pass da fase 3 (#116): marcar um anúncio real como sob encomenda e ver o prazo no Mercado Livre, uma venda nele até o despacho, e a recusa num anúncio com Flex.
