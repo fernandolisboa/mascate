@@ -14,7 +14,8 @@
 //! or published today and with any destination at its limit.
 //! Scheduling offers the dates of the coming Sales Events (#105).
 //! "Escrever chamada com IA" writes the post's Pitch with the Claude API
-//! (#182), in the template's `{chamada}` line.
+//! (#182), in the template's `{chamada}` line. Focused on one product's
+//! links, the section is the Passo a passo's Divulgar step (#198).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -536,6 +537,9 @@ pub struct OfferPostsSection {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
+    /// Set on the Passo a passo's section: the Affiliate Links whose posts
+    /// it shows, with no queue and no picker.
+    focused: Option<Vec<RecordId>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -558,10 +562,37 @@ impl OfferPostsSection {
             busy: false,
             reads: 0,
             outcome: None,
+            focused: None,
             _subscriptions: subscriptions,
         };
         section.refresh(window, cx);
         section
+    }
+
+    /// The section as a step of the Passo a passo: the editor, the
+    /// confirmation and the posts of the links it focuses on.
+    pub fn focused(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut section = Self::new(window, cx);
+        section.focused = Some(Vec::new());
+        section
+    }
+
+    /// Focuses a focused section on the posts of `links`; the editor and a
+    /// confirmation of another link's post close without sending anything.
+    pub fn focus(&mut self, links: Vec<RecordId>, cx: &mut Context<Self>) {
+        let editing = |link: RecordId| links.contains(&link);
+        if self
+            .editor
+            .as_ref()
+            .is_some_and(|editor| !editing(editor.facts.link_id))
+        {
+            self.editor = None;
+        }
+        if self.focused.as_ref() != Some(&links) {
+            self.confirming = None;
+        }
+        self.focused = Some(links);
+        cx.notify();
     }
 
     /// Reads the posts, the links and the channels again.
@@ -2498,6 +2529,21 @@ impl Render for OfferPostsSection {
             .as_ref()
             .map(|confirming| self.render_confirmation(confirming, cx));
         self.confirming = confirming;
+        if let Some(links) = &self.focused {
+            let rows: Vec<AnyElement> = self
+                .posts
+                .iter()
+                .filter(|post| links.contains(&post.draft.facts.link_id))
+                .enumerate()
+                .map(|(index, post)| self.render_post(index, post, cx))
+                .collect();
+            return v_flex()
+                .gap_3()
+                .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+                .children(confirmation)
+                .children(editing)
+                .children(rows);
+        }
         let queue = self.queue.clone();
         let mut index = 0;
         let mut groups: Vec<AnyElement> = Vec::new();

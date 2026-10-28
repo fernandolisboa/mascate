@@ -1,7 +1,8 @@
 //! Regras de divulgação on the Afiliação screen (#98): each Program with
 //! what it allows, forbids or leaves unread, starting from its Platform's
 //! terms, for the owner to edit as the producer's page says. The rules and
-//! their defaults live in the Affiliate module (ADR 0031).
+//! their defaults live in the Affiliate module (ADR 0031). Focused on one
+//! Program, the section is where the Passo a passo reviews its rules (#198).
 
 use std::sync::Arc;
 
@@ -112,6 +113,8 @@ pub struct PromotionRulesSection {
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
     outcome: Option<Outcome>,
+    /// Set on the Passo a passo's section, which shows only this Program.
+    focused: Option<Option<RecordId>>,
 }
 
 impl PromotionRulesSection {
@@ -123,7 +126,31 @@ impl PromotionRulesSection {
             busy: false,
             reads: 0,
             outcome: None,
+            focused: None,
         }
+    }
+
+    /// The section as a step of the Passo a passo: only the Program it
+    /// focuses on, with its rules open to review.
+    pub fn focused(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut section = Self::new(window, cx);
+        section.focused = Some(None);
+        section.refresh(window, cx);
+        section
+    }
+
+    /// Focuses a focused section on `program`; rules being edited for
+    /// another close unsaved.
+    pub fn focus(&mut self, program: Option<RecordId>, cx: &mut Context<Self>) {
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|draft| Some(draft.program) != program)
+        {
+            self.editing = None;
+        }
+        self.focused = Some(program);
+        cx.notify();
     }
 
     /// Reads the Programs again.
@@ -420,6 +447,17 @@ impl PromotionRulesSection {
 impl Render for PromotionRulesSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
+        if let Some(focus) = self.focused {
+            let row = self
+                .programs
+                .iter()
+                .position(|program| Some(program.id) == focus)
+                .map(|index| self.render_row(index, &self.programs[index].clone(), cx));
+            return v_flex()
+                .gap_3()
+                .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+                .children(row);
+        }
         let section = v_flex()
             .gap_3()
             .child(kit::section_heading("Programas"))

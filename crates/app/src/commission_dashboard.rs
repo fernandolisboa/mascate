@@ -442,22 +442,26 @@ const PAUSE_PROMOTION: &str = "Gasto maior que o ganho: pause a divulgação pag
                                do anúncio.";
 
 impl CommissionDashboard {
-    /// Where to pause a losing channel, by the Platform it runs on.
     fn pause_text(&self, id: RecordId) -> &'static str {
-        let kind = self
-            .channels
-            .as_ref()
-            .and_then(|channels| channels.get(&id))
-            .map(|channel| channel.kind);
-        match kind {
-            Some(ChannelKind::PaidSocial) => {
-                "Gasto maior que o ganho: pausar campanha no painel da Meta (ou do TikTok)."
-            }
-            Some(ChannelKind::PaidSearch) => {
-                "Gasto maior que o ganho: pausar campanha no painel do Google Ads."
-            }
-            _ => "Gasto maior que o ganho: pausar a divulgação paga deste canal.",
+        pause_text(
+            self.channels
+                .as_ref()
+                .and_then(|channels| channels.get(&id))
+                .map(|channel| channel.kind),
+        )
+    }
+}
+
+/// Where to pause a losing channel of `kind`, by the Platform it runs on.
+pub(crate) fn pause_text(kind: Option<ChannelKind>) -> &'static str {
+    match kind {
+        Some(ChannelKind::PaidSocial) => {
+            "Gasto maior que o ganho: pausar campanha no painel da Meta (ou do TikTok)."
         }
+        Some(ChannelKind::PaidSearch) => {
+            "Gasto maior que o ganho: pausar campanha no painel do Google Ads."
+        }
+        _ => "Gasto maior que o ganho: pausar a divulgação paga deste canal.",
     }
 }
 
@@ -546,16 +550,16 @@ fn spend_text<K>(group: &CommissionGroup<K>) -> String {
     parts.join(" · ")
 }
 
-fn money_text(money: Option<Money>) -> String {
+pub(crate) fn money_text(money: Option<Money>) -> String {
     money.map_or_else(|| "–".into(), Money::to_pt_br)
 }
 
 /// `2,22x`, or a dash with nothing spent.
-fn roas_text(roas: Option<mascate_kernel::Roas>) -> String {
+pub(crate) fn roas_text(roas: Option<mascate_kernel::Roas>) -> String {
     roas.map_or_else(|| "–".into(), |roas| roas.to_pt_br())
 }
 
-fn profit_ink(profit: Option<Money>, t: &Tokens) -> Hsla {
+pub(crate) fn profit_ink(profit: Option<Money>, t: &Tokens) -> Hsla {
     if profit.is_some_and(|profit| profit.is_negative()) {
         t.danger
     } else {
@@ -614,7 +618,7 @@ fn reversed_ink(totals: &CurrencyTotals, t: &Tokens) -> Hsla {
     }
 }
 
-fn figure(label: String, text: String, ink: Hsla, t: &Tokens) -> AnyElement {
+pub(crate) fn figure(label: String, text: String, ink: Hsla, t: &Tokens) -> AnyElement {
     v_flex()
         .flex_1()
         .min_w(px(150.))

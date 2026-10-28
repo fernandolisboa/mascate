@@ -1,12 +1,13 @@
 //! Result Promises as the owner reads them (#197, ADR 0037 decision 9): the
 //! warning an Offer Post shows, and "Conferir texto" on the Divulgação
-//! screen for a text the owner pastes into an ad elsewhere. The app only
-//! warns; the patterns live in the Marketing.
+//! screen for a text the owner pastes into an ad elsewhere, which the
+//! Passo a passo's Divulgar step checks too (#198). The app only warns; the
+//! patterns live in the Marketing.
 
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{Entity, Subscription, Window, div};
+use gpui_kit::{AnyElement, App, Entity, Subscription, Window, div};
 use mascate_marketing::{ResultPromise, promises_in};
 
 use crate::appearance::look;
@@ -34,6 +35,26 @@ fn findings(text: &str) -> Option<Result<(), Vec<String>>> {
         Ok(())
     } else {
         Err(promises.iter().map(ResultPromise::describe).collect())
+    })
+}
+
+/// What a text pasted into an ad promises, as the owner reads it beside the
+/// text: nothing while it is empty.
+pub(crate) fn findings_notice(text: &str, cx: &App) -> Option<AnyElement> {
+    let t = look(cx).tokens;
+    findings(text).map(|found| match found {
+        Ok(()) => {
+            kit::success_notice("Nenhuma promessa de resultado no texto.", cx).into_any_element()
+        }
+        Err(warnings) => v_flex()
+            .gap_1()
+            .children(
+                warnings
+                    .into_iter()
+                    .map(|warning| kit::info_notice(warning, cx)),
+            )
+            .child(div().text_sm().text_color(t.text2).child(ONLY_A_WARNING))
+            .into_any_element(),
     })
 }
 
@@ -65,7 +86,7 @@ impl TextCheckSection {
 impl Render for TextCheckSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
-        let findings = findings(&self.text.read(cx).value());
+        let findings = findings_notice(&self.text.read(cx).value(), cx);
         v_flex()
             .gap_3()
             .child(kit::section_heading("Conferir texto"))
@@ -76,21 +97,7 @@ impl Render for TextCheckSection {
                  Os posts de oferta já são conferidos sozinhos. Nada é enviado daqui.",
             ))
             .child(Textarea::new(&self.text).small())
-            .children(findings.map(|found| {
-                match found {
-                    Ok(()) => kit::success_notice("Nenhuma promessa de resultado no texto.", cx)
-                        .into_any_element(),
-                    Err(warnings) => v_flex()
-                        .gap_1()
-                        .children(
-                            warnings
-                                .into_iter()
-                                .map(|warning| kit::info_notice(warning, cx)),
-                        )
-                        .child(div().text_sm().text_color(t.text2).child(ONLY_A_WARNING))
-                        .into_any_element(),
-                }
-            }))
+            .children(findings)
     }
 }
 

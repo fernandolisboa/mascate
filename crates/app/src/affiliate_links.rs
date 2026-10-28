@@ -6,7 +6,9 @@
 //! rules are checked first: what only warns is shown, a Restricted Feature
 //! that is off refuses (ADR 0031). "Encurtar" gives a link its Short Link
 //! through Short.io (#158, ADR 0035). "Nova afiliação" adds a Program
-//! before its first sale and goes straight to its link (#194).
+//! before its first sale and goes straight to its link (#194). Focused on
+//! one Program and product, the section is the Passo a passo's Link step
+//! (#198).
 
 use std::sync::Arc;
 
@@ -165,11 +167,20 @@ async fn read(affiliate: &Affiliate) -> Result<Snapshot, AffiliateError> {
     })
 }
 
-/// A link was created: the sales carrying its marking join its channel.
-pub struct AffiliateLinkCreated;
+/// A link was created, or given back as it was: the sales carrying its
+/// marking join its channel.
+pub struct AffiliateLinkCreated(pub AffiliateLink);
 
 /// A Program was added by hand: its rules can be read and edited.
-pub struct ProgramAdded;
+pub struct ProgramAdded(pub Program);
+
+/// The one Program, and the product of it, a focused section shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkFocus {
+    pub program: RecordId,
+    /// `None` shows every link of the Program.
+    pub product: Option<String>,
+}
 
 pub struct AffiliateLinksSection {
     links: Vec<AffiliateLink>,
@@ -197,6 +208,9 @@ pub struct AffiliateLinksSection {
     reads: u64,
     form: Option<Outcome>,
     outcome: Option<Outcome>,
+    /// Set on the Passo a passo's section, which shows only what it focuses
+    /// on.
+    focused: Option<Option<LinkFocus>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -231,8 +245,30 @@ impl AffiliateLinksSection {
             reads: 0,
             form: None,
             outcome: None,
+            focused: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// The section as a step of the Passo a passo: it shows the form open
+    /// and the links of what it focuses on, nothing else.
+    pub fn focused(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut section = Self::new(window, cx);
+        section.focused = Some(None);
+        section.refresh(window, cx);
+        section
+    }
+
+    /// Focuses a focused section on `focus`, closing what was open for
+    /// another Program.
+    pub fn focus(&mut self, focus: Option<LinkFocus>, cx: &mut Context<Self>) {
+        let program = focus.as_ref().map(|focus| focus.program);
+        if self.creating.is_some() && self.creating != program {
+            self.creating = None;
+            self.warnings.clear();
+        }
+        self.focused = Some(focus);
+        cx.notify();
     }
 
     /// Reads the links, the Programs and the channels again.
@@ -331,8 +367,27 @@ impl AffiliateLinksSection {
         cx.notify();
     }
 
+    /// Opens "Criar link" as [`Self::open`] does, unless it is already open
+    /// for `program`: what the owner typed stays.
+    pub fn keep_open(
+        &mut self,
+        program: RecordId,
+        product: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.creating != Some(program) {
+            self.open(program, product, window, cx);
+        }
+    }
+
+    /// Whether "Nova afiliação" is open.
+    pub fn adding(&self) -> bool {
+        self.adding
+    }
+
     /// Opens "Nova afiliação" with empty fields.
-    fn open_adding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_adding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for field in [&self.name, &self.product, &self.pasted] {
             field.update(cx, |field, cx| field.set_value("", window, cx));
         }
@@ -364,7 +419,7 @@ impl AffiliateLinksSection {
             move |affiliate| async move { affiliate.add_program(&new).await },
             move |this, program: Program, _, cx| {
                 this.adding = false;
-                cx.emit(ProgramAdded);
+                cx.emit(ProgramAdded(program.clone()));
                 if tagger(program.platform, cx).is_some() {
                     this.creating = Some(program.id);
                     this.channel = None;
@@ -434,7 +489,7 @@ impl AffiliateLinksSection {
             .map(|program| program.platform)
     }
 
-    fn pick_channel(&mut self, channel: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn pick_channel(&mut self, channel: RecordId, window: &mut Window, cx: &mut Context<Self>) {
         self.channel = Some(channel);
         // The tracking id the channel already used on Amazon, if any.
         let used = self
@@ -497,9 +552,7 @@ impl AffiliateLinksSection {
                 }
                 this.pasted
                     .update(cx, |field, cx| field.set_value("", window, cx));
-                if !created.existed {
-                    cx.emit(AffiliateLinkCreated);
-                }
+                cx.emit(AffiliateLinkCreated(created.link));
             },
         );
     }
@@ -974,8 +1027,72 @@ impl AffiliateLinksSection {
     }
 }
 
+impl AffiliateLinksSection {
+    /// The Passo a passo's part: "Nova afiliação" while it is open, else
+    /// the focused product's links with "Criar link" for another channel.
+    fn render_focused(&self, focus: Option<&LinkFocus>, cx: &mut Context<Self>) -> AnyElement {
+        let program = focus.and_then(|focus| {
+            self.programs
+                .iter()
+                .find(|program| program.id == focus.program)
+        });
+        let mut section = v_flex()
+            .gap_3()
+            .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)))
+            .children(
+                self.short_warnings
+                    .iter()
+                    .map(|warning| kit::info_notice(warning.clone(), cx).into_any_element()),
+            );
+        if self.adding {
+            return section.child(self.render_adding(cx)).into_any_element();
+        }
+        let (Some(focus), Some(program)) = (focus, program) else {
+            return section.into_any_element();
+        };
+        let links: Vec<AnyElement> = self
+            .links
+            .iter()
+            .enumerate()
+            .filter(|(_, link)| link.program.id == program.id)
+            .filter(|(_, link)| {
+                focus
+                    .product
+                    .as_ref()
+                    .is_none_or(|product| link.product == *product)
+            })
+            .map(|(at, link)| self.render_link(at, link, cx))
+            .collect();
+        if self.creating == Some(program.id) {
+            section = section.child(self.render_form(program, cx));
+        } else if tagger(program.platform, cx).is_some() {
+            let (id, product) = (program.id, focus.product.clone());
+            section = section.child(
+                h_flex().child(
+                    Button::new("focused-create-link")
+                        .label(if links.is_empty() {
+                            "Criar link"
+                        } else {
+                            "Criar link em outro canal"
+                        })
+                        .outline()
+                        .small()
+                        .disabled(self.busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open(id, product.clone(), window, cx)
+                        })),
+                ),
+            );
+        }
+        section.children(links).into_any_element()
+    }
+}
+
 impl Render for AffiliateLinksSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(focus) = &self.focused {
+            return self.render_focused(focus.as_ref(), cx);
+        }
         let t = look(cx).tokens;
         let context = preferences::work_context(cx);
         let (taggable, untagged): (Vec<Program>, Vec<Program>) = self
@@ -1060,6 +1177,7 @@ impl Render for AffiliateLinksSection {
                     untagged.join(", ")
                 )))
             })
+            .into_any_element()
     }
 }
 
