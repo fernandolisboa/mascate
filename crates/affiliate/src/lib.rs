@@ -1,4 +1,5 @@
-//! Affiliate: Programs, Affiliate Links, Conversions, Commissions and Payouts.
+//! Affiliate: Programs, Affiliate Links, Conversions, Commissions, Payouts
+//! and Prospects.
 
 mod affiliate_links;
 mod clicks;
@@ -6,6 +7,10 @@ mod commissions;
 mod links;
 mod merge;
 mod payouts;
+mod prospect_score;
+mod prospect_signals;
+mod prospect_source;
+mod prospects;
 mod provisional_programs;
 mod report;
 mod rules;
@@ -24,6 +29,15 @@ pub use commissions::{
 pub use links::PromotedProduct;
 pub use merge::MERGE;
 pub use payouts::{ManualPayout, Payout, PayoutProposal};
+pub use prospect_score::{
+    BET_MAX_AGE_DAYS, BET_MAX_TEMPERATURE, BET_MIN_BLUEPRINT, BET_MIN_RATING, BET_MIN_REVIEWS,
+    Score, ScoreArea, ScorePart, is_bet, score,
+};
+pub use prospect_signals::{
+    Affiliation, MAX_TEMPERATURE, SignalKind, SignalOrigin, SignalReading, Signals, Support,
+};
+pub use prospect_source::{FoundProspect, ProspectCategory, ProspectSource};
+pub use prospects::{Prospect, ProspectsRead, prospect_key_of};
 pub use provisional_programs::{NewProgram, ProgramJoin};
 pub use report::{CommissionGroup, CommissionReport, GroupOrder, ProgramRef};
 pub use rules::{
@@ -56,6 +70,7 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         short_links::CREATE_SHORT_LINKS,
         clicks::CREATE_LINK_CLICKS,
         provisional_programs::ADD_PROVISIONAL_PROGRAMS,
+        prospects::CREATE_PROSPECTS,
     ],
 };
 

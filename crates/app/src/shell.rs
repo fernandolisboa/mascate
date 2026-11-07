@@ -26,6 +26,7 @@ use crate::preferences;
 use crate::products::ProductsScreen;
 use crate::promotion_channels::PromotionScreen;
 use crate::promotions::PromotionsScreen;
+use crate::prospects::{OpenGuidedFlow, ProspectsScreen};
 use crate::purchases::{BuyForSale, PurchasesScreen};
 use crate::quality::QualityScreen;
 use crate::question_alerts::OpenQuestions;
@@ -46,6 +47,7 @@ pub struct Shell {
     home: Entity<Home>,
     opportunities: Entity<OpportunitiesScreen>,
     offers: Entity<OffersScreen>,
+    prospects: Entity<ProspectsScreen>,
     products: Entity<ProductsScreen>,
     listings: Entity<ListingsScreen>,
     quality: Entity<QualityScreen>,
@@ -83,6 +85,7 @@ impl Shell {
         let home = cx.new(|cx| Home::new(problem, cx));
         let opportunities = cx.new(|cx| OpportunitiesScreen::new(window, cx));
         let offers = cx.new(|cx| OffersScreen::new(window, cx));
+        let prospects = cx.new(|cx| ProspectsScreen::new(window, cx));
         let products = cx.new(|cx| ProductsScreen::new(window, cx));
         let listings = cx.new(|cx| ListingsScreen::new(window, cx));
         let quality = cx.new(|cx| QualityScreen::new(window, cx));
@@ -206,6 +209,17 @@ impl Shell {
                 window,
                 |shell, _, start: &StartPost, window, cx| shell.start_post(start, window, cx),
             ),
+            cx.subscribe_in(
+                &prospects,
+                window,
+                |shell, _, open: &OpenGuidedFlow, window, cx| {
+                    shell
+                        .guided
+                        .update(cx, |guided, cx| guided.open_program(&open.0, window, cx));
+                    shell.go(Place::GuidedFlow, window, cx);
+                    cx.notify();
+                },
+            ),
             // "Seguir o sistema" switches with the system's light/dark setting.
             cx.observe_window_appearance(window, |_, window, cx| {
                 let preference = preferences::appearance(cx).theme;
@@ -218,6 +232,7 @@ impl Shell {
             home,
             opportunities,
             offers,
+            prospects,
             products,
             listings,
             quality,
@@ -293,6 +308,9 @@ impl Shell {
                         Place::Offers => shell
                             .offers
                             .update(cx, |offers, cx| offers.refresh(window, cx)),
+                        Place::Prospects => shell
+                            .prospects
+                            .update(cx, |prospects, cx| prospects.refresh(window, cx)),
                         Place::Products => shell
                             .products
                             .update(cx, |products, cx| products.refresh(window, cx)),
@@ -363,6 +381,8 @@ impl Shell {
             .update(cx, |affiliate, cx| affiliate.follow_context(window, cx));
         self.guided
             .update(cx, |guided, cx| guided.follow_context(window, cx));
+        self.prospects
+            .update(cx, |prospects, cx| prospects.follow_context(window, cx));
         self.promotion.update(cx, PromotionScreen::follow_context);
         self.dashboard.update(cx, DashboardScreen::refresh);
         self.quality.update(cx, |_, cx| cx.notify());
@@ -389,6 +409,7 @@ impl Render for Shell {
             Place::Today => self.home.clone().into_any_element(),
             Place::Opportunities => self.opportunities.clone().into_any_element(),
             Place::Offers => self.offers.clone().into_any_element(),
+            Place::Prospects => self.prospects.clone().into_any_element(),
             Place::Products => self.products.clone().into_any_element(),
             Place::Listings => self.listings.clone().into_any_element(),
             Place::Quality => self.quality.clone().into_any_element(),

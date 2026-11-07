@@ -604,6 +604,16 @@ impl GuidedFlowScreen {
         self.go(step, window, cx);
     }
 
+    /// Opens the Passo a passo on `program`, which Garimpo's "Quero
+    /// divulgar" gave: the link is next.
+    pub fn open_program(&mut self, program: &Program, window: &mut Window, cx: &mut Context<Self>) {
+        self.outcome = None;
+        self.new_channel = None;
+        self.links.update(cx, |links, cx| links.refresh(window, cx));
+        self.rules.update(cx, |rules, cx| rules.refresh(window, cx));
+        self.pick(program.id, program.product.clone(), window, cx);
+    }
+
     /// The first step picked or added `program`: the link is next.
     fn pick(
         &mut self,
