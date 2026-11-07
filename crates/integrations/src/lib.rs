@@ -12,6 +12,7 @@ mod browser;
 mod connections;
 mod crawler;
 mod eduzz;
+mod eduzz_affiliate_market;
 mod escaped;
 mod hotmart;
 mod hotmart_affiliate_market;
@@ -59,6 +60,10 @@ pub use connections::{
 };
 pub use crawler::Crawler;
 pub use eduzz::{API_URL as EDUZZ_API_URL, Eduzz, LINKS as EDUZZ_LINKS};
+pub use eduzz_affiliate_market::{
+    EDUZZ_AFFILIATE_MARKET, EduzzAffiliateMarket, MARKET_URL as EDUZZ_AFFILIATE_MARKET_URL,
+    affiliation_page as eduzz_affiliation_page,
+};
 pub use hotmart::{
     API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart, LINKS as HOTMART_LINKS,
 };
@@ -173,6 +178,7 @@ pub const FLAGS: &[Flag] = &[
     HOTMART_CRAWLER,
     HOTMART_AFFILIATE_MARKET,
     KIWIFY_AFFILIATE_MARKET,
+    EDUZZ_AFFILIATE_MARKET,
     MERCADO_LIVRE_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL,
 ];

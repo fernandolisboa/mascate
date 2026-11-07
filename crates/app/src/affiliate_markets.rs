@@ -66,12 +66,15 @@ pub fn market(platform: AffiliatePlatform) -> Option<Market> {
             ],
         ),
         AffiliatePlatform::Eduzz => (
-            "https://my.eduzz.com",
+            "https://orbita.eduzz.com",
             &[
-                "Entre no MyEduzz e abra a Vitrine (Select) no menu.",
+                "Entre no MyEduzz e abra Vitrine no menu lateral. Mais Vendidos mostra os que \
+                 os afiliados mais venderam nos últimos 30 dias e Novidades, os que acabaram de \
+                 entrar; use a busca e os Filtros.",
                 COPY,
-                "Para se afiliar, use Afiliar-se agora na página do produto; o link fica em \
-                 Afiliações > Divulgar depois da aprovação.",
+                "Para se afiliar, clique em Afiliar-se agora na página do produto: com a \
+                 afiliação automática ativa você já vira afiliado; nos outros, o pedido vai \
+                 para o produtor aprovar.",
             ],
         ),
         AffiliatePlatform::Shopee
