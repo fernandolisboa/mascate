@@ -280,6 +280,7 @@ fn main() {
     let crawlers = AppCrawlers {
         engine: Arc::new(Crawler::new(&user_agent, Arc::new(SystemClock))),
         sites: CrawledSite::all(Build::CURRENT, &process_environment()),
+        hotmart_vitrine: crawlers::hotmart_vitrine(Build::CURRENT, &process_environment()),
     };
     // The browser opens nothing until a panel whose flag is on reads, on a
     // profile beside the database.

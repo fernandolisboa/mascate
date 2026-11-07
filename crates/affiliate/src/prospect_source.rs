@@ -3,7 +3,7 @@
 //! only reads; the Affiliate keeps what comes back by the Platform's
 //! natural key.
 
-use mascate_kernel::PlatformError;
+use mascate_kernel::{PlatformError, Timestamp};
 
 use crate::prospect_signals::{SignalOrigin, Signals};
 use crate::source::AffiliatePlatform;
@@ -42,6 +42,11 @@ pub trait ProspectSource: Send + Sync {
         category: Option<&ProspectCategory>,
     ) -> Result<Vec<FoundProspect>, PlatformError>;
 
-    /// One product's page, with what the list does not show.
-    fn details(&self, key: &str) -> Result<FoundProspect, PlatformError>;
+    /// One product's page, with what the list does not show. `known` is
+    /// what the app keeps of it, such as the address of its page.
+    fn details(&self, known: &FoundProspect) -> Result<FoundProspect, PlatformError>;
+
+    /// Until when the Platform is left alone after blocking the reader;
+    /// `None` while it may be asked.
+    fn blocked_until(&self) -> Option<Timestamp>;
 }

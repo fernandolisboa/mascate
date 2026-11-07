@@ -445,6 +445,133 @@ fn a_pasted_link_keys_the_product_without_its_query() {
 }
 
 #[test]
+fn a_product_typed_by_its_link_and_then_read_is_one_prospect_under_the_platform_id() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let typed = FoundProspect {
+            platform: AffiliatePlatform::Hotmart,
+            key: prospect_key_of(&format!("{EXCEL_PAGE}?ref=insta")).unwrap(),
+            name: "Excel".into(),
+            signals: Signals {
+                commission_rate: Some(percent("40")),
+                product_page: Some(format!("{EXCEL_PAGE}?ref=insta")),
+                ..Signals::default()
+            },
+        };
+        let id = fixture
+            .affiliate
+            .save_prospect(&typed, SignalOrigin::Typed)
+            .await
+            .unwrap();
+        fixture
+            .affiliate
+            .dismiss_prospect(id, "já vi")
+            .await
+            .unwrap();
+
+        let read = fixture
+            .affiliate
+            .read_prospects(&Vitrine(vec![excel()]), None)
+            .await
+            .unwrap();
+
+        assert_eq!((read.added, read.dismissed), (0, 1));
+        let kept = fixture.affiliate.prospect(id).await.unwrap();
+        assert_eq!(kept.key, "4021");
+        assert_eq!(kept.name, "Excel do Zero ao Avançado");
+        assert_eq!(kept.signals.commission_rate, Some(percent("40")));
+        assert_eq!(kept.signals.students, Some(12_000));
+        assert_eq!(
+            kept.reading(SignalKind::CommissionRate).unwrap().origin,
+            SignalOrigin::Typed
+        );
+        assert_eq!(kept.dismissed.as_deref(), Some("já vi"));
+    });
+}
+
+#[test]
+fn reading_a_prospects_page_adds_what_only_the_page_shows_and_keeps_the_rest() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let vitrine = Vitrine(vec![excel(), photo()]);
+        fixture
+            .affiliate
+            .read_prospects(&vitrine, None)
+            .await
+            .unwrap();
+        let id = fixture.affiliate.prospects(None).await.unwrap()[0].id;
+        let typed = FoundProspect {
+            signals: Signals {
+                temperature: Some(30),
+                ..Signals::default()
+            },
+            ..excel()
+        };
+        fixture
+            .affiliate
+            .save_prospect(&typed, SignalOrigin::Typed)
+            .await
+            .unwrap();
+        fixture.clock.advance(TimeDelta::hours(1));
+
+        let read = fixture
+            .affiliate
+            .read_prospect_details(&vitrine, id)
+            .await
+            .unwrap();
+        let again = fixture
+            .affiliate
+            .read_prospect_details(&vitrine, id)
+            .await
+            .unwrap();
+
+        assert_eq!(read.id, id);
+        assert_eq!(read.signals.warranty_days, Some(7));
+        assert_eq!(read.signals.temperature, Some(30));
+        assert_eq!(read.signals.students, Some(12_000));
+        let warranty = read.reading(SignalKind::WarrantyDays).unwrap();
+        assert_eq!(
+            (warranty.origin, warranty.read_at),
+            (SignalOrigin::Vitrine, noon() + TimeDelta::hours(1))
+        );
+        assert_eq!(again, read);
+        assert_eq!(fixture.affiliate.prospects(None).await.unwrap().len(), 2);
+    });
+}
+
+#[test]
+fn a_page_is_read_only_from_its_own_platform_and_a_failed_read_keeps_the_prospect() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let kiwify = FoundProspect {
+            platform: AffiliatePlatform::Kiwify,
+            ..photo()
+        };
+        let other = fixture
+            .affiliate
+            .save_prospect(&kiwify, SignalOrigin::Typed)
+            .await
+            .unwrap();
+        let id = fixture
+            .affiliate
+            .save_prospect(&photo(), SignalOrigin::Typed)
+            .await
+            .unwrap();
+        let before = fixture.affiliate.prospect(id).await.unwrap();
+
+        let wrong = fixture
+            .affiliate
+            .read_prospect_details(&Vitrine(Vec::new()), other)
+            .await;
+        let failed = fixture.affiliate.read_prospect_details(&Blocked, id).await;
+
+        assert!(matches!(wrong, Err(AffiliateError::NoSuchProspect)));
+        assert!(matches!(failed, Err(AffiliateError::Platform(_))));
+        assert_eq!(fixture.affiliate.prospect(id).await.unwrap(), before);
+    });
+}
+
+#[test]
 fn a_failed_read_keeps_nothing() {
     block_on(async {
         let fixture = Fixture::new().await;
@@ -474,12 +601,20 @@ impl ProspectSource for Vitrine {
         Ok(self.0.clone())
     }
 
-    fn details(&self, key: &str) -> Result<FoundProspect, PlatformError> {
-        self.0
+    /// The product whose page `known` has, with its students read there.
+    fn details(&self, known: &FoundProspect) -> Result<FoundProspect, PlatformError> {
+        let mut page = self
+            .0
             .iter()
-            .find(|found| found.key == key)
+            .find(|found| found.signals.product_page == known.signals.product_page)
             .cloned()
-            .ok_or(PlatformError::NotFound)
+            .ok_or(PlatformError::NotFound)?;
+        page.signals.warranty_days = Some(7);
+        Ok(page)
+    }
+
+    fn blocked_until(&self) -> Option<Timestamp> {
+        None
     }
 }
 
@@ -503,7 +638,11 @@ impl ProspectSource for Blocked {
         Err(PlatformError::NotFound)
     }
 
-    fn details(&self, _: &str) -> Result<FoundProspect, PlatformError> {
+    fn details(&self, _: &FoundProspect) -> Result<FoundProspect, PlatformError> {
         Err(PlatformError::NotFound)
+    }
+
+    fn blocked_until(&self) -> Option<Timestamp> {
+        Some(noon())
     }
 }
