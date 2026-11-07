@@ -1,0 +1,75 @@
+{
+  "url": "https://dashboard.kiwify.com.br/marketplace",
+  "title": "Marketplace | Kiwify",
+  "captcha": false,
+  "heading": "Marketplace",
+  "links": [],
+  "lines": [
+    "Marketplace",
+    "Pesquisar produtos",
+    "Preço",
+    "Comissão",
+    "Categoria"
+  ],
+  "cards": [
+    {
+      "link": "https://dashboard.kiwify.com.br/marketplace/Qx7Lm2Pa",
+      "title": "Método Confeitaria Lucrativa",
+      "links": [
+        "https://dashboard.kiwify.com.br/marketplace/Qx7Lm2Pa"
+      ],
+      "lines": [
+        "Método Confeitaria Lucrativa",
+        "Gastronomia",
+        "Preço R$ 197,00",
+        "Comissão de até R$ 98,50",
+        "Comissão: 50%",
+        "Aprovação automática"
+      ]
+    },
+    {
+      "link": "https://dashboard.kiwify.com.br/marketplace/Rt5Nv8Kd?ref=lista",
+      "title": "Planilhas Financeiras Pro",
+      "links": [
+        "https://dashboard.kiwify.com.br/marketplace/Rt5Nv8Kd?ref=lista"
+      ],
+      "lines": [
+        "Planilhas Financeiras Pro",
+        "Finanças e investimentos",
+        "Preço",
+        "R$ 47,00",
+        "Comissão",
+        "40%",
+        "Aprovação manual"
+      ]
+    },
+    {
+      "link": "https://dashboard.kiwify.com.br/marketplace/Hz3Wq9Bc",
+      "title": "Yoga em Casa",
+      "links": [
+        "https://dashboard.kiwify.com.br/marketplace/Hz3Wq9Bc"
+      ],
+      "lines": [
+        "Yoga em Casa",
+        "Saúde e esportes",
+        "Preço sob consulta",
+        "Comissão a combinar"
+      ]
+    },
+    {
+      "link": "https://dashboard.kiwify.com.br/marketplace/<script>",
+      "title": "Produto estranho",
+      "links": [],
+      "lines": [
+        "Produto estranho",
+        "Comissão: 30%"
+      ]
+    },
+    {
+      "link": "https://dashboard.kiwify.com.br/marketplace/Mm4Ty6Ue",
+      "title": "",
+      "links": [],
+      "lines": []
+    }
+  ]
+}

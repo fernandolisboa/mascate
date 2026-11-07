@@ -4,8 +4,9 @@
 //! lives in the browser's own profile: whether a browser is installed,
 //! "Entrar no painel" to log in by hand in its window, and "Ler painel
 //! agora". The hourly Commissions Sync reads every panel that is on and
-//! logged in. Hotmart's affiliate market (#221) shares the browser and its
-//! profile, but only Garimpo reads it, on the owner's click.
+//! logged in. The logged-in affiliate markets of Hotmart (#221) and Kiwify
+//! (#222) share the browser and its profile, but only Garimpo reads them,
+//! on the owner's click.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -15,12 +16,13 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, EventEmitter, Global, Window, div};
-use mascate_affiliate::AffiliateError;
+use mascate_affiliate::{AffiliateError, AffiliatePlatform};
 use mascate_integrations::{
-    AffiliatePanel, BrowserSession, HOTMART_AFFILIATE_MARKET, HOTMART_AFFILIATE_MARKET_URL,
-    HotmartAffiliateMarket, MAGALU_AFFILIATE_PANEL, MAGALU_AFFILIATE_PANEL_URL,
-    MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL, MagaluAffiliatePanel,
-    MercadoLivreAffiliatePanel, PanelState,
+    AffiliateMarket, AffiliatePanel, BrowserSession, HOTMART_AFFILIATE_MARKET,
+    HOTMART_AFFILIATE_MARKET_URL, HotmartAffiliateMarket, KIWIFY_AFFILIATE_MARKET,
+    KIWIFY_AFFILIATE_MARKET_URL, KiwifyAffiliateMarket, MAGALU_AFFILIATE_PANEL,
+    MAGALU_AFFILIATE_PANEL_URL, MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL,
+    MagaluAffiliatePanel, MercadoLivreAffiliatePanel, PanelState,
 };
 use mascate_kernel::{PlatformError, SystemClock, ThreadPause};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
@@ -37,7 +39,7 @@ use crate::restricted::AppFlags;
 pub struct Panels {
     pub browser: Arc<BrowserSession>,
     pub sites: Vec<PanelSite>,
-    pub hotmart_market: MarketSite,
+    pub markets: Vec<MarketSite>,
 }
 
 pub struct AppAffiliatePanels(pub Arc<Panels>);
@@ -55,34 +57,135 @@ pub fn profile_folder(data: PathBuf) -> PathBuf {
     data.join("navegador")
 }
 
-/// Where the reading of Hotmart's affiliate market is stopped, so a stop
-/// outlasts a restart: beside the browser's profile, never inside it.
-pub fn market_stop_file(data: PathBuf) -> PathBuf {
-    data.join("mercado-hotmart-parado")
+/// Where the reading of `platform`'s affiliate market is stopped, so a
+/// stop outlasts a restart: beside the browser's profile, never inside it.
+pub fn market_stop_file(data: PathBuf, platform: AffiliatePlatform) -> PathBuf {
+    data.join(format!(
+        "mercado-{}-parado",
+        platform.name().to_lowercase().replace(' ', "-")
+    ))
 }
 
-/// Hotmart's Mercado de Afiliação, read for Garimpo.
+/// How Garimpo names a Platform's logged-in market and what it reads.
+#[derive(Debug, Clone, Copy)]
+pub struct MarketTexts {
+    pub platform: AffiliatePlatform,
+    pub flag: Flag,
+    /// "o mercado de afiliação", "o marketplace".
+    pub called: &'static str,
+    /// What one click reads: "até 5 páginas por clique".
+    pub pages: &'static str,
+    /// What a read brings: "comissão, preço e …".
+    pub reads: &'static str,
+    /// Where a read without a category looked: "em todas as categorias".
+    pub everything: &'static str,
+}
+
+impl MarketTexts {
+    /// "mercado de afiliação", without its article.
+    pub fn called_short(&self) -> &'static str {
+        self.called.strip_prefix("o ").unwrap_or(self.called)
+    }
+}
+
+/// A Platform's logged-in affiliate market, read for Garimpo.
 pub struct MarketSite {
+    pub texts: MarketTexts,
     pub url: String,
     stop_file: Option<PathBuf>,
+    build: fn(&str, Arc<BrowserSession>) -> NewMarket,
     /// Built the first time its flag is found on, and kept, so its memory
     /// of pages, its interval and its stop last while the app runs.
-    built: OnceLock<Arc<HotmartAffiliateMarket>>,
+    built: OnceLock<Arc<dyn AffiliateMarket>>,
+}
+
+/// A market reader, before its stop file is set.
+enum NewMarket {
+    Hotmart(HotmartAffiliateMarket),
+    Kiwify(KiwifyAffiliateMarket),
+}
+
+impl NewMarket {
+    fn kept_in(self, stop_file: Option<PathBuf>) -> Arc<dyn AffiliateMarket> {
+        match (self, stop_file) {
+            (NewMarket::Hotmart(market), Some(file)) => Arc::new(market.with_stop_file(file)),
+            (NewMarket::Hotmart(market), None) => Arc::new(market),
+            (NewMarket::Kiwify(market), Some(file)) => Arc::new(market.with_stop_file(file)),
+            (NewMarket::Kiwify(market), None) => Arc::new(market),
+        }
+    }
 }
 
 impl MarketSite {
-    /// The market or, in a development build only, the URL in
-    /// `MASCATE_HOTMART_AFFILIATE_MARKET_URL`, a local fake page; a stop is
-    /// kept in `stop_file`.
-    pub fn hotmart(build: Build, environment: &Environment, stop_file: Option<PathBuf>) -> Self {
+    /// Every market the app reads, in the Work Context's order; each stop
+    /// is kept beside `data`, when there is one.
+    pub fn all(build: Build, environment: &Environment, data: Option<PathBuf>) -> Vec<Self> {
+        vec![
+            Self::hotmart(build, environment, data.clone()),
+            Self::kiwify(build, environment, data),
+        ]
+    }
+
+    /// Hotmart's Mercado de Afiliação or, in a development build only, the
+    /// URL in `MASCATE_HOTMART_AFFILIATE_MARKET_URL`, a local fake page.
+    pub fn hotmart(build: Build, environment: &Environment, data: Option<PathBuf>) -> Self {
         Self {
+            texts: MarketTexts {
+                platform: AffiliatePlatform::Hotmart,
+                flag: HOTMART_AFFILIATE_MARKET,
+                called: "o mercado de afiliação",
+                pages: "até 5 páginas por clique",
+                reads: "temperatura, comissão em % e em R$, Blueprint, satisfação, preço e se a \
+                        afiliação é imediata",
+                everything: "em todas as categorias",
+            },
             url: crate::mercado_livre::local_fake(
                 build,
                 environment,
                 "MASCATE_HOTMART_AFFILIATE_MARKET_URL",
             )
             .unwrap_or_else(|| HOTMART_AFFILIATE_MARKET_URL.to_owned()),
-            stop_file,
+            stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Hotmart)),
+            build: |url, browser| {
+                NewMarket::Hotmart(HotmartAffiliateMarket::new(
+                    url,
+                    browser,
+                    Arc::new(SystemClock),
+                    Arc::new(ThreadPause),
+                ))
+            },
+            built: OnceLock::new(),
+        }
+    }
+
+    /// Kiwify's Marketplace or, in a development build only, the URL in
+    /// `MASCATE_KIWIFY_AFFILIATE_MARKET_URL`, a local fake page.
+    pub fn kiwify(build: Build, environment: &Environment, data: Option<PathBuf>) -> Self {
+        Self {
+            texts: MarketTexts {
+                platform: AffiliatePlatform::Kiwify,
+                flag: KIWIFY_AFFILIATE_MARKET,
+                called: "o marketplace",
+                pages: "a primeira página da lista por clique",
+                reads: "comissão em % e em R$, preço, garantia, o produtor e se a aprovação é \
+                        automática",
+                everything: "na primeira página",
+            },
+            url: crate::mercado_livre::local_fake(
+                build,
+                environment,
+                "MASCATE_KIWIFY_AFFILIATE_MARKET_URL",
+            )
+            .unwrap_or_else(|| KIWIFY_AFFILIATE_MARKET_URL.to_owned()),
+            stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Kiwify)),
+            build: |url, browser| {
+                NewMarket::Kiwify(KiwifyAffiliateMarket::new(
+                    url,
+                    browser,
+                    Arc::new(SystemClock),
+                    Arc::new(ThreadPause),
+                ))
+            },
             built: OnceLock::new(),
         }
     }
@@ -167,32 +270,33 @@ impl Panels {
 }
 
 impl Panels {
-    /// Hotmart's affiliate market while its flag is on; off, it is never
-    /// built and no browser opens for it.
-    pub async fn hotmart_market(
+    /// The logged-in affiliate markets whose flag is on, each with its
+    /// reader; off, a market is never built and no browser opens for it.
+    pub async fn markets_on(
         &self,
         flags: &Flags,
-    ) -> Result<Option<Arc<HotmartAffiliateMarket>>, FlagError> {
-        if !flags.is_on(&HOTMART_AFFILIATE_MARKET).await? {
-            return Ok(None);
-        }
-        let site = &self.hotmart_market;
-        Ok(Some(
-            site.built
-                .get_or_init(|| {
-                    let market = HotmartAffiliateMarket::new(
-                        &site.url,
-                        self.browser.clone(),
-                        Arc::new(SystemClock),
-                        Arc::new(ThreadPause),
-                    );
-                    Arc::new(match &site.stop_file {
-                        Some(file) => market.with_stop_file(file.clone()),
-                        None => market,
+    ) -> Result<Vec<(&MarketSite, Arc<dyn AffiliateMarket>)>, FlagError> {
+        let mut on = Vec::new();
+        for site in &self.markets {
+            if flags.is_on(&site.texts.flag).await? {
+                let market = site
+                    .built
+                    .get_or_init(|| {
+                        (site.build)(&site.url, self.browser.clone())
+                            .kept_in(site.stop_file.clone())
                     })
-                })
-                .clone(),
-        ))
+                    .clone();
+                on.push((site, market));
+            }
+        }
+        Ok(on)
+    }
+
+    /// The market of `platform`, whether its flag is on or not.
+    pub fn market_site(&self, platform: AffiliatePlatform) -> Option<&MarketSite> {
+        self.markets
+            .iter()
+            .find(|site| site.texts.platform == platform)
     }
 }
 
@@ -559,7 +663,7 @@ mod tests {
             let panels = Panels {
                 browser: Arc::new(BrowserSession::new(None, profile.clone())),
                 sites: PanelSite::all(Build::Release, &nowhere()),
-                hotmart_market: MarketSite::hotmart(Build::Release, &nowhere(), None),
+                markets: MarketSite::all(Build::Release, &nowhere(), None),
             };
             let shown = |on: &[(&PanelSite, Arc<dyn AffiliatePanel>)]| {
                 on.iter()
@@ -594,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn hotmarts_market_is_built_only_while_its_flag_is_on_and_opens_nothing_meanwhile() {
+    fn each_market_is_built_only_while_its_flag_is_on_and_opens_nothing_meanwhile() {
         block_on(async {
             let dir = tempfile::tempdir().unwrap();
             let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
@@ -611,28 +715,96 @@ mod tests {
             let panels = Panels {
                 browser: Arc::new(BrowserSession::new(None, profile.clone())),
                 sites: PanelSite::all(Build::Release, &nowhere()),
-                hotmart_market: MarketSite::hotmart(
+                markets: MarketSite::all(
                     Build::Release,
                     &nowhere(),
-                    Some(market_stop_file(dir.path().to_path_buf())),
+                    Some(dir.path().to_path_buf()),
                 ),
             };
+            let platforms = |on: &[(&MarketSite, Arc<dyn AffiliateMarket>)]| {
+                on.iter()
+                    .map(|(site, market)| (site.texts.platform, market.platform(), market.state()))
+                    .collect::<Vec<_>>()
+            };
+            let built = |platform| {
+                panels
+                    .market_site(platform)
+                    .is_some_and(|site| site.built.get().is_some())
+            };
 
-            let off = panels.hotmart_market(&flags).await.unwrap();
-            let built_while_off = panels.hotmart_market.built.get().is_some();
-            let request = flags.request_turn_on(HOTMART_AFFILIATE_MARKET.key).unwrap();
-            assert_eq!(request.flag().risk, HOTMART_AFFILIATE_MARKET.risk);
+            let off = platforms(&panels.markets_on(&flags).await.unwrap());
+            let built_while_off =
+                built(AffiliatePlatform::Hotmart) || built(AffiliatePlatform::Kiwify);
+            let request = flags.request_turn_on(KIWIFY_AFFILIATE_MARKET.key).unwrap();
+            assert_eq!(request.flag().risk, KIWIFY_AFFILIATE_MARKET.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
-            let on = panels.hotmart_market(&flags).await.unwrap().unwrap();
-            let again = panels.hotmart_market(&flags).await.unwrap().unwrap();
+            let kiwify_on = platforms(&panels.markets_on(&flags).await.unwrap());
+            let hotmart_built = built(AffiliatePlatform::Hotmart);
+            let request = flags.request_turn_on(HOTMART_AFFILIATE_MARKET.key).unwrap();
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let both = panels.markets_on(&flags).await.unwrap();
+            let again = panels.markets_on(&flags).await.unwrap();
 
-            assert!(off.is_none());
+            assert!(off.is_empty());
             assert!(!built_while_off);
-            assert!(Arc::ptr_eq(&on, &again));
-            assert_eq!(on.state(), PanelState::NoBrowser);
-            assert_eq!(panels.hotmart_market.url, "https://app.hotmart.com/market");
+            assert_eq!(
+                kiwify_on,
+                [(
+                    AffiliatePlatform::Kiwify,
+                    AffiliatePlatform::Kiwify,
+                    PanelState::NoBrowser
+                )]
+            );
+            assert!(!hotmart_built);
+            assert_eq!(
+                platforms(&both),
+                [
+                    (
+                        AffiliatePlatform::Hotmart,
+                        AffiliatePlatform::Hotmart,
+                        PanelState::NoBrowser
+                    ),
+                    (
+                        AffiliatePlatform::Kiwify,
+                        AffiliatePlatform::Kiwify,
+                        PanelState::NoBrowser
+                    ),
+                ]
+            );
+            assert!(Arc::ptr_eq(&both[1].1, &again[1].1));
             assert!(!profile.exists());
         });
+    }
+
+    #[test]
+    fn each_market_is_the_real_one_unless_a_development_build_points_elsewhere() {
+        let release = MarketSite::all(Build::Release, &nowhere(), None);
+        let development = MarketSite::kiwify(
+            Build::Development,
+            &(Box::new(|name: &str| {
+                (name == "MASCATE_KIWIFY_AFFILIATE_MARKET_URL")
+                    .then(|| "http://127.0.0.1:8222/marketplace".to_owned())
+            }) as Environment),
+            None,
+        );
+
+        let urls: Vec<&str> = release.iter().map(|site| site.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://app.hotmart.com/market",
+                "https://dashboard.kiwify.com.br/marketplace"
+            ]
+        );
+        assert_eq!(development.url, "http://127.0.0.1:8222/marketplace");
+        assert_eq!(
+            market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Hotmart),
+            PathBuf::from("dados").join("mercado-hotmart-parado")
+        );
+        assert_eq!(
+            market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Kiwify),
+            PathBuf::from("dados").join("mercado-kiwify-parado")
+        );
     }
 
     #[test]

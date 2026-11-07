@@ -3,8 +3,8 @@
 O Mercado de Afiliação da Hotmart só abre com login, e os termos de uso da Hotmart (item 3.5(m))
 proíbem robôs e scripts, então estas fixtures **não** foram gravadas de uma conta real: gravá-las
 seria rodar o leitor que fica desligado atrás da flag `integrations.hotmart_affiliate_market`
-(ADR 0039). Cada arquivo é o valor que o script de leitura do app (`MARKET_SCRIPT`, em
-`src/hotmart_affiliate_market.rs`) devolveria numa página: o endereço em que a página parou, o
+(ADR 0039). Cada arquivo é o valor que o script de leitura do app (`market_script`, em
+`src/affiliate_market.rs`, com o seletor de `src/hotmart_affiliate_market.rs`) devolveria numa página: o endereço em que a página parou, o
 título, se há uma verificação contra robôs, os cartões de produto (cada um pelo link para a página
 do produto no mercado, com o texto de cada linha) e as linhas da página inteira. O servidor de
 depuração falso dos testes responde com esse valor no lugar de rodar o script.
@@ -48,7 +48,7 @@ Inventado até o regression pass da fase 3 (#116):
 | `blocked.json` | "429 Too Many Requests" |
 
 Para regravar: ligue a flag, entre na Hotmart pela janela de **Entrar na Hotmart** no Garimpo, abra
-o mercado e a página de um produto, abra as ferramentas do desenvolvedor (F12), cole o conteúdo de
-`MARKET_SCRIPT` envolto em `copy(...)` no console e cole o resultado aqui, trocando nomes e valores
+o mercado e a página de um produto, abra as ferramentas do desenvolvedor (F12), cole o script
+(o resultado de `market_script` com o seletor da Hotmart) envolto em `copy(...)` no console e cole o resultado aqui, trocando nomes e valores
 de verdade por inventados. Confira também os endereços da lista, da categoria e da página do
 produto, e se a página do produto abre só com o `productUcode`.

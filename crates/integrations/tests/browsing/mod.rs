@@ -12,7 +12,9 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::TimeDelta;
 use mascate_integrations::Pause;
+use mascate_kernel::testing::ManualClock;
 use mascate_platform::testing::FakeHttpServer;
 use serde_json::{Value, json};
 use tungstenite::Message;
@@ -186,5 +188,32 @@ impl Pause for RecordedPauses {
 impl RecordedPauses {
     pub fn count(&self) -> usize {
         self.0.lock().unwrap().len()
+    }
+}
+
+/// A wait that moves the clock on, as a real one would, and is remembered.
+pub struct ClockPause {
+    pub clock: Arc<ManualClock>,
+    waits: Mutex<Vec<Duration>>,
+}
+
+impl ClockPause {
+    pub fn on(clock: Arc<ManualClock>) -> Self {
+        Self {
+            clock,
+            waits: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn waits(&self) -> Vec<Duration> {
+        self.waits.lock().unwrap().clone()
+    }
+}
+
+impl Pause for ClockPause {
+    fn pause(&self, duration: Duration) {
+        self.waits.lock().unwrap().push(duration);
+        self.clock
+            .advance(TimeDelta::from_std(duration).unwrap_or_default());
     }
 }

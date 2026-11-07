@@ -1,0 +1,9 @@
+{
+  "url": "https://dashboard.kiwify.com.br/login?redirect=%2Fmarketplace",
+  "title": "Entrar | Kiwify",
+  "captcha": false,
+  "heading": "Entrar na sua conta",
+  "links": [],
+  "lines": ["Entrar na sua conta", "E-mail", "Senha", "Entrar"],
+  "cards": []
+}
