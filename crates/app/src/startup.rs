@@ -1632,10 +1632,28 @@ mod tests {
                     Arc::new(UuidV7Generator),
                 );
                 assert!(flags.is_on(&MODULE_FLAGS[0][0]).await.unwrap(), "{name}");
+                // Read just after the sample's dismissal: a dismissal only
+                // lasts the Reminder's days, so the wall clock would undo it.
+                let dismissed_at = {
+                    let mut rows = database
+                        .connection()
+                        .query(
+                            "SELECT MAX(created_at) FROM platform_reminder_dismissals
+                             WHERE reminder = ?1",
+                            [MODULE_REMINDERS[0][0].key],
+                        )
+                        .await
+                        .unwrap();
+                    let row = rows.next().await.unwrap().expect("one row");
+                    mascate_platform::read_stored(&row.get::<String>(0).unwrap())
+                        .expect("a dismissal time")
+                };
                 let reminders = Reminders::new(
                     database.clone(),
                     Registry::new(MODULE_REMINDERS).unwrap(),
-                    Arc::new(SystemClock),
+                    Arc::new(mascate_kernel::testing::ManualClock::at(
+                        dismissed_at + chrono::TimeDelta::hours(1),
+                    )),
                     Arc::new(UuidV7Generator),
                 );
                 let showing = reminders.showing(&[]).await.unwrap();
