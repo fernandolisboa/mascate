@@ -180,6 +180,31 @@ impl Affiliate {
         Ok(read)
     }
 
+    /// Reads the page of `prospect` from `source`, its own Platform's, and
+    /// keeps what it shows the same way as a list read: the Prospect as it
+    /// is kept afterwards.
+    pub async fn read_prospect_details(
+        &self,
+        source: &dyn ProspectSource,
+        prospect: RecordId,
+    ) -> Result<Prospect, AffiliateError> {
+        let known = self.prospect(prospect).await?;
+        if known.platform != source.platform() {
+            return Err(AffiliateError::NoSuchProspect);
+        }
+        let read = source.details(&FoundProspect {
+            platform: known.platform,
+            key: known.key,
+            name: known.name,
+            signals: known.signals,
+        })?;
+        if read.platform != known.platform {
+            return Err(AffiliateError::NoSuchProspect);
+        }
+        let id = self.save_prospect(&read, source.origin()).await?;
+        self.prospect(id).await
+    }
+
     /// The Prospects not dismissed, of `platform` or of every Platform,
     /// the best score first.
     pub async fn prospects(
@@ -302,14 +327,10 @@ impl Affiliate {
             return Err(AffiliateError::ImpossibleSignal(kind));
         }
         let now = stored(self.clock.now());
-        let kept_row = first_row(
-            on,
-            "SELECT id, name, dismissed_at IS NOT NULL FROM affiliate_prospects
-             WHERE platform = ?1 AND product_key = ?2 AND deleted_at IS NULL",
-            params![found.platform.code(), key],
-            |row| Ok((row.id_at(0)?, row.get::<String>(1)?, row.get::<bool>(2)?)),
-        )
-        .await?;
+        let mut kept_row = kept_prospect(on, found.platform, key).await?;
+        if kept_row.is_none() {
+            kept_row = self.adopt_pasted(on, found, key).await?;
+        }
         let (id, kept) = match kept_row {
             Some((id, kept_name, dismissed)) => {
                 if kept_name != name {
@@ -387,6 +408,35 @@ impl Affiliate {
             }
         }
         Ok((id, kept))
+    }
+
+    /// The Prospect the owner typed with the link of `found`'s page, now
+    /// keyed by the Platform's own `key`, so one product is one Prospect
+    /// whether pasted first or read first.
+    async fn adopt_pasted(
+        &self,
+        on: &Connection,
+        found: &FoundProspect,
+        key: &str,
+    ) -> Result<Option<(RecordId, String, bool)>, AffiliateError> {
+        let Some(pasted) = found
+            .signals
+            .product_page
+            .as_deref()
+            .and_then(prospect_key_of)
+            .filter(|pasted| pasted != key)
+        else {
+            return Ok(None);
+        };
+        let Some(kept) = kept_prospect(on, found.platform, &pasted).await? else {
+            return Ok(None);
+        };
+        on.execute(
+            "UPDATE affiliate_prospects SET product_key = ?1, updated_at = ?2 WHERE id = ?3",
+            params![key, stored(self.clock.now()), kept.0.to_string()],
+        )
+        .await?;
+        Ok(Some(kept))
     }
 
     /// The Prospects not dismissed of `platform`, or `only` dismissed or
@@ -494,6 +544,23 @@ async fn first_row<T>(
         Some(row) => Ok(Some(read(&row)?)),
         None => Ok(None),
     }
+}
+
+/// The live Prospect of `platform` keyed `key`: its id, its name and
+/// whether it was dismissed.
+async fn kept_prospect(
+    on: &Connection,
+    platform: AffiliatePlatform,
+    key: &str,
+) -> Result<Option<(RecordId, String, bool)>, AffiliateError> {
+    first_row(
+        on,
+        "SELECT id, name, dismissed_at IS NOT NULL FROM affiliate_prospects
+         WHERE platform = ?1 AND product_key = ?2 AND deleted_at IS NULL",
+        params![platform.code(), key],
+        |row| Ok((row.id_at(0)?, row.get::<String>(1)?, row.get::<bool>(2)?)),
+    )
+    .await
 }
 
 /// What keeping a found Prospect did.

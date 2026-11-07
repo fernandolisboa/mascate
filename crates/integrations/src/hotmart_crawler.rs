@@ -1,213 +1,83 @@
-//! The Hotmart marketplace crawler (#154, ADR 0035): reads the best sellers
-//! and the category pages of hotmart.com's public marketplace, as a source
-//! of Supplier Offers, through the shared [`Crawler`]. It reads only the
-//! page's embedded state (`__NEXT_DATA__`). Built only while its flag is on.
+//! The Hotmart vitrine reader (#154, #220, ADR 0039 decision 2): reads the
+//! best sellers and the category pages of hotmart.com's public marketplace,
+//! and a product's page when the owner opens it, as Prospects, through the
+//! shared [`Crawler`]. It reads only the page's embedded state
+//! (`__NEXT_DATA__`). Built only while its flag is on.
 
 use std::sync::Arc;
 
-use mascate_catalog::{
-    Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource, ProductSource,
+use chrono::{DateTime, NaiveDate};
+use mascate_affiliate::{
+    AffiliatePlatform, FoundProspect, ProspectCategory, ProspectSource, SignalOrigin, Signals,
 };
-use mascate_kernel::{PlatformError, Timestamp, folded_words};
+use mascate_kernel::{PlatformError, Timestamp};
 use mascate_platform::{Flag, FlagKind, Phase};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde_json::Value;
 
 use crate::answers::page_on;
-use crate::crawler::{Crawler, money, no_shops, number_in, script_json, walk};
+use crate::crawler::{Crawler, number_in, script_json, walk};
 
 /// The marketplace in Portuguese, unless a test points elsewhere.
 pub const MARKETPLACE_URL: &str = "https://hotmart.com/pt-br/marketplace";
 
-/// The crawler, off until the owner turns it on (ADR 0006).
+/// The reader, off until the owner turns it on (ADR 0006).
 pub const HOTMART_CRAWLER: Flag = Flag {
     key: "integrations.hotmart_crawler",
     name: "Crawler da vitrine da Hotmart",
     kind: FlagKind::RestrictedFeature,
     phase: Phase::Three,
     reason: "Os termos de uso da Hotmart, item 3.5(m), proíbem sistemas automatizados, robôs e \
-             scripts. O crawler lê devagar, só as páginas que o robots.txt deixa, e para quando \
-             o site bloqueia.",
+             scripts. O crawler lê devagar, só quando você clica, só as páginas que o robots.txt \
+             deixa, e para quando o site bloqueia.",
     risk: "A Hotmart pode bloquear o endereço de internet da sua casa ou suspender a sua conta \
            de afiliado, com as comissões a receber.",
 };
 
-/// A category of the marketplace and its subcategories, by the slugs of
-/// their pages and the names the marketplace shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MarketplaceCategory {
-    pub slug: &'static str,
-    pub name: &'static str,
-    pub subcategories: &'static [(&'static str, &'static str)],
-}
-
-/// The marketplace's categories, as its sitemap listed them on 2026-10-16.
-/// A category missing here still works as a link or a slug.
-pub const HOTMART_CATEGORIES: &[MarketplaceCategory] = &[
-    category("animais-e-pets", "Animais e pets", &[("pet", "Pet")]),
-    category(
+/// the marketplace shows, as its sitemap listed them on 2026-10-16.
+const CATEGORIES: &[(&str, &str)] = &[
+    ("animais-e-pets", "Animais e pets"),
+    (
         "autoconhecimento-e-espiritualidade",
         "Autoconhecimento e espiritualidade",
-        &[
-            ("astrologia", "Astrologia"),
-            ("espiritualidade", "Espiritualidade"),
-            ("meditacao", "Meditação"),
-            ("teologia", "Teologia"),
-        ],
     ),
-    category(
+    (
         "carreira-e-desenvolvimento-pessoal",
         "Carreira e desenvolvimento pessoal",
-        &[
-            ("carreira", "Carreira"),
-            ("coaching", "Coaching"),
-            ("desenvolvimento-pessoal", "Desenvolvimento pessoal"),
-            ("oratoria", "Oratória"),
-        ],
     ),
-    category(
-        "culinaria-e-gastronomia",
-        "Culinária e gastronomia",
-        &[
-            ("confeitaria", "Confeitaria"),
-            ("drinks", "Drinks"),
-            ("gastronomia", "Gastronomia"),
-            ("receitas", "Receitas"),
-        ],
-    ),
-    category(
-        "design-e-fotografia",
-        "Design e fotografia",
-        &[("design", "Design"), ("fotografia", "Fotografia")],
-    ),
-    category(
-        "educacao-infantil-e-familia",
-        "Educação infantil e família",
-        &[("maternidade", "Maternidade")],
-    ),
-    category(
-        "engenharia-e-arquitetura",
-        "Engenharia e arquitetura",
-        &[
-            ("arquitetura", "Arquitetura"),
-            ("seguranca-do-trabalho", "Segurança do trabalho"),
-        ],
-    ),
-    category(
-        "ensino-e-estudo-academico",
-        "Ensino e estudo acadêmico",
-        &[
-            ("concurso", "Concurso"),
-            ("direito", "Direito"),
-            ("educacao", "Educação"),
-            ("enem", "Enem"),
-            ("idiomas", "Idiomas"),
-            ("libras", "Libras"),
-            ("literatura", "Literatura"),
-            ("politica", "Política"),
-            ("psicologia", "Psicologia"),
-        ],
-    ),
-    category(
-        "financas-e-negocios",
-        "Finanças e negócios",
-        &[
-            ("contabilidade", "Contabilidade"),
-            ("empreendedorismo", "Empreendedorismo"),
-            ("financas", "Finanças"),
-            ("investimentos", "Investimentos"),
-        ],
-    ),
-    category(
-        "manutencao-de-equipamentos",
-        "Manutenção de equipamentos",
-        &[("manutencao", "Manutenção")],
-    ),
-    category(
-        "marketing-e-vendas",
-        "Marketing e vendas",
-        &[("marketing-digital", "Marketing digital")],
-    ),
-    category(
-        "moda-e-beleza",
-        "Moda e beleza",
-        &[
-            ("cabelo", "Cabelo"),
-            ("estetica", "Estética"),
-            ("manicure", "Manicure"),
-            ("maquiagem", "Maquiagem"),
-            ("moda", "Moda"),
-        ],
-    ),
-    category(
-        "musica-e-artes",
-        "Música e artes",
-        &[
-            ("artesanato", "Artesanato"),
-            ("desenho", "Desenho"),
-            ("musica", "Música"),
-        ],
-    ),
-    category(
-        "plantas-e-ecologia",
-        "Plantas e ecologia",
-        &[("agricultura", "Agricultura"), ("plantas", "Plantas")],
-    ),
-    category(
-        "relacionamentos",
-        "Relacionamentos",
-        &[("relacionamento", "Relacionamento")],
-    ),
-    category(
-        "saude-e-esportes",
-        "Saúde e esportes",
-        &[
-            ("emagrecimento", "Emagrecimento"),
-            ("esporte", "Esporte"),
-            ("fisioterapia", "Fisioterapia"),
-            ("saude", "Saúde"),
-        ],
-    ),
-    category(
+    ("culinaria-e-gastronomia", "Culinária e gastronomia"),
+    ("design-e-fotografia", "Design e fotografia"),
+    ("educacao-infantil-e-familia", "Educação infantil e família"),
+    ("engenharia-e-arquitetura", "Engenharia e arquitetura"),
+    ("ensino-e-estudo-academico", "Ensino e estudo acadêmico"),
+    ("financas-e-negocios", "Finanças e negócios"),
+    ("manutencao-de-equipamentos", "Manutenção de equipamentos"),
+    ("marketing-e-vendas", "Marketing e vendas"),
+    ("moda-e-beleza", "Moda e beleza"),
+    ("musica-e-artes", "Música e artes"),
+    ("plantas-e-ecologia", "Plantas e ecologia"),
+    ("relacionamentos", "Relacionamentos"),
+    ("saude-e-esportes", "Saúde e esportes"),
+    (
         "tecnologia-e-desenvolvimento-de-software",
         "Tecnologia e desenvolvimento de software",
-        &[
-            ("excel", "Excel"),
-            ("programacao", "Programação"),
-            ("site", "Site"),
-        ],
     ),
-    category(
-        "tempo-livre-e-lazer",
-        "Tempo livre e lazer",
-        &[("turismo", "Turismo")],
-    ),
+    ("tempo-livre-e-lazer", "Tempo livre e lazer"),
 ];
 
-const fn category(
-    slug: &'static str,
-    name: &'static str,
-    subcategories: &'static [(&'static str, &'static str)],
-) -> MarketplaceCategory {
-    MarketplaceCategory {
-        slug,
-        name,
-        subcategories,
-    }
-}
-
-/// The site, as the crawler's refusals name it.
-const SITE: &str = "da Hotmart";
-
-/// Hotmart's own domain: links and pictures read from a page must be here.
+/// Hotmart's own domain: a product page read or kept must be here.
 const DOMAIN: &str = "hotmart.com";
 
-/// Where the original pictures of the products live.
-const PICTURES: &str = "hotmart.s3.amazonaws.com";
-
-/// Where the items' and the producers' pages live, whatever address the
-/// marketplace was read from.
+/// Where the products' pages live, whatever address the marketplace was
+/// read from.
 const PAGES: &str = "https://hotmart.com/pt-br/marketplace";
+
+/// The part of a product page's address before its slug and code.
+const PRODUCT_PATH: &str = "/marketplace/produtos/";
+
+/// The badge of a producer whose profile Hotmart verified.
+const VERIFIED: &str = "VERIFIED_PROFILE";
 
 /// The Hotmart marketplace's public pages, read by the crawler.
 pub struct HotmartCrawler {
@@ -224,71 +94,70 @@ impl HotmartCrawler {
         }
     }
 
-    /// The address of `search`'s page: the marketplace's front page for its
-    /// best sellers, else the category's page. Hotmart's robots.txt
-    /// disallows every address with `q=`, its search by words, so a search
-    /// with words is refused before any request.
-    fn page_url(&self, search: &OfferSearch) -> Result<String, PlatformError> {
-        if !folded_words(&search.keyword).is_empty() {
-            return Err(PlatformError::Refused(
-                "o robots.txt da Hotmart proíbe robôs na busca por palavras; escolha uma \
-                 categoria"
-                    .into(),
-            ));
-        }
-        if search.shop.is_some() {
-            return Err(no_shops(SITE));
-        }
-        if search.order != OfferOrder::Relevance {
-            return Err(PlatformError::Refused(
-                "a vitrine da Hotmart vem numa ordem só".into(),
-            ));
-        }
-        match search
-            .category
-            .as_deref()
-            .map(str::trim)
-            .filter(|category| !category.is_empty())
-        {
+    /// The address of `category`'s page, or the front page with the best
+    /// sellers. Only the listed categories are asked for, so nothing the
+    /// app did not write goes into an address.
+    fn listing_url(&self, category: Option<&ProspectCategory>) -> Result<String, PlatformError> {
+        match category {
             None => Ok(self.marketplace.clone()),
-            Some(category) => Ok(format!(
-                "{}/categorias/{}",
-                self.marketplace,
-                category_path(category)?
-            )),
+            Some(category) => CATEGORIES
+                .iter()
+                .find(|(slug, _)| *slug == category.id)
+                .map(|(slug, _)| format!("{}/categorias/{slug}", self.marketplace))
+                .ok_or_else(|| {
+                    PlatformError::Refused("isso não é uma categoria da vitrine da Hotmart".into())
+                }),
         }
     }
 }
 
-impl OfferSource for HotmartCrawler {
-    fn source(&self) -> ProductSource {
-        ProductSource::HotmartCrawler
+impl ProspectSource for HotmartCrawler {
+    fn platform(&self) -> AffiliatePlatform {
+        AffiliatePlatform::Hotmart
     }
 
-    /// The page's state holds only the first items of a category; the
+    fn origin(&self) -> SignalOrigin {
+        SignalOrigin::Vitrine
+    }
+
+    fn categories(&self) -> Result<Vec<ProspectCategory>, PlatformError> {
+        Ok(CATEGORIES
+            .iter()
+            .map(|(slug, name)| ProspectCategory {
+                id: (*slug).to_owned(),
+                name: (*name).to_owned(),
+            })
+            .collect())
+    }
+
+    /// The page's state holds only the first products of a category; the
     /// next ones come from a search the robots.txt keeps the crawler out
-    /// of, so a later page finds nothing.
-    fn search_offers(&self, search: &OfferSearch) -> Result<Found<FoundOffer>, PlatformError> {
-        let url = self.page_url(search)?;
-        if search.page > 1 {
-            return Ok(Found {
-                items: Vec::new(),
-                more: false,
-            });
-        }
-        Ok(marketplace_page(&self.crawler.page(&url)?))
+    /// of, so one page is all there is.
+    fn prospects(
+        &self,
+        category: Option<&ProspectCategory>,
+    ) -> Result<Vec<FoundProspect>, PlatformError> {
+        let url = self.listing_url(category)?;
+        Ok(listing(&self.crawler.page(&url)?))
     }
 
-    fn search_shops(&self, _: &str, _: u32) -> Result<Found<FoundShop>, PlatformError> {
-        Err(no_shops(SITE))
-    }
-
-    fn orders(&self) -> &[OfferOrder] {
-        &[OfferOrder::Relevance]
-    }
-
-    fn finds_shops(&self) -> bool {
-        false
+    /// Reads the product page `known` keeps the address of: the students,
+    /// the warranty and the producer, which the listing does not show.
+    fn details(&self, known: &FoundProspect) -> Result<FoundProspect, PlatformError> {
+        let (slug, code) = known
+            .signals
+            .product_page
+            .as_deref()
+            .and_then(product_page)
+            .ok_or_else(|| {
+                PlatformError::Refused(
+                    "esse produto não tem o endereço de uma página da vitrine da Hotmart".into(),
+                )
+            })?;
+        let html = self
+            .crawler
+            .page(&format!("{}/produtos/{slug}/{code}", self.marketplace))?;
+        Ok(product(&html, &slug, &code, known))
     }
 
     fn blocked_until(&self) -> Option<Timestamp> {
@@ -296,125 +165,151 @@ impl OfferSource for HotmartCrawler {
     }
 }
 
-/// A category as the path after `/categorias/`: its slug, or the slugs of
-/// a category and its subcategory, given as such or as the link to its
-/// page on hotmart.com.
-fn category_path(category: &str) -> Result<String, PlatformError> {
-    let path = if category.contains("://") {
-        page_on(category, DOMAIN)
-            .as_deref()
-            .and_then(|link| link.split(['?', '#']).next())
-            .and_then(|link| link.split_once("/marketplace/categorias/"))
-            .map(|(_, path)| path.to_owned())
-    } else {
-        Some(category.to_owned())
-    };
-    let slugs: Vec<&str> = path
-        .as_deref()
-        .unwrap_or_default()
-        .trim_matches('/')
-        .split('/')
-        .collect();
-    if (1..=2).contains(&slugs.len()) && slugs.iter().all(|slug| is_slug(slug)) {
-        Ok(slugs.join("/"))
-    } else {
-        Err(PlatformError::Refused(
-            "isso não é uma categoria da vitrine da Hotmart".into(),
-        ))
-    }
+/// The slug and code of a product page on hotmart.com, from its address.
+fn product_page(link: &str) -> Option<(String, String)> {
+    let link = page_on(link, DOMAIN)?;
+    let path = link.split(['?', '#']).next()?;
+    let (_, rest) = path.split_once(PRODUCT_PATH)?;
+    let (slug, code) = rest.trim_end_matches('/').split_once('/')?;
+    (is_slug(slug) && is_code(code)).then(|| (slug.to_owned(), code.to_owned()))
 }
 
 /// The products on a marketplace page: its best sellers or a category's
 /// results, in the page's order, each once. The rest of the state, such as
 /// the campaign banners, is left out.
-fn marketplace_page(html: &str) -> Found<FoundOffer> {
-    let mut items = Vec::new();
+fn listing(html: &str) -> Vec<FoundProspect> {
+    let mut found = Vec::new();
     if let Some(state) = script_json(html, "__NEXT_DATA__") {
         walk(&state, &mut |value| {
             for key in ["bestSellers", "results"] {
                 if let Some(products) = value.get(key).and_then(Value::as_array) {
-                    items.extend(products.iter().filter_map(state_offer));
+                    found.extend(products.iter().filter_map(listed));
                 }
             }
         });
     }
     let mut seen = std::collections::HashSet::new();
-    items.retain(|item: &FoundOffer| seen.insert(item.id.clone()));
-    Found { items, more: false }
+    found.retain(|prospect: &FoundProspect| seen.insert(prospect.key.clone()));
+    found
 }
 
-/// A product as the page's state describes it: its id, title, page,
-/// picture, stars and producer. The marketplace's state carries no price
-/// (the page asks the checkout for it afterwards), so an item is found
-/// without one unless the state says; a product not for sale is left out.
-fn state_offer(value: &Value) -> Option<FoundOffer> {
-    let id = number_in(value.get("productId")?)?;
-    if id.is_sign_negative() || !id.fract().is_zero() {
-        return None;
-    }
+/// A product as the state lists it, keyed by its id on Hotmart. A field
+/// missing or odd leaves its signal empty; a product not for sale, or
+/// without an id, a title or a page, is left out. The listing has no price
+/// (the checkout gives it later), no commission and no temperature.
+fn listed(value: &Value) -> Option<FoundProspect> {
+    let key = whole(value.get("productId")?)?;
     if value.get("salesEnabled").and_then(Value::as_bool) == Some(false) {
         return None;
     }
-    let title = value.get("title")?.as_str()?.trim();
-    let slug = value.get("slug")?.as_str()?.trim();
-    let code = value.get("producerReferenceCode")?.as_str()?.trim();
-    if title.is_empty() || !is_slug(slug) || !is_code(code) {
-        return None;
-    }
-    let price = value.get("price").and_then(|amount| money(amount, None));
-    let image = ["avatar", "finalAvatar"]
-        .iter()
-        .filter_map(|key| value.get(*key)?.as_str())
-        .find_map(picture);
+    let name = text(value.get("title"))?;
+    let slug = text(value.get("slug")).filter(|slug| is_slug(slug))?;
+    let code = text(value.get("producerReferenceCode")).filter(|code| is_code(code))?;
     let shows_rating = value.get("showRating").and_then(Value::as_bool) != Some(false);
-    let rating = value
-        .get("rating")
-        .filter(|_| shows_rating)
-        .and_then(number_in)
-        .filter(|stars| !stars.is_zero() && (Decimal::ZERO..=Decimal::from(5)).contains(stars))
-        .map(|stars| stars.round_dp(2));
-    Some(FoundOffer {
-        id: id.to_string(),
-        title: title.to_owned(),
-        link: format!("{PAGES}/produtos/{slug}/{code}"),
-        image,
-        shop: producer(value)?,
-        price,
-        highest_price: price,
-        sales: 0,
-        commission: None,
-        rating,
+    Some(FoundProspect {
+        platform: AffiliatePlatform::Hotmart,
+        key: key.to_string(),
+        name: name.to_owned(),
+        signals: Signals {
+            rating: value.get("rating").filter(|_| shows_rating).and_then(stars),
+            reviews: value.get("totalReviews").and_then(count),
+            launched: value.get("ingressDate").and_then(day),
+            classes: value.get("totalClasses").and_then(count),
+            hours: value
+                .get("totalHours")
+                .and_then(number_in)
+                .filter(|hours| !hours.is_sign_negative())
+                .map(|hours| hours.round_dp(1)),
+            certificate: value.get("certification").and_then(Value::as_bool),
+            video: value
+                .get("videoLink")
+                .map(|link| text(Some(link)).is_some()),
+            creator: creator(value).map(str::to_owned),
+            product_page: Some(format!("{PAGES}/produtos/{slug}/{code}")),
+            ..Signals::default()
+        },
     })
 }
 
-/// The product's producer as a shop: by its public id on Hotmart, with
-/// the link to its page when the state gives one.
-fn producer(product: &Value) -> Option<FoundShop> {
-    let owner = product.get("owner");
-    let name = text(owner.and_then(|owner| owner.get("name")))
+/// A product page: what the listing shows of the product, when the state
+/// carries it again, and what only the page shows. Under `known`'s key
+/// unless the page gives Hotmart's id, as for a link the owner pasted.
+fn product(html: &str, slug: &str, code: &str, known: &FoundProspect) -> FoundProspect {
+    let mut found = FoundProspect {
+        signals: Signals {
+            product_page: Some(format!("{PAGES}/produtos/{slug}/{code}")),
+            ..Signals::default()
+        },
+        ..known.clone()
+    };
+    let Some(state) = script_json(html, "__NEXT_DATA__") else {
+        return found;
+    };
+    let mut listed_here = None;
+    let first = |key: &str| {
+        let mut hit = None;
+        walk(&state, &mut |value| {
+            if hit.is_none() {
+                hit = value.get(key).cloned();
+            }
+        });
+        hit
+    };
+    walk(&state, &mut |value| {
+        if listed_here.is_none()
+            && text(value.get("producerReferenceCode")) == Some(code)
+            && text(value.get("slug")) == Some(slug)
+        {
+            listed_here = listed(value);
+        }
+    });
+    let students = first("totalUsers").as_ref().and_then(count);
+    let warranty = first("dataSheet")
+        .as_ref()
+        .and_then(|sheet| sheet.get("warranty").and_then(days));
+    let hotmarter = first("hotmarter");
+    let review = first("customerReview");
+    if let Some(listed) = listed_here {
+        found.key = listed.key;
+        found.name = listed.name;
+        found.signals = listed.signals;
+    }
+    let signals = &mut found.signals;
+    signals.students = students;
+    signals.warranty_days = warranty;
+    if let Some(hotmarter) = &hotmarter {
+        signals.creator_since = hotmarter.get("userSince").and_then(day);
+        signals.creator_verified = hotmarter
+            .get("activeBadges")
+            .and_then(Value::as_array)
+            .map(|badges| badges.iter().any(is_verified));
+        if signals.creator.is_none() {
+            signals.creator = text(hotmarter.get("name")).map(str::to_owned);
+        }
+    }
+    if let Some(review) = &review {
+        if let Some(rating) = review.get("rating").and_then(stars) {
+            signals.rating = Some(rating);
+        }
+        if let Some(reviews) = review.get("totalReviews").and_then(count) {
+            signals.reviews = Some(reviews);
+        }
+    }
+    found
+}
+
+fn is_verified(badge: &Value) -> bool {
+    badge.as_str() == Some(VERIFIED)
+        || ["type", "name", "key"]
+            .iter()
+            .any(|field| badge.get(*field).and_then(Value::as_str) == Some(VERIFIED))
+}
+
+/// The producer's name, as the listing gives it.
+fn creator(product: &Value) -> Option<&str> {
+    text(product.get("owner").and_then(|owner| owner.get("name")))
         .or_else(|| text(product.get("ownerName")))
-        .or_else(|| text(product.get("authorName")))?;
-    let public_id = text(owner.and_then(|owner| owner.get("publicId"))).filter(|id| is_code(id));
-    let id = public_id
-        .map(str::to_owned)
-        .or_else(|| {
-            owner
-                .and_then(|owner| number_in(owner.get("id")?))
-                .map(|id| id.to_string())
-        })
-        .unwrap_or_else(|| folded_words(name).join("-").to_ascii_lowercase());
-    let slug = text(owner.and_then(|owner| owner.get("slug"))).filter(|slug| is_slug(slug));
-    let link = text(owner.and_then(|owner| owner.get("creatorPage")))
-        .and_then(|page| page_on(page, DOMAIN))
-        .or_else(|| Some(format!("{PAGES}/especialista/{}/{}", slug?, public_id?)))
-        .unwrap_or_else(|| PAGES.to_owned());
-    Some(FoundShop {
-        id,
-        name: name.to_owned(),
-        link,
-        commission: None,
-        rating: None,
-    })
+        .or_else(|| text(product.get("authorName")))
 }
 
 fn text(value: Option<&Value>) -> Option<&str> {
@@ -424,9 +319,49 @@ fn text(value: Option<&Value>) -> Option<&str> {
         .filter(|text| !text.is_empty())
 }
 
-/// A picture on Hotmart's servers, over HTTPS.
-fn picture(address: &str) -> Option<String> {
-    page_on(address, DOMAIN).or_else(|| page_on(address, PICTURES))
+/// A whole number from 0 up, as a number or as text.
+fn whole(value: &Value) -> Option<u64> {
+    number_in(value)
+        .filter(|number| !number.is_sign_negative() && number.fract().is_zero())
+        .and_then(|number| number.to_u64())
+}
+
+fn count(value: &Value) -> Option<u32> {
+    whole(value).and_then(|count| u32::try_from(count).ok())
+}
+
+/// Stars from 0 to 5, two decimals; zero is no rating yet.
+fn stars(value: &Value) -> Option<Decimal> {
+    number_in(value)
+        .filter(|stars| !stars.is_zero() && (Decimal::ZERO..=Decimal::from(5)).contains(stars))
+        .map(|stars| stars.round_dp(2))
+}
+
+/// Days, as a number or as text such as "7 dias".
+fn days(value: &Value) -> Option<u32> {
+    count(value).or_else(|| {
+        let digits: String = value
+            .as_str()?
+            .trim()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    })
+}
+
+/// A day as Hotmart's state writes one: milliseconds since 1970, an ISO
+/// date or date and time, or a year alone as its first day.
+fn day(value: &Value) -> Option<NaiveDate> {
+    if let Some(number) = whole(value) {
+        return match number {
+            2000..=2100 => NaiveDate::from_ymd_opt(i32::try_from(number).ok()?, 1, 1),
+            _ => DateTime::from_timestamp_millis(i64::try_from(number).ok()?)
+                .map(|time| time.date_naive()),
+        };
+    }
+    let text = value.as_str()?.trim();
+    NaiveDate::parse_from_str(text.get(..10)?, "%Y-%m-%d").ok()
 }
 
 /// A slug of Hotmart's pages: lower-case letters, digits and dashes.

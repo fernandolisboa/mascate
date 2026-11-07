@@ -1,23 +1,32 @@
-//! The Hotmart marketplace crawler against the fake server serving pages
-//! written by hand (see the fixtures' README).
+//! The Hotmart vitrine reader against the fake server serving pages written
+//! by hand (see the fixtures' README): Prospects keyed by Hotmart's product
+//! id, each signal empty when its field is missing or odd, and the product
+//! page read only for one Prospect.
 
 use std::str::FromStr;
 use std::sync::Arc;
 
+use chrono::NaiveDate;
 use futures::executor::block_on;
-use mascate_catalog::{Catalog, KeptOffers, OfferOrder, OfferSearch, OfferSource, ProductSource};
-use mascate_integrations::{FLAGS, HOTMART_CATEGORIES, HOTMART_CRAWLER, HotmartCrawler};
-use mascate_kernel::PlatformError;
+use mascate_affiliate::{
+    Affiliate, AffiliatePlatform, FoundProspect, ProspectCategory, ProspectSource, SignalOrigin,
+    Signals,
+};
+use mascate_integrations::{FLAGS, HOTMART_CRAWLER, HotmartCrawler};
 use mascate_kernel::testing::{ManualClock, SequentialIds};
+use mascate_kernel::{Clock, PlatformError};
 use mascate_platform::testing::FakeHttpServer;
 use mascate_platform::{Database, FlagKind, Phase, migrate};
 use rust_decimal::Decimal;
 
 mod crawling;
 
-use crawling::{brl, pages};
+use crawling::pages;
 
 const CATEGORY: &str = "/pt-br/marketplace/categorias/culinaria-e-gastronomia";
+const CAKES_PATH: &str = "/pt-br/marketplace/produtos/escola-de-bolos-3-em-1/Q52300001P";
+const CAKES_PAGE: &str =
+    "https://hotmart.com/pt-br/marketplace/produtos/escola-de-bolos-3-em-1/Q52300001P";
 
 fn fixture(name: &str) -> String {
     crawling::fixture("hotmart-crawler", name)
@@ -26,110 +35,112 @@ fn fixture(name: &str) -> String {
 struct Setup {
     server: FakeHttpServer,
     clock: Arc<ManualClock>,
-    crawler: HotmartCrawler,
+    reader: HotmartCrawler,
 }
 
 fn setup() -> Setup {
     let site = crawling::site(fixture("robots.txt"));
-    let crawler = HotmartCrawler::new(
+    let reader = HotmartCrawler::new(
         &format!("{}/pt-br/marketplace/", site.server.url()),
         site.engine,
     );
     Setup {
         server: site.server,
         clock: site.clock,
-        crawler,
+        reader,
     }
 }
 
-fn browse(category: Option<&str>) -> OfferSearch {
-    OfferSearch {
-        category: category.map(str::to_owned),
-        order: OfferOrder::Relevance,
-        page: 1,
-        ..OfferSearch::default()
+fn category(id: &str) -> ProspectCategory {
+    ProspectCategory {
+        id: id.into(),
+        name: String::new(),
     }
 }
 
-fn stars(text: &str) -> Option<Decimal> {
+fn cooking() -> ProspectCategory {
+    category("culinaria-e-gastronomia")
+}
+
+fn decimal(text: &str) -> Option<Decimal> {
     Some(Decimal::from_str(text).unwrap())
 }
 
+fn day(year: i32, month: u32, day: u32) -> Option<NaiveDate> {
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+/// A Prospect kept with only the page of the product.
+fn known(key: &str, page: &str) -> FoundProspect {
+    FoundProspect {
+        platform: AffiliatePlatform::Hotmart,
+        key: key.into(),
+        name: "Kept name".into(),
+        signals: Signals {
+            product_page: Some(page.into()),
+            ..Signals::default()
+        },
+    }
+}
+
 #[test]
-fn a_category_page_yields_found_offers_keyed_by_the_hotmart_product_id_with_the_producer_as_shop() {
+fn a_category_page_yields_prospects_keyed_by_the_hotmart_product_id_with_their_signals() {
     let s = setup();
     s.server.serve(CATEGORY, 200, fixture("category.html"));
 
-    let found = s
-        .crawler
-        .search_offers(&browse(Some("culinaria-e-gastronomia")))
-        .unwrap();
+    let found = s.reader.prospects(Some(&cooking())).unwrap();
 
-    assert!(!found.more);
-    let ids: Vec<&str> = found.items.iter().map(|item| item.id.as_str()).collect();
-    assert_eq!(ids, ["1418001", "154002", "659003", "663006"]);
+    let keys: Vec<&str> = found.iter().map(|found| found.key.as_str()).collect();
+    assert_eq!(keys, ["1418001", "154002", "659003", "663006"]);
+    let cakes = &found[0];
+    assert_eq!(cakes.platform, AffiliatePlatform::Hotmart);
+    assert_eq!(cakes.name, "Escola de Bolos 3 em 1");
+    assert_eq!(
+        cakes.signals,
+        Signals {
+            rating: decimal("4.87"),
+            reviews: Some(525),
+            launched: day(2025, 9, 28),
+            classes: Some(48),
+            hours: decimal("12.5"),
+            certificate: Some(true),
+            video: Some(true),
+            creator: Some("Ana Confeiteira".into()),
+            product_page: Some(CAKES_PAGE.into()),
+            ..Signals::default()
+        }
+    );
+}
 
-    let cakes = &found.items[0];
-    assert_eq!(cakes.title, "Escola de Bolos 3 em 1");
-    assert_eq!(
-        cakes.link,
-        "https://hotmart.com/pt-br/marketplace/produtos/escola-de-bolos-3-em-1/Q52300001P"
-    );
-    assert_eq!(
-        cakes.image.as_deref(),
-        Some("https://hotmart.s3.amazonaws.com/product_pictures/11aa22bb/bolos.png")
-    );
-    assert_eq!((cakes.price, cakes.highest_price), (None, None));
-    assert_eq!(cakes.rating, stars("4.87"));
-    assert_eq!((cakes.sales, cakes.commission), (0, None));
-    assert_eq!(
-        (
-            cakes.shop.id.as_str(),
-            cakes.shop.name.as_str(),
-            cakes.shop.link.as_str()
-        ),
-        (
-            "AC4100001Z",
-            "Ana Confeiteira",
-            "https://hotmart.com/pt-br/marketplace/especialista/ana-confeiteira/AC4100001Z"
-        )
-    );
+#[test]
+fn a_missing_or_odd_field_leaves_its_signal_empty_and_never_fails_the_page() {
+    let s = setup();
+    s.server.serve(CATEGORY, 200, fixture("category.html"));
 
-    let fit = &found.items[1];
-    assert_eq!(fit.rating, None);
-    assert_eq!(
-        fit.shop.link,
-        "https://hotmart.com/pt-br/marketplace/especialista/camila-fit/CF4100002Y"
-    );
+    let found = s.reader.prospects(Some(&cooking())).unwrap();
 
-    let priced = &found.items[2];
-    assert_eq!(priced.price, Some(brl("97")));
-    assert_eq!(priced.highest_price, Some(brl("97")));
+    let fit = &found[1].signals;
+    assert_eq!(fit.rating, None, "showRating false hides the rating");
+    assert_eq!(fit.reviews, Some(803));
+    assert_eq!(fit.launched, day(2026, 9, 28));
+    assert_eq!(fit.classes, Some(20));
+    assert_eq!(fit.hours, None, "negative hours");
+    assert_eq!((fit.certificate, fit.video), (Some(false), Some(false)));
+    let cakes = &found[2].signals;
     assert_eq!(
-        priced.image.as_deref(),
-        Some(
-            "https://static-media.hotmart.com/jkl=/300x300/hotmart/product_pictures/bolos-perfeitos.png"
-        )
+        (cakes.launched, cakes.classes, cakes.reviews, cakes.video),
+        (None, None, None, Some(false))
     );
+    assert_eq!(cakes.rating, decimal("4.9"));
+    let vegan = &found[3].signals;
     assert_eq!(
-        priced.shop.link,
-        "https://hotmart.com/pt-br/marketplace/especialista/beatriz-doces/BD4100003X"
+        (vegan.rating, vegan.certificate, vegan.video),
+        (None, None, None)
     );
-
-    let vegan = &found.items[3];
-    assert_eq!((vegan.rating, vegan.image.as_deref()), (None, None));
-    assert_eq!(
-        (
-            vegan.shop.id.as_str(),
-            vegan.shop.name.as_str(),
-            vegan.shop.link.as_str()
-        ),
-        (
-            "larica-vegana",
-            "Larica Vegana",
-            "https://hotmart.com/pt-br/marketplace"
-        )
-    );
+    assert_eq!(vegan.creator.as_deref(), Some("Larica Vegana"));
+    assert!(found.iter().all(|found| found.signals.price.is_none()
+        && found.signals.commission.is_none()
+        && found.signals.temperature.is_none()));
 }
 
 #[test]
@@ -138,237 +149,62 @@ fn without_a_category_the_best_sellers_come_from_the_front_page_without_the_bann
     s.server
         .serve("/pt-br/marketplace", 200, fixture("best-sellers.html"));
 
-    let found = s.crawler.search_offers(&browse(None)).unwrap();
+    let found = s.reader.prospects(None).unwrap();
 
     assert_eq!(pages(&s.server), ["/pt-br/marketplace"]);
-    let ids: Vec<&str> = found.items.iter().map(|item| item.id.as_str()).collect();
-    assert_eq!(ids, ["3101", "3102"]);
-    let barber = &found.items[0];
-    assert_eq!(barber.rating, stars("4.78"));
+    let keys: Vec<&str> = found.iter().map(|found| found.key.as_str()).collect();
+    assert_eq!(keys, ["3101", "3102"]);
+    let barber = &found[0].signals;
     assert_eq!(
-        (barber.shop.id.as_str(), barber.shop.name.as_str()),
-        ("PN9001AAAA", "Paulo Navalha")
+        (barber.launched, barber.classes, barber.hours),
+        (day(2026, 10, 20), Some(60), decimal("20"))
     );
-    let excel = &found.items[1];
-    assert_eq!(
-        excel.image.as_deref(),
-        Some("https://static-media.hotmart.com/def=/300x300/hotmart/product_pictures/excel.png")
-    );
-    assert_eq!(
-        excel.shop.link,
-        "https://hotmart.com/pt-br/marketplace/especialista/planilhas-e-cia/PC9002BBBB"
-    );
+    assert_eq!(found[1].signals.creator.as_deref(), Some("Planilhas & Cia"));
 }
 
 #[test]
-fn a_subcategory_or_a_category_link_goes_in_the_address() {
-    let s = setup();
-    s.server.serve(
-        &format!("{CATEGORY}/confeitaria"),
-        200,
-        fixture("subcategory.html"),
-    );
-    s.server.serve(
-        "/pt-br/marketplace/categorias/saude-e-esportes",
-        200,
-        fixture("subcategory.html"),
-    );
-
-    let sweets = s
-        .crawler
-        .search_offers(&browse(Some(" culinaria-e-gastronomia/confeitaria/ ")))
-        .unwrap();
-    s.crawler
-        .search_offers(&browse(Some(
-            "https://hotmart.com/pt-br/marketplace/categorias/saude-e-esportes?utm_source=x#top",
-        )))
-        .unwrap();
-
-    assert_eq!(
-        pages(&s.server),
-        [
-            format!("{CATEGORY}/confeitaria"),
-            "/pt-br/marketplace/categorias/saude-e-esportes".to_owned()
-        ]
-    );
-    let brownies = &sweets.items[0];
-    assert_eq!(
-        (brownies.id.as_str(), brownies.rating),
-        ("859007", stars("4.7"))
-    );
-    assert_eq!(
-        (brownies.shop.id.as_str(), brownies.shop.name.as_str()),
-        ("daiana-dias", "Daiana Dias")
-    );
-}
-
-#[test]
-fn a_keyword_search_is_refused_without_a_request_because_robots_txt_disallows_it() {
+fn reading_the_same_page_twice_gives_the_same_prospects_from_one_request() {
     let s = setup();
     s.server.serve(CATEGORY, 200, fixture("category.html"));
 
-    let refused = s.crawler.search_offers(&OfferSearch {
-        keyword: "bolo de pote".into(),
-        ..browse(Some("culinaria-e-gastronomia"))
-    });
+    let first = s.reader.prospects(Some(&cooking())).unwrap();
+    let again = s.reader.prospects(Some(&cooking())).unwrap();
 
-    match refused {
-        Err(PlatformError::Refused(why)) => assert!(why.contains("robots.txt"), "{why}"),
-        other => panic!("{other:?}"),
-    }
-    assert!(s.server.requests().is_empty());
+    assert_eq!(first, again);
+    assert_eq!(
+        pages(&s.server).len(),
+        1,
+        "the second read comes from memory"
+    );
 }
 
 #[test]
-fn shops_other_orders_and_what_is_not_a_category_are_refused_without_a_request() {
+fn the_categories_are_the_vitrines_and_nothing_else_goes_into_an_address() {
     let s = setup();
 
-    assert!(!s.crawler.finds_shops());
-    assert_eq!(s.crawler.orders(), [OfferOrder::Relevance]);
-    assert!(s.crawler.search_shops("bolos", 1).is_err());
+    let categories = s.reader.categories().unwrap();
+    assert_eq!(categories.len(), 18);
+    assert_eq!(categories[3].name, "Culinária e gastronomia");
     for refused in [
-        OfferSearch {
-            order: OfferOrder::Sales,
-            ..browse(None)
-        },
-        OfferSearch {
-            shop: Some("AC4100001Z".into()),
-            ..browse(None)
-        },
-        browse(Some("culinaria/confeitaria/bolos")),
-        browse(Some("../../admin")),
-        browse(Some("Culinária")),
-        browse(Some("https://evil.example.com/marketplace/categorias/moda")),
-        browse(Some(
-            "https://hotmart.com/pt-br/marketplace/produtos?q=bolo",
-        )),
+        category("culinaria/confeitaria"),
+        category("../../admin"),
+        category("https://evil.example.com/marketplace/categorias/moda"),
+        category("Culinária"),
     ] {
         assert!(
             matches!(
-                s.crawler.search_offers(&refused),
+                s.reader.prospects(Some(&refused)),
                 Err(PlatformError::Refused(_))
             ),
             "{refused:?}"
         );
     }
     assert!(s.server.requests().is_empty());
-}
-
-#[test]
-fn a_later_page_finds_nothing_without_a_request() {
-    let s = setup();
-
-    let later = s
-        .crawler
-        .search_offers(&OfferSearch {
-            page: 2,
-            ..browse(Some("culinaria-e-gastronomia"))
-        })
-        .unwrap();
-
-    assert!(later.items.is_empty());
-    assert!(!later.more);
-    assert!(s.server.requests().is_empty());
-}
-
-#[test]
-fn only_a_found_offer_with_a_price_is_kept_once_with_its_producer_as_supplier() {
-    block_on(async {
-        let s = setup();
-        s.server.serve(CATEGORY, 200, fixture("category.html"));
-        let dir = tempfile::tempdir().unwrap();
-        let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
-        migrate(&database, s.clock.as_ref(), &[mascate_catalog::MIGRATIONS])
-            .await
-            .unwrap();
-        let catalog = Catalog::new(
-            database,
-            dir.path().join("produtos"),
-            s.clock.clone(),
-            Arc::new(SequentialIds::default()),
-        );
-
-        let found = catalog
-            .search_offers(&s.crawler, &browse(Some("culinaria-e-gastronomia")))
-            .await
-            .unwrap();
-        let offers: Vec<_> = found.items.iter().map(|item| item.found.clone()).collect();
-        let kept = catalog
-            .keep_found_offers(s.crawler.source(), &offers)
-            .await
-            .unwrap();
-        let kept_again = catalog
-            .keep_found_offers(s.crawler.source(), &offers)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            kept,
-            KeptOffers {
-                added: 1,
-                unchanged: 0,
-                skipped: 3
-            }
-        );
-        assert_eq!((kept_again.added, kept_again.unchanged), (0, 1));
-        let offers = catalog.offers().await.unwrap();
-        assert_eq!(offers.len(), 1);
-        assert_eq!(offers[0].latest.source, ProductSource::HotmartCrawler);
-        assert_eq!(offers[0].latest.price, brl("97"));
-        let suppliers: Vec<String> = catalog
-            .suppliers()
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|supplier| supplier.name)
-            .collect();
-        assert_eq!(suppliers, ["Beatriz Doces"]);
-    });
-}
-
-#[test]
-fn a_forbidden_page_three_times_opens_the_breaker() {
-    let s = setup();
-    s.server.serve(CATEGORY, 403, fixture("forbidden.html"));
-
-    for _ in 0..3 {
-        let blocked = s
-            .crawler
-            .search_offers(&browse(Some("culinaria-e-gastronomia")));
-        assert!(matches!(blocked, Err(PlatformError::Refused(_))));
+    for listed in &categories {
+        let _ = s.reader.prospects(Some(listed));
     }
-    let while_open = s
-        .crawler
-        .search_offers(&browse(Some("culinaria-e-gastronomia")));
-
-    assert!(matches!(while_open, Err(PlatformError::Refused(_))));
-    assert_eq!(pages(&s.server).len(), 3);
-    assert!(s.crawler.blocked_until().is_some());
-}
-
-#[test]
-fn every_listed_category_and_subcategory_is_a_page_the_crawler_reads() {
-    let s = setup();
-
-    for category in HOTMART_CATEGORIES {
-        assert!(!category.name.is_empty());
-        for path in std::iter::once(category.slug.to_owned()).chain(
-            category
-                .subcategories
-                .iter()
-                .map(|(slug, _)| format!("{}/{slug}", category.slug)),
-        ) {
-            let _ = s.crawler.search_offers(&browse(Some(&path)));
-        }
-    }
-
     let read = pages(&s.server);
-    let subcategories: usize = HOTMART_CATEGORIES
-        .iter()
-        .map(|category| category.subcategories.len())
-        .sum();
-    assert_eq!(HOTMART_CATEGORIES.len(), 18);
-    assert_eq!(read.len(), HOTMART_CATEGORIES.len() + subcategories);
+    assert_eq!(read.len(), 18);
     assert!(
         read.iter()
             .all(|path| path.starts_with("/pt-br/marketplace/categorias/"))
@@ -376,33 +212,216 @@ fn every_listed_category_and_subcategory_is_a_page_the_crawler_reads() {
 }
 
 #[test]
-fn the_crawler_is_a_restricted_feature_of_phase_3_with_its_reason_and_risk() {
+fn a_product_page_adds_the_students_the_warranty_and_the_producer() {
+    let s = setup();
+    s.server.serve(CAKES_PATH, 200, fixture("product.html"));
+
+    let read = s
+        .reader
+        .details(&known("1418001", &format!("{CAKES_PAGE}?ref=x")))
+        .unwrap();
+
+    assert_eq!(pages(&s.server), [CAKES_PATH]);
+    assert_eq!(
+        (read.key.as_str(), read.name.as_str()),
+        ("1418001", "Escola de Bolos 3 em 1")
+    );
+    assert_eq!(
+        read.signals,
+        Signals {
+            rating: decimal("4.9"),
+            reviews: Some(530),
+            students: Some(15_230),
+            launched: day(2025, 9, 28),
+            warranty_days: Some(7),
+            classes: Some(48),
+            hours: decimal("12.5"),
+            certificate: Some(true),
+            video: Some(true),
+            creator: Some("Ana Confeiteira".into()),
+            creator_since: day(2018, 1, 1),
+            creator_verified: Some(true),
+            product_page: Some(CAKES_PAGE.into()),
+            ..Signals::default()
+        }
+    );
+}
+
+#[test]
+fn a_pasted_product_page_gets_the_hotmart_id_and_odd_fields_stay_empty() {
+    let s = setup();
+    s.server.serve(CAKES_PATH, 200, fixture("product.html"));
+    let brownies = "/pt-br/marketplace/produtos/brownies-perfeitos/O35100007S";
+    s.server.serve(brownies, 200, fixture("product-odd.html"));
+
+    let pasted = s
+        .reader
+        .details(&known("https://hotmart.com/x", CAKES_PAGE))
+        .unwrap();
+    let odd = s
+        .reader
+        .details(&known("859007", &format!("https://hotmart.com{brownies}")))
+        .unwrap();
+
+    assert_eq!(pasted.key, "1418001");
+    assert_eq!(
+        (odd.key.as_str(), odd.name.as_str()),
+        ("859007", "Kept name")
+    );
+    assert_eq!(
+        odd.signals,
+        Signals {
+            warranty_days: Some(30),
+            creator: Some("Daiana Dias".into()),
+            creator_since: day(2015, 3, 1),
+            creator_verified: Some(false),
+            product_page: Some(format!("https://hotmart.com{brownies}")),
+            ..Signals::default()
+        }
+    );
+}
+
+#[test]
+fn a_page_off_hotmart_or_not_a_product_is_refused_without_a_request() {
+    let s = setup();
+
+    for page in [
+        "https://evil.example.com/pt-br/marketplace/produtos/bolos/Q1",
+        "http://hotmart.com/pt-br/marketplace/produtos/bolos/Q1",
+        "https://hotmart.com/pt-br/marketplace/categorias/moda",
+        "https://hotmart.com/pt-br/marketplace/produtos/../admin/Q1",
+        "https://hotmart.com/pt-br/marketplace/produtos/bolos/Q1%2F..",
+    ] {
+        assert!(
+            matches!(
+                s.reader.details(&known("1", page)),
+                Err(PlatformError::Refused(_))
+            ),
+            "{page}"
+        );
+    }
+    let without_page = FoundProspect {
+        signals: Signals::default(),
+        ..known("1", CAKES_PAGE)
+    };
+    assert!(s.reader.details(&without_page).is_err());
+    assert!(s.server.requests().is_empty());
+}
+
+#[test]
+fn a_forbidden_page_three_times_opens_the_breaker_and_says_until_when() {
+    let s = setup();
+    s.server.serve(CATEGORY, 403, fixture("forbidden.html"));
+
+    for _ in 0..3 {
+        assert!(matches!(
+            s.reader.prospects(Some(&cooking())),
+            Err(PlatformError::Refused(_))
+        ));
+    }
+    let while_open = s.reader.details(&known("1418001", CAKES_PAGE));
+
+    assert!(matches!(while_open, Err(PlatformError::Refused(_))));
+    assert_eq!(pages(&s.server).len(), 3);
+    assert!(
+        s.reader
+            .blocked_until()
+            .is_some_and(|until| until > s.clock.now())
+    );
+}
+
+#[test]
+fn read_twice_into_the_affiliate_the_same_prospects_stay_and_a_dismissed_one_stays_out() {
+    block_on(async {
+        let s = setup();
+        s.server.serve(CATEGORY, 200, fixture("category.html"));
+        s.server.serve(CAKES_PATH, 200, fixture("product.html"));
+        let dir = tempfile::tempdir().unwrap();
+        let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
+        migrate(
+            &database,
+            s.clock.as_ref(),
+            &[mascate_affiliate::MIGRATIONS],
+        )
+        .await
+        .unwrap();
+        let affiliate = Affiliate::new(
+            database,
+            s.clock.clone(),
+            Arc::new(SequentialIds::default()),
+        );
+
+        let first = affiliate
+            .read_prospects(&s.reader, Some(&cooking()))
+            .await
+            .unwrap();
+        let listed = affiliate.prospects(None).await.unwrap();
+        let fit = listed.iter().find(|p| p.key == "154002").unwrap().id;
+        affiliate
+            .dismiss_prospect(fit, "fora do meu nicho")
+            .await
+            .unwrap();
+        let again = affiliate
+            .read_prospects(&s.reader, Some(&cooking()))
+            .await
+            .unwrap();
+        let cakes = listed.iter().find(|p| p.key == "1418001").unwrap().id;
+        let detailed = affiliate
+            .read_prospect_details(&s.reader, cakes)
+            .await
+            .unwrap();
+
+        assert_eq!((first.found, first.added), (4, 4));
+        assert_eq!((again.found, again.added, again.dismissed), (4, 0, 1));
+        let shown: Vec<String> = affiliate
+            .prospects(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(shown.len(), 3);
+        assert!(!shown.contains(&"154002".to_owned()));
+        assert_eq!(detailed.signals.students, Some(15_230));
+        assert_eq!(
+            detailed
+                .reading(mascate_affiliate::SignalKind::Students)
+                .unwrap()
+                .origin,
+            SignalOrigin::Vitrine
+        );
+    });
+}
+
+#[test]
+fn the_reader_is_a_restricted_feature_of_phase_3_with_its_reason_and_risk() {
+    let s = setup();
     assert!(FLAGS.contains(&HOTMART_CRAWLER));
     assert_eq!(HOTMART_CRAWLER.key, "integrations.hotmart_crawler");
     assert_eq!(HOTMART_CRAWLER.kind, FlagKind::RestrictedFeature);
     assert_eq!(HOTMART_CRAWLER.phase, Phase::Three);
     assert!(HOTMART_CRAWLER.reason.contains("3.5(m)"));
     assert!(HOTMART_CRAWLER.risk.contains("conta de afiliado"));
+    assert_eq!(s.reader.platform(), AffiliatePlatform::Hotmart);
+    assert_eq!(s.reader.origin(), SignalOrigin::Vitrine);
 }
 
 proptest::proptest! {
     #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
 
-    /// Whatever the category says, the crawler asks only for a category
-    /// page of plain slugs on the marketplace's own host.
+    /// Whatever page a Prospect keeps, the reader asks only for a product
+    /// page of plain slugs and codes on the marketplace's own host.
     #[test]
-    fn any_category_becomes_a_plain_category_path(category in "\\PC{0,60}") {
+    fn any_kept_page_becomes_a_plain_product_path(page in "\\PC{0,80}") {
         let s = setup();
-        let _ = s.crawler.search_offers(&browse(Some(&category)));
+        let _ = s.reader.details(&known("1", &format!("https://hotmart.com/pt-br/marketplace/produtos/{page}")));
         for path in pages(&s.server) {
-            let slugs = path
-                .strip_prefix("/pt-br/marketplace/categorias/")
-                .or_else(|| (path == "/pt-br/marketplace").then_some(""))
-                .unwrap();
-            proptest::prop_assert!(slugs
+            let rest = path.strip_prefix("/pt-br/marketplace/produtos/").unwrap();
+            let (slug, code) = rest.split_once('/').unwrap();
+            proptest::prop_assert!(slug
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '/'));
-            proptest::prop_assert!(!slugs.contains("//"));
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+            proptest::prop_assert!(code.chars().all(|c| c.is_ascii_alphanumeric()));
         }
     }
 }

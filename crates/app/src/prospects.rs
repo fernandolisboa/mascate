@@ -1,12 +1,14 @@
 //! Garimpo (#219, ADR 0039): affiliate Prospects ranked by their score,
 //! each part with its reason, the apostas in a filter of their own, the
-//! owner's own entries from any Platform's market, and the way from a
-//! Prospect to the Passo a passo or to the bin. The ranking and every rule
-//! are the Affiliate's; this screen only calls it.
+//! owner's own entries from any Platform's market, the Hotmart vitrine
+//! read on the owner's click while its flag is on (#220), and the way from
+//! a Prospect to the Passo a passo or to the bin. The ranking and every
+//! rule are the Affiliate's; this screen only calls it.
 
 use std::sync::Arc;
 
 use chrono::NaiveDate;
+use chrono::Utc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
@@ -14,8 +16,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, EventEmitter, SharedString, Window, div, px};
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliatePlatform, Affiliation, FoundProspect, Program, Prospect,
-    SignalOrigin, Signals, Support, prospect_key_of,
+    ProspectCategory, ProspectSource, ProspectsRead, SignalOrigin, Signals, Support,
+    prospect_key_of,
 };
+use mascate_integrations::HOTMART_CRAWLER;
 use mascate_kernel::{Currency, Money, Percentage, RecordId, parse_amount};
 use rust_decimal::Decimal;
 
@@ -23,11 +27,16 @@ use crate::affiliate::{affiliate, failure};
 use crate::affiliate_markets::{MARKET_PLATFORMS, Market, market};
 use crate::appearance::look;
 use crate::catalog::NO_DATABASE;
+use crate::crawlers::{self, crawlers};
 use crate::forms::{Outcome, amount_text, day_text, input, notice, parse_day, percent_text};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
 use crate::preferences;
+use crate::restricted::AppFlags;
+
+/// The vitrine the app reads, as its failures name it.
+const VITRINE: &str = "a Hotmart";
 
 /// "Quero divulgar" gave this Program: the Passo a passo opens on it.
 pub struct OpenGuidedFlow(pub Program);
@@ -299,6 +308,7 @@ impl Form {
 enum Changed {
     Nothing,
     Saved(String),
+    Read(String),
     Dismissed(String),
     Promoted(Program),
 }
@@ -313,9 +323,16 @@ pub struct ProspectsScreen {
     dismissing: Option<RecordId>,
     reason: Entity<InputState>,
     form: Option<Form>,
+    /// The Hotmart vitrine's reader, while its flag is on.
+    vitrine: Option<Arc<dyn ProspectSource>>,
+    /// The vitrine's category "Garimpar" reads; `None` for its best
+    /// sellers.
+    category: Option<ProspectCategory>,
     busy: bool,
     /// Numbers each read, so a slow one never lands over a newer one.
     reads: u64,
+    /// The same, for the reads of the vitrine's flag.
+    flag_reads: u64,
     outcome: Option<Outcome>,
     row_outcome: Option<Outcome>,
 }
@@ -332,8 +349,11 @@ impl ProspectsScreen {
             dismissing: None,
             reason: input("Por que não serve? Ex.: nicho saturado", window, cx),
             form: None,
+            vitrine: None,
+            category: None,
             busy: false,
             reads: 0,
+            flag_reads: 0,
             outcome: None,
             row_outcome: None,
         };
@@ -343,7 +363,81 @@ impl ProspectsScreen {
 
     /// Reads everything again, as when the screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.read_vitrine_flag(cx);
         self.run(window, cx, |_| async { Ok(Changed::Nothing) });
+    }
+
+    /// Reads the vitrine's flag again: on, it builds the reader; off, it
+    /// drops it.
+    fn read_vitrine_flag(&mut self, cx: &mut Context<Self>) {
+        let (Some(app), Some(crawlers)) = (cx.try_global::<AppFlags>(), crawlers(cx)) else {
+            return;
+        };
+        let flags = app.flags.clone();
+        let (vitrine, engine) = (crawlers.hotmart_vitrine.clone(), crawlers.engine.clone());
+        self.flag_reads += 1;
+        let reading = self.flag_reads;
+        let working = cx
+            .background_executor()
+            .spawn(async move { crawlers::vitrine_if_on(&flags, &vitrine, engine).await });
+        cx.spawn(async move |this, cx| {
+            let source = working.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.flag_reads == reading {
+                    this.vitrine = source.ok().flatten();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Whether the vitrine's card shows: in the Platform's own list, or in
+    /// every Platform's.
+    fn shows_vitrine(&self, cx: &App) -> bool {
+        matches!(self.platform(cx), None | Some(AffiliatePlatform::Hotmart))
+    }
+
+    /// "Garimpar": reads the vitrine's chosen category once and keeps what
+    /// it shows.
+    fn garimpar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = self.vitrine.clone() else {
+            return;
+        };
+        if source.blocked_until().is_some() {
+            cx.notify();
+            return;
+        }
+        let category = self.category.clone();
+        self.outcome = None;
+        self.run(window, cx, move |affiliate| async move {
+            let read = affiliate
+                .read_prospects(source.as_ref(), category.as_ref())
+                .await?;
+            Ok(Changed::Read(read_text(category.as_ref(), read)))
+        });
+    }
+
+    /// Reads the product page of `prospect` from the vitrine.
+    fn read_page(&mut self, prospect: RecordId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = self.vitrine.clone() else {
+            return;
+        };
+        if source.blocked_until().is_some() {
+            cx.notify();
+            return;
+        }
+        self.outcome = None;
+        self.run(window, cx, move |affiliate| async move {
+            let read = affiliate
+                .read_prospect_details(source.as_ref(), prospect)
+                .await?;
+            Ok(Changed::Read(format!(
+                "{}: a página do produto trouxe alunos, garantia e o perfil do produtor para a \
+                 nota.",
+                read.name
+            )))
+        });
     }
 
     /// Follows a new Work Context: the Platform picked in All and what was
@@ -410,6 +504,7 @@ impl ProspectsScreen {
                         this.form = None;
                         this.outcome = Some(Outcome::Done(text.into()));
                     }
+                    Ok(Changed::Read(text)) => this.outcome = Some(Outcome::Done(text.into())),
                     Ok(Changed::Dismissed(text)) => {
                         this.dismissing = None;
                         this.outcome = Some(Outcome::Done(text.into()));
@@ -428,7 +523,10 @@ impl ProspectsScreen {
     }
 
     fn failed(&mut self, error: &AffiliateError) {
-        let text = failure(error);
+        let text = match error {
+            AffiliateError::Platform(error) => crawlers::failure(VITRINE, error),
+            error => failure(error),
+        };
         if let Some(form) = self.form.as_mut() {
             form.outcome = Some(Outcome::Failed(text.into()));
         } else if self.dismissing.is_some() {
@@ -619,6 +717,95 @@ impl ProspectsScreen {
                 )
                 .into_any_element(),
         }
+    }
+
+    /// The Hotmart vitrine: its categories and "Garimpar" while its flag is
+    /// on, else what the flag does and why it is off.
+    fn render_vitrine(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.shows_vitrine(cx) {
+            return None;
+        }
+        let t = look(cx).tokens;
+        let card = v_flex()
+            .gap_2()
+            .p_3()
+            .rounded(t.radius_lg)
+            .border(t.border_width)
+            .border_color(t.frame)
+            .bg(t.surface);
+        let Some(source) = self.vitrine.clone() else {
+            return Some(
+                card.child(div().font_medium().child("Garimpar na vitrine da Hotmart"))
+                    .child(div().text_sm().child(format!(
+                        "Ligando \"{}\" em Configurações › Funcionalidades restritas, o Mascate \
+                         lê a vitrine pública da Hotmart quando você clica em Garimpar: nota, \
+                         avaliações, quando o produto entrou, aulas, horas, certificado e o \
+                         produtor, e dá a nota de cada um.",
+                        HOTMART_CRAWLER.name
+                    )))
+                    .child(div().text_xs().text_color(t.text2).child(format!(
+                        "Fica desligado porque: {} {}",
+                        HOTMART_CRAWLER.reason, HOTMART_CRAWLER.risk
+                    )))
+                    .into_any_element(),
+            );
+        };
+        let blocked = source.blocked_until().filter(|until| *until > Utc::now());
+        let off = self.busy || blocked.is_some();
+        let chip = |index: usize, label: String, category: Option<ProspectCategory>| {
+            let on = self.category.as_ref().map(|c| &c.id) == category.as_ref().map(|c| &c.id);
+            Button::new(("vitrine-category", index))
+                .label(label)
+                .small()
+                .map(|b| if on { b.primary() } else { b.ghost() })
+                .disabled(off)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.category = category.clone();
+                    cx.notify();
+                }))
+        };
+        let categories = source.categories().unwrap_or_default();
+        Some(
+            card.child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .items_center()
+                    .child(div().font_medium().child("Garimpar na vitrine da Hotmart"))
+                    .child(kit::tag("Crawler ligado", t.danger, cx)),
+            )
+            .child(div().text_xs().text_color(t.text2).child(
+                "Lê a vitrine pública só quando você clica: uma página a cada 3 segundos ou \
+                 mais, e a mesma página dentro de 1 hora vem da memória. Traz nota, avaliações, \
+                 quando entrou, aulas, horas, certificado e o produtor; Ler a página do produto \
+                 soma alunos, garantia e o perfil do produtor. Comissão e temperatura só o \
+                 mercado de afiliação mostra.",
+            ))
+            .children(
+                blocked.map(|until| kit::error_notice(crawlers::blocked_text(VITRINE, until), cx)),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(chip(0, "Mais vendidos".into(), None))
+                    .children(categories.into_iter().enumerate().map(|(index, category)| {
+                        chip(index + 1, category.name.clone(), Some(category))
+                    })),
+            )
+            .child(
+                h_flex().child(
+                    Button::new("garimpar")
+                        .label("Garimpar")
+                        .primary()
+                        .small()
+                        .loading(self.busy)
+                        .disabled(off)
+                        .on_click(cx.listener(|this, _, window, cx| this.garimpar(window, cx))),
+                ),
+            )
+            .into_any_element(),
+        )
     }
 
     fn render_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -985,6 +1172,23 @@ impl ProspectsScreen {
                         this.open_form(Some(shown.clone()), window, cx)
                     })),
             )
+            .when(
+                self.vitrine.is_some()
+                    && prospect.platform == AffiliatePlatform::Hotmart
+                    && prospect.signals.product_page.is_some(),
+                |row| {
+                    row.child(
+                        Button::new(("read-page", index))
+                            .label("Ler a página do produto")
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.read_page(id, window, cx)
+                            })),
+                    )
+                },
+            )
             .when(!dismissing, |row| {
                 row.child(
                     Button::new(("dismiss", index))
@@ -1130,6 +1334,7 @@ impl Render for ProspectsScreen {
             .filter(|index| !self.only_bets || self.prospects[*index].bet)
             .collect();
         let platforms = self.render_platforms(cx);
+        let vitrine = self.render_vitrine(cx);
         let market = self.render_market(cx);
         let form = self.render_form(cx);
         let filter = |id: &'static str, label: String, on: bool, only_bets: bool| {
@@ -1145,6 +1350,9 @@ impl Render for ProspectsScreen {
         let empty = if self.only_bets {
             "Nenhuma aposta ainda: produto que entrou há até 90 dias, com Blueprint de 80% ou \
              nota 4,5 com 10 avaliações, e temperatura até 40°."
+        } else if self.vitrine.is_some() && self.shows_vitrine(cx) {
+            "Nenhum produto no garimpo ainda. Escolha uma categoria da vitrine e clique em \
+             Garimpar, ou traga os números do mercado em Cadastrar à mão."
         } else {
             "Nenhum produto no garimpo ainda. Abra o mercado da plataforma, escolha os que \
              parecem bons e traga os números em Cadastrar à mão."
@@ -1152,6 +1360,7 @@ impl Render for ProspectsScreen {
         let mut list = v_flex()
             .gap_3()
             .children(platforms)
+            .children(vitrine)
             .child(market)
             .children(form)
             .child(
@@ -1200,6 +1409,29 @@ impl Render for ProspectsScreen {
         parts.content.push(list.into_any_element());
         layout::screen(parts, cx)
     }
+}
+
+/// What one "Garimpar" in `category` (the best sellers without one) did.
+pub fn read_text(category: Option<&ProspectCategory>, read: ProspectsRead) -> String {
+    let place = category.map_or("nos mais vendidos".to_owned(), |c| format!("em {}", c.name));
+    if read.found == 0 {
+        return format!("A vitrine da Hotmart não mostrou nenhum produto {place}.");
+    }
+    let found = match read.found {
+        1 => "1 produto".to_owned(),
+        count => format!("{count} produtos"),
+    };
+    let added = match read.added {
+        0 => "nenhum novo; os que já estavam foram atualizados".to_owned(),
+        1 => "1 novo no garimpo".to_owned(),
+        count => format!("{count} novos no garimpo"),
+    };
+    let dismissed = match read.dismissed {
+        0 => String::new(),
+        1 => " 1 que você descartou continua de fora.".to_owned(),
+        count => format!(" {count} que você descartou continuam de fora."),
+    };
+    format!("Li {found} da vitrine {place}: {added}.{dismissed}")
 }
 
 fn capitalized(text: &str) -> String {
@@ -1255,6 +1487,39 @@ mod tests {
         assert_eq!(
             signals.product_page.as_deref(),
             Some("https://hotmart.com/pt-br/marketplace/produtos/excel/X123?ref=1")
+        );
+    }
+
+    #[test]
+    fn a_read_of_the_vitrine_says_what_it_found_and_what_stays_out() {
+        let cooking = ProspectCategory {
+            id: "culinaria-e-gastronomia".into(),
+            name: "Culinária e gastronomia".into(),
+        };
+        let read = |found, added, dismissed| ProspectsRead {
+            found,
+            added,
+            dismissed,
+        };
+
+        assert_eq!(
+            read_text(Some(&cooking), read(24, 5, 2)),
+            "Li 24 produtos da vitrine em Culinária e gastronomia: 5 novos no garimpo. 2 que \
+             você descartou continuam de fora."
+        );
+        assert_eq!(
+            read_text(None, read(1, 0, 0)),
+            "Li 1 produto da vitrine nos mais vendidos: nenhum novo; os que já estavam foram \
+             atualizados."
+        );
+        assert_eq!(
+            read_text(None, read(3, 1, 1)),
+            "Li 3 produtos da vitrine nos mais vendidos: 1 novo no garimpo. 1 que você \
+             descartou continua de fora."
+        );
+        assert_eq!(
+            read_text(Some(&cooking), read(0, 0, 0)),
+            "A vitrine da Hotmart não mostrou nenhum produto em Culinária e gastronomia."
         );
     }
 

@@ -55,8 +55,7 @@ pub use hotmart::{
     API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart, LINKS as HOTMART_LINKS,
 };
 pub use hotmart_crawler::{
-    HOTMART_CATEGORIES, HOTMART_CRAWLER, HotmartCrawler,
-    MARKETPLACE_URL as HOTMART_MARKETPLACE_URL, MarketplaceCategory,
+    HOTMART_CRAWLER, HotmartCrawler, MARKETPLACE_URL as HOTMART_MARKETPLACE_URL,
 };
 pub use instagram::{
     API_URL as INSTAGRAM_API_URL, Instagram, InstagramAccount, TOKEN_DAYS as INSTAGRAM_TOKEN_DAYS,

@@ -1,26 +1,29 @@
 //! The crawlers as the screens use them (#152, ADR 0035): the one engine
-//! the app shares, the sites it can search, each built only while its
-//! Restricted Feature is on, and how their failures read in Portuguese.
+//! the app shares, the sites Ofertas can search and the Hotmart vitrine
+//! Garimpo reads (#220), each built only while its Restricted Feature is
+//! on, and how their failures read in Portuguese.
 
 use std::sync::Arc;
 
 use chrono::Local;
 use gpui_kit::{App, Global};
+use mascate_affiliate::ProspectSource;
 use mascate_catalog::OfferSource;
 use mascate_integrations::{
-    AMAZON_CRAWLER, AMAZON_SEARCH_URL, AmazonCrawler, Crawler, HOTMART_CATEGORIES, HOTMART_CRAWLER,
+    AMAZON_CRAWLER, AMAZON_SEARCH_URL, AmazonCrawler, Crawler, HOTMART_CRAWLER,
     HOTMART_MARKETPLACE_URL, HotmartCrawler, MAGALU_CRAWLER, MAGALU_SEARCH_URL,
-    MERCADO_LIVRE_CRAWLER, MERCADO_LIVRE_LISTING_URL, MagaluCrawler, MarketplaceCategory,
-    MercadoLivreCrawler,
+    MERCADO_LIVRE_CRAWLER, MERCADO_LIVRE_LISTING_URL, MagaluCrawler, MercadoLivreCrawler,
 };
 use mascate_kernel::{PlatformError, Timestamp};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
 
 /// The engine every crawler shares, so turns, memory and breakers hold per
-/// host, and the sites Ofertas can search with it.
+/// host, the sites Ofertas can search with it and where the Hotmart
+/// vitrine is.
 pub struct AppCrawlers {
     pub engine: Arc<Crawler>,
     pub sites: Vec<CrawledSite>,
+    pub hotmart_vitrine: String,
 }
 
 impl Global for AppCrawlers {}
@@ -38,10 +41,6 @@ pub struct CrawledSite {
     pub flag: Flag,
     /// Where its pages start.
     pub listing: String,
-    /// The categories the owner browses instead of typing words, for a site
-    /// whose robots.txt keeps robots out of its search; empty for a search
-    /// by words.
-    pub categories: &'static [MarketplaceCategory],
     build: fn(&str, Arc<Crawler>) -> Arc<dyn OfferSource>,
 }
 
@@ -54,7 +53,6 @@ impl CrawledSite {
             Self::mercado_livre(build, environment),
             Self::amazon(build, environment),
             Self::magalu(build, environment),
-            Self::hotmart(build, environment),
         ]
     }
 
@@ -70,7 +68,6 @@ impl CrawledSite {
                 "MASCATE_MERCADO_LIVRE_LISTING_URL",
                 MERCADO_LIVRE_LISTING_URL,
             ),
-            categories: &[],
             build: |listing, engine| Arc::new(MercadoLivreCrawler::new(listing, engine)),
         }
     }
@@ -87,7 +84,6 @@ impl CrawledSite {
                 "MASCATE_AMAZON_SEARCH_URL",
                 AMAZON_SEARCH_URL,
             ),
-            categories: &[],
             build: |site, engine| Arc::new(AmazonCrawler::new(site, engine)),
         }
     }
@@ -104,33 +100,8 @@ impl CrawledSite {
                 "MASCATE_MAGALU_SEARCH_URL",
                 MAGALU_SEARCH_URL,
             ),
-            categories: &[],
             build: |site, engine| Arc::new(MagaluCrawler::new(site, engine)),
         }
-    }
-
-    /// The Hotmart marketplace, browsed by category, or
-    /// `MASCATE_HOTMART_MARKETPLACE_URL`.
-    pub fn hotmart(build: Build, environment: &Environment) -> Self {
-        Self {
-            name: "Hotmart",
-            article: "a",
-            flag: HOTMART_CRAWLER,
-            listing: local_or(
-                build,
-                environment,
-                "MASCATE_HOTMART_MARKETPLACE_URL",
-                HOTMART_MARKETPLACE_URL,
-            ),
-            categories: HOTMART_CATEGORIES,
-            build: |marketplace, engine| Arc::new(HotmartCrawler::new(marketplace, engine)),
-        }
-    }
-
-    /// Whether the owner browses the site's categories instead of typing
-    /// words.
-    pub fn browses(&self) -> bool {
-        !self.categories.is_empty()
     }
 
     /// "o Mercado Livre", "a Amazon".
@@ -154,6 +125,30 @@ impl CrawledSite {
     }
 }
 
+/// The Hotmart vitrine Garimpo reads, or, in a development build only,
+/// `MASCATE_HOTMART_MARKETPLACE_URL`, for a local fake server.
+pub fn hotmart_vitrine(build: Build, environment: &Environment) -> String {
+    local_or(
+        build,
+        environment,
+        "MASCATE_HOTMART_MARKETPLACE_URL",
+        HOTMART_MARKETPLACE_URL,
+    )
+}
+
+/// The Hotmart vitrine's reader at `vitrine` on `engine`, built only while
+/// its flag is on.
+pub async fn vitrine_if_on(
+    flags: &Flags,
+    vitrine: &str,
+    engine: Arc<Crawler>,
+) -> Result<Option<Arc<dyn ProspectSource>>, FlagError> {
+    Ok(flags
+        .is_on(&HOTMART_CRAWLER)
+        .await?
+        .then(|| Arc::new(HotmartCrawler::new(vitrine, engine)) as Arc<dyn ProspectSource>))
+}
+
 fn local_or(build: Build, environment: &Environment, variable: &str, site: &str) -> String {
     crate::mercado_livre::local_fake(build, environment, variable)
         .unwrap_or_else(|| site.to_owned())
@@ -172,8 +167,9 @@ pub async fn source_if_on(
         .then(|| (site.build)(&site.listing, engine)))
 }
 
-/// Why the crawler is waiting, until `until`.
-pub fn blocked_text(site: &CrawledSite, until: Timestamp) -> String {
+/// Why the crawler of `the_site`, such as "a Hotmart", is waiting, until
+/// `until`.
+pub fn blocked_text(the_site: &str, until: Timestamp) -> String {
     let until = until.with_timezone(&Local);
     let when = if until.date_naive() == Local::now().date_naive() {
         until.format("as %H:%M").to_string()
@@ -183,30 +179,39 @@ pub fn blocked_text(site: &CrawledSite, until: Timestamp) -> String {
     format!(
         "{} bloqueou o crawler três vezes seguidas, então o app não pede nada ao site até \
          {when}. Bloqueio é a resposta do site: o app não tenta contornar.",
-        site.the_capitalized()
+        capitalized(the_site)
     )
 }
 
-/// Why a search failed, as the owner reads it.
-pub fn failure(site: &CrawledSite, error: &PlatformError) -> String {
+/// Why a search of `the_site`, such as "a Hotmart", failed, as the owner
+/// reads it.
+pub fn failure(the_site: &str, error: &PlatformError) -> String {
+    let site = capitalized(the_site);
     match error {
         PlatformError::Refused(why) => format!("Não li a busca: {why}."),
-        PlatformError::NotFound => {
-            format!("{} não tem página para essa busca.", site.the_capitalized())
+        PlatformError::NotFound => format!("{site} não tem página para essa busca."),
+        PlatformError::RateLimited => {
+            format!("Há buscas demais na fila para {the_site}; espere um pouco e busque de novo.")
         }
-        PlatformError::RateLimited => format!(
-            "Há buscas demais na fila para {}; espere um pouco e busque de novo.",
-            site.the()
-        ),
-        PlatformError::Failed(why) => format!("Não consegui falar com {}: {why}", site.the()),
+        PlatformError::Failed(why) => format!("Não consegui falar com {the_site}: {why}"),
         PlatformError::NotConnected | PlatformError::Expired => {
-            format!("{} não respondeu à busca.", site.the_capitalized())
+            format!("{site} não respondeu à busca.")
         }
     }
 }
 
+/// `text` with its first letter in upper case: "A Hotmart".
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use futures::executor::block_on;
     use mascate_catalog::ProductSource;
     use mascate_kernel::SystemClock;
@@ -250,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn ofertas_offers_mercado_livre_amazon_magalu_and_hotmart_each_behind_its_own_flag() {
+    fn ofertas_offers_mercado_livre_amazon_and_magalu_each_behind_its_own_flag() {
         let release = CrawledSite::all(Build::Release, &(Box::new(|_: &str| None) as Environment));
         let development = CrawledSite::all(
             Build::Development,
@@ -281,16 +286,8 @@ mod tests {
                     "integrations.magalu_crawler",
                     "https://www.magazineluiza.com.br"
                 ),
-                (
-                    "Hotmart",
-                    "integrations.hotmart_crawler",
-                    "https://hotmart.com/pt-br/marketplace"
-                ),
             ]
         );
-        let browsed: Vec<bool> = release.iter().map(CrawledSite::browses).collect();
-        assert_eq!(browsed, [false, false, false, true]);
-        assert_eq!(release[3].of(), "da Hotmart");
         assert_eq!(development[1].listing, "http://127.0.0.1:8091");
         assert_eq!(development[2].listing, "https://www.magazineluiza.com.br");
         assert_eq!(
@@ -319,11 +316,11 @@ mod tests {
                 Arc::new(SequentialIds::default()),
             );
             let environment = Box::new(|_: &str| None) as Environment;
-            let (amazon, magalu, hotmart) = (
+            let (amazon, magalu) = (
                 CrawledSite::amazon(Build::Release, &environment),
                 CrawledSite::magalu(Build::Release, &environment),
-                CrawledSite::hotmart(Build::Release, &environment),
             );
+            let vitrine = hotmart_vitrine(Build::Release, &environment);
             let engine = Arc::new(Crawler::new("Mascate/test", Arc::new(SystemClock)));
 
             let request = flags.request_turn_on(amazon.flag.key).unwrap();
@@ -331,13 +328,13 @@ mod tests {
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let amazon_on = source_if_on(&flags, &amazon, engine.clone()).await.unwrap();
             let magalu_off = source_if_on(&flags, &magalu, engine.clone()).await.unwrap();
-            let hotmart_off = source_if_on(&flags, &hotmart, engine.clone())
+            let hotmart_off = vitrine_if_on(&flags, &vitrine, engine.clone())
                 .await
                 .unwrap();
-            let request = flags.request_turn_on(hotmart.flag.key).unwrap();
+            let request = flags.request_turn_on(HOTMART_CRAWLER.key).unwrap();
             assert_eq!(request.flag().risk, HOTMART_CRAWLER.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
-            let hotmart_on = source_if_on(&flags, &hotmart, engine).await.unwrap();
+            let hotmart_on = vitrine_if_on(&flags, &vitrine, engine).await.unwrap();
 
             assert_eq!(
                 amazon_on.map(|source| source.source()),
@@ -346,9 +343,22 @@ mod tests {
             assert!(magalu_off.is_none());
             assert!(hotmart_off.is_none());
             assert_eq!(
-                hotmart_on.map(|source| source.source()),
-                Some(ProductSource::HotmartCrawler)
+                hotmart_on.map(|source| source.platform()),
+                Some(mascate_affiliate::AffiliatePlatform::Hotmart)
             );
+            assert_eq!(vitrine, "https://hotmart.com/pt-br/marketplace");
         });
+    }
+
+    #[test]
+    fn a_failure_names_the_site_it_came_from() {
+        assert_eq!(
+            failure("a Hotmart", &PlatformError::NotFound),
+            "A Hotmart não tem página para essa busca."
+        );
+        assert!(
+            failure("a Hotmart", &PlatformError::RateLimited).contains("na fila para a Hotmart")
+        );
+        assert!(blocked_text("a Hotmart", Utc::now()).starts_with("A Hotmart bloqueou"));
     }
 }

@@ -461,3 +461,21 @@ fn a_kept_offer_enters_the_opportunities_on_the_next_demand_sync() {
         assert_eq!(opportunities[0].cost, brl("29.90"));
     });
 }
+
+#[test]
+fn offers_kept_from_the_hotmart_vitrine_still_read_after_it_left_ofertas() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let hotmart = ProductSource::HotmartCrawler;
+        f.catalog
+            .keep_found_offers(hotmart, &[fone("97.00")])
+            .await
+            .unwrap();
+
+        let offers = f.catalog.offers().await.unwrap();
+
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].latest.source, hotmart);
+        assert_eq!(offers[0].latest.price, brl("97.00"));
+    });
+}
