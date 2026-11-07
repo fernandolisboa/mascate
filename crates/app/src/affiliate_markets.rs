@@ -58,11 +58,17 @@ pub fn market(platform: AffiliatePlatform) -> Option<Market> {
         AffiliatePlatform::Monetizze => (
             "https://app.monetizze.com.br",
             &[
-                "Entre na Monetizze e abra a Loja. Filtre por tipo, categoria e faturamento; \
-                 o Hall da Fama mostra os mais vendidos do momento.",
+                "Entre na Monetizze e abra Vitrine de afiliação no menu lateral (Loja, no \
+                 painel antigo). O Hall da Fama ordena pelos BARs (vendas, afiliados, \
+                 reembolsos e chargebacks), Em Destaque tem os que passaram de R$ 250 mil \
+                 vendidos, Oportunidades os de R$ 50 mil a R$ 250 mil e Mais Recentes os que \
+                 acabaram de entrar; a Busca avançada filtra por tipo, comissão, categoria e \
+                 preço.",
                 COPY,
-                "Para se afiliar, peça a afiliação na página do produto e copie o Hotlink \
-                 quando for aprovado.",
+                "Para se afiliar, clique em Promover este produto na página do produto e aceite \
+                 os Termos de Afiliação: com afiliação aberta você já vira afiliado; na \
+                 fechada, o pedido fica em Afiliados > Solicitações Enviadas até o produtor \
+                 aprovar. Os links ficam em Produtos > Meus produtos > URL's.",
             ],
         ),
         AffiliatePlatform::Eduzz => (

@@ -34,7 +34,8 @@ pub use prospect_score::{
     Score, ScoreArea, ScorePart, is_bet, score,
 };
 pub use prospect_signals::{
-    Affiliation, MAX_TEMPERATURE, SignalKind, SignalOrigin, SignalReading, Signals, Support,
+    Affiliation, MAX_TEMPERATURE, ProductFormat, SignalKind, SignalOrigin, SignalReading, Signals,
+    Support,
 };
 pub use prospect_source::{FoundProspect, ProspectCategory, ProspectSource};
 pub use prospects::{Prospect, ProspectsRead, prospect_key_of};

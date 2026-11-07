@@ -29,6 +29,7 @@ mod mercado_livre;
 mod mercado_livre_affiliate_panel;
 mod mercado_livre_crawler;
 mod monetizze;
+mod monetizze_affiliate_market;
 mod pictures;
 mod pinterest;
 mod posting;
@@ -103,6 +104,10 @@ pub use mercado_livre_crawler::{
     LISTING_URL as MERCADO_LIVRE_LISTING_URL, MERCADO_LIVRE_CRAWLER, MercadoLivreCrawler,
 };
 pub use monetizze::{API_URL as MONETIZZE_API_URL, LINKS as MONETIZZE_LINKS, Monetizze};
+pub use monetizze_affiliate_market::{
+    MARKET_URL as MONETIZZE_AFFILIATE_MARKET_URL, MONETIZZE_AFFILIATE_MARKET,
+    MonetizzeAffiliateMarket,
+};
 pub use pinterest::{
     API_URL as PINTEREST_API_URL, LOGIN_URL as PINTEREST_LOGIN_URL,
     MAX_PHOTO_BYTES as PINTEREST_MAX_PHOTO_BYTES, Pinterest, PinterestAuthorization,
@@ -178,6 +183,7 @@ pub const FLAGS: &[Flag] = &[
     HOTMART_CRAWLER,
     HOTMART_AFFILIATE_MARKET,
     KIWIFY_AFFILIATE_MARKET,
+    MONETIZZE_AFFILIATE_MARKET,
     EDUZZ_AFFILIATE_MARKET,
     MERCADO_LIVRE_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL,
