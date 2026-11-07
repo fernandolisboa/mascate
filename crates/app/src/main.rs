@@ -293,11 +293,7 @@ fn main() {
                     affiliate_panels::profile_folder(data.clone()),
                 )),
                 sites: PanelSite::all(Build::CURRENT, &process_environment()),
-                hotmart_market: MarketSite::hotmart(
-                    Build::CURRENT,
-                    &process_environment(),
-                    Some(affiliate_panels::market_stop_file(data)),
-                ),
+                markets: MarketSite::all(Build::CURRENT, &process_environment(), Some(data)),
             }))
         });
     let user: SharedString = system_user(&process_environment())

@@ -6,7 +6,7 @@
 //! database: one product is one Prospect whichever reader saw it first.
 
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{TimeDelta, TimeZone, Utc};
@@ -16,12 +16,12 @@ use mascate_affiliate::{
     SignalKind, SignalOrigin, Signals,
 };
 use mascate_integrations::{
-    BrowserSession, FLAGS, HOTMART_AFFILIATE_MARKET, HOTMART_MARKET_INTERVAL,
-    HOTMART_MARKET_PAGES_PER_CLICK, HOTMART_MARKET_STOPPED_FOR, HotmartAffiliateMarket,
-    HotmartCrawler, MarketStop, MarketStopped, PanelState, hotmart_affiliation_page,
+    AffiliateMarket, BrowserSession, FLAGS, HOTMART_AFFILIATE_MARKET, HotmartAffiliateMarket,
+    HotmartCrawler, MARKET_INTERVAL, MARKET_PAGES_PER_CLICK, MARKET_STOPPED_FOR, MarketStop,
+    MarketStopped, PanelState, hotmart_affiliation_page,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
-use mascate_kernel::{Currency, Money, Pause, Percentage, PlatformError, Timestamp};
+use mascate_kernel::{Currency, Money, Percentage, PlatformError, Timestamp};
 use mascate_platform::{Database, FlagKind, Phase, migrate};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 mod browsing;
 mod crawling;
 
-use browsing::{FakeDevTools, RecordedPauses};
+use browsing::{ClockPause, FakeDevTools, RecordedPauses};
 
 const MARKET: &str = "https://app.hotmart.com/market";
 const CAKES: &str = "8a1c3e52-0f6d-4b8e-9c21-5d7a0e4f1b93";
@@ -59,26 +59,6 @@ fn page_of(ucode: &str) -> String {
     format!("{MARKET}/details?productUcode={ucode}")
 }
 
-/// A wait that moves the clock on, as a real one would, and is remembered.
-struct ClockPause {
-    clock: Arc<ManualClock>,
-    waits: Mutex<Vec<Duration>>,
-}
-
-impl Pause for ClockPause {
-    fn pause(&self, duration: Duration) {
-        self.waits.lock().unwrap().push(duration);
-        self.clock
-            .advance(TimeDelta::from_std(duration).unwrap_or_default());
-    }
-}
-
-impl ClockPause {
-    fn waits(&self) -> Vec<Duration> {
-        self.waits.lock().unwrap().clone()
-    }
-}
-
 struct Setup {
     devtools: FakeDevTools,
     clock: Arc<ManualClock>,
@@ -93,10 +73,7 @@ fn setup() -> Setup {
     let profile = tempfile::tempdir().unwrap();
     let devtools = FakeDevTools::start();
     let clock = Arc::new(ManualClock::at(start()));
-    let pause = Arc::new(ClockPause {
-        clock: clock.clone(),
-        waits: Mutex::new(Vec::new()),
-    });
+    let pause = Arc::new(ClockPause::on(clock.clone()));
     let market = market_on(&devtools, profile.path(), &clock, &pause);
     Setup {
         devtools,
@@ -163,9 +140,9 @@ fn the_reader_is_a_restricted_feature_of_phase_3_with_its_limits_and_risk() {
         assert!(HOTMART_AFFILIATE_MARKET.reason.contains(limit), "{limit}");
     }
     assert!(HOTMART_AFFILIATE_MARKET.risk.contains("conta de afiliado"));
-    assert_eq!(HOTMART_MARKET_PAGES_PER_CLICK, 5);
-    assert_eq!(HOTMART_MARKET_INTERVAL, Duration::from_secs(5));
-    assert_eq!(HOTMART_MARKET_STOPPED_FOR, TimeDelta::hours(24));
+    assert_eq!(MARKET_PAGES_PER_CLICK, 5);
+    assert_eq!(MARKET_INTERVAL, Duration::from_secs(5));
+    assert_eq!(MARKET_STOPPED_FOR, TimeDelta::hours(24));
 }
 
 #[test]
@@ -253,11 +230,8 @@ fn one_click_reads_at_most_five_pages_five_seconds_apart() {
     let found = s.market.prospects(None).unwrap();
 
     assert_eq!(found.len(), 15);
-    assert_eq!(
-        s.devtools.navigations().len(),
-        HOTMART_MARKET_PAGES_PER_CLICK
-    );
-    assert_eq!(s.pause.waits(), vec![HOTMART_MARKET_INTERVAL; 4]);
+    assert_eq!(s.devtools.navigations().len(), MARKET_PAGES_PER_CLICK);
+    assert_eq!(s.pause.waits(), vec![MARKET_INTERVAL; 4]);
 }
 
 #[test]

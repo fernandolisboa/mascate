@@ -1,5 +1,6 @@
 //! Integrations: one adapter per Platform, publishing normalized data to the other modules.
 
+mod affiliate_market;
 mod affiliate_panel;
 mod amazon;
 mod amazon_crawler;
@@ -17,6 +18,7 @@ mod hotmart_affiliate_market;
 mod hotmart_crawler;
 mod instagram;
 mod kiwify;
+mod kiwify_affiliate_market;
 mod landing;
 mod link_tags;
 mod magalu;
@@ -38,6 +40,11 @@ mod spend_reports;
 mod spreadsheet;
 mod telegram;
 
+pub use affiliate_market::{
+    AffiliateMarket, INTERVAL as MARKET_INTERVAL, MarketStop,
+    PAGES_PER_CLICK as MARKET_PAGES_PER_CLICK, STOPPED_FOR as MARKET_STOPPED_FOR,
+    Stopped as MarketStopped,
+};
 pub use affiliate_panel::{AffiliatePanel, PanelState, TABLES_SCRIPT};
 pub use amazon::{API_URL as AMAZON_API_URL, AUTH_URL as AMAZON_AUTH_URL, Amazon};
 pub use amazon_crawler::{AMAZON_CRAWLER, AmazonCrawler, SEARCH_URL as AMAZON_SEARCH_URL};
@@ -56,10 +63,8 @@ pub use hotmart::{
     API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart, LINKS as HOTMART_LINKS,
 };
 pub use hotmart_affiliate_market::{
-    HOTMART_AFFILIATE_MARKET, HotmartAffiliateMarket, INTERVAL as HOTMART_MARKET_INTERVAL,
-    MARKET_SCRIPT as HOTMART_MARKET_SCRIPT, MARKET_URL as HOTMART_AFFILIATE_MARKET_URL, MarketStop,
-    PAGES_PER_CLICK as HOTMART_MARKET_PAGES_PER_CLICK, STOPPED_FOR as HOTMART_MARKET_STOPPED_FOR,
-    Stopped as MarketStopped, affiliation_page as hotmart_affiliation_page,
+    HOTMART_AFFILIATE_MARKET, HotmartAffiliateMarket, MARKET_URL as HOTMART_AFFILIATE_MARKET_URL,
+    affiliation_page as hotmart_affiliation_page,
 };
 pub use hotmart_crawler::{
     HOTMART_CRAWLER, HotmartCrawler, MARKETPLACE_URL as HOTMART_MARKETPLACE_URL,
@@ -68,6 +73,10 @@ pub use instagram::{
     API_URL as INSTAGRAM_API_URL, Instagram, InstagramAccount, TOKEN_DAYS as INSTAGRAM_TOKEN_DAYS,
 };
 pub use kiwify::{API_URL as KIWIFY_API_URL, Kiwify, LINKS as KIWIFY_LINKS};
+pub use kiwify_affiliate_market::{
+    KIWIFY_AFFILIATE_MARKET, KiwifyAffiliateMarket, MARKET_URL as KIWIFY_AFFILIATE_MARKET_URL,
+    affiliation_page as kiwify_affiliation_page,
+};
 pub use link_tags::UrlTagger;
 pub use magalu::{
     API_URL as MAGALU_API_URL, ID_URL as MAGALU_ID_URL, Magalu, SANDBOX_URL as MAGALU_SANDBOX_URL,
@@ -163,6 +172,7 @@ pub const FLAGS: &[Flag] = &[
     MAGALU_CRAWLER,
     HOTMART_CRAWLER,
     HOTMART_AFFILIATE_MARKET,
+    KIWIFY_AFFILIATE_MARKET,
     MERCADO_LIVRE_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL,
 ];

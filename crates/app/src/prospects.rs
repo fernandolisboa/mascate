@@ -1,8 +1,9 @@
 //! Garimpo (#219, ADR 0039): affiliate Prospects ranked by their score,
 //! each part with its reason, the apostas in a filter of their own, the
 //! owner's own entries from any Platform's market, the Hotmart vitrine
-//! (#220) and Hotmart's logged-in affiliate market (#221), each read on the
-//! owner's click while its flag is on, and the way from a Prospect to the
+//! (#220) and the logged-in affiliate markets of Hotmart (#221) and Kiwify
+//! (#222), each read on the owner's click while its flag is on, and the way
+//! from a Prospect to the
 //! Passo a passo or to the bin. The ranking and every
 //! rule are the Affiliate's; this screen only calls it.
 
@@ -22,8 +23,7 @@ use mascate_affiliate::{
     prospect_key_of,
 };
 use mascate_integrations::{
-    HOTMART_AFFILIATE_MARKET, HOTMART_CRAWLER, HotmartAffiliateMarket, MarketStop, MarketStopped,
-    PanelState,
+    AffiliateMarket, HOTMART_CRAWLER, MarketStop, MarketStopped, PanelState,
 };
 use mascate_kernel::PlatformError;
 use mascate_kernel::{Currency, Money, Percentage, RecordId, parse_amount};
@@ -31,7 +31,7 @@ use rust_decimal::Decimal;
 
 use crate::affiliate::{affiliate, failure};
 use crate::affiliate_markets::{MARKET_PLATFORMS, Market, market};
-use crate::affiliate_panels::panels;
+use crate::affiliate_panels::{MarketTexts, panels};
 use crate::appearance::look;
 use crate::catalog::NO_DATABASE;
 use crate::crawlers::{self, crawlers};
@@ -334,8 +334,9 @@ pub struct ProspectsScreen {
     form: Option<Form>,
     /// The Hotmart vitrine's reader, while its flag is on.
     vitrine: Option<Arc<dyn ProspectSource>>,
-    /// Hotmart's affiliate market reader, while its flag is on.
-    market: Option<Arc<HotmartAffiliateMarket>>,
+    /// The logged-in affiliate markets whose flag is on, each with its
+    /// reader.
+    markets: Vec<Arc<dyn AffiliateMarket>>,
     /// The vitrine's category "Garimpar" reads; `None` for its best
     /// sellers.
     category: Option<ProspectCategory>,
@@ -361,7 +362,7 @@ impl ProspectsScreen {
             reason: input("Por que não serve? Ex.: nicho saturado", window, cx),
             form: None,
             vitrine: None,
-            market: None,
+            markets: Vec::new(),
             category: None,
             busy: false,
             reads: 0,
@@ -399,18 +400,22 @@ impl ProspectsScreen {
                     .flatten(),
                 None => None,
             };
-            let market = match panels {
-                Some(panels) => panels.hotmart_market(&flags).await.ok().flatten(),
-                None => None,
+            let markets = match panels {
+                Some(panels) => panels
+                    .markets_on(&flags)
+                    .await
+                    .map(|on| on.into_iter().map(|(_, market)| market).collect())
+                    .unwrap_or_default(),
+                None => Vec::new(),
             };
-            (vitrine, market)
+            (vitrine, markets)
         });
         cx.spawn(async move |this, cx| {
-            let (vitrine, market) = working.await;
+            let (vitrine, markets) = working.await;
             let _ = this.update(cx, |this, cx| {
                 if this.flag_reads == reading {
                     this.vitrine = vitrine;
-                    this.market = market;
+                    this.markets = markets;
                     cx.notify();
                 }
             });
@@ -441,50 +446,76 @@ impl ProspectsScreen {
                 .read_prospects(source.as_ref(), category.as_ref())
                 .await?;
             Ok(Changed::Read(read_text(
-                VITRINE_READ,
+                &vitrine_read(),
                 category.as_ref(),
                 read,
             )))
         });
     }
 
-    /// "Garimpar no mercado": reads the market's listing in the chosen
-    /// category, a few pages at most, and keeps what it shows.
-    fn garimpar_market(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(market) = self.market.clone() else {
+    /// The reader of `platform`'s logged-in market, while its flag is on.
+    fn market(&self, platform: AffiliatePlatform) -> Option<Arc<dyn AffiliateMarket>> {
+        self.markets
+            .iter()
+            .find(|market| market.platform() == platform)
+            .cloned()
+    }
+
+    /// "Garimpar no mercado": reads `platform`'s market listing, in the
+    /// chosen category when the market has it, a few pages at most, and
+    /// keeps what it shows.
+    fn garimpar_market(
+        &mut self,
+        platform: AffiliatePlatform,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(market), Some(site)) = (self.market(platform), market_site(platform, cx)) else {
             return;
         };
         if market.stopped().is_some() {
             cx.notify();
             return;
         }
-        let category = self.category.clone();
+        let category = self.category.clone().filter(|category| {
+            market
+                .categories()
+                .unwrap_or_default()
+                .iter()
+                .any(|known| known.id == category.id)
+        });
+        let from = market_read(&site);
         self.outcome = None;
         self.run(window, cx, move |affiliate| async move {
             match affiliate
                 .read_prospects(market.as_ref(), category.as_ref())
                 .await
             {
-                Ok(read) => Ok(Changed::Read(read_text(
-                    MARKET_READ,
-                    category.as_ref(),
-                    read,
-                ))),
-                Err(AffiliateError::Platform(error)) => Ok(Changed::Failed(market_failure(&error))),
+                Ok(read) => Ok(Changed::Read(read_text(&from, category.as_ref(), read))),
+                Err(AffiliateError::Platform(error)) => {
+                    Ok(Changed::Failed(market_failure(platform, &error)))
+                }
                 Err(error) => Err(error),
             }
         });
     }
 
-    /// Reads the page of `prospect` in the market.
-    fn read_in_market(&mut self, prospect: RecordId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(market) = self.market.clone() else {
+    /// Reads the page of `prospect` in its Platform's market.
+    fn read_in_market(
+        &mut self,
+        prospect: RecordId,
+        platform: AffiliatePlatform,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(market), Some(site)) = (self.market(platform), market_site(platform, cx)) else {
             return;
         };
         if market.stopped().is_some() {
             cx.notify();
             return;
         }
+        let called = site.called;
         self.outcome = None;
         self.run(window, cx, move |affiliate| async move {
             match affiliate
@@ -492,20 +523,26 @@ impl ProspectsScreen {
                 .await
             {
                 Ok(read) => Ok(Changed::Read(format!(
-                    "{}: o mercado de afiliação trouxe temperatura, comissão, Blueprint e \
-                     satisfação para a nota.",
+                    "{}: {called} trouxe os números da página do produto para a nota.",
                     read.name
                 ))),
-                Err(AffiliateError::Platform(error)) => Ok(Changed::Failed(market_failure(&error))),
+                Err(AffiliateError::Platform(error)) => {
+                    Ok(Changed::Failed(market_failure(platform, &error)))
+                }
                 Err(error) => Err(error),
             }
         });
     }
 
-    /// "Entrar na Hotmart": opens the market in the browser's window for the
-    /// owner to log in, or answer a robot check, by hand.
-    fn log_in_market(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(market) = self.market.clone() else {
+    /// "Entrar na Hotmart": opens `platform`'s market in the browser's
+    /// window for the owner to log in, or answer a robot check, by hand.
+    fn log_in_market(
+        &mut self,
+        platform: AffiliatePlatform,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(market) = self.market(platform) else {
             return;
         };
         self.outcome = None;
@@ -517,13 +554,16 @@ impl ProspectsScreen {
             let opened = opening.await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
+                let name = platform.name();
                 this.outcome = Some(match opened {
                     Ok(()) => Outcome::Done(
-                        "Janela aberta no mercado da Hotmart. Entre com a sua conta, confira que o \
-                         mercado aparece e feche a janela; depois, Garimpar no mercado."
-                            .into(),
+                        format!(
+                            "Janela aberta no mercado da {name}. Entre com a sua conta, confira \
+                             que o mercado aparece e feche a janela; depois, Garimpar no mercado."
+                        )
+                        .into(),
                     ),
-                    Err(error) => Outcome::Failed(market_failure(&error).into()),
+                    Err(error) => Outcome::Failed(market_failure(platform, &error).into()),
                 });
                 cx.notify();
             });
@@ -787,7 +827,7 @@ impl ProspectsScreen {
                         )),
                 )
                 .child(div().text_xs().text_color(t.text2).child(
-                    if platform == AffiliatePlatform::Hotmart && self.market.is_some() {
+                    if self.market(platform).is_some() {
                         "O Mascate lê esse mercado pelo cartão acima; o que ele não ler, traga \
                          para cá:"
                     } else {
@@ -812,17 +852,12 @@ impl ProspectsScreen {
                 .into_any_element(),
             None => card
                 .child(div().font_medium().child("Onde garimpar"))
-                .child(div().text_xs().text_color(t.text2).child(
-                    if self.market.is_some() {
-                        "O Mascate lê sozinho só o mercado da Hotmart, pelo cartão acima. Abra o \
-                         de cada outra plataforma e traga os números em Cadastrar à mão; escolha \
-                         uma plataforma acima para ver o passo a passo dela."
-                    } else {
-                        "O Mascate ainda não lê os mercados sozinho. Abra o de cada plataforma e \
-                         traga os números em Cadastrar à mão; escolha uma plataforma acima para \
-                         ver o passo a passo dela."
-                    },
-                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(t.text2)
+                        .child(where_to_look_text(&self.markets_read())),
+                )
                 .child(
                     h_flex().flex_wrap().gap_3().children(
                         MARKET_PLATFORMS
@@ -883,14 +918,48 @@ impl ProspectsScreen {
             .into_any_element()
     }
 
-    /// Hotmart's logged-in affiliate market: while its flag is on, its
-    /// Connection, "Entrar na Hotmart", "Garimpar no mercado" and its stop;
-    /// else what the flag does and why it is off.
-    fn render_logged_market(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.shows_vitrine(cx) {
-            return None;
-        }
+    /// The Platforms whose market the app reads now, in the Work
+    /// Context's order.
+    fn markets_read(&self) -> Vec<AffiliatePlatform> {
+        MARKET_PLATFORMS
+            .into_iter()
+            .filter(|platform| self.market(*platform).is_some())
+            .collect()
+    }
+
+    /// The logged-in market of each Platform the list shows: in a
+    /// Platform's own list, whether its flag is on or not; in every
+    /// Platform's, only those that are on.
+    fn render_logged_markets(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(panels) = panels(cx) else {
+            return Vec::new();
+        };
+        let shown = self.platform(cx);
+        panels
+            .markets
+            .iter()
+            .enumerate()
+            .map(|(index, site)| (index, site.texts))
+            .filter(|(_, site)| match shown {
+                Some(platform) => platform == site.platform,
+                None => self.market(site.platform).is_some(),
+            })
+            .map(|(index, site)| self.render_logged_market(index, &site, cx))
+            .collect()
+    }
+
+    /// A Platform's logged-in affiliate market: while its flag is on, its
+    /// Connection, "Entrar na …", "Garimpar no mercado" and its stop; else
+    /// what the flag does and why it is off.
+    fn render_logged_market(
+        &self,
+        index: usize,
+        site: &MarketTexts,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = look(cx).tokens;
+        let platform = site.platform;
+        let name = platform.name();
         let card = v_flex()
             .gap_2()
             .p_3()
@@ -898,23 +967,20 @@ impl ProspectsScreen {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.surface);
-        let title = "Garimpar no mercado de afiliação da Hotmart";
-        let Some(market) = self.market.clone() else {
-            return Some(
-                card.child(div().font_medium().child(title))
-                    .child(div().text_sm().child(format!(
-                        "Ligando \"{}\" em Configurações › Funcionalidades restritas, o Mascate \
-                         lê o mercado de afiliação da Hotmart, com o seu login, quando você \
-                         clica: temperatura, comissão em % e em R$, Blueprint, satisfação, preço \
-                         e se a afiliação é imediata.",
-                        HOTMART_AFFILIATE_MARKET.name
-                    )))
-                    .child(div().text_xs().text_color(t.text2).child(format!(
-                        "Fica desligado porque: {} {}",
-                        HOTMART_AFFILIATE_MARKET.reason, HOTMART_AFFILIATE_MARKET.risk
-                    )))
-                    .into_any_element(),
-            );
+        let title = format!("Garimpar no {} da {name}", site.called_short());
+        let Some(market) = self.market(platform) else {
+            return card
+                .child(div().font_medium().child(title))
+                .child(div().text_sm().child(format!(
+                    "Ligando \"{}\" em Configurações › Funcionalidades restritas, o Mascate lê \
+                     {} da {name}, com o seu login, quando você clica: {}.",
+                    site.flag.name, site.called, site.reads
+                )))
+                .child(div().text_xs().text_color(t.text2).child(format!(
+                    "Fica desligado porque: {} {}",
+                    site.flag.reason, site.flag.risk
+                )))
+                .into_any_element();
         };
         let state = market.state();
         let stopped = market.stopped();
@@ -927,67 +993,74 @@ impl ProspectsScreen {
             PanelState::LoggedOut => ("entre de novo", t.danger),
             PanelState::Ready => ("conectado", t.success),
         };
-        Some(
+        let has_categories = market
+            .categories()
+            .is_ok_and(|categories| !categories.is_empty());
+        // The vitrine's card shows the same Platform's categories already.
+        let vitrine_picks = self.shows_vitrine(cx)
+            && self
+                .vitrine
+                .as_ref()
+                .is_some_and(|vitrine| vitrine.platform() == platform);
+        card.child(
+            h_flex()
+                .gap_2()
+                .flex_wrap()
+                .items_center()
+                .child(div().font_medium().child(title))
+                .child(kit::tag(label, ink, cx))
+                .child(kit::tag("Leitura ligada", t.danger, cx)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(t.text2)
+                .child(market_state_text(site, state)),
+        )
+        .children(stopped.map(|stopped| kit::error_notice(stopped_text(platform, stopped), cx)))
+        .when(has_categories && !vitrine_picks && can_read, |card| {
+            card.child(self.render_categories(market.as_ref(), "Todas", off, cx))
+        })
+        .when(has_categories && vitrine_picks && can_read, |card| {
             card.child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .items_center()
-                    .child(div().font_medium().child(title))
-                    .child(kit::tag(label, ink, cx))
-                    .child(kit::tag("Leitura ligada", t.danger, cx)),
-            )
-            .child(
                 div()
                     .text_xs()
                     .text_color(t.text2)
-                    .child(market_state_text(state)),
+                    .child("Lê a categoria escolhida acima, na vitrine."),
             )
-            .children(stopped.map(|stopped| kit::error_notice(stopped_text(stopped), cx)))
-            .when(self.vitrine.is_none() && can_read, |card| {
-                card.child(self.render_categories(market.as_ref(), "Todas", off, cx))
-            })
-            .when(self.vitrine.is_some() && can_read, |card| {
-                card.child(
-                    div()
-                        .text_xs()
-                        .text_color(t.text2)
-                        .child("Lê a categoria escolhida acima, na vitrine."),
-                )
-            })
-            .child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .when(can_open, |row| {
-                        row.child(
-                            Button::new("log-in-market")
-                                .label("Entrar na Hotmart")
-                                .icon(IconName::ExternalLink)
-                                .outline()
-                                .small()
-                                .disabled(self.busy)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.log_in_market(window, cx)
-                                })),
-                        )
-                    })
-                    .when(can_read, |row| {
-                        row.child(
-                            Button::new("garimpar-market")
-                                .label("Garimpar no mercado")
-                                .primary()
-                                .small()
-                                .loading(self.busy)
-                                .disabled(off)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.garimpar_market(window, cx)
-                                })),
-                        )
-                    }),
-            )
-            .into_any_element(),
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .flex_wrap()
+                .when(can_open, |row| {
+                    row.child(
+                        Button::new(("log-in-market", index))
+                            .label(format!("Entrar na {name}"))
+                            .icon(IconName::ExternalLink)
+                            .outline()
+                            .small()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.log_in_market(platform, window, cx)
+                            })),
+                    )
+                })
+                .when(can_read, |row| {
+                    row.child(
+                        Button::new(("garimpar-market", index))
+                            .label("Garimpar no mercado")
+                            .primary()
+                            .small()
+                            .loading(self.busy)
+                            .disabled(off)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.garimpar_market(platform, window, cx)
+                            })),
+                    )
+                }),
         )
+        .into_any_element()
     }
 
     /// The Hotmart vitrine: its categories and "Garimpar" while its flag is
@@ -1307,6 +1380,7 @@ impl ProspectsScreen {
         let t = look(cx).tokens;
         let prospect = &self.prospects[index];
         let id = prospect.id;
+        let platform = prospect.platform;
         let dismissing = self.dismissing == Some(id);
         let all = preferences::work_context(cx).affiliate_platform().is_none();
         let mut tags = h_flex().flex_wrap().gap_1();
@@ -1440,8 +1514,7 @@ impl ProspectsScreen {
                 },
             )
             .when(
-                self.market.is_some()
-                    && prospect.platform == AffiliatePlatform::Hotmart
+                self.market(prospect.platform).is_some()
                     && prospect.signals.affiliation_page.is_some(),
                 |row| {
                     row.child(
@@ -1451,7 +1524,7 @@ impl ProspectsScreen {
                             .small()
                             .disabled(self.busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.read_in_market(id, window, cx)
+                                this.read_in_market(id, platform, window, cx)
                             })),
                     )
                 },
@@ -1602,7 +1675,7 @@ impl Render for ProspectsScreen {
             .collect();
         let platforms = self.render_platforms(cx);
         let vitrine = self.render_vitrine(cx);
-        let logged_market = self.render_logged_market(cx);
+        let logged_markets = self.render_logged_markets(cx);
         let market = self.render_market(cx);
         let form = self.render_form(cx);
         let filter = |id: &'static str, label: String, on: bool, only_bets: bool| {
@@ -1618,7 +1691,13 @@ impl Render for ProspectsScreen {
         let empty = if self.only_bets {
             "Nenhuma aposta ainda: produto que entrou há até 90 dias, com Blueprint de 80% ou \
              nota 4,5 com 10 avaliações, e temperatura até 40°."
-        } else if (self.vitrine.is_some() || self.market.is_some()) && self.shows_vitrine(cx) {
+        } else if (self.vitrine.is_some() && self.shows_vitrine(cx))
+            || self
+                .platform(cx)
+                .map_or(!self.markets.is_empty(), |platform| {
+                    self.market(platform).is_some()
+                })
+        {
             "Nenhum produto no garimpo ainda. Escolha uma categoria e clique em Garimpar, ou \
              traga os números do mercado em Cadastrar à mão."
         } else {
@@ -1629,7 +1708,7 @@ impl Render for ProspectsScreen {
             .gap_3()
             .children(platforms)
             .children(vitrine)
-            .children(logged_market)
+            .children(logged_markets)
             .child(market)
             .children(form)
             .child(
@@ -1680,94 +1759,109 @@ impl Render for ProspectsScreen {
     }
 }
 
-/// Why reading Hotmart's affiliate market failed, as the owner reads it.
-pub fn market_failure(error: &PlatformError) -> String {
+/// The market of `platform`, whether its flag is on or not.
+fn market_site(platform: AffiliatePlatform, cx: &App) -> Option<MarketTexts> {
+    panels(cx)?.market_site(platform).map(|site| site.texts)
+}
+
+/// Why reading `platform`'s affiliate market failed, as the owner reads it.
+pub fn market_failure(platform: AffiliatePlatform, error: &PlatformError) -> String {
+    let name = platform.name();
     match error {
-        PlatformError::NotConnected => "Falta entrar na Hotmart uma vez: clique em Entrar na \
-                                        Hotmart e entre com a sua conta na janela que abrir."
-            .to_owned(),
-        PlatformError::Expired => "A Hotmart pediu login. Clique em Entrar na Hotmart, entre na \
-                                   janela que abrir e garimpe de novo."
-            .to_owned(),
+        PlatformError::NotConnected => format!(
+            "Falta entrar na {name} uma vez: clique em Entrar na {name} e entre com a sua conta \
+             na janela que abrir."
+        ),
+        PlatformError::Expired => format!(
+            "A {name} pediu login. Clique em Entrar na {name}, entre na janela que abrir e \
+             garimpe de novo."
+        ),
         PlatformError::RateLimited => {
-            "A Hotmart recusou a página, então o app parou de ler o mercado.".to_owned()
+            format!("A {name} recusou a página, então o app parou de ler o mercado.")
         }
-        PlatformError::Refused(why) => format!("Não li o mercado da Hotmart: {why}."),
-        PlatformError::NotFound => "O mercado da Hotmart não abriu essa página.".to_owned(),
-        PlatformError::Failed(why) => format!("Não consegui ler o mercado da Hotmart: {why}"),
+        PlatformError::Refused(why) => format!("Não li o mercado da {name}: {why}."),
+        PlatformError::NotFound => format!("O mercado da {name} não abriu essa página."),
+        PlatformError::Failed(why) => format!("Não consegui ler o mercado da {name}: {why}"),
     }
 }
 
-/// Why the market's reading stopped, and until when.
-pub fn stopped_text(stopped: MarketStopped) -> String {
+/// Why `platform`'s market reading stopped, and until when.
+pub fn stopped_text(platform: AffiliatePlatform, stopped: MarketStopped) -> String {
+    let name = platform.name();
     let until = crawlers::until_text(stopped.until);
     match stopped.why {
         MarketStop::Login => format!(
-            "A última leitura caiu no login da Hotmart, então o app não abre o mercado até \
-             {until}, ou até você entrar de novo por Entrar na Hotmart."
+            "A última leitura caiu no login da {name}, então o app não abre o mercado até \
+             {until}, ou até você entrar de novo por Entrar na {name}."
         ),
         MarketStop::Check => format!(
-            "A Hotmart pediu a verificação contra robôs, então o app não abre o mercado até \
-             {until}. Se quiser antes, clique em Entrar na Hotmart e responda você mesmo na \
+            "A {name} pediu a verificação contra robôs, então o app não abre o mercado até \
+             {until}. Se quiser antes, clique em Entrar na {name} e responda você mesmo na \
              janela."
         ),
         MarketStop::Block => format!(
-            "A Hotmart recusou a leitura, então o app não abre o mercado até {until}. Bloqueio \
+            "A {name} recusou a leitura, então o app não abre o mercado até {until}. Bloqueio \
              é a resposta do site: o app não tenta contornar."
         ),
     }
 }
 
-/// What the market's state means for the owner.
-fn market_state_text(state: PanelState) -> &'static str {
+/// What the state of `site`'s reading means for the owner.
+fn market_state_text(site: &MarketTexts, state: PanelState) -> String {
+    let name = site.platform.name();
     match state {
-        PanelState::NoBrowser => {
-            "Não há Edge nem Chrome instalado neste computador, e o app lê o mercado por um \
-             deles. Instale um e abra o app de novo."
-        }
-        PanelState::NeverLoggedIn => {
-            "Falta entrar uma vez: clique em Entrar na Hotmart, entre com a sua conta na janela \
+        PanelState::NoBrowser => "Não há Edge nem Chrome instalado neste computador, e o app lê \
+                                  o mercado por um deles. Instale um e abra o app de novo."
+            .to_owned(),
+        PanelState::NeverLoggedIn => format!(
+            "Falta entrar uma vez: clique em Entrar na {name}, entre com a sua conta na janela \
              que abrir e feche a janela quando o mercado aparecer. A senha fica só no navegador."
-        }
-        PanelState::LoggedOut => {
-            "A última leitura caiu no login da Hotmart. Clique em Entrar na Hotmart e entre de \
+        ),
+        PanelState::LoggedOut => format!(
+            "A última leitura caiu no login da {name}. Clique em Entrar na {name} e entre de \
              novo na janela."
-        }
-        PanelState::Ready => {
-            "Conectado pelo navegador do Mascate, num perfil só dele. Lê só quando você clica: \
-             até 5 páginas por clique, uma a cada 5 segundos ou mais, e a mesma página dentro de \
-             1 hora vem da memória. Traz temperatura, comissão, Blueprint, satisfação, preço e o \
-             tipo de afiliação; não clica, não pede afiliação e não resolve captcha."
-        }
+        ),
+        PanelState::Ready => format!(
+            "Conectado pelo navegador do Mascate, num perfil só dele. Lê só quando você clica, \
+             {}, uma página a cada 5 segundos ou mais, e a mesma página dentro de 1 hora vem da \
+             memória. Traz {}; não clica, não pede afiliação e não resolve captcha.",
+            site.pages, site.reads
+        ),
     }
 }
 
 /// Where a "Garimpar" read, as its result names it.
 pub struct ReadFrom {
     /// "a vitrine da Hotmart", to start a sentence.
-    pub the: &'static str,
+    pub the: String,
     /// "da vitrine".
-    pub of: &'static str,
+    pub of: String,
     /// "nos mais vendidos", without a category.
     pub everything: &'static str,
 }
 
-pub const VITRINE_READ: ReadFrom = ReadFrom {
-    the: "a vitrine da Hotmart",
-    of: "da vitrine",
-    everything: "nos mais vendidos",
-};
+/// The Hotmart vitrine, as a read names it.
+pub fn vitrine_read() -> ReadFrom {
+    ReadFrom {
+        the: "a vitrine da Hotmart".into(),
+        of: "da vitrine".into(),
+        everything: "nos mais vendidos",
+    }
+}
 
-pub const MARKET_READ: ReadFrom = ReadFrom {
-    the: "o mercado de afiliação da Hotmart",
-    of: "do mercado de afiliação",
-    everything: "em todas as categorias",
-};
+/// `site`'s market, as a read names it.
+pub fn market_read(site: &MarketTexts) -> ReadFrom {
+    ReadFrom {
+        the: format!("{} da {}", site.called, site.platform.name()),
+        of: format!("d{}", site.called),
+        everything: site.everything,
+    }
+}
 
 /// What one "Garimpar" from `from` in `category` (everything without one)
 /// did.
 pub fn read_text(
-    from: ReadFrom,
+    from: &ReadFrom,
     category: Option<&ProspectCategory>,
     read: ProspectsRead,
 ) -> String {
@@ -1775,7 +1869,7 @@ pub fn read_text(
     if read.found == 0 {
         return format!(
             "{} não mostrou nenhum produto {place}.",
-            capitalized(from.the)
+            capitalized(&from.the)
         );
     }
     let found = match read.found {
@@ -1795,6 +1889,31 @@ pub fn read_text(
     format!("Li {found} {} {place}: {added}.{dismissed}", from.of)
 }
 
+/// What "Onde garimpar" says in every Platform's list, given the
+/// Platforms whose market the app reads now.
+pub fn where_to_look_text(read: &[AffiliatePlatform]) -> String {
+    let names: Vec<String> = read
+        .iter()
+        .map(|platform| format!("da {}", platform.name()))
+        .collect();
+    let choose = "escolha uma plataforma acima para ver o passo a passo dela.";
+    match names.as_slice() {
+        [] => format!(
+            "O Mascate ainda não lê os mercados sozinho. Abra o de cada plataforma e traga os \
+             números em Cadastrar à mão; {choose}"
+        ),
+        [one] => format!(
+            "O Mascate lê sozinho só o mercado {one}, pelo cartão acima. Abra o de cada outra \
+             plataforma e traga os números em Cadastrar à mão; {choose}"
+        ),
+        [many @ .., last] => format!(
+            "O Mascate lê sozinho os mercados {} e {last}, pelos cartões acima. Abra o de cada \
+             outra plataforma e traga os números em Cadastrar à mão; {choose}",
+            many.join(", ")
+        ),
+    }
+}
+
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars
@@ -1805,7 +1924,10 @@ fn capitalized(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use mascate_platform::{Build, Environment};
+
     use super::*;
+    use crate::affiliate_panels::MarketSite;
 
     fn typed() -> Typed {
         Typed {
@@ -1864,53 +1986,106 @@ mod tests {
         };
 
         assert_eq!(
-            read_text(VITRINE_READ, Some(&cooking), read(24, 5, 2)),
+            read_text(&vitrine_read(), Some(&cooking), read(24, 5, 2)),
             "Li 24 produtos da vitrine em Culinária e gastronomia: 5 novos no garimpo. 2 que \
              você descartou continuam de fora."
         );
         assert_eq!(
-            read_text(VITRINE_READ, None, read(1, 0, 0)),
+            read_text(&vitrine_read(), None, read(1, 0, 0)),
             "Li 1 produto da vitrine nos mais vendidos: nenhum novo; os que já estavam foram \
              atualizados."
         );
         assert_eq!(
-            read_text(VITRINE_READ, None, read(3, 1, 1)),
+            read_text(&vitrine_read(), None, read(3, 1, 1)),
             "Li 3 produtos da vitrine nos mais vendidos: 1 novo no garimpo. 1 que você \
              descartou continua de fora."
         );
         assert_eq!(
-            read_text(VITRINE_READ, Some(&cooking), read(0, 0, 0)),
+            read_text(&vitrine_read(), Some(&cooking), read(0, 0, 0)),
             "A vitrine da Hotmart não mostrou nenhum produto em Culinária e gastronomia."
         );
     }
 
+    fn texts(platform: AffiliatePlatform) -> MarketTexts {
+        MarketSite::all(
+            Build::Release,
+            &(Box::new(|_: &str| None) as Environment),
+            None,
+        )
+        .into_iter()
+        .map(|site| site.texts)
+        .find(|texts| texts.platform == platform)
+        .unwrap()
+    }
+
     #[test]
-    fn a_read_of_the_market_names_the_market_and_every_category() {
+    fn a_read_of_a_market_names_the_market_and_where_it_looked() {
         let read = ProspectsRead {
             found: 12,
             added: 3,
             dismissed: 0,
         };
+        let hotmart = market_read(&texts(AffiliatePlatform::Hotmart));
+        let kiwify = market_read(&texts(AffiliatePlatform::Kiwify));
         assert_eq!(
-            read_text(MARKET_READ, None, read),
+            read_text(&hotmart, None, read),
             "Li 12 produtos do mercado de afiliação em todas as categorias: 3 novos no garimpo."
         );
         assert_eq!(
-            read_text(MARKET_READ, None, ProspectsRead::default()),
+            read_text(&hotmart, None, ProspectsRead::default()),
             "O mercado de afiliação da Hotmart não mostrou nenhum produto em todas as categorias."
+        );
+        assert_eq!(
+            read_text(&kiwify, None, read),
+            "Li 12 produtos do marketplace na primeira página: 3 novos no garimpo."
+        );
+        assert_eq!(
+            read_text(&kiwify, None, ProspectsRead::default()),
+            "O marketplace da Kiwify não mostrou nenhum produto na primeira página."
+        );
+        assert_eq!(
+            texts(AffiliatePlatform::Kiwify).called_short(),
+            "marketplace"
         );
     }
 
     #[test]
-    fn the_market_says_why_it_stopped_and_what_the_owner_can_do() {
+    fn each_market_says_why_it_stopped_and_what_the_owner_can_do_by_its_own_name() {
         let until = Utc::now() + chrono::TimeDelta::hours(24);
-        let stopped = |why| stopped_text(MarketStopped { why, until });
-        assert!(stopped(MarketStop::Login).contains("entrar de novo por Entrar na Hotmart"));
-        assert!(stopped(MarketStop::Check).contains("responda você mesmo"));
-        assert!(stopped(MarketStop::Block).contains("o app não tenta contornar"));
-        assert!(stopped(MarketStop::Block).contains(&crawlers::until_text(until)));
-        assert!(market_failure(&PlatformError::NotConnected).contains("Entrar na Hotmart"));
-        assert!(market_failure(&PlatformError::Expired).contains("pediu login"));
+        for platform in [AffiliatePlatform::Hotmart, AffiliatePlatform::Kiwify] {
+            let name = platform.name();
+            let stopped = |why| stopped_text(platform, MarketStopped { why, until });
+            assert!(
+                stopped(MarketStop::Login)
+                    .contains(&format!("entrar de novo por Entrar na {name}"))
+            );
+            assert!(stopped(MarketStop::Check).contains("responda você mesmo"));
+            assert!(stopped(MarketStop::Block).contains("o app não tenta contornar"));
+            assert!(stopped(MarketStop::Block).contains(&crawlers::until_text(until)));
+            assert!(
+                market_failure(platform, &PlatformError::NotConnected)
+                    .contains(&format!("Entrar na {name}"))
+            );
+            assert!(market_failure(platform, &PlatformError::Expired).contains("pediu login"));
+            let site = texts(platform);
+            assert!(market_state_text(&site, PanelState::Ready).contains(site.reads));
+            assert!(market_state_text(&site, PanelState::Ready).contains(site.pages));
+        }
+    }
+
+    #[test]
+    fn where_to_look_names_every_market_the_app_reads() {
+        assert!(where_to_look_text(&[]).starts_with("O Mascate ainda não lê os mercados"));
+        assert!(
+            where_to_look_text(&[AffiliatePlatform::Kiwify])
+                .starts_with("O Mascate lê sozinho só o mercado da Kiwify, pelo cartão acima.")
+        );
+        assert!(
+            where_to_look_text(&[AffiliatePlatform::Hotmart, AffiliatePlatform::Kiwify])
+                .starts_with(
+                    "O Mascate lê sozinho os mercados da Hotmart e da Kiwify, pelos cartões acima."
+                )
+        );
     }
 
     #[test]

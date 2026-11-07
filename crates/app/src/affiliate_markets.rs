@@ -46,11 +46,13 @@ pub fn market(platform: AffiliatePlatform) -> Option<Market> {
         AffiliatePlatform::Kiwify => (
             "https://dashboard.kiwify.com.br",
             &[
-                "Entre na Kiwify e abra Marketplace no menu. Só aparecem produtos com pelo \
-                 menos R$ 5 mil vendidos.",
+                "Entre na Kiwify e abra Marketplace no menu principal. Só aparecem produtos \
+                 com mais de R$ 5 mil vendidos, na ordem do faturamento recente; filtre por \
+                 preço, comissão e categoria.",
                 COPY,
-                "Para se afiliar, peça a afiliação na página do produto; alguns aprovam na \
-                 hora, outros esperam o produtor.",
+                "Para se afiliar, clique em Solicitar afiliação na página do produto: a \
+                 aprovação é automática ou manual, como o produtor escolheu. Aprovado, o link \
+                 fica em Produtos > Minhas afiliações.",
             ],
         ),
         AffiliatePlatform::Monetizze => (
