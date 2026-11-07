@@ -38,7 +38,7 @@ O Fernando escolheu num card, em 07/11/2026, ler a vitrine pública e o mercado 
 
 ## Consequences
 
-- Um épico sob o PRD #3, em fatias verticais, nesta ordem: Prospects, pontuação, aposta, cadastro à mão, links e a tela Garimpo, com "Quero divulgar" e "Descartar" (Affiliate v9); a vitrine pública da Hotmart como `ProspectSource`, saindo de Ofertas; o mercado logado da Hotmart; e um leitor de mercado logado por Platform (Kiwify, Eduzz, Monetizze), cada um com a sua flag desligada. Todas `ready-for-agent` e `afk`.
+- O épico #218 sob o PRD #3, em fatias verticais, nesta ordem: Prospects, pontuação, aposta, cadastro à mão, links e a tela Garimpo, com "Quero divulgar" e "Descartar" (#219, Affiliate v9); a vitrine pública da Hotmart como `ProspectSource`, saindo de Ofertas (#220); o mercado logado da Hotmart (#221); e um leitor de mercado logado por Platform, cada um com a sua flag desligada: Kiwify (#222), Eduzz (#223) e Monetizze (#224). Todas `ready-for-agent` e `afk`.
 - Migração Affiliate v9. Nenhuma dependência, crate ou aresta nova.
 - Glossário: Prospect entra no `CONTEXT.md`; o PRD ganha as histórias 115 a 118.
 - As fixtures do mercado logado são escritas à mão a partir da ajuda pública das Platforms, porque gravá-las seria rodar o leitor proibido; o README de cada pasta diz isso. Ficam para o regression pass da fase 3 (#116): gravar a vitrine e o mercado logado da Hotmart, conferir os endereços dos links de cada Platform, e uma leitura real do mercado de Kiwify, Eduzz e Monetizze, cada uma com a flag ligada pelo Fernando.
