@@ -651,7 +651,7 @@ impl ProspectsScreen {
             h_flex()
                 .gap_1()
                 .items_center()
-                .child(div().w(px(130.)).text_xs().text_color(t.text2).child(label))
+                .child(div().w(px(170.)).text_xs().text_color(t.text2).child(label))
                 .child(choice(ids[0], "Não sei", value.is_none(), set[0]))
                 .child(choice(ids[1], "Sim", value == Some(true), set[1]))
                 .child(choice(ids[2], "Não", value == Some(false), set[2]))
@@ -782,7 +782,7 @@ impl ProspectsScreen {
                         .items_center()
                         .child(
                             div()
-                                .w(px(130.))
+                                .w(px(170.))
                                 .text_xs()
                                 .text_color(t.text2)
                                 .child("Suporte"),
@@ -812,7 +812,7 @@ impl ProspectsScreen {
                         .items_center()
                         .child(
                             div()
-                                .w(px(130.))
+                                .w(px(170.))
                                 .text_xs()
                                 .text_color(t.text2)
                                 .child("Afiliação"),
