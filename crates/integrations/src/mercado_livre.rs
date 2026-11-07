@@ -33,6 +33,7 @@ use mascate_platform::{SecretStore, http_agent};
 use serde::de::DeserializeOwned;
 
 use crate::answers::MAX_DOCUMENT_BYTES;
+use crate::escaped::escaped;
 use answers::{
     CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrice, ListingPrices,
     MultigetEntry, ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
@@ -53,6 +54,14 @@ const SITE: &str = "MLB";
 /// range, and `paging.total` still counts them all.
 const COMPETITORS_PAGE: u32 = 50;
 
+/// Mercado Livre Brasil's page where the seller authorizes the app.
+pub const AUTHORIZATION_PAGE: &str = "https://auth.mercadolivre.com.br/authorization";
+
+/// Mercado Livre asks every authorization for a `state`, which a web app
+/// checks on its callback. The owner pastes the address back by hand, so no
+/// forged callback can reach the app and a fixed value serves.
+const STATE: &str = "mascate";
+
 /// Catalog products read per search.
 const SEARCH_LIMIT: u32 = 5;
 
@@ -61,7 +70,23 @@ pub struct MercadoLivre {
     agent: ureq::Agent,
     api: String,
     payments_api: String,
+    authorization_page: String,
     tokens: Tokens,
+}
+
+/// What the browser lands on after the seller authorizes the app on
+/// Mercado Livre's page: a one-time code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SellerAuthorization {
+    pub code: String,
+}
+
+impl SellerAuthorization {
+    /// The code in the address the browser landed on, or in its query
+    /// alone; `None` when it is missing or malformed.
+    pub fn from_landing(address: &str) -> Option<Self> {
+        crate::landing::code_in(address).map(|code| Self { code })
+    }
 }
 
 impl MercadoLivre {
@@ -76,6 +101,7 @@ impl MercadoLivre {
             agent: http_agent(api, user_agent, Duration::from_secs(30)),
             api: api.trim_end_matches('/').to_owned(),
             payments_api: PAYMENTS_API_URL.to_owned(),
+            authorization_page: AUTHORIZATION_PAGE.to_owned(),
             tokens: Tokens::new(store, clock),
         }
     }
@@ -85,6 +111,36 @@ impl MercadoLivre {
     pub fn with_payments_api(mut self, api: &str) -> Self {
         self.payments_api = api.trim_end_matches('/').to_owned();
         self
+    }
+
+    /// The same, sending the seller to the authorization page at `page`, as
+    /// a development build pointing at a fake server does.
+    pub fn with_authorization_page(mut self, page: &str) -> Self {
+        self.authorization_page = page.to_owned();
+        self
+    }
+
+    /// Mercado Livre's page where the seller logs in and authorizes the app,
+    /// sending the browser to `redirect` with a code.
+    pub fn authorization_url(&self, redirect: &str) -> Result<String, PlatformError> {
+        let client = self.tokens.client_id()?;
+        Ok(format!(
+            "{}?response_type=code&client_id={}&redirect_uri={}&state={STATE}",
+            self.authorization_page,
+            escaped(client.expose()),
+            escaped(redirect)
+        ))
+    }
+
+    /// Trades the one-time code of `authorization`, given for `redirect`,
+    /// for the seller's login, kept in the store before anything uses it.
+    pub fn authorize(
+        &self,
+        authorization: &SellerAuthorization,
+        redirect: &str,
+    ) -> Result<(), PlatformError> {
+        self.tokens
+            .authorize(&self.agent, &self.api, &authorization.code, redirect)
     }
 
     /// The JSON answer to `GET path` with `query`.

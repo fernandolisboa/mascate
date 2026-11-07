@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use mascate_catalog::{DemandCategory, DemandSource};
-use mascate_integrations::MercadoLivre;
+use mascate_integrations::{MercadoLivre, SellerAuthorization};
 use mascate_kernel::testing::ManualClock;
 use mascate_kernel::{Currency, ListingType, Money, PlatformError};
 use mascate_platform::testing::{FakeHttpServer, MemorySecretStore};
@@ -15,6 +15,7 @@ use rust_decimal::Decimal;
 
 const ACCESS_TOKEN: &str = "APP_USR-123456-090515-8cc4448aac10d5105474e1351-1234567";
 const RENEWED_REFRESH_TOKEN: &str = "TG-5b9032b4e4b0714aed1f959f-1234567";
+const REDIRECT: &str = "https://github.com/fernandolisboa";
 
 fn fixture(name: &str) -> String {
     let path = format!(
@@ -49,6 +50,18 @@ impl Fake {
         }
         fake.server
             .serve("/oauth/token", 200, fixture("token.json"));
+        fake
+    }
+
+    /// The app's keys saved, before the seller authorized it.
+    fn with_keys() -> Self {
+        let fake = Self::not_connected();
+        for (name, value) in [
+            ("ML_CLIENT_ID", "1234567890"),
+            ("ML_CLIENT_SECRET", "s3cr3t"),
+        ] {
+            fake.store.write(name, &Secret::new(value)).unwrap();
+        }
         fake
     }
 
@@ -238,6 +251,153 @@ fn without_the_seller_login_nothing_is_requested() {
         .unwrap();
 
     assert_eq!(fake.adapter.categories(), Err(PlatformError::NotConnected));
+    assert!(fake.server.received().is_empty());
+}
+
+#[test]
+fn the_seller_authorizes_the_app_on_mercado_livres_page_with_the_registered_address() {
+    let fake = Fake::with_keys();
+    let page = MercadoLivre::new(
+        fake.server.url(),
+        "Mascate/test",
+        fake.store.clone(),
+        fake.clock.clone(),
+    );
+
+    assert_eq!(
+        page.authorization_url(REDIRECT).unwrap(),
+        "https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=1234567890\
+         &redirect_uri=https%3A%2F%2Fgithub.com%2Ffernandolisboa&state=mascate"
+    );
+    assert_eq!(
+        page.with_authorization_page("http://127.0.0.1:8090/authorization")
+            .authorization_url(REDIRECT)
+            .unwrap(),
+        "http://127.0.0.1:8090/authorization?response_type=code&client_id=1234567890\
+         &redirect_uri=https%3A%2F%2Fgithub.com%2Ffernandolisboa&state=mascate"
+    );
+    assert!(fake.server.received().is_empty());
+}
+
+#[test]
+fn the_code_comes_out_of_the_address_the_browser_landed_on() {
+    let code = |address: &str| SellerAuthorization::from_landing(address).map(|found| found.code);
+
+    assert_eq!(
+        code("https://github.com/fernandolisboa?code=TG-61828b7fffcc9a001b4bc890-314029626&state=mascate")
+            .as_deref(),
+        Some("TG-61828b7fffcc9a001b4bc890-314029626")
+    );
+    assert_eq!(code("https://github.com/fernandolisboa"), None);
+    assert_eq!(
+        code("https://github.com/fernandolisboa?code=&state=mascate"),
+        None
+    );
+}
+
+#[test]
+fn the_code_is_traded_for_the_seller_login_and_its_refresh_token_is_stored() {
+    let fake = Fake::with_keys();
+    fake.server.serve(
+        "/oauth/token",
+        200,
+        fixture("token-authorization-code.json"),
+    );
+    fake.serve("/sites/MLB/categories", "categories.json");
+
+    fake.adapter
+        .authorize(
+            &SellerAuthorization {
+                code: "TG-61828b7fffcc9a001b4bc890-314029626".into(),
+            },
+            REDIRECT,
+        )
+        .unwrap();
+
+    let trade = &fake.server.received()[0];
+    assert_eq!(
+        (trade.method.as_str(), trade.path.as_str()),
+        ("POST", "/oauth/token")
+    );
+    assert_eq!(
+        trade.body,
+        "grant_type=authorization_code&client_id=1234567890&client_secret=s3cr3t\
+         &code=TG-61828b7fffcc9a001b4bc890-314029626\
+         &redirect_uri=https%3A%2F%2Fgithub.com%2Ffernandolisboa"
+    );
+    assert_eq!(
+        fake.store.read("ML_REFRESH_TOKEN").unwrap(),
+        Some(Secret::new("TG-61828b7fffcc9a001b4bc890-first"))
+    );
+    // The login just traded serves the next call without a renewal.
+    fake.adapter.categories().unwrap();
+    assert_eq!(fake.renewals(), 1);
+    assert_eq!(
+        fake.server.received()[1].authorization,
+        Some("Bearer APP_USR-123456-090515-authorized-1234567".into())
+    );
+}
+
+#[test]
+fn a_refused_code_keeps_no_login_and_says_why() {
+    let fake = Fake::with_keys();
+    fake.server
+        .serve("/oauth/token", 400, fixture("token-invalid-grant.json"));
+
+    let refused = fake.adapter.authorize(
+        &SellerAuthorization {
+            code: "TG-used".into(),
+        },
+        REDIRECT,
+    );
+
+    assert_eq!(
+        refused,
+        Err(PlatformError::Refused(
+            "Error validating grant. Your authorization code or refresh token may be expired or \
+             it was already used"
+                .into()
+        ))
+    );
+    assert_eq!(fake.store.read("ML_REFRESH_TOKEN").unwrap(), None);
+}
+
+#[test]
+fn keys_mercado_livre_does_not_know_are_refused_as_such() {
+    let fake = Fake::with_keys();
+    fake.server
+        .serve("/oauth/token", 401, fixture("token-invalid-client.json"));
+
+    assert_eq!(
+        fake.adapter.authorize(
+            &SellerAuthorization {
+                code: "TG-new".into()
+            },
+            REDIRECT
+        ),
+        Err(PlatformError::Refused(
+            "Mercado Livre does not know this app".into()
+        ))
+    );
+}
+
+#[test]
+fn without_the_keys_the_authorization_page_is_not_opened() {
+    let fake = Fake::not_connected();
+
+    assert_eq!(
+        fake.adapter.authorization_url(REDIRECT),
+        Err(PlatformError::NotConnected)
+    );
+    assert_eq!(
+        fake.adapter.authorize(
+            &SellerAuthorization {
+                code: "TG-new".into()
+            },
+            REDIRECT
+        ),
+        Err(PlatformError::NotConnected)
+    );
     assert!(fake.server.received().is_empty());
 }
 
