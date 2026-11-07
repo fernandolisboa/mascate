@@ -109,28 +109,31 @@ impl Place {
     }
 
     /// Whether the navigation lists this place in `context` (ADR 0037,
-    /// decision 2). The sales screens show on the Sales Channels, and the
-    /// rest everywhere: the stock is one, split across the Listings.
+    /// decision 2). The sales screens, the resale Discovery and the stock
+    /// show on the Sales Channels, the stock in full on each since it is
+    /// one, split across the Listings; the rest everywhere.
     pub fn shows_in(self, context: WorkContext) -> bool {
         if context == WorkContext::All {
             return true;
         }
         match self {
-            Place::Listings | Place::Quality | Place::Promotions | Place::Orders | Place::Sales => {
-                context.sales_channel().is_some()
-            }
+            Place::Listings
+            | Place::Quality
+            | Place::Promotions
+            | Place::Orders
+            | Place::Sales
+            | Place::Offers
+            | Place::Products
+            | Place::Purchases
+            | Place::Stock => context.sales_channel().is_some(),
             // Only Mercado Livre's buyers ask questions and rate the seller
-            // through a port the app reads.
-            Place::Questions | Place::Reputation => {
+            // through a port the app reads, and Opportunities weigh Offers
+            // against its demand and Fees alone.
+            Place::Questions | Place::Reputation | Place::Opportunities => {
                 context.sales_channel() == Some(SalesChannelKind::MercadoLivre)
             }
             Place::Today
-            | Place::Opportunities
-            | Place::Offers
-            | Place::Products
             | Place::Dashboard
-            | Place::Purchases
-            | Place::Stock
             | Place::GuidedFlow
             | Place::Affiliate
             | Place::Promotion
@@ -300,21 +303,11 @@ mod tests {
     /// order.
     fn expected(context: WorkContext) -> Vec<Place> {
         use Place::*;
-        let everywhere = [
-            Today,
-            Opportunities,
-            Offers,
-            Products,
-            Purchases,
-            Stock,
-            Dashboard,
-            GuidedFlow,
-            Affiliate,
-            Promotion,
-            Settings,
+        let everywhere = [Today, Dashboard, GuidedFlow, Affiliate, Promotion, Settings];
+        let selling = [
+            Offers, Products, Purchases, Stock, Listings, Quality, Promotions, Orders, Sales,
         ];
-        let selling = [Listings, Quality, Promotions, Orders, Sales];
-        let mercado_livre_only = [Questions, Reputation];
+        let mercado_livre_only = [Opportunities, Questions, Reputation];
         EVERY_PLACE
             .into_iter()
             .filter(|place| match context {
@@ -398,10 +391,7 @@ mod tests {
             .filter(|group| !group.shown(WorkContext::Hotmart).is_empty())
             .filter_map(|group| group.name)
             .collect();
-        assert_eq!(
-            named,
-            ["Descoberta", "Estoque", "Pedidos e finanças", "Afiliação"]
-        );
+        assert_eq!(named, ["Pedidos e finanças", "Afiliação"]);
         assert_eq!(
             Place::GROUPS[4].shown(WorkContext::Hotmart),
             [Place::Dashboard]

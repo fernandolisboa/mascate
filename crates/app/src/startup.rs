@@ -508,6 +508,7 @@ mod tests {
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
+    use mascate_kernel::testing::ManualClock;
     use mascate_kernel::{
         ChannelSpend, Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
         Roas, SalesChannelKind, Timestamp,
@@ -1635,7 +1636,10 @@ mod tests {
                 let reminders = Reminders::new(
                     database.clone(),
                     Registry::new(MODULE_REMINDERS).unwrap(),
-                    Arc::new(SystemClock),
+                    // Before any sample was written: the dismissal hides the
+                    // Reminder whatever day the test runs, and only if it
+                    // survived the migrations.
+                    Arc::new(ManualClock::at("2026-10-01T00:00:00Z".parse().unwrap())),
                     Arc::new(UuidV7Generator),
                 );
                 let showing = reminders.showing(&[]).await.unwrap();
