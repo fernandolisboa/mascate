@@ -152,17 +152,21 @@ pub fn guide(connection: Connection) -> Guide {
                 steps: &[
                     step_at(
                         "Entre na Hotmart com a sua conta e abra Ferramentas, Credenciais \
-                     Developers.",
-                        "Abrir Credenciais Developers",
+                     Hotmart.",
+                        "Abrir Credenciais Hotmart",
                         "https://app-vlc.hotmart.com/tools/credentials",
                     ),
+                    // MCP Hotmart is for an AI chat client; the app talks to
+                    // the REST API.
                     step(
-                        "Clique em Criar credencial e dê um nome como Mascate. Deixe o tipo \
-                     sandbox desmarcado: a credencial de sandbox só enxerga vendas de teste.",
+                        "Clique em Criar credencial, escolha API Hotmart (não Zapier nem MCP \
+                     Hotmart) e dê um nome como Mascate. Se aparecer a opção de sandbox, deixe \
+                     desmarcada: a credencial de sandbox só enxerga vendas de teste.",
                     ),
                     step(
-                        "Confirme. A Hotmart mostra o Client ID, o Client Secret e o Basic; copie \
-                     os três antes de fechar. Se perder algum, apague a credencial e crie outra.",
+                        "Confirme. A Hotmart mostra o Client ID, o Client Secret e o Basic só \
+                     nessa hora: faça o download ou copie os três antes de fechar. Se perder \
+                     algum, apague a credencial e crie outra.",
                     ),
                 ],
                 then: None,
