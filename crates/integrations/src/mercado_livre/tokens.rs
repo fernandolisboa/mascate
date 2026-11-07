@@ -66,44 +66,110 @@ impl Tokens {
         }
     }
 
+    /// Trades the one-time `code` the seller's authorization gave, for
+    /// `redirect`, for the login: the refresh token is in the store before
+    /// the access token serves anything.
+    pub fn authorize(
+        &self,
+        agent: &ureq::Agent,
+        api: &str,
+        code: &str,
+        redirect: &str,
+    ) -> Result<(), PlatformError> {
+        let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        let (client_id, client_secret) = (self.read(CLIENT_ID)?, self.read(CLIENT_SECRET)?);
+        // Refused: a code past its time, already used, or given for another
+        // address; or keys Mercado Livre does not know.
+        let answer = self.trade(
+            agent,
+            api,
+            &[
+                ("grant_type", "authorization_code"),
+                ("client_id", client_id.expose()),
+                ("client_secret", client_secret.expose()),
+                ("code", code),
+                ("redirect_uri", redirect),
+            ],
+        )?;
+        *current = Some(self.keep(answer)?);
+        Ok(())
+    }
+
     fn renew(&self, agent: &ureq::Agent, api: &str) -> Result<AccessToken, PlatformError> {
-        let read = |name| match self.store.read(name) {
-            Ok(Some(secret)) => Ok(secret),
-            Ok(None) => Err(PlatformError::NotConnected),
-            Err(error) => Err(PlatformError::Failed(error.to_string())),
-        };
-        let (client_id, client_secret, refresh_token) =
-            (read(CLIENT_ID)?, read(CLIENT_SECRET)?, read(REFRESH_TOKEN)?);
-        let response = agent
-            .post(format!("{api}/oauth/token"))
-            .header("Accept", "application/json")
-            .send_form([
+        let (client_id, client_secret, refresh_token) = (
+            self.read(CLIENT_ID)?,
+            self.read(CLIENT_SECRET)?,
+            self.read(REFRESH_TOKEN)?,
+        );
+        let answer = self.trade(
+            agent,
+            api,
+            &[
                 ("grant_type", "refresh_token"),
                 ("client_id", client_id.expose()),
                 ("client_secret", client_secret.expose()),
                 ("refresh_token", refresh_token.expose()),
-            ])
-            .map_err(|error| PlatformError::Failed(error.to_string()))?;
-        match response.status().as_u16() {
-            200 => {}
+            ],
+        );
+        match answer {
+            Ok(answer) => self.keep(answer),
             // `invalid_grant`: the refresh token was used, revoked or expired.
+            Err(Refusal::Turned(_)) => Err(PlatformError::Expired),
+            Err(refusal) => Err(refusal.into()),
+        }
+    }
+
+    pub fn client_id(&self) -> Result<Secret, PlatformError> {
+        self.read(CLIENT_ID)
+    }
+
+    fn read(&self, name: &str) -> Result<Secret, PlatformError> {
+        match self.store.read(name) {
+            Ok(Some(secret)) => Ok(secret),
+            Ok(None) => Err(PlatformError::NotConnected),
+            Err(error) => Err(PlatformError::Failed(error.to_string())),
+        }
+    }
+
+    /// Mercado Livre's answer to a token request with `form`.
+    fn trade(
+        &self,
+        agent: &ureq::Agent,
+        api: &str,
+        form: &[(&str, &str)],
+    ) -> Result<TokenAnswer, Refusal> {
+        let response = agent
+            .post(format!("{api}/oauth/token"))
+            .header("Accept", "application/json")
+            .send_form(form.iter().copied())
+            .map_err(|error| Refusal::Platform(PlatformError::Failed(error.to_string())))?;
+        match response.status().as_u16() {
+            200 => read_json(response).map_err(Refusal::Platform),
             400 | 401 | 403 => {
                 let answer = read_json::<ErrorAnswer>(response).ok();
-                return Err(match answer.and_then(|answer| answer.error).as_deref() {
-                    Some("invalid_client") => {
-                        PlatformError::Refused("Mercado Livre does not know this app".into())
+                Err(match answer {
+                    Some(answer) if answer.error.as_deref() == Some("invalid_client") => {
+                        Refusal::UnknownApp
                     }
-                    _ => PlatformError::Expired,
-                });
+                    answer => Refusal::Turned(
+                        answer
+                            .and_then(|answer| {
+                                answer.error_description.or(answer.message).or(answer.error)
+                            })
+                            .unwrap_or_else(|| "refused".into()),
+                    ),
+                })
             }
-            429 => return Err(PlatformError::RateLimited),
-            status => {
-                return Err(PlatformError::Failed(format!(
-                    "Mercado Livre answered {status} when renewing the login"
-                )));
-            }
+            429 => Err(Refusal::Platform(PlatformError::RateLimited)),
+            status => Err(Refusal::Platform(PlatformError::Failed(format!(
+                "Mercado Livre answered {status} to the login"
+            )))),
         }
-        let answer: TokenAnswer = read_json(response)?;
+    }
+
+    /// Stores the new single-use refresh token before its access token is
+    /// handed out.
+    fn keep(&self, answer: TokenAnswer) -> Result<AccessToken, PlatformError> {
         self.store
             .write(REFRESH_TOKEN, &Secret::new(answer.refresh_token))
             .map_err(|error| {
@@ -113,5 +179,26 @@ impl Tokens {
             value: Secret::new(answer.access_token),
             expires_at: self.clock.now() + TimeDelta::seconds(answer.expires_in),
         })
+    }
+}
+
+/// Why a token request gave no tokens.
+enum Refusal {
+    /// `invalid_client`: the Client ID or Secret is wrong.
+    UnknownApp,
+    /// Mercado Livre turned the code or refresh token down, in its words.
+    Turned(String),
+    Platform(PlatformError),
+}
+
+impl From<Refusal> for PlatformError {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::UnknownApp => {
+                PlatformError::Refused("Mercado Livre does not know this app".into())
+            }
+            Refusal::Turned(why) => PlatformError::Refused(why),
+            Refusal::Platform(error) => error,
+        }
     }
 }

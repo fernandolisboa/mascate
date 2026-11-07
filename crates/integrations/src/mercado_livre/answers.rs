@@ -52,6 +52,8 @@ pub(super) struct TokenAnswer {
 pub(super) struct ErrorAnswer {
     pub message: Option<String>,
     pub error: Option<String>,
+    /// The OAuth endpoint's reason, in place of `message`.
+    pub error_description: Option<String>,
     /// What exactly was wrong with a request, when Mercado Livre says.
     #[serde(default)]
     pub cause: Vec<ErrorCause>,

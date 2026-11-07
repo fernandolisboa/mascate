@@ -508,7 +508,6 @@ mod tests {
     };
     use mascate_integrations::Connections;
     use mascate_inventory::{HOME_LOCATION, LowStock, StockAdjustment};
-    use mascate_kernel::testing::ManualClock;
     use mascate_kernel::{
         ChannelSpend, Clock, Currency, ListingType, Money, Percentage, PlatformError, RecordId,
         Roas, SalesChannelKind, Timestamp,
@@ -1633,13 +1632,28 @@ mod tests {
                     Arc::new(UuidV7Generator),
                 );
                 assert!(flags.is_on(&MODULE_FLAGS[0][0]).await.unwrap(), "{name}");
+                // Read just after the sample's dismissal: a dismissal only
+                // lasts the Reminder's days, so the wall clock would undo it.
+                let dismissed_at = {
+                    let mut rows = database
+                        .connection()
+                        .query(
+                            "SELECT MAX(created_at) FROM platform_reminder_dismissals
+                             WHERE reminder = ?1",
+                            [MODULE_REMINDERS[0][0].key],
+                        )
+                        .await
+                        .unwrap();
+                    let row = rows.next().await.unwrap().expect("one row");
+                    mascate_platform::read_stored(&row.get::<String>(0).unwrap())
+                        .expect("a dismissal time")
+                };
                 let reminders = Reminders::new(
                     database.clone(),
                     Registry::new(MODULE_REMINDERS).unwrap(),
-                    // Before any sample was written: the dismissal hides the
-                    // Reminder whatever day the test runs, and only if it
-                    // survived the migrations.
-                    Arc::new(ManualClock::at("2026-10-01T00:00:00Z".parse().unwrap())),
+                    Arc::new(mascate_kernel::testing::ManualClock::at(
+                        dismissed_at + chrono::TimeDelta::hours(1),
+                    )),
                     Arc::new(UuidV7Generator),
                 );
                 let showing = reminders.showing(&[]).await.unwrap();

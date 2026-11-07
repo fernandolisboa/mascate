@@ -17,7 +17,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, Global, Hsla, SharedString, Window, div, px};
 use mascate_integrations::{
     Connection, ConnectionState, Connections, Credential, Instagram, PinterestAuthorization,
-    ShopAuthorization, StoreAuthorization,
+    SellerAuthorization, ShopAuthorization, StoreAuthorization,
 };
 use mascate_kernel::Timestamp;
 use mascate_platform::Build;
@@ -25,12 +25,12 @@ use mascate_platform::Build;
 use crate::appearance::look;
 use crate::credential_guides::guide;
 use crate::kit;
-use crate::{instagram, magalu, pinterest, shopee_seller};
+use crate::{instagram, magalu, mercado_livre, pinterest, shopee_seller};
 
 /// Where a Platform's authorization page sends the browser back. The app has
-/// no address of its own yet (#10), so the owner copies the one the browser
-/// lands on, code included, back into the app; each Platform's console has
-/// this one registered.
+/// no address of its own, so the owner copies the one the browser lands on,
+/// code included, back into the app; each Platform's console has this one
+/// registered, as its guide says.
 pub const LOGIN_REDIRECT: &str = "https://github.com/fernandolisboa";
 
 /// The app's Connections, shared by every screen that needs them.
@@ -166,6 +166,7 @@ fn is_identifier(credential: Credential) -> bool {
 /// A Connection whose login happens on the Platform's page in the browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BrowserLogin {
+    MercadoLivre,
     Shopee,
     Magalu,
     Pinterest,
@@ -174,6 +175,7 @@ enum BrowserLogin {
 impl BrowserLogin {
     fn of(connection: Connection) -> Option<Self> {
         match connection {
+            Connection::MercadoLivre => Some(Self::MercadoLivre),
             Connection::ShopeeSeller => Some(Self::Shopee),
             Connection::Magalu => Some(Self::Magalu),
             Connection::Pinterest => Some(Self::Pinterest),
@@ -184,6 +186,7 @@ impl BrowserLogin {
     /// "Entrar na Shopee", "Entrar no Pinterest".
     fn button(self) -> &'static str {
         match self {
+            Self::MercadoLivre => "Entrar no Mercado Livre",
             Self::Shopee => "Entrar na Shopee",
             Self::Magalu => "Entrar na Magalu",
             Self::Pinterest => "Entrar no Pinterest",
@@ -192,6 +195,7 @@ impl BrowserLogin {
 
     fn placeholder(self) -> &'static str {
         match self {
+            Self::MercadoLivre => "https://github.com/fernandolisboa?code=TG-…&state=mascate",
             Self::Shopee => "https://github.com/fernandolisboa?code=…&shop_id=…",
             Self::Magalu => "https://github.com/fernandolisboa?code=…",
             Self::Pinterest => "http://localhost/?code=…",
@@ -201,6 +205,17 @@ impl BrowserLogin {
     /// What to do next, once the keys are saved.
     fn steps(self, connected: bool) -> &'static str {
         match (self, connected) {
+            (Self::MercadoLivre, true) => {
+                "Conta de vendedor conectada. Para trocar de conta ou autorizar de novo, \
+                 repita: Entrar no Mercado Livre e colar o endereço."
+            }
+            (Self::MercadoLivre, false) => {
+                "Chaves salvas. Falta entrar na conta de vendedor: clique em Entrar no Mercado \
+                 Livre, entre com a conta em que você vende (a principal, não a de um \
+                 colaborador) e autorize o app. O Mercado Livre abre github.com/fernandolisboa \
+                 com um código no endereço; copie o endereço inteiro da barra do navegador e \
+                 cole abaixo. O código vale poucos minutos."
+            }
             (Self::Shopee, true) => {
                 "Loja conectada. Para trocar de loja ou autorizar de novo, repita: Entrar na \
                  Shopee e colar o endereço."
@@ -237,6 +252,10 @@ impl BrowserLogin {
     /// Why the pasted address cannot be used.
     fn malformed(self) -> &'static str {
         match self {
+            Self::MercadoLivre => {
+                "Esse endereço não tem o code que o Mercado Livre manda. Depois de autorizar, \
+                 copie o endereço inteiro da barra do navegador e cole aqui."
+            }
             Self::Shopee => {
                 "Esse endereço não tem o code e o shop_id que a Shopee manda. Depois de \
                  autorizar, copie o endereço inteiro da barra do navegador e cole aqui."
@@ -432,6 +451,16 @@ impl ConnectionsSection {
             return;
         };
         let link: Box<dyn FnOnce() -> Result<String, String> + Send> = match login {
+            BrowserLogin::MercadoLivre => {
+                let Some(adapter) = mercado_livre::adapter(cx) else {
+                    return;
+                };
+                Box::new(move || {
+                    adapter
+                        .authorization_url(LOGIN_REDIRECT)
+                        .map_err(|error| mercado_livre::login_failure(&error))
+                })
+            }
             BrowserLogin::Shopee => {
                 let Some(adapter) = shopee_seller::adapter(cx) else {
                     return;
@@ -491,6 +520,19 @@ impl ConnectionsSection {
         let login = *login;
         let address = landing.read(cx).value().to_string();
         let authorize: Box<dyn FnOnce() -> Result<(), String> + Send> = match login {
+            BrowserLogin::MercadoLivre => {
+                let (Some(authorization), Some(adapter)) = (
+                    SellerAuthorization::from_landing(&address),
+                    mercado_livre::adapter(cx),
+                ) else {
+                    return self.malformed(index, login, cx);
+                };
+                Box::new(move || {
+                    adapter
+                        .authorize(&authorization, LOGIN_REDIRECT)
+                        .map_err(|error| mercado_livre::login_failure(&error))
+                })
+            }
             BrowserLogin::Shopee => {
                 let (Some(authorization), Some(adapter)) = (
                     ShopAuthorization::from_landing(&address),
@@ -795,12 +837,6 @@ impl ConnectionsSection {
     fn render_card(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
         let card = &self.cards[index];
-        let needs_login = card.connection == Connection::MercadoLivre
-            && card.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.state == ConnectionState::NotConfigured
-                    && snapshot.stored.iter().all(|&stored| stored)
-            });
-
         v_flex()
             .gap_3()
             .p_3()
@@ -823,12 +859,6 @@ impl ConnectionsSection {
                 ),
             )
             .child(self.fields(index, cx))
-            .when(needs_login, |card| {
-                card.child(div().text_xs().text_color(t.text2).child(
-                    "Chaves salvas. Falta entrar na sua conta de vendedor, o que chega numa \
-                     próxima versão com o botão Conectar.",
-                ))
-            })
             .children(self.browser_login(index, cx))
             .children(card.snapshot.as_ref().and_then(|snapshot| {
                 let connected = snapshot.state == ConnectionState::Connected;

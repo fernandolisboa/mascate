@@ -8,7 +8,9 @@ conta de vendedor do Fernando.
 | Arquivo | Recurso | Página da documentação |
 |---|---|---|
 | `token.json` | `POST /oauth/token` com `grant_type=refresh_token` | Autenticação e autorização |
-| `token-invalid-grant.json` | o mesmo, com refresh token já usado (400) | Autenticação e autorização |
+| `token-invalid-grant.json` | o mesmo, com refresh token já usado (400); serve também ao código de autorização já usado | Autenticação e autorização |
+| `token-authorization-code.json` | `POST /oauth/token` com `grant_type=authorization_code`: o login do vendedor depois de autorizar o app | Autenticação e autorização |
+| `token-invalid-client.json` | o mesmo, com Client ID ou Secret que o Mercado Livre não conhece (401, `invalid_client`) | Autenticação e autorização |
 | `categories.json` | `GET /sites/MLB/categories` | Categorias e atributos |
 | `category-MLB3697.json` | `GET /categories/{id}` (`path_from_root`) | Categorias e atributos |
 | `category-MLB196208.json` | `GET /categories/{id}` com `settings.max_title_length` e `settings.max_description_length` (Listing Copy, #17) | Categorias e atributos |
