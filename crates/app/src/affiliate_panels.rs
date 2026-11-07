@@ -4,9 +4,9 @@
 //! lives in the browser's own profile: whether a browser is installed,
 //! "Entrar no painel" to log in by hand in its window, and "Ler painel
 //! agora". The hourly Commissions Sync reads every panel that is on and
-//! logged in. The logged-in affiliate markets of Hotmart (#221) and Kiwify
-//! (#222) share the browser and its profile, but only Garimpo reads them,
-//! on the owner's click.
+//! logged in. The logged-in affiliate markets of Hotmart (#221), Kiwify
+//! (#222) and Eduzz (#223) share the browser and its profile, but only
+//! Garimpo reads them, on the owner's click.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -18,7 +18,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, EventEmitter, Global, Window, div};
 use mascate_affiliate::{AffiliateError, AffiliatePlatform};
 use mascate_integrations::{
-    AffiliateMarket, AffiliatePanel, BrowserSession, HOTMART_AFFILIATE_MARKET,
+    AffiliateMarket, AffiliatePanel, BrowserSession, EDUZZ_AFFILIATE_MARKET,
+    EDUZZ_AFFILIATE_MARKET_URL, EduzzAffiliateMarket, HOTMART_AFFILIATE_MARKET,
     HOTMART_AFFILIATE_MARKET_URL, HotmartAffiliateMarket, KIWIFY_AFFILIATE_MARKET,
     KIWIFY_AFFILIATE_MARKET_URL, KiwifyAffiliateMarket, MAGALU_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL_URL, MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL,
@@ -71,7 +72,7 @@ pub fn market_stop_file(data: PathBuf, platform: AffiliatePlatform) -> PathBuf {
 pub struct MarketTexts {
     pub platform: AffiliatePlatform,
     pub flag: Flag,
-    /// "o mercado de afiliação", "o marketplace".
+    /// "o mercado de afiliação", "a Vitrine", with its article.
     pub called: &'static str,
     /// What one click reads: "até 5 páginas por clique".
     pub pages: &'static str,
@@ -82,9 +83,13 @@ pub struct MarketTexts {
 }
 
 impl MarketTexts {
-    /// "mercado de afiliação", without its article.
-    pub fn called_short(&self) -> &'static str {
-        self.called.strip_prefix("o ").unwrap_or(self.called)
+    /// "no mercado de afiliação", "na Vitrine": where a read looks.
+    pub fn called_in(&self) -> String {
+        match self.called.split_once(' ') {
+            Some(("o", rest)) => format!("no {rest}"),
+            Some(("a", rest)) => format!("na {rest}"),
+            _ => format!("em {}", self.called),
+        }
     }
 }
 
@@ -103,6 +108,7 @@ pub struct MarketSite {
 enum NewMarket {
     Hotmart(HotmartAffiliateMarket),
     Kiwify(KiwifyAffiliateMarket),
+    Eduzz(EduzzAffiliateMarket),
 }
 
 impl NewMarket {
@@ -112,6 +118,8 @@ impl NewMarket {
             (NewMarket::Hotmart(market), None) => Arc::new(market),
             (NewMarket::Kiwify(market), Some(file)) => Arc::new(market.with_stop_file(file)),
             (NewMarket::Kiwify(market), None) => Arc::new(market),
+            (NewMarket::Eduzz(market), Some(file)) => Arc::new(market.with_stop_file(file)),
+            (NewMarket::Eduzz(market), None) => Arc::new(market),
         }
     }
 }
@@ -122,7 +130,8 @@ impl MarketSite {
     pub fn all(build: Build, environment: &Environment, data: Option<PathBuf>) -> Vec<Self> {
         vec![
             Self::hotmart(build, environment, data.clone()),
-            Self::kiwify(build, environment, data),
+            Self::kiwify(build, environment, data.clone()),
+            Self::eduzz(build, environment, data),
         ]
     }
 
@@ -180,6 +189,38 @@ impl MarketSite {
             stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Kiwify)),
             build: |url, browser| {
                 NewMarket::Kiwify(KiwifyAffiliateMarket::new(
+                    url,
+                    browser,
+                    Arc::new(SystemClock),
+                    Arc::new(ThreadPause),
+                ))
+            },
+            built: OnceLock::new(),
+        }
+    }
+
+    /// Eduzz's Vitrine or, in a development build only, the URL in
+    /// `MASCATE_EDUZZ_AFFILIATE_MARKET_URL`, a local fake page.
+    pub fn eduzz(build: Build, environment: &Environment, data: Option<PathBuf>) -> Self {
+        Self {
+            texts: MarketTexts {
+                platform: AffiliatePlatform::Eduzz,
+                flag: EDUZZ_AFFILIATE_MARKET,
+                called: "a Vitrine",
+                pages: "a primeira página da Vitrine por clique",
+                reads: "comissão por venda em % e em R$, preço, nota, garantia, o produtor e se a \
+                        afiliação é automática",
+                everything: "na primeira página",
+            },
+            url: crate::mercado_livre::local_fake(
+                build,
+                environment,
+                "MASCATE_EDUZZ_AFFILIATE_MARKET_URL",
+            )
+            .unwrap_or_else(|| EDUZZ_AFFILIATE_MARKET_URL.to_owned()),
+            stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Eduzz)),
+            build: |url, browser| {
+                NewMarket::Eduzz(EduzzAffiliateMarket::new(
                     url,
                     browser,
                     Arc::new(SystemClock),
@@ -733,17 +774,26 @@ mod tests {
             };
 
             let off = platforms(&panels.markets_on(&flags).await.unwrap());
-            let built_while_off =
-                built(AffiliatePlatform::Hotmart) || built(AffiliatePlatform::Kiwify);
+            let built_while_off = [
+                AffiliatePlatform::Hotmart,
+                AffiliatePlatform::Kiwify,
+                AffiliatePlatform::Eduzz,
+            ]
+            .into_iter()
+            .any(built);
             let request = flags.request_turn_on(KIWIFY_AFFILIATE_MARKET.key).unwrap();
             assert_eq!(request.flag().risk, KIWIFY_AFFILIATE_MARKET.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let kiwify_on = platforms(&panels.markets_on(&flags).await.unwrap());
-            let hotmart_built = built(AffiliatePlatform::Hotmart);
+            let others_built = built(AffiliatePlatform::Hotmart) || built(AffiliatePlatform::Eduzz);
             let request = flags.request_turn_on(HOTMART_AFFILIATE_MARKET.key).unwrap();
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let both = panels.markets_on(&flags).await.unwrap();
             let again = panels.markets_on(&flags).await.unwrap();
+            let request = flags.request_turn_on(EDUZZ_AFFILIATE_MARKET.key).unwrap();
+            assert_eq!(request.flag().risk, EDUZZ_AFFILIATE_MARKET.risk);
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let all_on = platforms(&panels.markets_on(&flags).await.unwrap());
 
             assert!(off.is_empty());
             assert!(!built_while_off);
@@ -755,7 +805,7 @@ mod tests {
                     PanelState::NoBrowser
                 )]
             );
-            assert!(!hotmart_built);
+            assert!(!others_built);
             assert_eq!(
                 platforms(&both),
                 [
@@ -772,6 +822,15 @@ mod tests {
                 ]
             );
             assert!(Arc::ptr_eq(&both[1].1, &again[1].1));
+            assert_eq!(
+                all_on.last(),
+                Some(&(
+                    AffiliatePlatform::Eduzz,
+                    AffiliatePlatform::Eduzz,
+                    PanelState::NoBrowser
+                ))
+            );
+            assert_eq!(all_on.len(), 3);
             assert!(!profile.exists());
         });
     }
@@ -793,7 +852,8 @@ mod tests {
             urls,
             [
                 "https://app.hotmart.com/market",
-                "https://dashboard.kiwify.com.br/marketplace"
+                "https://dashboard.kiwify.com.br/marketplace",
+                "https://my2.eduzz.com/showcase"
             ]
         );
         assert_eq!(development.url, "http://127.0.0.1:8222/marketplace");
@@ -804,6 +864,10 @@ mod tests {
         assert_eq!(
             market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Kiwify),
             PathBuf::from("dados").join("mercado-kiwify-parado")
+        );
+        assert_eq!(
+            market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Eduzz),
+            PathBuf::from("dados").join("mercado-eduzz-parado")
         );
     }
 

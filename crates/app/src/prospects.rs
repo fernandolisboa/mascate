@@ -1,11 +1,11 @@
 //! Garimpo (#219, ADR 0039): affiliate Prospects ranked by their score,
 //! each part with its reason, the apostas in a filter of their own, the
 //! owner's own entries from any Platform's market, the Hotmart vitrine
-//! (#220) and the logged-in affiliate markets of Hotmart (#221) and Kiwify
-//! (#222), each read on the owner's click while its flag is on, and the way
-//! from a Prospect to the
-//! Passo a passo or to the bin. The ranking and every
-//! rule are the Affiliate's; this screen only calls it.
+//! (#220) and the logged-in affiliate markets of Hotmart (#221), Kiwify
+//! (#222) and Eduzz (#223), each read on the owner's click while its flag
+//! is on, and the way from a Prospect to the Passo a passo or to the bin.
+//! The ranking and every rule are the Affiliate's; this screen only calls
+//! it.
 
 use std::sync::Arc;
 
@@ -967,7 +967,7 @@ impl ProspectsScreen {
             .border(t.border_width)
             .border_color(t.frame)
             .bg(t.surface);
-        let title = format!("Garimpar no {} da {name}", site.called_short());
+        let title = format!("Garimpar {} da {name}", site.called_in());
         let Some(market) = self.market(platform) else {
             return card
                 .child(div().font_medium().child(title))
@@ -1698,8 +1698,8 @@ impl Render for ProspectsScreen {
                     self.market(platform).is_some()
                 })
         {
-            "Nenhum produto no garimpo ainda. Escolha uma categoria e clique em Garimpar, ou \
-             traga os números do mercado em Cadastrar à mão."
+            "Nenhum produto no garimpo ainda. Clique em Garimpar, com uma categoria onde o \
+             cartão oferece, ou traga os números do mercado em Cadastrar à mão."
         } else {
             "Nenhum produto no garimpo ainda. Abra o mercado da plataforma, escolha os que \
              parecem bons e traga os números em Cadastrar à mão."
@@ -2044,15 +2044,29 @@ mod tests {
             "O marketplace da Kiwify não mostrou nenhum produto na primeira página."
         );
         assert_eq!(
-            texts(AffiliatePlatform::Kiwify).called_short(),
-            "marketplace"
+            texts(AffiliatePlatform::Kiwify).called_in(),
+            "no marketplace"
+        );
+        assert_eq!(texts(AffiliatePlatform::Eduzz).called_in(), "na Vitrine");
+        let eduzz = market_read(&texts(AffiliatePlatform::Eduzz));
+        assert_eq!(
+            read_text(&eduzz, None, read),
+            "Li 12 produtos da Vitrine na primeira página: 3 novos no garimpo."
+        );
+        assert_eq!(
+            read_text(&eduzz, None, ProspectsRead::default()),
+            "A Vitrine da Eduzz não mostrou nenhum produto na primeira página."
         );
     }
 
     #[test]
     fn each_market_says_why_it_stopped_and_what_the_owner_can_do_by_its_own_name() {
         let until = Utc::now() + chrono::TimeDelta::hours(24);
-        for platform in [AffiliatePlatform::Hotmart, AffiliatePlatform::Kiwify] {
+        for platform in [
+            AffiliatePlatform::Hotmart,
+            AffiliatePlatform::Kiwify,
+            AffiliatePlatform::Eduzz,
+        ] {
             let name = platform.name();
             let stopped = |why| stopped_text(platform, MarketStopped { why, until });
             assert!(

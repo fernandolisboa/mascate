@@ -1,0 +1,96 @@
+{
+  "url": "https://my2.eduzz.com/showcase",
+  "title": "MyEduzz",
+  "captcha": false,
+  "heading": "Vitrine",
+  "links": [],
+  "lines": [
+    "Vitrine",
+    "Mais Vendidos",
+    "Novidades",
+    "Produto Físico",
+    "Filtros"
+  ],
+  "cards": [
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/2154873",
+      "title": "Mentoria Finanças em Família",
+      "links": [
+        "https://my2.eduzz.com/showcase/product/details/2154873"
+      ],
+      "lines": [
+        "Mentoria Finanças em Família",
+        "Ana Prado",
+        "RPC P",
+        "1,20",
+        "RPC A",
+        "0,85",
+        "Comissão:",
+        "R$ 30,00 rec.",
+        "R$ 98,50",
+        "4.6"
+      ]
+    },
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/1987620?origem=vitrine",
+      "title": "Curso de Violão do Zero",
+      "links": [
+        "https://my2.eduzz.com/showcase/product/details/1987620?origem=vitrine"
+      ],
+      "lines": [
+        "Curso de Violão do Zero",
+        "Rafa Cordas",
+        "RPC P",
+        "-",
+        "RPC A",
+        "-",
+        "Comissão: 40%",
+        "Afiliação com aprovação do produtor",
+        "-"
+      ]
+    },
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/2203311",
+      "title": "Clube do Livro Infantil",
+      "links": [
+        "https://my2.eduzz.com/showcase/product/details/2203311"
+      ],
+      "lines": [
+        "Clube do Livro Infantil",
+        "Editora Pipoca",
+        "Comissão:",
+        "R$ 19,90 rec.",
+        "4.9"
+      ]
+    },
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/2099045",
+      "title": "Planner Digital",
+      "links": [
+        "https://my2.eduzz.com/showcase/product/details/2099045"
+      ],
+      "lines": [
+        "Planner Digital",
+        "Studio Agenda",
+        "Comissão:",
+        "R$ --",
+        "-"
+      ]
+    },
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/<script>",
+      "title": "Produto estranho",
+      "links": [],
+      "lines": [
+        "Produto estranho",
+        "Comissão: 30%"
+      ]
+    },
+    {
+      "link": "https://my2.eduzz.com/showcase/product/details/2311870",
+      "title": "",
+      "links": [],
+      "lines": []
+    }
+  ]
+}
