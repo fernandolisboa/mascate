@@ -1,0 +1,14 @@
+{
+  "url": "https://sso.hotmart.com/login?service=https%3A%2F%2Fapp.hotmart.com%2Fmarket",
+  "title": "Login | Hotmart",
+  "captcha": false,
+  "heading": "Entre na sua conta",
+  "links": [],
+  "lines": [
+    "Entre na sua conta",
+    "E-mail",
+    "Senha",
+    "Entrar"
+  ],
+  "cards": []
+}

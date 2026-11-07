@@ -242,6 +242,11 @@ fn a_product_page_adds_the_students_the_warranty_and_the_producer() {
             creator_since: day(2018, 1, 1),
             creator_verified: Some(true),
             product_page: Some(CAKES_PAGE.into()),
+            affiliation_page: Some(
+                "https://app.hotmart.com/market/details?productUcode=\
+                 8a1c3e52-0f6d-4b8e-9c21-5d7a0e4f1b93"
+                    .into()
+            ),
             ..Signals::default()
         }
     );
