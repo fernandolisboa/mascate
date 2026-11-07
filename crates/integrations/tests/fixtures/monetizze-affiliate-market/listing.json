@@ -1,0 +1,83 @@
+{
+  "url": "https://app.monetizze.com.br/loja",
+  "title": "Monetizze",
+  "captcha": false,
+  "heading": "Vitrine de afiliação",
+  "links": [],
+  "lines": [
+    "Vitrine de afiliação",
+    "Busca avançada",
+    "Hall da Fama",
+    "Em Destaque",
+    "Oportunidades",
+    "Mais Recentes"
+  ],
+  "cards": [
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/184520",
+      "title": "Kit de Potes Herméticos",
+      "links": ["https://app.monetizze.com.br/loja/produto/184520"],
+      "lines": [
+        "Kit de Potes Herméticos",
+        "100 Bars",
+        "Categoria: Casa e Decoração",
+        "Formato: Produto Físico",
+        "Você ganha até R$ 49,30 por indicação",
+        "Afiliação aberta"
+      ]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/203117?origem=hall-da-fama",
+      "title": "Inglês em 90 Dias",
+      "links": ["https://app.monetizze.com.br/loja/produto/203117?origem=hall-da-fama"],
+      "lines": [
+        "Inglês em 90 Dias",
+        "72 Bars",
+        "Categoria: Idiomas",
+        "Formato: Produto Digital",
+        "Comissão: 60%",
+        "Afiliação mediante aprovação do produtor"
+      ]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/211846",
+      "title": "Protein Bars 12 unidades",
+      "links": ["https://app.monetizze.com.br/loja/produto/211846"],
+      "lines": [
+        "Protein Bars 12 unidades",
+        "Categoria: Saúde e Esportes",
+        "Comissão:",
+        "R$ 35,00"
+      ]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/219003",
+      "title": "Planilha de Orçamento",
+      "links": ["https://app.monetizze.com.br/loja/produto/219003"],
+      "lines": [
+        "Planilha de Orçamento",
+        "Bars",
+        "Formato: Assinatura",
+        "Comissão: a combinar"
+      ]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/categoria/saude",
+      "title": "Saúde",
+      "links": ["https://app.monetizze.com.br/loja/categoria/saude"],
+      "lines": ["Saúde", "Ver todos"]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/<script>",
+      "title": "Produto estranho",
+      "links": [],
+      "lines": ["Produto estranho", "Comissão: 30%"]
+    },
+    {
+      "link": "https://app.monetizze.com.br/loja/produto/220150",
+      "title": "",
+      "links": [],
+      "lines": []
+    }
+  ]
+}

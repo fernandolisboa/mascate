@@ -9,8 +9,8 @@ use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
 use futures::executor::block_on;
 use mascate_affiliate::{
     Affiliate, AffiliateError, AffiliatePlatform, CommissionStatus, FoundProspect, MIGRATIONS,
-    NewProgram, ProspectCategory, ProspectSource, ReportedConversion, ReportedProgram, SignalKind,
-    SignalOrigin, Signals, prospect_key_of,
+    NewProgram, ProductFormat, ProspectCategory, ProspectSource, ReportedConversion,
+    ReportedProgram, ScoreArea, SignalKind, SignalOrigin, Signals, prospect_key_of,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, Percentage, PlatformError, Timestamp};
@@ -111,6 +111,52 @@ fn saving_the_same_prospect_again_changes_nothing() {
         let rating = kept.reading(SignalKind::Rating).unwrap();
         assert_eq!(rating.origin, SignalOrigin::Vitrine);
         assert_eq!(rating.read_at, noon());
+    });
+}
+
+#[test]
+fn a_monetizze_product_keeps_its_format_category_and_bars_and_ranks_by_them() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let kit = FoundProspect {
+            platform: AffiliatePlatform::Monetizze,
+            key: "184520".into(),
+            name: "Kit de Potes".into(),
+            signals: Signals {
+                commission: Some(brl("49.30")),
+                bars: Some(100),
+                format: Some(ProductFormat::Physical),
+                category: Some("Saúde e Beleza".into()),
+                ..Signals::default()
+            },
+        };
+        fixture
+            .affiliate
+            .save_prospect(&kit, SignalOrigin::Market)
+            .await
+            .unwrap();
+        fixture.clock.advance(TimeDelta::hours(1));
+        fixture
+            .affiliate
+            .save_prospect(&kit, SignalOrigin::Market)
+            .await
+            .unwrap();
+
+        let kept = fixture.affiliate.prospects(None).await.unwrap();
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].signals, kit.signals);
+        assert_eq!(
+            kept[0].reading(SignalKind::Bars).unwrap().origin,
+            SignalOrigin::Market
+        );
+        let sales = kept[0]
+            .score
+            .parts
+            .iter()
+            .find(|part| part.area == ScoreArea::Sales)
+            .unwrap();
+        assert_eq!((sales.points, sales.reason.as_str()), (100, "100 BARs"));
     });
 }
 

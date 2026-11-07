@@ -56,6 +56,23 @@ pub enum Affiliation {
     OnRequest,
 }
 
+/// Whether the buyer gets something shipped or something online.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProductFormat {
+    Physical,
+    Digital,
+}
+
+impl ProductFormat {
+    /// As the owner reads it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProductFormat::Physical => "produto físico",
+            ProductFormat::Digital => "produto digital",
+        }
+    }
+}
+
 /// The owner's own word on the creator's support to affiliates, which no
 /// Platform measures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -166,6 +183,24 @@ impl SignalText for Affiliation {
     }
 }
 
+impl SignalText for ProductFormat {
+    fn to_text(&self) -> String {
+        match self {
+            ProductFormat::Physical => "physical",
+            ProductFormat::Digital => "digital",
+        }
+        .to_owned()
+    }
+
+    fn from_text(text: &str) -> Option<Self> {
+        match text {
+            "physical" => Some(ProductFormat::Physical),
+            "digital" => Some(ProductFormat::Digital),
+            _ => None,
+        }
+    }
+}
+
 impl SignalText for Support {
     fn to_text(&self) -> String {
         match self {
@@ -264,6 +299,7 @@ signals! {
     commission: Money => Commission, "commission", "comissão em R$";
     commission_rate: Percentage => CommissionRate, "commission_rate", "comissão em %";
     temperature: u32 => Temperature, "temperature", "temperatura";
+    bars: u32 => Bars, "bars", "BARs";
     blueprint: Percentage => Blueprint, "blueprint", "Blueprint";
     satisfaction: Percentage => Satisfaction, "satisfaction", "satisfação";
     rating: Decimal => Rating, "rating", "nota";
@@ -276,6 +312,8 @@ signals! {
     certificate: bool => Certificate, "certificate", "certificado";
     video: bool => Video, "video", "vídeo";
     affiliation: Affiliation => Affiliation, "affiliation", "afiliação";
+    format: ProductFormat => Format, "format", "formato";
+    category: String => Category, "category", "categoria";
     creator: String => Creator, "creator", "produtor";
     creator_since: NaiveDate => CreatorSince, "creator_since", "produtor desde";
     creator_verified: bool => CreatorVerified, "creator_verified", "perfil verificado";

@@ -36,6 +36,9 @@ const FULL_COMMISSION_BRL: u32 = 150;
 const FULL_COMMISSION_USD: u32 = 30;
 /// The temperature that scores full marks for sales.
 const FULL_TEMPERATURE: u32 = 100;
+/// The BARs that score full marks for sales: Monetizze's help shows 100
+/// BARs as five full stars.
+const FULL_BARS: u32 = 100;
 const FULL_STUDENTS: u32 = 10_000;
 const FULL_REVIEWS: u32 = 500;
 const FULL_CLASSES: u32 = 60;
@@ -75,7 +78,7 @@ impl ScoreArea {
     pub fn wanted(self) -> &'static str {
         match self {
             ScoreArea::Commission => "comissão (em R$, ou preço e %)",
-            ScoreArea::Sales => "temperatura, alunos ou avaliações",
+            ScoreArea::Sales => "temperatura, BARs, alunos ou avaliações",
             ScoreArea::Material => "Blueprint, aulas, horas, certificado ou vídeo",
             ScoreArea::Creator => {
                 "tempo na plataforma, perfil verificado, nota, satisfação ou suporte"
@@ -224,6 +227,11 @@ fn sales_part(signals: &Signals) -> Option<(Decimal, String)> {
             scale(degrees.into(), FULL_TEMPERATURE),
             format!("temperatura {degrees}°"),
         ));
+    }
+    // Monetizze ranks its Hall da Fama by BARs: sales, affiliates and their
+    // results, refunds and chargebacks, like Hotmart's temperature.
+    if let Some(bars) = signals.bars {
+        return Some((scale(bars.into(), FULL_BARS), format!("{bars} BARs")));
     }
     let mut found = Found::default();
     if let Some(students) = signals.students {

@@ -123,6 +123,33 @@ fn sales_use_the_temperature_and_else_students_and_reviews() {
 }
 
 #[test]
+fn without_a_temperature_monetizzes_bars_score_the_sales() {
+    let ranked = Signals {
+        bars: Some(60),
+        students: Some(10_000),
+        ..Signals::default()
+    };
+    assert_eq!(
+        part(&ranked, ScoreArea::Sales),
+        Some((60, "60 BARs".to_owned()))
+    );
+    let top = Signals {
+        bars: Some(130),
+        ..Signals::default()
+    };
+    assert_eq!(part(&top, ScoreArea::Sales).unwrap().0, 100);
+    let hot = Signals {
+        temperature: Some(20),
+        bars: Some(100),
+        ..Signals::default()
+    };
+    assert_eq!(
+        part(&hot, ScoreArea::Sales),
+        Some((20, "temperatura 20°".to_owned()))
+    );
+}
+
+#[test]
 fn material_uses_the_blueprint_and_else_the_course_itself() {
     let blueprint = Signals {
         blueprint: Some(percent("92")),
@@ -317,6 +344,7 @@ fn any_signals() -> impl Strategy<Value = Signals> {
         (
             proptest::option::of(0i64..4000),
             proptest::option::of(prop_oneof![Just(Support::Good), Just(Support::Bad)]),
+            proptest::option::of(0u32..200),
         ),
     )
         .prop_map(
@@ -325,7 +353,7 @@ fn any_signals() -> impl Strategy<Value = Signals> {
                 (blueprint, satisfaction, rating_tenths, reviews),
                 (students, classes, hours_tenths),
                 (certificate, video, creator_verified),
-                (creator_days, support),
+                (creator_days, support, bars),
             )| Signals {
                 price,
                 commission,
@@ -343,6 +371,7 @@ fn any_signals() -> impl Strategy<Value = Signals> {
                 creator_verified,
                 creator_since: creator_days.map(|days| today() - TimeDelta::days(days)),
                 support,
+                bars,
                 ..Signals::default()
             },
         )
@@ -384,7 +413,8 @@ fn raised(signals: &Signals, which: usize, by: u32) -> Signals {
                 .creator_since
                 .map(|since| since - TimeDelta::days(by.into()))
         }
-        _ => up.support = up.support.map(|_| Support::Good),
+        15 => up.support = up.support.map(|_| Support::Good),
+        _ => up.bars = more(up.bars),
     }
     up
 }
@@ -411,7 +441,7 @@ proptest! {
     #[test]
     fn a_better_signal_never_lowers_the_score(
         signals in any_signals(),
-        which in 0usize..16,
+        which in 0usize..17,
         by in 1u32..500,
     ) {
         let before = score(&signals, today());

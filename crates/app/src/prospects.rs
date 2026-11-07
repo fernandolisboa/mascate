@@ -2,8 +2,9 @@
 //! each part with its reason, the apostas in a filter of their own, the
 //! owner's own entries from any Platform's market, the Hotmart vitrine
 //! (#220) and the logged-in affiliate markets of Hotmart (#221), Kiwify
-//! (#222) and Eduzz (#223), each read on the owner's click while its flag
-//! is on, and the way from a Prospect to the Passo a passo or to the bin.
+//! (#222), Eduzz (#223) and Monetizze (#224), each read on the owner's
+//! click while its flag is on, and the way from a Prospect to the Passo a
+//! passo or to the bin.
 //! The ranking and every rule are the Affiliate's; this screen only calls
 //! it.
 
@@ -1404,6 +1405,12 @@ impl ProspectsScreen {
         if prospect.score.partial() {
             tags = tags.child(kit::tag("nota parcial", t.text2, cx));
         }
+        if let Some(format) = prospect.signals.format {
+            tags = tags.child(kit::tag(format.name(), t.text2, cx));
+        }
+        if let Some(category) = &prospect.signals.category {
+            tags = tags.child(kit::tag(category.clone(), t.text2, cx));
+        }
         if let Some(affiliation) = prospect.signals.affiliation {
             tags = tags.child(kit::tag(
                 match affiliation {
@@ -2057,16 +2064,25 @@ mod tests {
             read_text(&eduzz, None, ProspectsRead::default()),
             "A Vitrine da Eduzz não mostrou nenhum produto na primeira página."
         );
+        let monetizze = market_read(&texts(AffiliatePlatform::Monetizze));
+        assert_eq!(
+            texts(AffiliatePlatform::Monetizze).called_in(),
+            "na Vitrine de afiliação"
+        );
+        assert_eq!(
+            read_text(&monetizze, None, read),
+            "Li 12 produtos da Vitrine de afiliação na primeira página: 3 novos no garimpo."
+        );
+        assert_eq!(
+            read_text(&monetizze, None, ProspectsRead::default()),
+            "A Vitrine de afiliação da Monetizze não mostrou nenhum produto na primeira página."
+        );
     }
 
     #[test]
     fn each_market_says_why_it_stopped_and_what_the_owner_can_do_by_its_own_name() {
         let until = Utc::now() + chrono::TimeDelta::hours(24);
-        for platform in [
-            AffiliatePlatform::Hotmart,
-            AffiliatePlatform::Kiwify,
-            AffiliatePlatform::Eduzz,
-        ] {
+        for platform in MARKET_PLATFORMS {
             let name = platform.name();
             let stopped = |why| stopped_text(platform, MarketStopped { why, until });
             assert!(

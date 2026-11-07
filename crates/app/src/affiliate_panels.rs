@@ -5,8 +5,8 @@
 //! "Entrar no painel" to log in by hand in its window, and "Ler painel
 //! agora". The hourly Commissions Sync reads every panel that is on and
 //! logged in. The logged-in affiliate markets of Hotmart (#221), Kiwify
-//! (#222) and Eduzz (#223) share the browser and its profile, but only
-//! Garimpo reads them, on the owner's click.
+//! (#222), Eduzz (#223) and Monetizze (#224) share the browser and its
+//! profile, but only Garimpo reads them, on the owner's click.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -23,7 +23,8 @@ use mascate_integrations::{
     HOTMART_AFFILIATE_MARKET_URL, HotmartAffiliateMarket, KIWIFY_AFFILIATE_MARKET,
     KIWIFY_AFFILIATE_MARKET_URL, KiwifyAffiliateMarket, MAGALU_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL_URL, MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL,
-    MagaluAffiliatePanel, MercadoLivreAffiliatePanel, PanelState,
+    MONETIZZE_AFFILIATE_MARKET, MONETIZZE_AFFILIATE_MARKET_URL, MagaluAffiliatePanel,
+    MercadoLivreAffiliatePanel, MonetizzeAffiliateMarket, PanelState,
 };
 use mascate_kernel::{PlatformError, SystemClock, ThreadPause};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
@@ -108,6 +109,7 @@ pub struct MarketSite {
 enum NewMarket {
     Hotmart(HotmartAffiliateMarket),
     Kiwify(KiwifyAffiliateMarket),
+    Monetizze(MonetizzeAffiliateMarket),
     Eduzz(EduzzAffiliateMarket),
 }
 
@@ -118,6 +120,8 @@ impl NewMarket {
             (NewMarket::Hotmart(market), None) => Arc::new(market),
             (NewMarket::Kiwify(market), Some(file)) => Arc::new(market.with_stop_file(file)),
             (NewMarket::Kiwify(market), None) => Arc::new(market),
+            (NewMarket::Monetizze(market), Some(file)) => Arc::new(market.with_stop_file(file)),
+            (NewMarket::Monetizze(market), None) => Arc::new(market),
             (NewMarket::Eduzz(market), Some(file)) => Arc::new(market.with_stop_file(file)),
             (NewMarket::Eduzz(market), None) => Arc::new(market),
         }
@@ -131,6 +135,7 @@ impl MarketSite {
         vec![
             Self::hotmart(build, environment, data.clone()),
             Self::kiwify(build, environment, data.clone()),
+            Self::monetizze(build, environment, data.clone()),
             Self::eduzz(build, environment, data),
         ]
     }
@@ -189,6 +194,40 @@ impl MarketSite {
             stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Kiwify)),
             build: |url, browser| {
                 NewMarket::Kiwify(KiwifyAffiliateMarket::new(
+                    url,
+                    browser,
+                    Arc::new(SystemClock),
+                    Arc::new(ThreadPause),
+                ))
+            },
+            built: OnceLock::new(),
+        }
+    }
+
+    /// Monetizze's Vitrine de afiliação or, in a development build only,
+    /// the URL in `MASCATE_MONETIZZE_AFFILIATE_MARKET_URL`, a local fake
+    /// page.
+    pub fn monetizze(build: Build, environment: &Environment, data: Option<PathBuf>) -> Self {
+        Self {
+            texts: MarketTexts {
+                platform: AffiliatePlatform::Monetizze,
+                flag: MONETIZZE_AFFILIATE_MARKET,
+                called: "a Vitrine de afiliação",
+                pages: "a primeira página da Vitrine por clique",
+                reads: "comissão em % e em R$, preço, BARs (a pontuação do Hall da Fama), se é \
+                        produto físico ou digital, a categoria, o produtor e se a afiliação é \
+                        aberta",
+                everything: "na primeira página",
+            },
+            url: crate::mercado_livre::local_fake(
+                build,
+                environment,
+                "MASCATE_MONETIZZE_AFFILIATE_MARKET_URL",
+            )
+            .unwrap_or_else(|| MONETIZZE_AFFILIATE_MARKET_URL.to_owned()),
+            stop_file: data.map(|data| market_stop_file(data, AffiliatePlatform::Monetizze)),
+            build: |url, browser| {
+                NewMarket::Monetizze(MonetizzeAffiliateMarket::new(
                     url,
                     browser,
                     Arc::new(SystemClock),
@@ -681,6 +720,7 @@ mod tests {
     use mascate_platform::{Database, Registry, migrate};
 
     use super::*;
+    use crate::affiliate_markets::MARKET_PLATFORMS;
 
     fn nowhere() -> Environment {
         Box::new(|_: &str| None)
@@ -777,6 +817,7 @@ mod tests {
             let built_while_off = [
                 AffiliatePlatform::Hotmart,
                 AffiliatePlatform::Kiwify,
+                AffiliatePlatform::Monetizze,
                 AffiliatePlatform::Eduzz,
             ]
             .into_iter()
@@ -785,13 +826,20 @@ mod tests {
             assert_eq!(request.flag().risk, KIWIFY_AFFILIATE_MARKET.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let kiwify_on = platforms(&panels.markets_on(&flags).await.unwrap());
-            let others_built = built(AffiliatePlatform::Hotmart) || built(AffiliatePlatform::Eduzz);
+            let others_built = built(AffiliatePlatform::Hotmart)
+                || built(AffiliatePlatform::Monetizze)
+                || built(AffiliatePlatform::Eduzz);
             let request = flags.request_turn_on(HOTMART_AFFILIATE_MARKET.key).unwrap();
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let both = panels.markets_on(&flags).await.unwrap();
             let again = panels.markets_on(&flags).await.unwrap();
             let request = flags.request_turn_on(EDUZZ_AFFILIATE_MARKET.key).unwrap();
             assert_eq!(request.flag().risk, EDUZZ_AFFILIATE_MARKET.risk);
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let request = flags
+                .request_turn_on(MONETIZZE_AFFILIATE_MARKET.key)
+                .unwrap();
+            assert_eq!(request.flag().risk, MONETIZZE_AFFILIATE_MARKET.risk);
             flags.turn_on(request.confirm("fernando")).await.unwrap();
             let all_on = platforms(&panels.markets_on(&flags).await.unwrap());
 
@@ -823,14 +871,12 @@ mod tests {
             );
             assert!(Arc::ptr_eq(&both[1].1, &again[1].1));
             assert_eq!(
-                all_on.last(),
-                Some(&(
-                    AffiliatePlatform::Eduzz,
-                    AffiliatePlatform::Eduzz,
-                    PanelState::NoBrowser
-                ))
+                all_on
+                    .iter()
+                    .map(|(site, market, _)| (*site, *market))
+                    .collect::<Vec<_>>(),
+                MARKET_PLATFORMS.map(|platform| (platform, platform))
             );
-            assert_eq!(all_on.len(), 3);
             assert!(!profile.exists());
         });
     }
@@ -853,6 +899,7 @@ mod tests {
             [
                 "https://app.hotmart.com/market",
                 "https://dashboard.kiwify.com.br/marketplace",
+                "https://app.monetizze.com.br/loja",
                 "https://my2.eduzz.com/showcase"
             ]
         );
@@ -868,6 +915,10 @@ mod tests {
         assert_eq!(
             market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Eduzz),
             PathBuf::from("dados").join("mercado-eduzz-parado")
+        );
+        assert_eq!(
+            market_stop_file(PathBuf::from("dados"), AffiliatePlatform::Monetizze),
+            PathBuf::from("dados").join("mercado-monetizze-parado")
         );
     }
 
