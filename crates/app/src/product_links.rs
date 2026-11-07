@@ -87,6 +87,9 @@ impl ProductLinksSection {
     /// it does not show stops, linking nothing.
     pub fn follow_context(&mut self, cx: &mut Context<Self>) {
         let context = preferences::work_context(cx);
+        if !context.sells() {
+            self.picking = None;
+        }
         let promoted = &self.promoted;
         work_context::close_outside_platform(&mut self.picking, context, |(program, _)| {
             promoted
@@ -237,6 +240,7 @@ impl ProductLinksSection {
         &self,
         index: usize,
         promoted: &PromotedProduct,
+        resells: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = look(cx).tokens;
@@ -266,27 +270,31 @@ impl ProductLinksSection {
                         }
                     ))),
             )
-            .child(match &linked {
-                Some(name) => kit::tag(format!("ligado a {name}"), t.success, cx),
-                None => div()
-                    .text_xs()
-                    .text_color(t.text2)
-                    .child("sem produto do catálogo"),
+            .when(resells, |row| {
+                row.child(match &linked {
+                    Some(name) => kit::tag(format!("ligado a {name}"), t.success, cx),
+                    None => div()
+                        .text_xs()
+                        .text_color(t.text2)
+                        .child("sem produto do catálogo"),
+                })
             })
-            .child(
-                Button::new(("pick-linked", index))
-                    .label(if linked.is_some() {
-                        "Trocar"
-                    } else {
-                        "Ligar a um produto"
-                    })
-                    .outline()
-                    .small()
-                    .disabled(self.busy || self.products.is_empty())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.pick(pick_key.clone(), window, cx)
-                    })),
-            );
+            .when(resells, |row| {
+                row.child(
+                    Button::new(("pick-linked", index))
+                        .label(if linked.is_some() {
+                            "Trocar"
+                        } else {
+                            "Ligar a um produto"
+                        })
+                        .outline()
+                        .small()
+                        .disabled(self.busy || self.products.is_empty())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.pick(pick_key.clone(), window, cx)
+                        })),
+                )
+            });
         let (program, product) = key.clone();
         row = row.child(
             Button::new(("create-link-for", index))
@@ -370,16 +378,21 @@ async fn read_both(
 impl Render for ProductLinksSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = look(cx).tokens;
+        let context = preferences::work_context(cx);
+        // A Platform the owner only promotes sells nothing the stock could
+        // hold, so there is no resale margin to compare.
+        let resells = context.sells();
         let mut section = v_flex()
             .gap_3()
             .child(kit::section_heading("Produtos divulgados"))
-            .child(div().text_sm().text_color(t.text2).child(
+            .child(div().text_sm().text_color(t.text2).child(if resells {
                 "Ligue o produto que você divulga a um produto do catálogo para ver, na ficha \
                  do produto e no Painel, a margem de revendê-lo ao lado das comissões de \
-                 divulgá-lo. Cada produto divulgado se liga a um produto do catálogo, no máximo.",
-            ))
+                 divulgá-lo. Cada produto divulgado se liga a um produto do catálogo, no máximo."
+            } else {
+                "Os produtos que já deram comissão, para criar um link de afiliado de cada um."
+            }))
             .children(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
-        let context = preferences::work_context(cx);
         if !self
             .promoted
             .iter()
@@ -389,7 +402,7 @@ impl Render for ProductLinksSection {
                 "Nenhum produto divulgado ainda: eles aparecem aqui com a primeira comissão.",
             ));
         }
-        if self.products.is_empty() {
+        if resells && self.products.is_empty() {
             section = section.child(
                 div()
                     .text_sm()
@@ -406,7 +419,7 @@ impl Render for ProductLinksSection {
             .collect::<Vec<_>>()
             .iter()
             .enumerate()
-            .map(|(index, promoted)| self.render_row(index, promoted, cx))
+            .map(|(index, promoted)| self.render_row(index, promoted, resells, cx))
             .collect();
         section
             .child(div().w(px(320.)).child(Input::new(&self.search).small()))

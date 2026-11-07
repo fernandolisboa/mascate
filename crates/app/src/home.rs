@@ -38,15 +38,16 @@ impl Area {
         Area::SalesEvents,
     ];
 
-    /// Whether the area shows in `context` (ADR 0037, decision 3): a sales
-    /// area wherever its screen does, and what belongs to everyone, the
-    /// stock and the Sales Events, always.
+    /// Whether the area shows in `context` (ADR 0037, decision 3): an area
+    /// wherever its screen does, and the Sales Events, which every seller
+    /// and affiliate plans around, always.
     fn shows_in(self, context: WorkContext) -> bool {
         match self {
             Area::Orders => Place::Orders.shows_in(context),
             Area::Questions => Place::Questions.shows_in(context),
             Area::Reputation | Area::OnOrderRisk => Place::Reputation.shows_in(context),
-            Area::LowStock | Area::SalesEvents => true,
+            Area::LowStock => Place::Stock.shows_in(context),
+            Area::SalesEvents => true,
         }
     }
 }
@@ -199,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn hoje_shows_the_context_s_sales_areas_and_what_belongs_to_everyone() {
+    fn hoje_shows_the_context_s_areas_and_the_sales_events_everywhere() {
         assert_eq!(shown(WorkContext::All), Area::ALL);
         assert_eq!(shown(WorkContext::MercadoLivre), Area::ALL);
         for context in [
@@ -220,12 +221,7 @@ mod tests {
             WorkContext::Monetizze,
             WorkContext::Eduzz,
         ] {
-            assert_eq!(
-                shown(context),
-                [Area::LowStock, Area::SalesEvents],
-                "{}",
-                context.name()
-            );
+            assert_eq!(shown(context), [Area::SalesEvents], "{}", context.name());
         }
     }
 }
