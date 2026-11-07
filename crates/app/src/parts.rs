@@ -9,6 +9,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::{AnyElement, App, SharedString, Window};
 use mascate_kernel::SalesChannelKind;
 
+use crate::affiliate_markets::market;
 use crate::work_context::WorkContext;
 
 /// What picking one of `T` runs.
@@ -21,6 +22,7 @@ pub enum Place {
     Today,
     Opportunities,
     Offers,
+    Prospects,
     Products,
     Listings,
     Quality,
@@ -68,7 +70,7 @@ impl Place {
         },
         PlaceGroup {
             name: Some("Descoberta"),
-            places: &[Place::Opportunities, Place::Offers],
+            places: &[Place::Opportunities, Place::Offers, Place::Prospects],
         },
         PlaceGroup {
             name: Some("Estoque"),
@@ -111,7 +113,8 @@ impl Place {
     /// Whether the navigation lists this place in `context` (ADR 0037,
     /// decision 2). The sales screens, the resale Discovery and the stock
     /// show on the Sales Channels, the stock in full on each since it is
-    /// one, split across the Listings; the rest everywhere.
+    /// one, split across the Listings; Garimpo on the Platforms with an
+    /// affiliate market; the rest everywhere.
     pub fn shows_in(self, context: WorkContext) -> bool {
         if context == WorkContext::All {
             return true;
@@ -132,6 +135,9 @@ impl Place {
             Place::Questions | Place::Reputation | Place::Opportunities => {
                 context.sales_channel() == Some(SalesChannelKind::MercadoLivre)
             }
+            // Garimpo reads the affiliate markets, and only these Platforms
+            // have one (ADR 0039, decision 8).
+            Place::Prospects => context.affiliate_platform().and_then(market).is_some(),
             Place::Today
             | Place::Dashboard
             | Place::GuidedFlow
@@ -146,6 +152,7 @@ impl Place {
             Place::Today => "Hoje",
             Place::Opportunities => "Oportunidades",
             Place::Offers => "Ofertas",
+            Place::Prospects => "Garimpo",
             Place::Products => "Produtos",
             Place::Listings => "Anúncios",
             Place::Quality => "Qualidade",
@@ -169,6 +176,7 @@ impl Place {
             Place::Today => IconName::LayoutDashboard,
             Place::Opportunities => IconName::Star,
             Place::Offers => IconName::Globe,
+            Place::Prospects => IconName::Search,
             Place::Products => IconName::Inbox,
             Place::Listings => IconName::Building2,
             Place::Quality => IconName::CircleCheck,
@@ -234,10 +242,11 @@ mod tests {
 
     use super::*;
 
-    const EVERY_PLACE: [Place; 18] = [
+    const EVERY_PLACE: [Place; 19] = [
         Place::Today,
         Place::Opportunities,
         Place::Offers,
+        Place::Prospects,
         Place::Products,
         Place::Listings,
         Place::Quality,
@@ -291,6 +300,7 @@ mod tests {
                 .and_then(|group| group.name)
         };
         assert_eq!(group_of(Place::Offers), Some("Descoberta"));
+        assert_eq!(group_of(Place::Prospects), Some("Descoberta"));
         assert_eq!(group_of(Place::Purchases), Some("Estoque"));
         assert_eq!(group_of(Place::Questions), Some("Canais de venda"));
         assert_eq!(group_of(Place::Dashboard), Some("Pedidos e finanças"));
@@ -308,24 +318,28 @@ mod tests {
             Offers, Products, Purchases, Stock, Listings, Quality, Promotions, Orders, Sales,
         ];
         let mercado_livre_only = [Opportunities, Questions, Reputation];
+        let affiliate_markets = [Prospects];
         EVERY_PLACE
             .into_iter()
             .filter(|place| match context {
                 WorkContext::All => true,
-                WorkContext::MercadoLivre => true,
+                WorkContext::MercadoLivre => !affiliate_markets.contains(place),
                 WorkContext::Shopee | WorkContext::Amazon | WorkContext::Magalu => {
                     everywhere.contains(place) || selling.contains(place)
                 }
                 WorkContext::Hotmart
                 | WorkContext::Kiwify
                 | WorkContext::Monetizze
-                | WorkContext::Eduzz => everywhere.contains(place),
+                | WorkContext::Eduzz => {
+                    everywhere.contains(place) || affiliate_markets.contains(place)
+                }
             })
             .inspect(|place| {
                 assert!(
                     everywhere.contains(place)
                         || selling.contains(place)
-                        || mercado_livre_only.contains(place),
+                        || mercado_livre_only.contains(place)
+                        || affiliate_markets.contains(place),
                     "{} has no rule",
                     place.name()
                 );
@@ -375,6 +389,24 @@ mod tests {
     }
 
     #[test]
+    fn garimpo_shows_in_all_and_on_each_platform_with_an_affiliate_market() {
+        let shown: Vec<WorkContext> = WorkContext::ALL
+            .into_iter()
+            .filter(|context| Place::Prospects.shows_in(*context))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                WorkContext::All,
+                WorkContext::Hotmart,
+                WorkContext::Kiwify,
+                WorkContext::Monetizze,
+                WorkContext::Eduzz
+            ]
+        );
+    }
+
+    #[test]
     fn today_and_settings_show_in_every_context() {
         for context in WorkContext::ALL {
             assert!(Place::Today.shows_in(context), "{}", context.name());
@@ -391,7 +423,11 @@ mod tests {
             .filter(|group| !group.shown(WorkContext::Hotmart).is_empty())
             .filter_map(|group| group.name)
             .collect();
-        assert_eq!(named, ["Pedidos e finanças", "Afiliação"]);
+        assert_eq!(named, ["Descoberta", "Pedidos e finanças", "Afiliação"]);
+        assert_eq!(
+            Place::GROUPS[1].shown(WorkContext::Hotmart),
+            [Place::Prospects]
+        );
         assert_eq!(
             Place::GROUPS[4].shown(WorkContext::Hotmart),
             [Place::Dashboard]

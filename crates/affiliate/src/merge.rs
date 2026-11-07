@@ -112,6 +112,23 @@ pub const MERGE: ModuleMerge = ModuleMerge {
         )
         .references(&[Reference::to("short_link_id", "affiliate_short_links")])
         .label(&["day", "clicks"]),
+        TableMerge::new(
+            "affiliate_prospects",
+            "Produto do garimpo",
+            Keys(&[UniqueKey::live(&[
+                Column("platform"),
+                Column("product_key"),
+            ])]),
+        )
+        .references(&[TO_PROGRAM])
+        .label(&["platform", "name"]),
+        TableMerge::new(
+            "affiliate_prospect_signals",
+            "Sinal de produto do garimpo",
+            Keys(&[UniqueKey::live(&[Column("prospect_id"), Column("signal")])]),
+        )
+        .references(&[Reference::to("prospect_id", "affiliate_prospects")])
+        .label(&["signal", "value"]),
         TableMerge::new("affiliate_click_reads", "Leitura de cliques", SingleRow),
         TableMerge::new(
             "affiliate_syncs",

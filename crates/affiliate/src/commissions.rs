@@ -16,6 +16,7 @@ use mascate_platform::{
     Database, Flag, FlagError, Flags, Migration, Registry, StoredRow, StoredValueError, stored,
 };
 
+use crate::prospect_signals::SignalKind;
 use crate::source::{
     AffiliatePlatform, CommissionSource, CommissionStatus, ReportedConversion, ReportedProgram,
 };
@@ -266,6 +267,14 @@ pub enum AffiliateError {
     Flag(#[from] FlagError),
     #[error("a Commission is never negative")]
     Negative,
+    #[error("no such Prospect")]
+    NoSuchProspect,
+    #[error("the product's link or id on the Platform is missing")]
+    NoProspectKey,
+    #[error("the {} cannot be that", .0.name())]
+    ImpossibleSignal(SignalKind),
+    #[error("a dismissal needs a reason")]
+    NoReason,
     #[error("the Commissions hold a value this app cannot read: {0}")]
     Unreadable(String),
     #[error(transparent)]

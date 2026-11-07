@@ -1411,6 +1411,15 @@ pub(crate) fn failure(error: &AffiliateError) -> String {
         AffiliateError::Flag(error) => {
             format!("Não consegui ler as funcionalidades restritas: {error}")
         }
+        AffiliateError::NoSuchProspect => "Esse produto mudou; a lista foi atualizada.".into(),
+        AffiliateError::NoProspectKey => "Cole o endereço da página do produto.".into(),
+        AffiliateError::ImpossibleSignal(kind) => {
+            format!(
+                "Confira {}: esse valor não existe na plataforma.",
+                kind.name()
+            )
+        }
+        AffiliateError::NoReason => "Diga por que o produto não serve antes de descartar.".into(),
         AffiliateError::Platform(error) => format!("A plataforma não respondeu: {error}"),
         AffiliateError::Unreadable(_) | AffiliateError::Sql(_) => {
             format!("Não consegui ler ou gravar as comissões no banco: {error}")
