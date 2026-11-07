@@ -22,3 +22,6 @@ atual, com Backup antes, e confere que o que o dono salvou continua lá.
 - `0.7.0.db`: os anúncios sob encomenda, com o anúncio do Mercado Livre marcado sob encomenda
   (15 dias, 2 pedidos de cada vez), uma venda nele com mais unidades do que há no estoque e a
   compra feita para essa venda.
+- `0.8.0.db`: o Garimpo, com um produto da Hotmart lido na vitrine e no mercado de afiliação e
+  com o suporte do produtor digitado à mão, um produto da Monetizze escolhido em "Quero divulgar"
+  (com o seu Program adicionado antes da primeira venda) e um da Kiwify colado e descartado.

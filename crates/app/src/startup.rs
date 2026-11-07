@@ -493,9 +493,11 @@ fn not_opened(error: OpenError, path: &Path) -> Problem {
 #[cfg(test)]
 mod tests {
     use mascate_affiliate::{
-        AffiliatePlatform, CommissionFilter, CommissionStatus, DayClicks, LinkShortener,
-        LinkTagger, MERCADO_LIVRE_SHORT_LINK, ManualCommission, ManualPayout, NewAffiliateLink,
-        NewProgram, Practice, Promotion, PromotionRules, Shortened, Standing, TagRefusal,
+        AffiliatePlatform, Affiliation, CommissionFilter, CommissionStatus, DayClicks,
+        FoundProspect, LinkShortener, LinkTagger, MERCADO_LIVRE_SHORT_LINK, ManualCommission,
+        ManualPayout, NewAffiliateLink, NewProgram, Practice, ProductFormat, Promotion,
+        PromotionRules, Shortened, SignalKind, SignalOrigin, Signals, Standing, Support,
+        TagRefusal, prospect_key_of,
     };
     use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
     use mascate_commerce::{
@@ -948,6 +950,79 @@ mod tests {
         }
     }
 
+    /// What 0.8.0 saves: a Hotmart product as the public vitrine shows it.
+    fn sample_vitrine_prospect() -> FoundProspect {
+        FoundProspect {
+            platform: AffiliatePlatform::Hotmart,
+            key: "4321".into(),
+            name: "Fotografia com o celular".into(),
+            signals: Signals {
+                rating: Some(rust_decimal::Decimal::new(47, 1)),
+                reviews: Some(120),
+                students: Some(3400),
+                launched: chrono::NaiveDate::from_ymd_opt(2026, 9, 15),
+                product_page: Some(
+                    "https://hotmart.com/pt-br/marketplace/produtos/fotografia-com-o-celular/X1234"
+                        .into(),
+                ),
+                ..Signals::default()
+            },
+        }
+    }
+
+    /// What 0.8.0 saves: what the logged-in market adds to the vitrine's
+    /// Hotmart product.
+    fn sample_market_signals() -> Signals {
+        Signals {
+            commission: Some(Money::new(
+                rust_decimal::Decimal::new(4850, 2),
+                Currency::Brl,
+            )),
+            temperature: Some(35),
+            affiliation: Some(Affiliation::Immediate),
+            affiliation_page: Some(
+                "https://app.hotmart.com/market/details?productUcode=abc-123".into(),
+            ),
+            ..Signals::default()
+        }
+    }
+
+    /// What 0.8.0 saves: the signal the owner typed on the Hotmart product.
+    const SAMPLE_TYPED_SUPPORT: Support = Support::Good;
+
+    /// What 0.8.0 saves: a Monetizze product read from its market, which
+    /// the owner chose to promote.
+    fn sample_chosen_prospect() -> FoundProspect {
+        FoundProspect {
+            platform: AffiliatePlatform::Monetizze,
+            key: "98765".into(),
+            name: "Kit de temperos artesanais".into(),
+            signals: Signals {
+                commission_rate: Some(Percentage::new(40.into()).unwrap()),
+                bars: Some(60),
+                format: Some(ProductFormat::Physical),
+                category: Some("Culinária".into()),
+                ..Signals::default()
+            },
+        }
+    }
+
+    /// What 0.8.0 saves: a Kiwify product the owner pasted and dismissed.
+    fn sample_dismissed_prospect() -> FoundProspect {
+        FoundProspect {
+            platform: AffiliatePlatform::Kiwify,
+            key: prospect_key_of("https://dashboard.kiwify.com.br/marketplace/AbC123?ref=x")
+                .unwrap(),
+            name: "Planilha de finanças".into(),
+            signals: Signals {
+                commission_rate: Some(Percentage::new(10.into()).unwrap()),
+                ..Signals::default()
+            },
+        }
+    }
+
+    const SAMPLE_DISMISSED_REASON: &str = "Comissão baixa";
+
     /// What 0.6.0 saves: the Work Context the owner picked.
     const SAMPLE_WORK_CONTEXT: WorkContext = WorkContext::Shopee;
 
@@ -1334,6 +1409,7 @@ mod tests {
                 .add_program(&sample_added_program())
                 .await
                 .unwrap();
+            keep_prospects(&affiliate).await;
             let channels = PromotionChannels::new(database.clone(), clock.clone(), ids.clone());
             let channel = channels.create(&sample_channel()).await.unwrap();
             let channel = channels
@@ -1487,6 +1563,53 @@ mod tests {
                     }],
                 },
             )
+            .await
+            .unwrap();
+    }
+
+    /// What 0.8.0 saves: the Hotmart Prospect read from the vitrine and the
+    /// market, with a signal typed by hand; the Monetizze one the owner
+    /// chose to promote; the Kiwify one the owner pasted and dismissed.
+    async fn keep_prospects(affiliate: &Affiliate) {
+        let hotmart = sample_vitrine_prospect();
+        affiliate
+            .save_prospect(&hotmart, SignalOrigin::Vitrine)
+            .await
+            .unwrap();
+        affiliate
+            .save_prospect(
+                &FoundProspect {
+                    signals: sample_market_signals(),
+                    ..hotmart.clone()
+                },
+                SignalOrigin::Market,
+            )
+            .await
+            .unwrap();
+        affiliate
+            .save_prospect(
+                &FoundProspect {
+                    signals: Signals {
+                        support: Some(SAMPLE_TYPED_SUPPORT),
+                        ..Signals::default()
+                    },
+                    ..hotmart
+                },
+                SignalOrigin::Typed,
+            )
+            .await
+            .unwrap();
+        let chosen = affiliate
+            .save_prospect(&sample_chosen_prospect(), SignalOrigin::Market)
+            .await
+            .unwrap();
+        affiliate.promote_prospect(chosen).await.unwrap();
+        let dismissed = affiliate
+            .save_prospect(&sample_dismissed_prospect(), SignalOrigin::Typed)
+            .await
+            .unwrap();
+        affiliate
+            .dismiss_prospect(dismissed, SAMPLE_DISMISSED_REASON)
             .await
             .unwrap();
     }
@@ -2149,21 +2272,86 @@ mod tests {
                     .into_iter()
                     .filter(|program| program.provisional)
                     .collect();
+                // Prospects arrived in 0.8.0: the one the owner chose added
+                // its Program before its first sale too.
+                let since_0_8_0 = Version::parse(released) >= Version::parse("0.8.0");
                 if since_0_6_0 {
-                    assert_eq!(added_before.len(), 1, "{name}");
+                    assert_eq!(added_before.len(), 1 + usize::from(since_0_8_0), "{name}");
+                    let added = added_before
+                        .iter()
+                        .find(|program| program.platform == sample_added_program().platform)
+                        .expect(released);
                     assert_eq!(
-                        added_before[0].platform,
-                        sample_added_program().platform,
-                        "{name}"
-                    );
-                    assert_eq!(
-                        added_before[0].product.as_deref(),
+                        added.product.as_deref(),
                         Some(sample_added_program().product.as_str()),
                         "{name}"
                     );
                 } else {
                     assert!(added_before.is_empty(), "{name}");
                 }
+                // Each Prospect signal keeps where it came from, the chosen
+                // one keeps its Program, the dismissed one stays out, and
+                // reading the vitrine again changes nothing.
+                let prospects = affiliate.prospects(None).await.unwrap();
+                if since_0_8_0 {
+                    assert_eq!(prospects.len(), 2, "{name}");
+                    let vitrine = sample_vitrine_prospect();
+                    let read = prospects
+                        .iter()
+                        .find(|prospect| prospect.platform == vitrine.platform)
+                        .expect(released);
+                    assert_eq!(read.key, vitrine.key, "{name}");
+                    let market = sample_market_signals();
+                    assert_eq!(
+                        read.signals,
+                        Signals {
+                            commission: market.commission,
+                            temperature: market.temperature,
+                            affiliation: market.affiliation,
+                            affiliation_page: market.affiliation_page,
+                            support: Some(SAMPLE_TYPED_SUPPORT),
+                            ..vitrine.signals.clone()
+                        },
+                        "{name}"
+                    );
+                    for (kind, origin) in [
+                        (SignalKind::Rating, SignalOrigin::Vitrine),
+                        (SignalKind::Temperature, SignalOrigin::Market),
+                        (SignalKind::Support, SignalOrigin::Typed),
+                    ] {
+                        assert_eq!(
+                            read.reading(kind).map(|reading| reading.origin),
+                            Some(origin),
+                            "{name}"
+                        );
+                    }
+                    assert!(read.program.is_none() && !read.chosen, "{name}");
+                    affiliate
+                        .save_prospect(&vitrine, SignalOrigin::Vitrine)
+                        .await
+                        .unwrap();
+                    assert_eq!(affiliate.prospect(read.id).await.unwrap(), *read, "{name}");
+                    let chosen = prospects
+                        .iter()
+                        .find(|prospect| prospect.key == sample_chosen_prospect().key)
+                        .expect(released);
+                    assert!(chosen.chosen, "{name}");
+                    let program = affiliate.program(chosen.program.unwrap()).await.unwrap();
+                    assert!(program.provisional, "{name}");
+                    assert_eq!(program.platform, AffiliatePlatform::Monetizze, "{name}");
+                    assert_eq!(
+                        program.product.as_deref(),
+                        Some(sample_chosen_prospect().name.as_str()),
+                        "{name}"
+                    );
+                } else {
+                    assert!(prospects.is_empty(), "{name}");
+                }
+                assert_eq!(
+                    affiliate.dismissed_prospects(None).await.unwrap(),
+                    u64::from(since_0_8_0),
+                    "{name}"
+                );
                 assert!(affiliate.joins().await.unwrap().is_empty(), "{name}");
                 let added = affiliate
                     .add_program(&NewProgram {
