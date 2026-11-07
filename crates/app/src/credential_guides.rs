@@ -44,34 +44,48 @@ pub fn guide(connection: Connection) -> Guide {
             const GUIDE: Guide = Guide {
                 steps: &[
                     step_at(
-                        "Entre no DevCenter do Mercado Livre com a mesma conta em que você vende.",
+                        "Entre no DevCenter do Mercado Livre com a conta principal em que você \
+                     vende (não a de um colaborador) e clique em Criar nova aplicação. Preencha \
+                     nome, nome curto, descrição de até 150 caracteres e logotipo.",
                         "Abrir o DevCenter",
                         "https://developers.mercadolivre.com.br/devcenter",
                     ),
+                    // `LOGIN_REDIRECT`, checked by a test: the owner copies
+                    // the address the browser lands on back into the app.
                     step(
-                        "Crie uma aplicação nova: nome, nome curto, descrição de até 150 \
-                     caracteres e um logotipo.",
-                    ),
-                    // The redirect URI is required and must be https; the address the
-                    // Conectar button will use is decided with the seller login (#10).
-                    step(
-                        "Em URI de redirect, o Mercado Livre exige um endereço https. Enquanto o \
-                     botão Conectar não chega, cadastre https://github.com/fernandolisboa; o \
-                     app vai mostrar o endereço definitivo, e você troca na mesma aplicação.",
+                        "Em URIs de redirect, cadastre https://github.com/fernandolisboa \
+                     exatamente assim, sem barra no fim. Depois do login, o Mercado Livre manda \
+                     o navegador para lá com o código que você cola no Mascate.",
                     ),
                     step(
-                        "Nos escopos, marque leitura, escrita e acesso offline: com o acesso \
-                     offline o app renova o login sozinho. Os tópicos de notificação podem \
-                     ficar vazios, porque o app busca as mudanças por conta própria.",
+                        "Em Fluxos OAuth, marque Authorization Code e Refresh Token e desmarque \
+                     Client Credentials. Deixe PKCE desmarcado. Em Negócios, marque só Mercado \
+                     Livre: VIS é Veículos, Imóveis e Serviços, que o app não usa.",
+                    ),
+                    // The least each area needs: the app answers questions,
+                    // publishes, runs Product Ads and Promotions and prints
+                    // labels; it only reads the fees and the metrics.
+                    step(
+                        "Em Permissões, Usuários já vem fixa. Marque Leitura e escrita em \
+                     Comunicações pré e pós-vendas, Publicação e sincronização, Publicidade de \
+                     um produto, Promoções, cupons e descontos e Venda e envios de um produto. \
+                     Marque só Leitura em Faturamento de uma venda e Métricas do negócio.",
                     ),
                     step(
-                        "Salve e abra a aplicação na lista do DevCenter. Copie o App ID, que é o \
-                     Client ID, e a Secret Key, que é o Client Secret.",
+                        "Não marque nenhum tópico e deixe vazia a URL de retornos de chamada de \
+                     notificação: o app busca as mudanças sozinho. Aceite os termos e clique em \
+                     Criar.",
+                    ),
+                    step(
+                        "Em Minhas aplicações, a aplicação mostra o Client ID. Abra a aplicação e \
+                     copie o Client ID e a Secret Key, que é o Client Secret.",
                     ),
                 ],
                 then: Some(
-                    "Depois de salvar, falta entrar na sua conta de vendedor pelo botão Conectar, \
-                 que chega numa próxima versão.",
+                    "Depois de salvar, clique em Entrar no Mercado Livre, entre com a conta em que \
+                 você vende, autorize o app e cole o endereço em que o navegador parou. O app \
+                 renova o login sozinho; se o Mercado Livre deixar de aceitar, entre de novo \
+                 do mesmo jeito.",
                 ),
             };
             GUIDE
@@ -213,8 +227,9 @@ pub fn guide(connection: Connection) -> Guide {
                     step_at(
                         "Abra Apps e serviços › Desenvolver apps e preencha o perfil de \
                      desenvolvedor como desenvolvedor privado, para uso só na própria conta. \
-                     Marque os papéis Product Listing, Pricing e Inventory and Order \
-                     Tracking; peça também Direct-to-Consumer Shipping, o papel restrito que \
+                     Marque os papéis Product Listing, Pricing, Inventory and Order Tracking \
+                     e Finance and Accounting, que lê as tarifas e os repasses de cada \
+                     pedido; peça também Direct-to-Consumer Shipping, o papel restrito que \
                      libera o endereço do comprador para os pedidos e passa por análise da \
                      Amazon.",
                         "Abrir Desenvolver apps",
@@ -266,12 +281,12 @@ pub fn guide(connection: Connection) -> Guide {
                         "Abrir o console",
                         "https://open.shopee.com/console",
                     ),
-                    // The app has no address of its own yet (#10): the owner
-                    // copies the one the browser lands on.
+                    // `LOGIN_REDIRECT`, checked by a test.
                     step(
-                        "No app, em Redirect URL Domain, cadastre https://github.com/fernandolisboa: \
-                     depois do login, a Shopee manda o navegador para lá com o código que você \
-                     cola no Mascate.",
+                        "No app, cadastre https://github.com/fernandolisboa nos dois domínios de \
+                     redirect, o de teste (Test Redirect URL Domain) e o de produção (Live \
+                     Redirect URL Domain): depois do login, a Shopee manda o navegador para lá \
+                     com o código que você cola no Mascate.",
                     ),
                     step(
                         "Peça a publicação do app (Go Live). Aprovado, copie o Live Partner ID, um \
@@ -305,9 +320,7 @@ pub fn guide(connection: Connection) -> Guide {
                         "Baixar o idm",
                         "https://github.com/luizalabs/id-magalu-cli/releases",
                     ),
-                    // The app has no address of its own yet (#10): the owner
-                    // copies the one the browser lands on. The scopes are
-                    // `MAGALU_SCOPES`, checked by a test.
+                    // `LOGIN_REDIRECT` and `MAGALU_SCOPES`, checked by tests.
                     step(
                         "Crie o cliente do app com: idm client create --name \"Mascate\" \
                      --description \"Gestão da loja\" --terms-of-use \
@@ -350,7 +363,7 @@ pub fn guide(connection: Connection) -> Guide {
                      https://github.com/fernandolisboa/mascate, e peça o acesso Trial. O \
                      Pinterest analisa o pedido e avisa por e-mail.",
                     ),
-                    // The app has no address of its own (#10): the browser
+                    // `PINTEREST_REDIRECT`, checked by a test: the browser
                     // stops at localhost and the owner copies the address.
                     step(
                         "Com o acesso aprovado, abra o app em My apps e, em Redirect URIs, \
@@ -684,6 +697,28 @@ mod tests {
             )),
             "{command}"
         );
+    }
+
+    #[test]
+    fn each_browser_login_guide_registers_the_address_the_app_sends() {
+        for (connection, redirect) in [
+            (Connection::MercadoLivre, crate::connections::LOGIN_REDIRECT),
+            (Connection::ShopeeSeller, crate::connections::LOGIN_REDIRECT),
+            (Connection::Magalu, crate::connections::LOGIN_REDIRECT),
+            (
+                Connection::Pinterest,
+                mascate_integrations::PINTEREST_REDIRECT,
+            ),
+        ] {
+            assert!(
+                guide(connection)
+                    .steps
+                    .iter()
+                    .any(|step| step.text.contains(&format!("{redirect} "))
+                        || step.text.contains(&format!("{redirect}\""))),
+                "{connection:?} does not register {redirect}"
+            );
+        }
     }
 
     #[test]

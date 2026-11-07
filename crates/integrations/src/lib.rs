@@ -72,7 +72,8 @@ pub use magalu_affiliate_panel::{
 };
 pub use magalu_crawler::{MAGALU_CRAWLER, MagaluCrawler, SEARCH_URL as MAGALU_SEARCH_URL};
 pub use mercado_livre::{
-    API_URL as MERCADO_LIVRE_API_URL, MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL,
+    API_URL as MERCADO_LIVRE_API_URL, AUTHORIZATION_PAGE as MERCADO_LIVRE_AUTHORIZATION_PAGE,
+    MercadoLivre, PAYMENTS_API_URL as MERCADO_PAGO_API_URL, SellerAuthorization,
 };
 pub use mercado_livre_affiliate_panel::{
     MERCADO_LIVRE_AFFILIATE_PANEL, MercadoLivreAffiliatePanel,

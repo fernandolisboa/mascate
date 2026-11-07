@@ -267,6 +267,10 @@ fn main() {
         .with_payments_api(&mercado_livre::payments_api_url(
             Build::CURRENT,
             &process_environment(),
+        ))
+        .with_authorization_page(&mercado_livre::authorization_page(
+            Build::CURRENT,
+            &process_environment(),
         )),
     );
     // The engine exists from the start so its memory and breakers outlive

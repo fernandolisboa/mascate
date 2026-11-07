@@ -1,0 +1,8 @@
+{
+  "access_token": "APP_USR-123456-090515-authorized-1234567",
+  "token_type": "bearer",
+  "expires_in": 21600,
+  "scope": "offline_access read write",
+  "user_id": 1234567,
+  "refresh_token": "TG-61828b7fffcc9a001b4bc890-first"
+}
