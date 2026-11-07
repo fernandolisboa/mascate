@@ -158,6 +158,10 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 112. Como Fernando, quero uma tela Passo a passo que leva um produto de afiliado do cadastro ao resultado, para divulgar sem procurar cada coisa em uma tela.
 113. Como Fernando, quero ser avisado quando um texto promete resultado (renda, saúde, garantia), para não ter anúncio reprovado nem conta bloqueada.
 114. Como Fernando, quero ser avisado quando um atraso ou cancelamento a mais tira o verde da minha reputação no ML, com um botão para pausar os anúncios sob encomenda, para não perder exposição em todos os anúncios.
+115. Como Fernando, quero que o Mascate garimpe produtos para eu me afiliar, pontuados por comissão em reais, vendas, material e criador, com o motivo de cada nota, para não ter de garimpar sozinho cada Platform.
+116. Como Fernando, quero ver as apostas, produtos novos e bons com poucos afiliados ainda, num filtro próprio, para entrar antes da concorrência.
+117. Como Fernando, quero cadastrar à mão um produto de qualquer Platform de afiliado e ter um link direto para o mercado e para a página de afiliação dela, para usar o garimpo onde o app não lê sozinho.
+118. Como Fernando, quero escolher um produto do garimpo e cair no Passo a passo com o Program já criado, ou descartá-lo com um motivo para ele não voltar, para ir da escolha à divulgação sem retrabalho.
 
 ## Implementation Decisions
 
@@ -165,7 +169,7 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 
 - App desktop nativo em Rust com interface em GPUI e `gpui-component` (ADR 0001). Versões fixadas.
 - Monólito modular num workspace Cargo, um crate por módulo, cada um com interface pública explícita; nenhum módulo lê tabelas de outro; comunicação por chamada à interface pública ou evento interno (ADR 0002).
-- Módulos: **Catalog & Discovery** (Product, Supplier, Supplier Offer, Product Source, Opportunity), **Commerce** (Listing, Order, Purchase Order, Fee, Price Suggestion, Promotion), **Inventory** (Stock Location, Stock Movement, Average Cost), **Affiliate** (Program, Affiliate Link, Conversion, Commission, Payout), **Marketing** (Offer Post, Listing Copy, Promotion Channel, Sales Event, qualidade de anúncio), **Integrations** (Connections, adapters por Platform, Syncs, importadores de arquivo), **Finance & Reporting** (margens, painel, Reminders). Mais um crate de plataforma do app (backup, atualização, migrações, flags, cofre de segredos) e o crate de interface.
+- Módulos: **Catalog & Discovery** (Product, Supplier, Supplier Offer, Product Source, Opportunity), **Commerce** (Listing, Order, Purchase Order, Fee, Price Suggestion, Promotion), **Inventory** (Stock Location, Stock Movement, Average Cost), **Affiliate** (Program, Affiliate Link, Conversion, Commission, Payout, Prospect), **Marketing** (Offer Post, Listing Copy, Promotion Channel, Sales Event, qualidade de anúncio), **Integrations** (Connections, adapters por Platform, Syncs, importadores de arquivo), **Finance & Reporting** (margens, painel, Reminders). Mais um crate de plataforma do app (backup, atualização, migrações, flags, cofre de segredos) e o crate de interface.
 - A interface é uma camada fina sobre o núcleo: telas chamam a interface pública dos módulos e não têm regra de negócio, para que outra interface (macOS, celular, web) reaproveite o núcleo.
 
 ### Dados

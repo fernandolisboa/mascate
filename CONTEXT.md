@@ -184,6 +184,10 @@ _Avoid_: ganho, receita, estorno (quando a venda só não se concretizou)
 Repasse de dinheiro de um Program para o Fernando, cobrindo uma ou mais Commissions.
 _Avoid_: saque, pagamento (sozinho)
 
+**Prospect**:
+Produto de uma Platform de afiliado que o Fernando ainda não divulga, achado no garimpo ou cadastrado à mão, com os sinais lidos (comissão, temperatura, Blueprint, nota, alunos, criador) e a pontuação. Pode ser uma aposta: novo, bom e com poucos afiliados. Escolhido, vira um Program provisório; descartado, leva um motivo e nunca volta.
+_Avoid_: candidato, oportunidade (é da revenda), achado
+
 ## Marketing
 
 **Promotion Channel**:
