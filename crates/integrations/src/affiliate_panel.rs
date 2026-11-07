@@ -66,16 +66,21 @@ impl PanelPage {
     /// Whether the panel sent the browser to a login or to a check of who
     /// is asking, which only the owner answers.
     pub(crate) fn is_login(&self) -> bool {
-        let path = self
-            .url
-            .split_once("://")
-            .map_or(self.url.as_str(), |(_, rest)| rest)
-            .split(['?', '#'])
-            .next()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        asks_who_is_there(&path)
+        lands_on_login(&self.url)
     }
+}
+
+/// Whether a page that ended on `url` is a login or a check of who is
+/// asking instead of what was asked for.
+pub(crate) fn lands_on_login(url: &str) -> bool {
+    let path = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    asks_who_is_there(&path)
 }
 
 /// A header or a status as letters and digits only, accents dropped:
@@ -146,7 +151,7 @@ impl Panel {
     /// next reading tries again.
     pub(crate) fn open_login(&self, login: &str) -> Result<(), PlatformError> {
         self.browser.open_window(login)?;
-        self.logged_out.store(false, Ordering::Relaxed);
+        self.set_logged_out(false);
         Ok(())
     }
 
@@ -154,6 +159,33 @@ impl Panel {
     /// without a browser, the profile never opened or the login gone, it
     /// says so instead.
     pub(crate) fn read(&self, url: &str) -> Result<PanelPage, PlatformError> {
+        let ready = |value: &Value| {
+            PanelPage::deserialize(value)
+                .is_ok_and(|page| page.is_login() || !page.tables.is_empty())
+        };
+        let value = self.evaluate(url, TABLES_SCRIPT, &ready)?;
+        let page = PanelPage::deserialize(&value).map_err(|error| {
+            PlatformError::Failed(format!(
+                "a leitura do painel voltou sem as tabelas: {error}"
+            ))
+        })?;
+        let logged_out = page.is_login();
+        self.set_logged_out(logged_out);
+        if logged_out {
+            return Err(PlatformError::Expired);
+        }
+        Ok(page)
+    }
+
+    /// What `script`, which only reads, gives on the page at `url` once
+    /// `ready` accepts it: without a browser or the profile never opened,
+    /// it says so instead and opens nothing.
+    pub(crate) fn evaluate(
+        &self,
+        url: &str,
+        script: &str,
+        ready: &dyn Fn(&Value) -> bool,
+    ) -> Result<Value, PlatformError> {
         match self.state() {
             PanelState::NoBrowser => {
                 return Err(PlatformError::Refused(
@@ -163,22 +195,12 @@ impl Panel {
             PanelState::NeverLoggedIn => return Err(PlatformError::NotConnected),
             PanelState::LoggedOut | PanelState::Ready => {}
         }
-        let ready = |value: &Value| {
-            PanelPage::deserialize(value)
-                .is_ok_and(|page| page.is_login() || !page.tables.is_empty())
-        };
-        let value = self.browser.read(url, TABLES_SCRIPT, &ready)?;
-        let page = PanelPage::deserialize(&value).map_err(|error| {
-            PlatformError::Failed(format!(
-                "a leitura do painel voltou sem as tabelas: {error}"
-            ))
-        })?;
-        let logged_out = page.is_login();
+        self.browser.read(url, script, ready)
+    }
+
+    /// Remembers whether the last reading found a login page.
+    pub(crate) fn set_logged_out(&self, logged_out: bool) {
         self.logged_out.store(logged_out, Ordering::Relaxed);
-        if logged_out {
-            return Err(PlatformError::Expired);
-        }
-        Ok(page)
     }
 
     /// Every sale `report` shows under the panel at `panel_url`: the report

@@ -646,3 +646,169 @@ impl ProspectSource for Blocked {
         Some(noon())
     }
 }
+
+const EXCEL_MARKET: &str = "https://app.hotmart.com/market/details?productUcode=c4d5e6f7";
+
+/// Excel as the market shows it: under the market's code when the card
+/// does not show Hotmart's id, with its affiliation page.
+fn excel_in_the_market() -> FoundProspect {
+    FoundProspect {
+        platform: AffiliatePlatform::Hotmart,
+        key: "c4d5e6f7".into(),
+        name: "Excel do Zero ao Avançado".into(),
+        signals: Signals {
+            temperature: Some(30),
+            commission_rate: Some(percent("40")),
+            affiliation_page: Some(EXCEL_MARKET.into()),
+            ..Signals::default()
+        },
+    }
+}
+
+#[test]
+fn the_market_finds_a_product_read_before_by_its_affiliation_page_and_keeps_its_key() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let read_before = FoundProspect {
+            signals: Signals {
+                affiliation_page: Some(EXCEL_MARKET.into()),
+                ..excel().signals
+            },
+            ..excel()
+        };
+        let id = fixture
+            .affiliate
+            .save_prospect(&read_before, SignalOrigin::Vitrine)
+            .await
+            .unwrap();
+
+        let read = fixture
+            .affiliate
+            .read_prospects(&Market(vec![excel_in_the_market()]), None)
+            .await
+            .unwrap();
+
+        assert_eq!((read.found, read.added), (1, 0));
+        let kept = fixture.affiliate.prospects(None).await.unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!((kept[0].id, kept[0].key.as_str()), (id, "4021"));
+        assert_eq!(kept[0].signals.temperature, Some(30));
+        assert_eq!(kept[0].signals.students, Some(12_000));
+        assert_eq!(
+            kept[0].reading(SignalKind::Temperature).unwrap().origin,
+            SignalOrigin::Market
+        );
+        assert_eq!(
+            kept[0].reading(SignalKind::Students).unwrap().origin,
+            SignalOrigin::Vitrine
+        );
+    });
+}
+
+#[test]
+fn two_prospects_of_one_product_fold_into_the_one_just_read_keeping_signals_and_choices() {
+    block_on(async {
+        let fixture = Fixture::new().await;
+        let in_the_market = fixture
+            .affiliate
+            .save_prospect(&excel_in_the_market(), SignalOrigin::Market)
+            .await
+            .unwrap();
+        let program = fixture
+            .affiliate
+            .promote_prospect(in_the_market)
+            .await
+            .unwrap();
+        fixture
+            .affiliate
+            .dismiss_prospect(in_the_market, "nicho saturado")
+            .await
+            .unwrap();
+        let in_the_vitrine = fixture
+            .affiliate
+            .save_prospect(&excel(), SignalOrigin::Vitrine)
+            .await
+            .unwrap();
+        fixture.clock.advance(TimeDelta::hours(1));
+        let page = FoundProspect {
+            signals: Signals {
+                warranty_days: Some(7),
+                affiliation_page: Some(EXCEL_MARKET.into()),
+                ..Signals::default()
+            },
+            ..excel()
+        };
+
+        let id = fixture
+            .affiliate
+            .save_prospect(&page, SignalOrigin::Vitrine)
+            .await
+            .unwrap();
+
+        assert_eq!(id, in_the_vitrine);
+        assert!(fixture.affiliate.prospects(None).await.unwrap().is_empty());
+        assert!(matches!(
+            fixture.affiliate.prospect(in_the_market).await,
+            Err(AffiliateError::NoSuchProspect)
+        ));
+        let kept = fixture.affiliate.prospect(id).await.unwrap();
+        assert_eq!(kept.key, "4021");
+        assert_eq!(kept.dismissed.as_deref(), Some("nicho saturado"));
+        assert_eq!((kept.program, kept.chosen), (Some(program.id), true));
+        assert_eq!(kept.signals.temperature, Some(30));
+        assert_eq!(kept.signals.commission_rate, Some(percent("40")));
+        assert_eq!(kept.signals.students, Some(12_000));
+        assert_eq!(kept.signals.warranty_days, Some(7));
+        let temperature = kept.reading(SignalKind::Temperature).unwrap();
+        assert_eq!(
+            (temperature.origin, temperature.read_at),
+            (SignalOrigin::Market, noon())
+        );
+        let page_reading = kept.reading(SignalKind::AffiliationPage).unwrap();
+        assert_eq!(
+            (page_reading.origin, page_reading.read_at),
+            (SignalOrigin::Vitrine, noon() + TimeDelta::hours(1))
+        );
+        assert_eq!(
+            fixture.affiliate.dismissed_prospects(None).await.unwrap(),
+            1
+        );
+
+        let again = fixture
+            .affiliate
+            .read_prospects(&Market(vec![excel_in_the_market()]), None)
+            .await
+            .unwrap();
+        assert_eq!((again.added, again.dismissed), (0, 1));
+        assert_eq!(fixture.affiliate.prospect(id).await.unwrap().key, "4021");
+    });
+}
+
+/// The logged-in market, showing the same products on every read.
+struct Market(Vec<FoundProspect>);
+
+impl ProspectSource for Market {
+    fn platform(&self) -> AffiliatePlatform {
+        AffiliatePlatform::Hotmart
+    }
+
+    fn origin(&self) -> SignalOrigin {
+        SignalOrigin::Market
+    }
+
+    fn categories(&self) -> Result<Vec<ProspectCategory>, PlatformError> {
+        Ok(Vec::new())
+    }
+
+    fn prospects(&self, _: Option<&ProspectCategory>) -> Result<Vec<FoundProspect>, PlatformError> {
+        Ok(self.0.clone())
+    }
+
+    fn details(&self, known: &FoundProspect) -> Result<FoundProspect, PlatformError> {
+        Ok(known.clone())
+    }
+
+    fn blocked_until(&self) -> Option<Timestamp> {
+        None
+    }
+}

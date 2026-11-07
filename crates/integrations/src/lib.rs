@@ -13,6 +13,7 @@ mod crawler;
 mod eduzz;
 mod escaped;
 mod hotmart;
+mod hotmart_affiliate_market;
 mod hotmart_crawler;
 mod instagram;
 mod kiwify;
@@ -53,6 +54,12 @@ pub use crawler::Crawler;
 pub use eduzz::{API_URL as EDUZZ_API_URL, Eduzz, LINKS as EDUZZ_LINKS};
 pub use hotmart::{
     API_URL as HOTMART_API_URL, AUTH_URL as HOTMART_AUTH_URL, Hotmart, LINKS as HOTMART_LINKS,
+};
+pub use hotmart_affiliate_market::{
+    HOTMART_AFFILIATE_MARKET, HotmartAffiliateMarket, INTERVAL as HOTMART_MARKET_INTERVAL,
+    MARKET_SCRIPT as HOTMART_MARKET_SCRIPT, MARKET_URL as HOTMART_AFFILIATE_MARKET_URL, MarketStop,
+    PAGES_PER_CLICK as HOTMART_MARKET_PAGES_PER_CLICK, STOPPED_FOR as HOTMART_MARKET_STOPPED_FOR,
+    Stopped as MarketStopped, affiliation_page as hotmart_affiliation_page,
 };
 pub use hotmart_crawler::{
     HOTMART_CRAWLER, HotmartCrawler, MARKETPLACE_URL as HOTMART_MARKETPLACE_URL,
@@ -155,6 +162,7 @@ pub const FLAGS: &[Flag] = &[
     AMAZON_CRAWLER,
     MAGALU_CRAWLER,
     HOTMART_CRAWLER,
+    HOTMART_AFFILIATE_MARKET,
     MERCADO_LIVRE_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL,
 ];

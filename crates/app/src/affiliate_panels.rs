@@ -4,7 +4,8 @@
 //! lives in the browser's own profile: whether a browser is installed,
 //! "Entrar no painel" to log in by hand in its window, and "Ler painel
 //! agora". The hourly Commissions Sync reads every panel that is on and
-//! logged in.
+//! logged in. Hotmart's affiliate market (#221) shares the browser and its
+//! profile, but only Garimpo reads it, on the owner's click.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -16,11 +17,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, EventEmitter, Global, Window, div};
 use mascate_affiliate::AffiliateError;
 use mascate_integrations::{
-    AffiliatePanel, BrowserSession, MAGALU_AFFILIATE_PANEL, MAGALU_AFFILIATE_PANEL_URL,
+    AffiliatePanel, BrowserSession, HOTMART_AFFILIATE_MARKET, HOTMART_AFFILIATE_MARKET_URL,
+    HotmartAffiliateMarket, MAGALU_AFFILIATE_PANEL, MAGALU_AFFILIATE_PANEL_URL,
     MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL, MagaluAffiliatePanel,
     MercadoLivreAffiliatePanel, PanelState,
 };
-use mascate_kernel::PlatformError;
+use mascate_kernel::{PlatformError, SystemClock, ThreadPause};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
 
 use crate::affiliate::{CommissionSyncs, affiliate, failure, recorded_text};
@@ -35,6 +37,7 @@ use crate::restricted::AppFlags;
 pub struct Panels {
     pub browser: Arc<BrowserSession>,
     pub sites: Vec<PanelSite>,
+    pub hotmart_market: MarketSite,
 }
 
 pub struct AppAffiliatePanels(pub Arc<Panels>);
@@ -50,6 +53,39 @@ pub fn panels(cx: &App) -> Option<Arc<Panels>> {
 /// beside the database, never the owner's daily profile.
 pub fn profile_folder(data: PathBuf) -> PathBuf {
     data.join("navegador")
+}
+
+/// Where the reading of Hotmart's affiliate market is stopped, so a stop
+/// outlasts a restart: beside the browser's profile, never inside it.
+pub fn market_stop_file(data: PathBuf) -> PathBuf {
+    data.join("mercado-hotmart-parado")
+}
+
+/// Hotmart's Mercado de Afiliação, read for Garimpo.
+pub struct MarketSite {
+    pub url: String,
+    stop_file: Option<PathBuf>,
+    /// Built the first time its flag is found on, and kept, so its memory
+    /// of pages, its interval and its stop last while the app runs.
+    built: OnceLock<Arc<HotmartAffiliateMarket>>,
+}
+
+impl MarketSite {
+    /// The market or, in a development build only, the URL in
+    /// `MASCATE_HOTMART_AFFILIATE_MARKET_URL`, a local fake page; a stop is
+    /// kept in `stop_file`.
+    pub fn hotmart(build: Build, environment: &Environment, stop_file: Option<PathBuf>) -> Self {
+        Self {
+            url: crate::mercado_livre::local_fake(
+                build,
+                environment,
+                "MASCATE_HOTMART_AFFILIATE_MARKET_URL",
+            )
+            .unwrap_or_else(|| HOTMART_AFFILIATE_MARKET_URL.to_owned()),
+            stop_file,
+            built: OnceLock::new(),
+        }
+    }
 }
 
 /// A Platform's affiliate panel.
@@ -127,6 +163,36 @@ impl Panels {
             }
         }
         Ok(on)
+    }
+}
+
+impl Panels {
+    /// Hotmart's affiliate market while its flag is on; off, it is never
+    /// built and no browser opens for it.
+    pub async fn hotmart_market(
+        &self,
+        flags: &Flags,
+    ) -> Result<Option<Arc<HotmartAffiliateMarket>>, FlagError> {
+        if !flags.is_on(&HOTMART_AFFILIATE_MARKET).await? {
+            return Ok(None);
+        }
+        let site = &self.hotmart_market;
+        Ok(Some(
+            site.built
+                .get_or_init(|| {
+                    let market = HotmartAffiliateMarket::new(
+                        &site.url,
+                        self.browser.clone(),
+                        Arc::new(SystemClock),
+                        Arc::new(ThreadPause),
+                    );
+                    Arc::new(match &site.stop_file {
+                        Some(file) => market.with_stop_file(file.clone()),
+                        None => market,
+                    })
+                })
+                .clone(),
+        ))
     }
 }
 
@@ -493,6 +559,7 @@ mod tests {
             let panels = Panels {
                 browser: Arc::new(BrowserSession::new(None, profile.clone())),
                 sites: PanelSite::all(Build::Release, &nowhere()),
+                hotmart_market: MarketSite::hotmart(Build::Release, &nowhere(), None),
             };
             let shown = |on: &[(&PanelSite, Arc<dyn AffiliatePanel>)]| {
                 on.iter()
@@ -522,6 +589,48 @@ mod tests {
                     ("da Magalu", PanelState::NoBrowser),
                 ]
             );
+            assert!(!profile.exists());
+        });
+    }
+
+    #[test]
+    fn hotmarts_market_is_built_only_while_its_flag_is_on_and_opens_nothing_meanwhile() {
+        block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let database = Arc::new(Database::open(&dir.path().join("m.db")).await.unwrap());
+            migrate(&database, &SystemClock, &[mascate_platform::MIGRATIONS])
+                .await
+                .unwrap();
+            let flags = Flags::new(
+                database,
+                Registry::new(&[mascate_integrations::FLAGS]).unwrap(),
+                Arc::new(SystemClock),
+                Arc::new(SequentialIds::default()),
+            );
+            let profile = profile_folder(dir.path().to_path_buf());
+            let panels = Panels {
+                browser: Arc::new(BrowserSession::new(None, profile.clone())),
+                sites: PanelSite::all(Build::Release, &nowhere()),
+                hotmart_market: MarketSite::hotmart(
+                    Build::Release,
+                    &nowhere(),
+                    Some(market_stop_file(dir.path().to_path_buf())),
+                ),
+            };
+
+            let off = panels.hotmart_market(&flags).await.unwrap();
+            let built_while_off = panels.hotmart_market.built.get().is_some();
+            let request = flags.request_turn_on(HOTMART_AFFILIATE_MARKET.key).unwrap();
+            assert_eq!(request.flag().risk, HOTMART_AFFILIATE_MARKET.risk);
+            flags.turn_on(request.confirm("fernando")).await.unwrap();
+            let on = panels.hotmart_market(&flags).await.unwrap().unwrap();
+            let again = panels.hotmart_market(&flags).await.unwrap().unwrap();
+
+            assert!(off.is_none());
+            assert!(!built_while_off);
+            assert!(Arc::ptr_eq(&on, &again));
+            assert_eq!(on.state(), PanelState::NoBrowser);
+            assert_eq!(panels.hotmart_market.url, "https://app.hotmart.com/market");
             assert!(!profile.exists());
         });
     }

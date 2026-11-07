@@ -40,8 +40,11 @@ Como o leitor lê a vitrine:
 - A página do produto só é lida quando você pede, para um Prospect: soma alunos (`totalUsers`),
   garantia (`dataSheet.warranty`), desde quando o produtor está na Hotmart (`hotmarter.userSince`),
   perfil verificado (`VERIFIED_PROFILE` em `hotmarter.activeBadges`) e a nota de `customerReview`.
-- A vitrine não traz preço, comissão, temperatura nem a página de afiliação: esses vêm do mercado
-  logado (#221) ou digitados; a tela leva ao mercado da Hotmart para se afiliar.
+- A vitrine não traz preço, comissão nem temperatura: esses vêm do mercado logado (#221) ou
+  digitados. A página do produto traz o `ucode` do produto (conferido à mão em 07/11/2026, em
+  `profile.product`), e o leitor guarda com ele a página de afiliação
+  `https://app.hotmart.com/market/details?productUcode={ucode}`, a mesma que o leitor do mercado
+  escreve; em `product.html`, o `ucode` está no produto da página e no relacionado, que não entra.
 
 Inventados ou completados (conferir no regression pass):
 

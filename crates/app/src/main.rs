@@ -114,7 +114,7 @@ use mascate_platform::{
 use crate::ads::{AppAdCampaigns, AppProductAds};
 use crate::affiliate::{AppAffiliate, CommissionSources};
 use crate::affiliate_links::LinkTaggers;
-use crate::affiliate_panels::{AppAffiliatePanels, PanelSite, Panels};
+use crate::affiliate_panels::{AppAffiliatePanels, MarketSite, PanelSite, Panels};
 use crate::backups::{AppBackups, UnopenedDatabase};
 use crate::catalog::AppCatalog;
 use crate::connections::AppConnections;
@@ -290,9 +290,14 @@ fn main() {
             AppAffiliatePanels(Arc::new(Panels {
                 browser: Arc::new(mascate_integrations::BrowserSession::new(
                     installed_browser(&*process_environment()),
-                    affiliate_panels::profile_folder(data),
+                    affiliate_panels::profile_folder(data.clone()),
                 )),
                 sites: PanelSite::all(Build::CURRENT, &process_environment()),
+                hotmart_market: MarketSite::hotmart(
+                    Build::CURRENT,
+                    &process_environment(),
+                    Some(affiliate_panels::market_stop_file(data)),
+                ),
             }))
         });
     let user: SharedString = system_user(&process_environment())

@@ -331,6 +331,9 @@ impl Affiliate {
         if kept_row.is_none() {
             kept_row = self.adopt_pasted(on, found, key).await?;
         }
+        if kept_row.is_none() {
+            kept_row = same_affiliation_page(on, found).await?;
+        }
         let (id, kept) = match kept_row {
             Some((id, kept_name, dismissed)) => {
                 if kept_name != name {
@@ -407,7 +410,80 @@ impl Affiliate {
                 }
             }
         }
+        self.fold_same_product(on, id, found).await?;
         Ok((id, kept))
+    }
+
+    /// Folds into `id` every other live Prospect with `found`'s affiliation
+    /// page: one product read from the market under one key and from the
+    /// vitrine under another. Each signal `id` lacks moves over with its
+    /// origin and time; the others go. A dismissal or a Program the other
+    /// one had stays with the product.
+    async fn fold_same_product(
+        &self,
+        on: &Connection,
+        id: RecordId,
+        found: &FoundProspect,
+    ) -> Result<(), AffiliateError> {
+        let Some(page) = found.signals.affiliation_page.as_deref() else {
+            return Ok(());
+        };
+        let mut rows = on
+            .query(
+                "SELECT p.id FROM affiliate_prospects p
+                 JOIN affiliate_prospect_signals s
+                   ON s.prospect_id = p.id AND s.deleted_at IS NULL
+                 WHERE p.platform = ?1 AND p.deleted_at IS NULL AND p.id <> ?2
+                   AND s.signal = ?3 AND s.value = ?4",
+                params![
+                    found.platform.code(),
+                    id.to_string(),
+                    SignalKind::AffiliationPage.code(),
+                    page
+                ],
+            )
+            .await?;
+        let mut others = Vec::new();
+        while let Some(row) = rows.next().await? {
+            others.push(row.id_at(0)?);
+        }
+        let now = stored(self.clock.now());
+        for other in others {
+            let (id, other) = (id.to_string(), other.to_string());
+            on.execute(
+                "UPDATE affiliate_prospect_signals SET deleted_at = ?1, updated_at = ?1
+                 WHERE prospect_id = ?2 AND deleted_at IS NULL AND signal IN
+                   (SELECT signal FROM affiliate_prospect_signals
+                    WHERE prospect_id = ?3 AND deleted_at IS NULL)",
+                params![now.clone(), other.clone(), id.clone()],
+            )
+            .await?;
+            on.execute(
+                "UPDATE affiliate_prospect_signals SET prospect_id = ?1, updated_at = ?2
+                 WHERE prospect_id = ?3 AND deleted_at IS NULL",
+                params![id.clone(), now.clone(), other.clone()],
+            )
+            .await?;
+            on.execute(
+                "UPDATE affiliate_prospects SET
+                   program_id = COALESCE(program_id,
+                     (SELECT program_id FROM affiliate_prospects WHERE id = ?2)),
+                   dismissed_reason = COALESCE(dismissed_reason,
+                     (SELECT dismissed_reason FROM affiliate_prospects WHERE id = ?2)),
+                   dismissed_at = COALESCE(dismissed_at,
+                     (SELECT dismissed_at FROM affiliate_prospects WHERE id = ?2)),
+                   updated_at = ?3
+                 WHERE id = ?1",
+                params![id.clone(), other.clone(), now.clone()],
+            )
+            .await?;
+            on.execute(
+                "UPDATE affiliate_prospects SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now.clone(), other],
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     /// The Prospect the owner typed with the link of `found`'s page, now
@@ -558,6 +634,32 @@ async fn kept_prospect(
         "SELECT id, name, dismissed_at IS NOT NULL FROM affiliate_prospects
          WHERE platform = ?1 AND product_key = ?2 AND deleted_at IS NULL",
         params![platform.code(), key],
+        |row| Ok((row.id_at(0)?, row.get::<String>(1)?, row.get::<bool>(2)?)),
+    )
+    .await
+}
+
+/// The live Prospect of `found`'s Platform with the same affiliation page,
+/// under another key: the oldest, when there are more.
+async fn same_affiliation_page(
+    on: &Connection,
+    found: &FoundProspect,
+) -> Result<Option<(RecordId, String, bool)>, AffiliateError> {
+    let Some(page) = found.signals.affiliation_page.as_deref() else {
+        return Ok(None);
+    };
+    first_row(
+        on,
+        "SELECT p.id, p.name, p.dismissed_at IS NOT NULL FROM affiliate_prospects p
+         JOIN affiliate_prospect_signals s ON s.prospect_id = p.id AND s.deleted_at IS NULL
+         WHERE p.platform = ?1 AND p.deleted_at IS NULL
+           AND s.signal = ?2 AND s.value = ?3
+         ORDER BY p.created_at, p.id",
+        params![
+            found.platform.code(),
+            SignalKind::AffiliationPage.code(),
+            page
+        ],
         |row| Ok((row.id_at(0)?, row.get::<String>(1)?, row.get::<bool>(2)?)),
     )
     .await

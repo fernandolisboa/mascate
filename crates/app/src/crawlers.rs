@@ -170,17 +170,22 @@ pub async fn source_if_on(
 /// Why the crawler of `the_site`, such as "a Hotmart", is waiting, until
 /// `until`.
 pub fn blocked_text(the_site: &str, until: Timestamp) -> String {
-    let until = until.with_timezone(&Local);
-    let when = if until.date_naive() == Local::now().date_naive() {
-        until.format("as %H:%M").to_string()
-    } else {
-        until.format("%d/%m, às %H:%M").to_string()
-    };
     format!(
         "{} bloqueou o crawler três vezes seguidas, então o app não pede nada ao site até \
-         {when}. Bloqueio é a resposta do site: o app não tenta contornar.",
-        capitalized(the_site)
+         {}. Bloqueio é a resposta do site: o app não tenta contornar.",
+        capitalized(the_site),
+        until_text(until)
     )
+}
+
+/// `until` in the owner's time: "às 14:30" today, else "08/11, às 14:30".
+pub fn until_text(until: Timestamp) -> String {
+    let until = until.with_timezone(&Local);
+    if until.date_naive() == Local::now().date_naive() {
+        until.format("às %H:%M").to_string()
+    } else {
+        until.format("%d/%m, às %H:%M").to_string()
+    }
 }
 
 /// Why a search of `the_site`, such as "a Hotmart", failed, as the owner

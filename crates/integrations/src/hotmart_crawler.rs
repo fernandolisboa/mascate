@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::answers::page_on;
 use crate::crawler::{Crawler, number_in, script_json, walk};
+use crate::hotmart_affiliate_market::affiliation_page;
 
 /// The marketplace in Portuguese, unless a test points elsewhere.
 pub const MARKETPLACE_URL: &str = "https://hotmart.com/pt-br/marketplace";
@@ -35,7 +36,8 @@ pub const HOTMART_CRAWLER: Flag = Flag {
            de afiliado, com as comissões a receber.",
 };
 
-/// the marketplace shows, as its sitemap listed them on 2026-10-16.
+/// The top categories the marketplace shows, as its sitemap listed them on
+/// 2026-10-16.
 const CATEGORIES: &[(&str, &str)] = &[
     ("animais-e-pets", "Animais e pets"),
     (
@@ -65,6 +67,17 @@ const CATEGORIES: &[(&str, &str)] = &[
     ),
     ("tempo-livre-e-lazer", "Tempo livre e lazer"),
 ];
+
+/// Hotmart's top categories, which the vitrine and the market share.
+pub(crate) fn hotmart_categories() -> Vec<ProspectCategory> {
+    CATEGORIES
+        .iter()
+        .map(|(slug, name)| ProspectCategory {
+            id: (*slug).to_owned(),
+            name: (*name).to_owned(),
+        })
+        .collect()
+}
 
 /// Hotmart's own domain: a product page read or kept must be here.
 const DOMAIN: &str = "hotmart.com";
@@ -121,13 +134,7 @@ impl ProspectSource for HotmartCrawler {
     }
 
     fn categories(&self) -> Result<Vec<ProspectCategory>, PlatformError> {
-        Ok(CATEGORIES
-            .iter()
-            .map(|(slug, name)| ProspectCategory {
-                id: (*slug).to_owned(),
-                name: (*name).to_owned(),
-            })
-            .collect())
+        Ok(hotmart_categories())
     }
 
     /// The page's state holds only the first products of a category; the
@@ -232,8 +239,10 @@ fn listed(value: &Value) -> Option<FoundProspect> {
 }
 
 /// A product page: what the listing shows of the product, when the state
-/// carries it again, and what only the page shows. Under `known`'s key
-/// unless the page gives Hotmart's id, as for a link the owner pasted.
+/// carries it again, and what only the page shows, with the product's
+/// address in the affiliate market, from its code there (`ucode`). Under
+/// `known`'s key unless the page gives Hotmart's id, as for a link the
+/// owner pasted.
 fn product(html: &str, slug: &str, code: &str, known: &FoundProspect) -> FoundProspect {
     let mut found = FoundProspect {
         signals: Signals {
@@ -246,6 +255,7 @@ fn product(html: &str, slug: &str, code: &str, known: &FoundProspect) -> FoundPr
         return found;
     };
     let mut listed_here = None;
+    let mut ucode = None;
     let first = |key: &str| {
         let mut hit = None;
         walk(&state, &mut |value| {
@@ -262,6 +272,9 @@ fn product(html: &str, slug: &str, code: &str, known: &FoundProspect) -> FoundPr
         {
             listed_here = listed(value);
         }
+        if ucode.is_none() && text(value.get("producerReferenceCode")) == Some(code) {
+            ucode = text(value.get("ucode")).map(str::to_owned);
+        }
     });
     let students = first("totalUsers").as_ref().and_then(count);
     let warranty = first("dataSheet")
@@ -275,6 +288,7 @@ fn product(html: &str, slug: &str, code: &str, known: &FoundProspect) -> FoundPr
         found.signals = listed.signals;
     }
     let signals = &mut found.signals;
+    signals.affiliation_page = ucode.as_deref().and_then(affiliation_page);
     signals.students = students;
     signals.warranty_days = warranty;
     if let Some(hotmarter) = &hotmarter {
