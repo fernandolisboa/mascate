@@ -41,7 +41,7 @@ pub const KIWIFY_AFFILIATE_MARKET: Flag = Flag {
     reason: "Os termos de uso da Kiwify (versão de 29/10/2026) não citam robôs, mas os itens 14.1 \
              e 15.1 deixam a Kiwify suspender ou bloquear a conta por qualquer conduta contra os \
              termos e restringir o acesso a qualquer momento, por qualquer motivo, e o \
-             marketplace só abre com o seu login. O app abre o marketplace no Edge ou no Chrome, \
+             marketplace só abre com o seu login. O app abre o marketplace no seu navegador, \
              num perfil só do Mascate em que você entrou à mão, só quando você clica: a primeira \
              página da lista por clique e no máximo 5 páginas, uma a cada 5 segundos ou mais, a \
              mesma página dentro de 1 hora vem da memória. Só lê o que a página mostra: não \

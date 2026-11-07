@@ -43,7 +43,7 @@ pub const EDUZZ_AFFILIATE_MARKET: Flag = Flag {
              robôs, mas a parte Penalidades deixa a Eduzz suspender o acesso ou bloquear a \
              conta por qualquer conduta contra os termos, a seu critério, e a parte Direitos \
              Autorais proíbe copiar ou guardar o conteúdo da plataforma sem autorização; a \
-             Vitrine só abre com o seu login. O app abre a Vitrine no Edge ou no Chrome, num \
+             Vitrine só abre com o seu login. O app abre a Vitrine no seu navegador, num \
              perfil só do Mascate em que você entrou à mão, só quando você clica: a primeira \
              página da Vitrine por clique e no máximo 5 páginas, uma a cada 5 segundos ou mais, \
              a mesma página dentro de 1 hora vem da memória. Só lê o que a página mostra e \

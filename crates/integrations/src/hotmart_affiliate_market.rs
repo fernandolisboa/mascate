@@ -37,7 +37,7 @@ pub const HOTMART_AFFILIATE_MARKET: Flag = Flag {
     phase: Phase::Three,
     reason: "Os termos de uso da Hotmart, item 3.5(m), proíbem sistemas automatizados, robôs e \
              scripts, e o mercado de afiliação só abre com o seu login. O app abre o mercado no \
-             Edge ou no Chrome, num perfil só do Mascate em que você entrou à mão, só quando você \
+             seu navegador, num perfil só do Mascate em que você entrou à mão, só quando você \
              clica: no máximo 5 páginas por clique, uma a cada 5 segundos ou mais, a mesma \
              página dentro de 1 hora vem da memória. Só lê o que a página mostra: não clica, \
              não pede afiliação e não resolve captcha; no primeiro login, verificação ou \

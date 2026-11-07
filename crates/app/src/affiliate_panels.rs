@@ -8,7 +8,7 @@
 //! (#222), Eduzz (#223) and Monetizze (#224) share the browser and its
 //! profile, but only Garimpo reads them, on the owner's click.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use gpui_kit::assets::IconName;
@@ -24,7 +24,7 @@ use mascate_integrations::{
     KIWIFY_AFFILIATE_MARKET_URL, KiwifyAffiliateMarket, MAGALU_AFFILIATE_PANEL,
     MAGALU_AFFILIATE_PANEL_URL, MERCADO_LIVRE_AFFILIATE_PANEL, MERCADO_LIVRE_AFFILIATE_PANEL_URL,
     MONETIZZE_AFFILIATE_MARKET, MONETIZZE_AFFILIATE_MARKET_URL, MagaluAffiliatePanel,
-    MercadoLivreAffiliatePanel, MonetizzeAffiliateMarket, PanelState,
+    MercadoLivreAffiliatePanel, MonetizzeAffiliateMarket, PanelState, browser_name,
 };
 use mascate_kernel::{PlatformError, SystemClock, ThreadPause};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
@@ -53,10 +53,15 @@ pub fn panels(cx: &App) -> Option<Arc<Panels>> {
         .map(|app| app.0.clone())
 }
 
-/// Where the browser keeps the Mascate's own profile, with the logins:
-/// beside the database, never the owner's daily profile.
-pub fn profile_folder(data: PathBuf) -> PathBuf {
-    data.join("navegador")
+/// Where `browser` keeps the Mascate's own profile, with the logins:
+/// beside the database, never the owner's daily profile. Each browser has
+/// its own, since one cannot open a profile another wrote; switching the
+/// default browser asks for one login in the new one.
+pub fn profile_folder(data: PathBuf, browser: Option<&Path>) -> PathBuf {
+    match browser.and_then(browser_name) {
+        Some(name) => data.join(format!("navegador-{}", name.to_lowercase())),
+        None => data.join("navegador"),
+    }
 }
 
 /// Where the reading of `platform`'s affiliate market is stopped, so a
@@ -407,16 +412,16 @@ pub fn failure_text(site: &PanelSite, error: &AffiliateError) -> String {
 }
 
 /// What the panel's state means for the owner.
-fn state_text(site: &PanelSite, state: PanelState) -> String {
+fn state_text(site: &PanelSite, state: PanelState, browser: &str) -> String {
     let of = site.of;
     match state {
         PanelState::NoBrowser => format!(
-            "Não há Edge nem Chrome instalado neste computador, e o app lê o painel {of} por um \
-             deles. Instale um e abra o app de novo."
+            "Não há Chrome, Edge, Brave nem Vivaldi instalado neste computador, e o app lê o \
+             painel {of} por um deles. Instale um e abra o app de novo."
         ),
         PanelState::NeverLoggedIn => format!(
             "Falta entrar uma vez: clique em Entrar no painel, entre com a sua conta {of} na \
-             janela que abrir e feche a janela quando o painel aparecer. A senha fica só no \
+             janela do {browser} que abrir e feche a janela quando o painel aparecer. A senha fica só no \
              navegador."
         ),
         PanelState::LoggedOut => format!(
@@ -602,7 +607,11 @@ impl AffiliatePanelsSection {
         let working = self.busy.is_some() || syncing;
         let can_open = shown.state != PanelState::NoBrowser;
         let can_read = can_open && shown.state != PanelState::NeverLoggedIn;
-        let state = state_text(site, shown.state);
+        let state = state_text(
+            site,
+            shown.state,
+            panels.browser.name().unwrap_or("navegador"),
+        );
         v_flex()
             .gap_3()
             .p_4()
@@ -792,7 +801,7 @@ mod tests {
                 Arc::new(SystemClock),
                 Arc::new(SequentialIds::default()),
             );
-            let profile = profile_folder(dir.path().to_path_buf());
+            let profile = profile_folder(dir.path().to_path_buf(), None);
             let panels = Panels {
                 browser: Arc::new(BrowserSession::new(None, profile.clone())),
                 sites: PanelSite::all(Build::Release, &nowhere()),
@@ -942,9 +951,18 @@ mod tests {
         let magalu = PanelSite::magalu(Build::Release, &nowhere());
         assert_eq!(magalu.url, "https://www.magazinevoce.com.br/painel");
         assert_eq!(magalu.flag.key, "integrations.magalu_affiliate_panel");
+        let data = PathBuf::from("dados");
+        assert_eq!(profile_folder(data.clone(), None), data.join("navegador"));
         assert_eq!(
-            profile_folder(PathBuf::from("dados")),
-            PathBuf::from("dados").join("navegador")
+            profile_folder(
+                data.clone(),
+                Some(Path::new("/usr/bin/google-chrome-stable"))
+            ),
+            data.join("navegador-chrome")
+        );
+        assert_eq!(
+            profile_folder(data.clone(), Some(Path::new("/opt/brave.com/brave/brave"))),
+            data.join("navegador-brave")
         );
     }
 
@@ -957,12 +975,13 @@ mod tests {
         assert!(text(PlatformError::NotConnected).contains("uma vez"));
         assert_eq!(
             text(PlatformError::Refused(
-                "não há Edge nem Chrome instalado neste computador".into()
+                "não há Chrome, Edge, Brave nem Vivaldi instalado neste computador".into()
             )),
-            "Não li o painel de afiliado do Mercado Livre: não há Edge nem Chrome instalado \
-             neste computador."
+            "Não li o painel de afiliado do Mercado Livre: não há Chrome, Edge, Brave nem \
+             Vivaldi instalado neste computador."
         );
-        assert!(state_text(&site, PanelState::NoBrowser).contains("Instale"));
-        assert!(state_text(&site, PanelState::LoggedOut).contains("espera"));
+        assert!(state_text(&site, PanelState::NoBrowser, "Chrome").contains("Instale"));
+        assert!(state_text(&site, PanelState::NeverLoggedIn, "Brave").contains("janela do Brave"));
+        assert!(state_text(&site, PanelState::LoggedOut, "Chrome").contains("espera"));
     }
 }

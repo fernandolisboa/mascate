@@ -1,5 +1,6 @@
-//! The browser engine (#160, ADR 0035 decision 4): the installed Edge or
-//! Chrome, run with a profile folder of the Mascate's own and remote
+//! The browser engine (#160, ADR 0035 decision 4): the owner's default
+//! browser when it is one of the Chromium family, else an installed Chrome
+//! or Edge, run with a profile folder of the Mascate's own and remote
 //! debugging on loopback, driven through the DevTools Protocol over a
 //! WebSocket. The owner logs in by hand in its window, once; afterwards
 //! pages open without a window. It only opens pages and reads them: it
@@ -37,13 +38,215 @@ const CLOSE_ATTEMPTS: u32 = 20;
 /// then the path of its own WebSocket.
 const PORT_FILE: &str = "DevToolsActivePort";
 
-/// Where each installed browser lives, in the order they are tried: Edge
-/// first on Windows, where it always is; elsewhere Chrome, then Chromium,
-/// then Edge, by the names their packages put on the `PATH`.
-pub fn installed_browser(environment: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+/// The browsers that speak the DevTools Protocol the session drives, by the
+/// name of their program and as the owner calls them: the Chromium family.
+/// Firefox dropped the protocol, and Opera starts through a launcher that
+/// exits at once, so neither is driven even as the default.
+const DEVTOOLS_BROWSERS: [(&str, &str); 13] = [
+    ("chrome", "Chrome"),
+    ("google-chrome", "Chrome"),
+    ("google-chrome-stable", "Chrome"),
+    ("msedge", "Edge"),
+    ("microsoft-edge", "Edge"),
+    ("microsoft-edge-stable", "Edge"),
+    ("brave", "Brave"),
+    ("brave-browser", "Brave"),
+    ("brave-browser-stable", "Brave"),
+    ("vivaldi", "Vivaldi"),
+    ("vivaldi-stable", "Vivaldi"),
+    ("chromium", "Chromium"),
+    ("chromium-browser", "Chromium"),
+];
+
+/// Where the owner's https links open on Windows; `UserChoiceLatest` is
+/// where Windows 11 writes it now, `UserChoice` where it wrote it before.
+const HTTPS_CHOICE: &str =
+    r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https";
+const CHOICE_KEYS: [&str; 2] = ["UserChoiceLatest", "UserChoice"];
+
+/// Hides the console window a console program such as `reg.exe` would
+/// otherwise flash over the app.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The browser to open pages with: the owner's default browser when it
+/// speaks the DevTools Protocol; otherwise the first installed one, Chrome
+/// then Edge on Windows, and Chrome, then Chromium, then Edge elsewhere, by
+/// the names their packages put on the `PATH`. `ask` runs a program with
+/// its arguments and gives back what it printed, as [`system_answer`] does.
+pub fn installed_browser(
+    environment: &dyn Fn(&str) -> Option<String>,
+    ask: &dyn Fn(&str, &[&str]) -> Option<String>,
+) -> Option<PathBuf> {
+    default_browser(environment, ask)
+        .filter(|program| browser_name(program).is_some() && program.is_file())
+        .or_else(|| {
+            fallback_browsers(environment)
+                .into_iter()
+                .find(|candidate| candidate.is_file())
+        })
+}
+
+/// What a program the operating system was asked about printed, when it
+/// ran and succeeded; on Windows it runs without a console window.
+pub fn system_answer(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// How the owner calls the browser at `program`; `None` for one the
+/// session cannot drive.
+pub fn browser_name(program: &Path) -> Option<&'static str> {
+    let stem = program.file_stem()?.to_str()?.to_lowercase();
+    DEVTOOLS_BROWSERS
+        .iter()
+        .find(|(name, _)| *name == stem)
+        .map(|(_, called)| *called)
+}
+
+fn default_browser(
+    environment: &dyn Fn(&str) -> Option<String>,
+    ask: &dyn Fn(&str, &[&str]) -> Option<String>,
+) -> Option<PathBuf> {
+    if cfg!(windows) {
+        windows_default_browser(environment, ask)
+    } else {
+        xdg_default_browser(environment, ask)
+    }
+}
+
+/// The program behind the ProgId the owner chose for https links, read
+/// with `reg.exe` from the system folder, so no other `reg` on the `PATH`
+/// answers.
+fn windows_default_browser(
+    environment: &dyn Fn(&str) -> Option<String>,
+    ask: &dyn Fn(&str, &[&str]) -> Option<String>,
+) -> Option<PathBuf> {
+    let system_root = environment("SystemRoot").unwrap_or_else(|| r"C:\Windows".to_owned());
+    let reg = Path::new(&system_root).join(r"System32\reg.exe");
+    let reg = reg.to_str()?;
+    let prog_id = CHOICE_KEYS.iter().find_map(|key| {
+        let key = format!(r"{HTTPS_CHOICE}\{key}");
+        registry_value(&ask(reg, &["query", &key, "/v", "ProgId"])?)
+    })?;
+    if prog_id.contains(['\\', '/']) {
+        return None;
+    }
+    let key = format!(r"HKCR\{prog_id}\shell\open\command");
+    let command = registry_value(&ask(reg, &["query", &key, "/ve"])?)?;
+    program_of(&expanded(&command, environment))
+}
+
+/// The data of the value `reg query` printed, in any display language:
+/// the text after its type on the line that has one.
+fn registry_value(answer: &str) -> Option<String> {
+    answer.lines().find_map(|line| {
+        ["REG_EXPAND_SZ", "REG_SZ"].iter().find_map(|kind| {
+            let (_, data) = line.split_once(&format!(" {kind} "))?;
+            let data = data.trim();
+            (!data.is_empty()).then(|| data.to_owned())
+        })
+    })
+}
+
+/// `text` with each `%NAME%` replaced by that environment variable, as
+/// Windows expands a registry value; an unknown name stays as written.
+fn expanded(text: &str, environment: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut result = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('%') {
+        result.push_str(before);
+        match after.split_once('%') {
+            Some((name, tail)) if !name.is_empty() && !name.contains(' ') => {
+                match environment(name) {
+                    Some(value) => result.push_str(&value),
+                    None => {
+                        result.push('%');
+                        result.push_str(name);
+                        result.push('%');
+                    }
+                }
+                rest = tail;
+            }
+            _ => {
+                result.push('%');
+                rest = after;
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+/// The program a command line starts: the quoted text when it opens with
+/// a quote, its first word otherwise.
+fn program_of(command: &str) -> Option<PathBuf> {
+    let command = command.trim();
+    let program = match command.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next()?,
+        None => command.split_whitespace().next()?,
+    };
+    (!program.is_empty()).then(|| PathBuf::from(program))
+}
+
+/// The program of the desktop entry `xdg-settings` names as the default
+/// web browser, looked up where the XDG data folders keep entries.
+fn xdg_default_browser(
+    environment: &dyn Fn(&str) -> Option<String>,
+    ask: &dyn Fn(&str, &[&str]) -> Option<String>,
+) -> Option<PathBuf> {
+    let answer = ask("xdg-settings", &["get", "default-web-browser"])?;
+    let entry = answer.trim();
+    if entry.is_empty() || entry.contains('/') {
+        return None;
+    }
+    let set = |name: &str| environment(name).filter(|value| !value.is_empty());
+    let data_home = set("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| set("HOME").map(|home| Path::new(&home).join(".local/share")));
+    let data_dirs = OsString::from(
+        set("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned()),
+    );
+    let text = data_home
+        .into_iter()
+        .chain(std::env::split_paths(&data_dirs))
+        .find_map(|folder| std::fs::read_to_string(folder.join("applications").join(entry)).ok())?;
+    let exec = text.lines().find_map(|line| line.strip_prefix("Exec="))?;
+    let program = program_of(exec)?;
+    if program.is_absolute() {
+        return Some(program);
+    }
+    on_path(environment, program.to_str()?).into_iter().next()
+}
+
+/// Where `name` would be in each folder of the `PATH`, in order.
+fn on_path(environment: &dyn Fn(&str) -> Option<String>, name: &str) -> Vec<PathBuf> {
+    let path = OsString::from(environment("PATH").unwrap_or_default());
+    std::env::split_paths(&path)
+        .map(|folder| folder.join(name))
+        .filter(|candidate| candidate.is_file())
+        .collect()
+}
+
+/// Where each browser lives when the default one cannot be driven, in the
+/// order they are tried.
+fn fallback_browsers(environment: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     const WINDOWS: [&str; 2] = [
-        r"Microsoft\Edge\Application\msedge.exe",
         r"Google\Chrome\Application\chrome.exe",
+        r"Microsoft\Edge\Application\msedge.exe",
     ];
     const ON_PATH: [&str; 6] = [
         "google-chrome-stable",
@@ -53,25 +256,22 @@ pub fn installed_browser(environment: &dyn Fn(&str) -> Option<String>) -> Option
         "microsoft-edge-stable",
         "microsoft-edge",
     ];
-    let candidates: Vec<PathBuf> = if cfg!(windows) {
+    if cfg!(windows) {
         WINDOWS
             .iter()
             .flat_map(|program| {
-                ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"]
+                ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
                     .iter()
                     .filter_map(|folder| environment(folder))
                     .map(move |folder| Path::new(&folder).join(program))
             })
             .collect()
     } else {
-        let path = OsString::from(environment("PATH").unwrap_or_default());
-        let folders: Vec<PathBuf> = std::env::split_paths(&path).collect();
         ON_PATH
             .iter()
-            .flat_map(|name| folders.iter().map(move |folder| folder.join(name)))
+            .flat_map(|name| on_path(environment, name))
             .collect()
-    };
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    }
 }
 
 /// The installed browser, run on the Mascate's own profile. One browser at
@@ -123,6 +323,12 @@ impl BrowserSession {
     pub fn with_pause(mut self, pause: Arc<dyn Pause>) -> Self {
         self.pause = pause;
         self
+    }
+
+    /// How the owner calls the browser pages open in; `None` without one
+    /// the session starts.
+    pub fn name(&self) -> Option<&'static str> {
+        self.program.as_deref().and_then(browser_name)
     }
 
     /// Whether there is a browser to open pages with.
@@ -307,8 +513,11 @@ impl Drop for BrowserSession {
     }
 }
 
-fn not_installed() -> PlatformError {
-    PlatformError::Refused("não há Edge nem Chrome instalado neste computador".into())
+/// Nothing to open pages with: no browser of the Chromium family.
+pub(crate) fn not_installed() -> PlatformError {
+    PlatformError::Refused(
+        "não há Chrome, Edge, Brave nem Vivaldi instalado neste computador".into(),
+    )
 }
 
 /// Forgets a browser that is no longer running: the owner closed its

@@ -1,4 +1,4 @@
-//! The browser engine with the browser installed on this computer: starts
+//! The browser engine with the browser it picks on this computer: starts
 //! it without a window on a fresh profile, reads a local page's table with
 //! the panels' script and closes it. Ignored by default, since CI machines
 //! may lack a browser; run with `cargo test -p mascate-integrations --test
@@ -7,14 +7,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mascate_integrations::{BrowserSession, TABLES_SCRIPT, installed_browser};
+use mascate_integrations::{BrowserSession, TABLES_SCRIPT, installed_browser, system_answer};
 use serde_json::{Value, json};
 
 #[test]
-#[ignore = "needs Edge, Chrome or Chromium installed"]
+#[ignore = "needs a Chromium-family browser installed"]
 fn the_installed_browser_opens_a_page_reads_its_tables_and_closes() {
-    let program = installed_browser(&|name| std::env::var(name).ok())
-        .expect("Edge, Chrome or Chromium installed");
+    let program = installed_browser(&|name| std::env::var(name).ok(), &system_answer)
+        .expect("a Chromium-family browser installed");
     let folder = tempfile::tempdir().unwrap();
     let page = folder.path().join("relatorio.html");
     std::fs::write(
@@ -59,10 +59,10 @@ fn the_installed_browser_opens_a_page_reads_its_tables_and_closes() {
 }
 
 #[test]
-#[ignore = "needs Edge, Chrome or Chromium installed and a display"]
+#[ignore = "needs a Chromium-family browser installed and a display"]
 fn a_login_window_the_owner_closes_takes_its_browser_along_and_the_next_reading_starts_another() {
-    let program = installed_browser(&|name| std::env::var(name).ok())
-        .expect("Edge, Chrome or Chromium installed");
+    let program = installed_browser(&|name| std::env::var(name).ok(), &system_answer)
+        .expect("a Chromium-family browser installed");
     let folder = tempfile::tempdir().unwrap();
     let page = folder.path().join("painel.html");
     std::fs::write(&page, "<!doctype html><title>Painel</title>").unwrap();

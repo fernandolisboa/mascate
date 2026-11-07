@@ -55,7 +55,7 @@ pub use amazon_earnings::{
     ReportError, read_earnings_report,
 };
 pub use anthropic::{API_URL as ANTHROPIC_API_URL, Anthropic};
-pub use browser::{BrowserSession, installed_browser};
+pub use browser::{BrowserSession, browser_name, installed_browser, system_answer};
 pub use connections::{
     Connection, ConnectionError, ConnectionState, Connections, Credential, CredentialEntry,
 };

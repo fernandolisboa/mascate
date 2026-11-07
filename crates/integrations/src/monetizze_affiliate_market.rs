@@ -48,7 +48,7 @@ pub const MONETIZZE_AFFILIATE_MARKET: Flag = Flag {
              descumprimento, o 13.8 cita como causa de bloqueio a tentativa de violar as medidas \
              de segurança da plataforma e o 14.1 veda usar o sistema, a interface e os softwares \
              dela sem autorização; a Vitrine só abre com o seu login. O app abre a Vitrine no \
-             Edge ou no Chrome, num perfil só do Mascate em que você entrou à mão, só quando você \
+             seu navegador, num perfil só do Mascate em que você entrou à mão, só quando você \
              clica: a primeira página da Vitrine por clique e no máximo 5 páginas, uma a cada 5 \
              segundos ou mais, a mesma página dentro de 1 hora vem da memória. Só lê o que a \
              página mostra e guarda só o nome e os números de cada produto: não clica, não pede \

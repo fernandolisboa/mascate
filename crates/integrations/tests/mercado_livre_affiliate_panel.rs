@@ -15,7 +15,6 @@ use mascate_affiliate::{
 use mascate_integrations::{
     AffiliatePanel, BrowserSession, FLAGS, MERCADO_LIVRE_AFFILIATE_PANEL,
     MERCADO_LIVRE_AFFILIATE_PANEL_URL, MercadoLivreAffiliatePanel, PanelState, TABLES_SCRIPT,
-    installed_browser,
 };
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, PlatformError, Timestamp};
@@ -330,7 +329,7 @@ fn without_a_browser_installed_the_connection_says_so_and_nothing_is_opened() {
     assert!(!panel.state().can_read());
     let error = read(&panel).unwrap_err();
     assert!(
-        matches!(&error, PlatformError::Refused(why) if why.contains("Edge nem Chrome")),
+        matches!(&error, PlatformError::Refused(why) if why.contains("Chrome, Edge, Brave nem Vivaldi")),
         "{error:?}"
     );
     assert!(matches!(panel.open_login(), Err(PlatformError::Refused(_))));
@@ -349,28 +348,6 @@ fn before_the_owner_ever_logs_in_the_panel_is_not_connected_and_no_page_opens() 
     assert_eq!(panel.state(), PanelState::NeverLoggedIn);
     assert_eq!(read(&panel).unwrap_err(), PlatformError::NotConnected);
     assert!(devtools.tab_requests().is_empty());
-}
-
-#[test]
-fn the_installed_browser_is_found_where_its_package_puts_it() {
-    let folder = tempfile::tempdir().unwrap();
-    let nothing = |_: &str| None::<String>;
-    assert_eq!(installed_browser(&nothing), None);
-
-    let (environment_name, program) = if cfg!(windows) {
-        (
-            "ProgramFiles(x86)",
-            folder.path().join(r"Microsoft\Edge\Application\msedge.exe"),
-        )
-    } else {
-        ("PATH", folder.path().join("chromium"))
-    };
-    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-    std::fs::write(&program, "").unwrap();
-    let folder_text = folder.path().display().to_string();
-    let environment = move |name: &str| (name == environment_name).then(|| folder_text.clone());
-
-    assert_eq!(installed_browser(&environment), Some(program));
 }
 
 struct Synced {

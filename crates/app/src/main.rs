@@ -104,6 +104,7 @@ use mascate_integrations::{
     AMAZON_LINKS, Amazon, Anthropic, Connection, Connections, Crawler, EDUZZ_LINKS, Eduzz,
     HOTMART_LINKS, Hotmart, Instagram, KIWIFY_LINKS, Kiwify, MONETIZZE_LINKS, Magalu, MercadoLivre,
     Monetizze, Pinterest, ShopeeAffiliates, ShopeeSeller, ShortIo, Telegram, installed_browser,
+    system_answer,
 };
 use mascate_kernel::SystemClock;
 use mascate_platform::{
@@ -282,16 +283,16 @@ fn main() {
         sites: CrawledSite::all(Build::CURRENT, &process_environment()),
         hotmart_vitrine: crawlers::hotmart_vitrine(Build::CURRENT, &process_environment()),
     };
-    // The browser opens nothing until a panel whose flag is on reads, on a
-    // profile beside the database.
+    // The owner's default browser, or Chrome or Edge when it cannot be
+    // driven, opens nothing until a panel whose flag is on reads, on a
+    // profile of its own beside the database.
     let affiliate_panels = default_database_path()
         .and_then(|database| database.parent().map(std::path::Path::to_path_buf))
         .map(|data| {
+            let browser = installed_browser(&*process_environment(), &system_answer);
+            let profile = affiliate_panels::profile_folder(data.clone(), browser.as_deref());
             AppAffiliatePanels(Arc::new(Panels {
-                browser: Arc::new(mascate_integrations::BrowserSession::new(
-                    installed_browser(&*process_environment()),
-                    affiliate_panels::profile_folder(data.clone()),
-                )),
+                browser: Arc::new(mascate_integrations::BrowserSession::new(browser, profile)),
                 sites: PanelSite::all(Build::CURRENT, &process_environment()),
                 markets: MarketSite::all(Build::CURRENT, &process_environment(), Some(data)),
             }))

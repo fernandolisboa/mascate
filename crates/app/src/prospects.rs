@@ -984,6 +984,9 @@ impl ProspectsScreen {
                 .into_any_element();
         };
         let state = market.state();
+        let browser = panels(cx)
+            .and_then(|panels| panels.browser.name())
+            .unwrap_or("navegador");
         let stopped = market.stopped();
         let can_open = state != PanelState::NoBrowser;
         let can_read = matches!(state, PanelState::Ready | PanelState::LoggedOut);
@@ -1016,7 +1019,7 @@ impl ProspectsScreen {
             div()
                 .text_xs()
                 .text_color(t.text2)
-                .child(market_state_text(site, state)),
+                .child(market_state_text(site, state, browser)),
         )
         .children(stopped.map(|stopped| kit::error_notice(stopped_text(platform, stopped), cx)))
         .when(has_categories && !vitrine_picks && can_read, |card| {
@@ -1814,15 +1817,16 @@ pub fn stopped_text(platform: AffiliatePlatform, stopped: MarketStopped) -> Stri
 }
 
 /// What the state of `site`'s reading means for the owner.
-fn market_state_text(site: &MarketTexts, state: PanelState) -> String {
+fn market_state_text(site: &MarketTexts, state: PanelState, browser: &str) -> String {
     let name = site.platform.name();
     match state {
-        PanelState::NoBrowser => "Não há Edge nem Chrome instalado neste computador, e o app lê \
-                                  o mercado por um deles. Instale um e abra o app de novo."
+        PanelState::NoBrowser => "Não há Chrome, Edge, Brave nem Vivaldi instalado neste \
+                                  computador, e o app lê o mercado por um deles. Instale um e \
+                                  abra o app de novo."
             .to_owned(),
         PanelState::NeverLoggedIn => format!(
             "Falta entrar uma vez: clique em Entrar na {name}, entre com a sua conta na janela \
-             que abrir e feche a janela quando o mercado aparecer. A senha fica só no navegador."
+             do {browser} que abrir e feche a janela quando o mercado aparecer. A senha fica só no navegador."
         ),
         PanelState::LoggedOut => format!(
             "A última leitura caiu no login da {name}. Clique em Entrar na {name} e entre de \
@@ -2098,8 +2102,8 @@ mod tests {
             );
             assert!(market_failure(platform, &PlatformError::Expired).contains("pediu login"));
             let site = texts(platform);
-            assert!(market_state_text(&site, PanelState::Ready).contains(site.reads));
-            assert!(market_state_text(&site, PanelState::Ready).contains(site.pages));
+            assert!(market_state_text(&site, PanelState::Ready, "Chrome").contains(site.reads));
+            assert!(market_state_text(&site, PanelState::Ready, "Chrome").contains(site.pages));
         }
     }
 
