@@ -1,0 +1,27 @@
+{
+  "paging": {"total": 2, "offset": 0, "limit": 50},
+  "results": [
+    {
+      "item_id": "MLB4099000001",
+      "category_id": "MLB270250",
+      "price": 54.9,
+      "currency_id": "BRL",
+      "seller_id": 98765432,
+      "official_store_id": null,
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "shipping": {"free_shipping": false, "logistic_type": "cross_docking"}
+    },
+    {
+      "item_id": "MLB4099000002",
+      "category_id": "MLB270250",
+      "price": 39.9,
+      "currency_id": "BRL",
+      "seller_id": 55500011,
+      "official_store_id": null,
+      "listing_type_id": "gold_special",
+      "condition": "new",
+      "shipping": {"free_shipping": false, "logistic_type": "drop_off"}
+    }
+  ]
+}

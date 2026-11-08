@@ -21,7 +21,7 @@ pub use link::{InvalidLink, OfferLink};
 pub use merge::MERGE;
 pub use offer_source::{Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource};
 pub use opportunities::{
-    CategoryBestSellers, Charge, DemandSync, DiscoverySettings, MATCHES_PER_OFFER, Opportunity,
+    CategoryRank, Charge, DemandSync, DiscoverySettings, MATCHES_PER_OFFER, Opportunity,
     OpportunityFilter, RankedBestSeller, score,
 };
 pub use sku::{InvalidSku, Sku};

@@ -1,7 +1,8 @@
-//! Buscar no site por crawler (#152), on the Ofertas screen: searches a
-//! site's public pages for items and keeps the chosen ones as Supplier
-//! Offers. Shown only while the site's Restricted Feature is on; while the
-//! site keeps the crawler blocked, says until when and searches nothing.
+//! Buscar no site (#152), on the Ofertas screen: searches a site for items
+//! and keeps the chosen ones as Supplier Offers. With the site's official
+//! search and its Connection connected, through the API (#235); else by
+//! crawler, shown only while the site's Restricted Feature is on, and while
+//! the site keeps the crawler blocked, says until when and searches nothing.
 
 use std::sync::Arc;
 
@@ -14,10 +15,12 @@ use gpui_kit::{AnyElement, Entity, EventEmitter, Subscription, Window, div, px};
 use mascate_catalog::{
     CatalogError, FoundOffer, OfferOrder, OfferSearch, OfferSource, SearchedOffer,
 };
+use mascate_integrations::ConnectionState;
 use mascate_platform::FlagError;
 
 use crate::appearance::look;
 use crate::catalog;
+use crate::connections::AppConnections;
 use crate::crawlers::{self, CrawledSite, crawlers};
 use crate::forms::{Outcome, input, notice};
 use crate::found_offers;
@@ -29,8 +32,11 @@ pub struct CrawlerSearch {
     site: CrawledSite,
     keyword: Entity<InputState>,
     order: OfferOrder,
-    /// The crawler, while its flag is on.
+    /// The official search while its Connection is connected, else the
+    /// crawler while its flag is on.
     source: Option<Arc<dyn OfferSource>>,
+    /// Whether `source` is the official search.
+    official: bool,
     items: Vec<SearchedOffer>,
     /// The last page read, 0 before a search.
     page: u32,
@@ -62,6 +68,7 @@ impl CrawlerSearch {
             keyword,
             order: OfferOrder::Relevance,
             source: None,
+            official: false,
             items: Vec::new(),
             page: 0,
             more: false,
@@ -74,13 +81,20 @@ impl CrawlerSearch {
         search
     }
 
-    /// Whether the site's flag is on, as last read.
+    /// Whether the site can be searched, as last read: its official search
+    /// connected or its crawler's flag on.
     pub fn is_on(&self) -> bool {
         self.source.is_some()
     }
 
-    /// Reads the site's flag again: on, it builds the crawler; off, it drops
-    /// it with what it found.
+    /// The site, as Ofertas lists it.
+    pub fn site(&self) -> &CrawledSite {
+        &self.site
+    }
+
+    /// Reads the site's Connection and flag again: the official search
+    /// while connected, else the crawler while its flag is on; neither, it
+    /// drops what it found.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let (Some(app), Some(engine)) = (
             cx.try_global::<AppFlags>(),
@@ -90,18 +104,31 @@ impl CrawlerSearch {
         };
         let flags = app.flags.clone();
         let site = self.site.clone();
+        let official = site.official.and_then(|official| {
+            let connections = cx.try_global::<AppConnections>()?.0.clone();
+            Some(((official.adapter)(cx)?, official.connection, connections))
+        });
         self.searches += 1;
         let reading = self.searches;
-        let working = cx
-            .background_executor()
-            .spawn(async move { crawlers::source_if_on(&flags, &site, engine).await });
+        let working = cx.background_executor().spawn(async move {
+            if let Some((source, connection, connections)) = official
+                && connections.state(connection) == ConnectionState::Connected
+            {
+                return Ok(Some((source, true)));
+            }
+            crawlers::source_if_on(&flags, &site, engine)
+                .await
+                .map(|crawler| crawler.map(|source| (source, false)))
+        });
         cx.spawn(async move |this, cx| {
             let source: Result<_, FlagError> = working.await;
             let _ = this.update(cx, |this, cx| {
                 if this.searches != reading {
                     return;
                 }
-                this.source = source.ok().flatten();
+                let source = source.ok().flatten();
+                this.official = source.as_ref().is_some_and(|(_, official)| *official);
+                this.source = source.map(|(source, _)| source);
                 if let Some(source) = &this.source {
                     if !source.orders().contains(&this.order) {
                         this.order = source.orders().first().copied().unwrap_or_default();
@@ -144,11 +171,12 @@ impl CrawlerSearch {
         self.busy = true;
         self.outcome = None;
         let site = self.site.clone();
+        let official = self.official;
         let working = cx.background_executor().spawn(async move {
             catalog
                 .search_offers(source.as_ref(), &search)
                 .await
-                .map_err(|error| reading(&site, &error))
+                .map_err(|error| reading(&site, official, &error))
         });
         cx.spawn_in(window, async move |this, cx| {
             let found = working.await;
@@ -186,10 +214,11 @@ impl CrawlerSearch {
         self.busy = true;
         self.outcome = None;
         let site = self.site.clone();
+        let official = self.official;
         let working = cx.background_executor().spawn(async move {
             found_offers::keep(&catalog, source.source(), &offers, listed)
                 .await
-                .map_err(|error| reading(&site, &error))
+                .map_err(|error| reading(&site, official, &error))
         });
         cx.spawn(async move |this, cx| {
             let kept = working.await;
@@ -366,7 +395,11 @@ impl Render for CrawlerSearch {
         };
         let t = look(cx).tokens;
         let blocked = source.blocked_until().filter(|until| *until > Utc::now());
-        let about = about(&self.site, source.as_ref());
+        let about = if self.official {
+            official_about(&self.site)
+        } else {
+            about(&self.site, source.as_ref())
+        };
         v_flex()
             .gap_3()
             .p_4()
@@ -380,7 +413,11 @@ impl Render for CrawlerSearch {
                     .flex_wrap()
                     .items_center()
                     .child(kit::section_heading(format!("Buscar {}", self.site.on())))
-                    .child(kit::tag("Crawler ligado", t.danger, cx)),
+                    .child(if self.official {
+                        kit::tag("Pela sua conta", t.success, cx)
+                    } else {
+                        kit::tag("Crawler ligado", t.danger, cx)
+                    }),
             )
             .child(div().text_sm().text_color(t.text2).child(about))
             .children(blocked.map(|until| {
@@ -428,11 +465,23 @@ fn about(site: &CrawledSite, source: &dyn OfferSource) -> String {
     }
 }
 
-/// Why a search or a keep failed, as the owner reads it.
-fn reading(site: &CrawledSite, error: &CatalogError) -> String {
-    match error {
-        CatalogError::Platform(error) => crawlers::failure(&site.the(), error),
-        error => catalog::failure(error),
+/// What the official search reads and how, as the panel says it.
+fn official_about(site: &CrawledSite) -> String {
+    format!(
+        "Busca no catálogo {} pela API oficial, com a sua conta conectada: sem crawler e sem \
+         página de login. Cada produto vem com o anúncio mais barato e o vendedor dele; um \
+         produto que ninguém vende agora fica de fora.",
+        site.of()
+    )
+}
+
+/// Why a search or a keep failed, as the owner reads it: in the official
+/// search's words, or the crawler's.
+fn reading(site: &CrawledSite, official: bool, error: &CatalogError) -> String {
+    match (error, site.official) {
+        (CatalogError::Platform(error), Some(search)) if official => (search.failure)(error),
+        (CatalogError::Platform(error), _) => crawlers::failure(&site.the(), error),
+        (error, _) => catalog::failure(error),
     }
 }
 

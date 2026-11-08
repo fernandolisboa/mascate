@@ -13,8 +13,8 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Entity, EventEmitter, SharedString, Window, div, px};
 use mascate_catalog::{
-    Catalog, CatalogError, CategoryBestSellers, DemandCategory, DemandSource, DemandSync,
-    DiscoverySettings, Opportunity, OpportunityFilter, Product, Sku,
+    Catalog, CatalogError, DemandCategory, DemandSource, DemandSync, DiscoverySettings,
+    Opportunity, OpportunityFilter, Product, RankedBestSeller, Sku,
 };
 use mascate_integrations::{Connection, ConnectionState};
 use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId, Timestamp, parse_amount};
@@ -22,7 +22,7 @@ use mascate_kernel::{Currency, ListingType, Money, Percentage, RecordId, Timesta
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, failure};
 use crate::connections::AppConnections;
-use crate::forms::{Outcome, amount_text, input, notice, percent_text};
+use crate::forms::{Outcome, amount_text, count, input, notice, percent_text};
 use crate::kit;
 use crate::layout;
 use crate::mercado_livre;
@@ -43,7 +43,8 @@ struct Snapshot {
     tax: Percentage,
     followed: Vec<DemandCategory>,
     opportunities: Vec<Opportunity>,
-    best_sellers: Vec<CategoryBestSellers>,
+    best_sellers: Vec<RankedBestSeller>,
+    offers: usize,
     dismissed: u64,
     last_sync: Option<Timestamp>,
     products: Vec<Product>,
@@ -89,7 +90,11 @@ pub struct OpportunitiesScreen {
     /// owner picks which to follow.
     picking: Option<(Vec<DemandCategory>, Vec<String>)>,
     opportunities: Vec<Opportunity>,
-    best_sellers: Vec<CategoryBestSellers>,
+    best_sellers: Vec<RankedBestSeller>,
+    /// The category chip on over the best sellers; `None` lists them all.
+    best_seller_category: Option<String>,
+    /// How many Supplier Offers there are to compare.
+    offers: usize,
     dismissed: u64,
     last_sync: Option<Timestamp>,
     products: Vec<Product>,
@@ -128,6 +133,8 @@ impl OpportunitiesScreen {
             picking: None,
             opportunities: Vec::new(),
             best_sellers: Vec::new(),
+            best_seller_category: None,
+            offers: 0,
             dismissed: 0,
             last_sync: None,
             products: Vec::new(),
@@ -188,6 +195,7 @@ impl OpportunitiesScreen {
                     followed: catalog.demand_categories().await?,
                     opportunities: catalog.opportunities(&filter, tax).await?,
                     best_sellers: catalog.best_sellers().await?,
+                    offers: catalog.offers().await?.len(),
                     dismissed: catalog.dismissed_opportunities().await?,
                     last_sync: catalog.last_demand_sync().await?,
                     products: catalog.products().await?,
@@ -252,6 +260,14 @@ impl OpportunitiesScreen {
         self.followed = snapshot.followed;
         self.opportunities = snapshot.opportunities;
         self.best_sellers = snapshot.best_sellers;
+        if self
+            .best_seller_category
+            .as_ref()
+            .is_some_and(|chosen| !self.followed.iter().any(|category| &category.id == chosen))
+        {
+            self.best_seller_category = None;
+        }
+        self.offers = snapshot.offers;
         self.dismissed = snapshot.dismissed;
         self.last_sync = snapshot.last_sync;
         self.products = snapshot.products;
@@ -1001,21 +1017,63 @@ impl OpportunitiesScreen {
 
     fn render_best_sellers(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let mut section = v_flex()
-            .gap_3()
-            .child(kit::section_heading("Mais vendidos no Mercado Livre"));
-        if self.best_sellers.iter().all(|c| c.best_sellers.is_empty()) {
-            section = section.child(div().text_sm().text_color(t.text2).child(
-                "Os 20 mais vendidos de cada categoria acompanhada aparecem aqui depois do \
-                 Sync.",
-            ));
+        let mut section = v_flex().gap_3().child(
+            h_flex()
+                .gap_2()
+                .items_baseline()
+                .flex_wrap()
+                .child(kit::section_heading("Mais vendidos no Mercado Livre"))
+                .when(!self.best_sellers.is_empty(), |heading| {
+                    heading.child(div().text_xs().text_color(t.text2).child(format!(
+                        "{}, cada um uma vez só, dos rankings de {}",
+                        count(self.best_sellers.len(), "produto", "produtos"),
+                        count(self.followed.len(), "categoria", "categorias")
+                    )))
+                }),
+        );
+        if self.best_sellers.is_empty() {
+            let text = best_sellers_missing(self.followed.len(), self.last_sync.is_some());
+            return section
+                .child(div().text_sm().text_color(t.text2).child(text))
+                .into_any_element();
         }
-        for category in self
-            .best_sellers
-            .iter()
-            .filter(|c| !c.best_sellers.is_empty())
-        {
-            section = section.child(
+        let chosen = self.best_seller_category.clone();
+        let chip = |index: usize, label: String, value: Option<String>| {
+            let on = chosen == value;
+            Button::new(("best-seller-category", index))
+                .label(label)
+                .small()
+                .map(|b| if on { b.primary() } else { b.outline() })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.best_seller_category = value.clone();
+                    cx.notify();
+                }))
+        };
+        section = section.child(
+            h_flex()
+                .flex_wrap()
+                .gap_1()
+                .child(chip(
+                    0,
+                    format!("Todas ({})", self.best_sellers.len()),
+                    None,
+                ))
+                .children(self.followed.iter().enumerate().map(|(index, category)| {
+                    let ranked = self
+                        .best_sellers
+                        .iter()
+                        .filter(|b| b.position_in(&category.id).is_some())
+                        .count();
+                    chip(
+                        index + 1,
+                        format!("{} ({ranked})", category.name),
+                        Some(category.id.clone()),
+                    )
+                })),
+        );
+        let rows = shown_best_sellers(&self.best_sellers, chosen.as_deref());
+        section
+            .child(
                 v_flex()
                     .gap_1()
                     .p_3()
@@ -1023,26 +1081,37 @@ impl OpportunitiesScreen {
                     .border(t.border_width)
                     .border_color(t.frame)
                     .bg(t.surface)
-                    .child(div().font_medium().child(category.category.name.clone()))
-                    .children(category.best_sellers.iter().map(|ranked| {
+                    .children(rows.into_iter().map(|(position, ranked)| {
                         let seller = &ranked.best_seller;
+                        let places = ranked
+                            .rankings
+                            .iter()
+                            .map(|rank| format!("{} {}º", rank.category.name, rank.position))
+                            .collect::<Vec<_>>()
+                            .join(" · ");
                         h_flex()
                             .gap_2()
                             .items_center()
                             .text_sm()
-                            .child(
+                            .children(position.map(|position| {
                                 div()
                                     .w(px(28.))
                                     .flex_none()
                                     .text_color(t.text2)
-                                    .child(format!("{}º", seller.position)),
-                            )
+                                    .child(format!("{position}º"))
+                            }))
                             .child(
-                                div()
+                                v_flex()
                                     .flex_1()
                                     .min_w_0()
-                                    .truncate()
-                                    .child(seller.title.clone()),
+                                    .child(div().truncate().child(seller.title.clone()))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(t.text2)
+                                            .truncate()
+                                            .child(places),
+                                    ),
                             )
                             .children(seller.price.map(|price| {
                                 div()
@@ -1056,9 +1125,8 @@ impl OpportunitiesScreen {
                                 kit::tag("sem oferta", t.text2, cx)
                             })
                     })),
-            );
-        }
-        section.into_any_element()
+            )
+            .into_any_element()
     }
 }
 
@@ -1091,11 +1159,9 @@ impl Render for OpportunitiesScreen {
             count => format!("{count} oportunidades"),
         };
         let empty = if self.filter == OpportunityFilter::default() {
-            "Nenhuma oportunidade ainda. Registre ofertas em Ofertas e sincronize: cada oferta \
-             é comparada com os produtos do catálogo do Mercado Livre que combinam com o título \
-             dela."
+            no_opportunities(self.offers, self.last_sync.is_some())
         } else {
-            "Nenhuma oportunidade passa nesses filtros."
+            "Nenhuma oportunidade passa nesses filtros.".to_owned()
         };
         parts.content.push(
             v_flex()
@@ -1136,12 +1202,31 @@ fn competitors_text(count: u32) -> String {
     }
 }
 
-/// What the Sync read, in one line.
+/// What the Sync read and, when it found no Opportunity, why.
 fn synced(report: &DemandSync) -> String {
-    let mut text = format!(
-        "Sync concluído: {} mais vendidos e {} oportunidades de {} ofertas.",
-        report.best_sellers, report.opportunities, report.offers
-    );
+    let mut text = if report.categories == 0 {
+        "Sync concluído, mas nenhuma categoria é acompanhada: escolha categorias abaixo para \
+         ler os mais vendidos."
+            .to_owned()
+    } else {
+        format!(
+            "Sync concluído: {} entre os mais vendidos de {}.",
+            count(report.best_sellers, "produto", "produtos"),
+            count(report.categories, "categoria", "categorias")
+        )
+    };
+    if report.offers == 0 {
+        text.push_str(
+            " Nenhuma oportunidade porque você ainda não tem ofertas registradas: registre em \
+             Ofertas onde comprar (Shopee, Amazon, Magalu ou à mão) e sincronize de novo.",
+        );
+        return text;
+    }
+    text.push_str(&format!(
+        " {} com o catálogo do Mercado Livre: {}.",
+        count(report.offers, "oferta comparada", "ofertas comparadas"),
+        count(report.opportunities, "oportunidade", "oportunidades")
+    ));
     if report.unmatched > 0 {
         text.push_str(&format!(
             " {} sem produto correspondente no catálogo do Mercado Livre.",
@@ -1157,6 +1242,73 @@ fn synced(report: &DemandSync) -> String {
     text
 }
 
+/// Why the list of Opportunities is empty with no filter on, and what to
+/// do: `offers` Supplier Offers registered, `synced` once a Sync ran.
+fn no_opportunities(offers: usize, synced: bool) -> String {
+    match (offers, synced) {
+        (0, _) => "Nenhuma oportunidade porque você ainda não tem ofertas registradas. Uma \
+                   oportunidade é uma oferta de fornecedor (da Shopee, da Amazon, da Magalu ou \
+                   registrada à mão) que combina com um produto vendido no Mercado Livre. \
+                   Registre ofertas em Descoberta › Ofertas e clique em Sincronizar: cada uma é \
+                   comparada com o catálogo do Mercado Livre, com a margem estimada."
+            .to_owned(),
+        (offers, synced) => {
+            let yours = match offers {
+                1 => "a sua oferta".to_owned(),
+                offers => format!("as suas {offers} ofertas"),
+            };
+            if synced {
+                format!(
+                    "No último Sync, nada do catálogo do Mercado Livre combinou com {yours}. Um \
+                     título parecido com o que o Mercado Livre usa ajuda a achar o produto."
+                )
+            } else {
+                format!(
+                    "Clique em Sincronizar para comparar {yours} com o catálogo do Mercado Livre."
+                )
+            }
+        }
+    }
+}
+
+/// Why the best sellers are empty, and what to do: `followed` categories,
+/// `synced` once a Sync ran.
+fn best_sellers_missing(followed: usize, synced: bool) -> String {
+    match (followed, synced) {
+        (0, _) => "Escolha abaixo as categorias que você quer acompanhar: o Sync traz os 20 mais \
+                   vendidos de cada uma, numa lista só, sem repetir produto."
+            .to_owned(),
+        (1, false) => {
+            "Clique em Sincronizar para ler os mais vendidos da categoria acompanhada.".to_owned()
+        }
+        (followed, false) => format!(
+            "Clique em Sincronizar para ler os mais vendidos das {followed} categorias \
+             acompanhadas."
+        ),
+        (_, true) => "O Mercado Livre não devolveu mais vendidos para essas categorias no \
+                      último Sync."
+            .to_owned(),
+    }
+}
+
+/// The best sellers a chip shows, each with the position to its left: all
+/// of them, best first, without one; with category `chosen`, the ones it
+/// ranks, in its order and with its positions.
+fn shown_best_sellers<'a>(
+    best_sellers: &'a [RankedBestSeller],
+    chosen: Option<&str>,
+) -> Vec<(Option<u32>, &'a RankedBestSeller)> {
+    let Some(chosen) = chosen else {
+        return best_sellers.iter().map(|ranked| (None, ranked)).collect();
+    };
+    let mut shown: Vec<(Option<u32>, &RankedBestSeller)> = best_sellers
+        .iter()
+        .filter_map(|ranked| Some((Some(ranked.position_in(chosen)?), ranked)))
+        .collect();
+    shown.sort_by_key(|(position, _)| *position);
+    shown
+}
+
 fn reading(error: &Failure) -> String {
     match error {
         Failure::Text(text) => format!("Não consegui ler ou gravar no banco: {text}"),
@@ -1165,5 +1317,111 @@ fn reading(error: &Failure) -> String {
             "Diga por que a oportunidade não serve antes de descartar.".into()
         }
         Failure::Catalog(error) => failure(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mascate_catalog::{BestSeller, CategoryRank};
+
+    use super::*;
+
+    fn ranked(id: &str, rankings: &[(&str, u32)]) -> RankedBestSeller {
+        RankedBestSeller {
+            best_seller: BestSeller {
+                id: id.into(),
+                position: rankings.iter().map(|(_, at)| *at).min().unwrap_or(0),
+                title: id.into(),
+                catalog_product: Some(id.into()),
+                price: None,
+            },
+            rankings: rankings
+                .iter()
+                .map(|(category, position)| CategoryRank {
+                    category: DemandCategory {
+                        id: (*category).into(),
+                        name: (*category).into(),
+                    },
+                    position: *position,
+                })
+                .collect(),
+            has_opportunity: false,
+        }
+    }
+
+    #[test]
+    fn a_category_chip_lists_what_it_ranks_in_its_own_order() {
+        let list = [
+            ranked("creatina", &[("saude", 2), ("esportes", 1)]),
+            ranked("balanca", &[("saude", 1)]),
+            ranked("whey", &[("esportes", 3)]),
+        ];
+
+        let all: Vec<_> = shown_best_sellers(&list, None)
+            .into_iter()
+            .map(|(at, r)| (at, r.best_seller.id.as_str()))
+            .collect();
+        let health: Vec<_> = shown_best_sellers(&list, Some("saude"))
+            .into_iter()
+            .map(|(at, r)| (at, r.best_seller.id.as_str()))
+            .collect();
+
+        assert_eq!(all, [(None, "creatina"), (None, "balanca"), (None, "whey")]);
+        assert_eq!(health, [(Some(1), "balanca"), (Some(2), "creatina")]);
+    }
+
+    #[test]
+    fn the_sync_says_why_there_is_no_opportunity_without_offers() {
+        let report = DemandSync {
+            categories: 8,
+            best_sellers: 132,
+            ..DemandSync::default()
+        };
+
+        let text = synced(&report);
+
+        assert!(
+            text.starts_with(
+                "Sync concluído: 132 produtos entre os mais vendidos de 8 categorias."
+            )
+        );
+        assert!(text.contains("você ainda não tem ofertas registradas"));
+        assert!(text.contains("registre em Ofertas"));
+    }
+
+    #[test]
+    fn the_sync_counts_the_offers_compared_and_what_they_left_out() {
+        let report = DemandSync {
+            categories: 1,
+            best_sellers: 1,
+            offers: 3,
+            opportunities: 1,
+            unmatched: 2,
+            other_currency: 0,
+        };
+
+        assert_eq!(
+            synced(&report),
+            "Sync concluído: 1 produto entre os mais vendidos de 1 categoria. 3 ofertas \
+             comparadas com o catálogo do Mercado Livre: 1 oportunidade. 2 sem produto \
+             correspondente no catálogo do Mercado Livre."
+        );
+        assert!(synced(&DemandSync::default()).contains("nenhuma categoria é acompanhada"));
+    }
+
+    #[test]
+    fn empty_lists_say_what_is_missing() {
+        assert!(no_opportunities(0, true).contains("ainda não tem ofertas registradas"));
+        assert_eq!(
+            no_opportunities(1, false),
+            "Clique em Sincronizar para comparar a sua oferta com o catálogo do Mercado Livre."
+        );
+        assert!(no_opportunities(4, true).contains("combinou com as suas 4 ofertas"));
+        assert!(best_sellers_missing(0, false).starts_with("Escolha abaixo as categorias"));
+        assert_eq!(
+            best_sellers_missing(3, false),
+            "Clique em Sincronizar para ler os mais vendidos das 3 categorias acompanhadas."
+        );
+        assert!(best_sellers_missing(3, true).contains("não devolveu"));
     }
 }

@@ -25,9 +25,9 @@ use mascate_marketing::{
     PromotionSpends, SavedSpend, SpendError, SpendOrigin, SpendReport,
 };
 
-use crate::amazon_import::{count, pick_report, report_bytes, skipped_list};
+use crate::amazon_import::{pick_report, report_bytes, skipped_list};
 use crate::appearance::look;
-use crate::forms::{Outcome, amount_text, day_text, input, notice, parse_day};
+use crate::forms::{Outcome, amount_text, count, day_text, input, notice, parse_day};
 use crate::kit;
 use crate::merge_import::file_name;
 use crate::sales::table_row;

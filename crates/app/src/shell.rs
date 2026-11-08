@@ -385,6 +385,7 @@ impl Shell {
             .update(cx, |prospects, cx| prospects.follow_context(window, cx));
         self.promotion.update(cx, PromotionScreen::follow_context);
         self.dashboard.update(cx, DashboardScreen::refresh);
+        self.offers.update(cx, |_, cx| cx.notify());
         self.quality.update(cx, |_, cx| cx.notify());
         self.sales.update(cx, |_, cx| cx.notify());
         self.home.update(cx, |_, cx| cx.notify());

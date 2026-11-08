@@ -1,0 +1,76 @@
+{
+  "keywords": "acessorios para cafe",
+  "paging": {
+    "total": 12,
+    "limit": 10,
+    "offset": 0
+  },
+  "results": [
+    {
+      "id": "MLB19615318",
+      "status": "active",
+      "domain_id": "MLB-COFFEE_GRINDERS",
+      "settings": {
+        "listing_strategy": "catalog_required"
+      },
+      "name": "Moedor de Café Manual Inox",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [
+        {
+          "id": "613725-MLA45321230003_032021",
+          "url": "https://http2.mlstatic.com/D_613725-MLA45321230003_032021-F.jpg"
+        }
+      ],
+      "parent_id": null,
+      "children_ids": []
+    },
+    {
+      "id": "MLB22345678",
+      "status": "active",
+      "domain_id": "MLB-COFFEE_FILTERS",
+      "settings": {
+        "listing_strategy": "catalog_required"
+      },
+      "name": "Suporte de Filtro de Café 102",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [],
+      "parent_id": null,
+      "children_ids": []
+    },
+    {
+      "id": "MLB33445566",
+      "status": "active",
+      "domain_id": "MLB-MILK_FROTHERS",
+      "settings": {
+        "listing_strategy": "catalog_required"
+      },
+      "name": "Mixer Espumador de Leite",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [
+        {
+          "id": "700001-MLB0000000001_012026",
+          "url": "http://http2.mlstatic.com/D_700001-MLB0000000001_012026-F.jpg"
+        }
+      ],
+      "parent_id": null,
+      "children_ids": []
+    },
+    {
+      "id": "MLB1/../../users/me",
+      "status": "active",
+      "domain_id": "MLB-COFFEE_GRINDERS",
+      "settings": {
+        "listing_strategy": "catalog_required"
+      },
+      "name": "Id fora do formato",
+      "main_features": [],
+      "attributes": [],
+      "pictures": [],
+      "parent_id": null,
+      "children_ids": []
+    }
+  ]
+}

@@ -173,23 +173,43 @@ pub struct OpportunityFilter {
     pub max_price: Option<Decimal>,
 }
 
-/// A followed category with its best sellers, best first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CategoryBestSellers {
-    pub category: DemandCategory,
-    pub best_sellers: Vec<RankedBestSeller>,
-}
-
+/// A product among the best sellers of the followed categories, once
+/// however many of them rank it: Mercado Livre ranks per category, and a
+/// product often sits in two.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankedBestSeller {
+    /// As the first category that ranks it reports it, at its best position.
     pub best_seller: BestSeller,
+    /// Each followed category that ranks it, in the order they are listed.
+    pub rankings: Vec<CategoryRank>,
     /// Whether one of the owner's Supplier Offers matches it.
     pub has_opportunity: bool,
+}
+
+impl RankedBestSeller {
+    /// Its position in `category`, when that category ranks it.
+    pub fn position_in(&self, category: &str) -> Option<u32> {
+        self.rankings
+            .iter()
+            .find(|rank| rank.category.id == category)
+            .map(|rank| rank.position)
+    }
+}
+
+/// Where a category ranks a best seller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryRank {
+    pub category: DemandCategory,
+    /// 1 for the category's best seller.
+    pub position: u32,
 }
 
 /// What a Sync of demand read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DemandSync {
+    /// The followed categories read.
+    pub categories: usize,
+    /// Distinct products among their best sellers.
     pub best_sellers: usize,
     pub offers: usize,
     pub opportunities: usize,
@@ -344,11 +364,14 @@ impl Catalog {
         let settings = self.discovery_settings().await?;
         let currency = source.currency();
         let mut report = DemandSync::default();
+        let mut products = HashSet::new();
         for category in self.demand_categories().await? {
             let best_sellers = source.best_sellers(&category.id)?;
-            report.best_sellers += best_sellers.len();
+            report.categories += 1;
+            products.extend(best_sellers.iter().map(|b| product_key(b).to_owned()));
             self.store_best_sellers(&category.id, &best_sellers).await?;
         }
+        report.best_sellers = products.len();
         let mut roots: HashMap<String, Option<DemandCategory>> = HashMap::new();
         for (key, offer) in self.latest_offers().await? {
             report.offers += 1;
@@ -429,8 +452,10 @@ impl Catalog {
         }
     }
 
-    /// The best sellers of every followed category, as last synced.
-    pub async fn best_sellers(&self) -> Result<Vec<CategoryBestSellers>, CatalogError> {
+    /// The best sellers of the followed categories as last synced, each
+    /// product once: best position first and, at the same position, the
+    /// one more categories rank first.
+    pub async fn best_sellers(&self) -> Result<Vec<RankedBestSeller>, CatalogError> {
         let matched: HashSet<String> = {
             let mut rows = self
                 .connection()
@@ -446,7 +471,8 @@ impl Catalog {
             }
             matched
         };
-        let mut listed = Vec::new();
+        let mut listed: Vec<RankedBestSeller> = Vec::new();
+        let mut seen: HashMap<String, usize> = HashMap::new();
         for category in self.demand_categories().await? {
             let mut rows = self
                 .connection()
@@ -457,23 +483,41 @@ impl Catalog {
                     params![category.id.clone()],
                 )
                 .await?;
-            let mut best_sellers = Vec::new();
             while let Some(row) = rows.next().await? {
                 let best_seller = best_seller_from(&row)?;
-                let has_opportunity = best_seller
-                    .catalog_product
-                    .as_ref()
-                    .is_some_and(|product| matched.contains(product));
-                best_sellers.push(RankedBestSeller {
-                    best_seller,
-                    has_opportunity,
-                });
+                let rank = CategoryRank {
+                    category: category.clone(),
+                    position: best_seller.position,
+                };
+                match seen.get(product_key(&best_seller)) {
+                    Some(&index) => {
+                        let known = &mut listed[index];
+                        known.best_seller.position = known.best_seller.position.min(rank.position);
+                        if known.position_in(&category.id).is_none() {
+                            known.rankings.push(rank);
+                        }
+                    }
+                    None => {
+                        seen.insert(product_key(&best_seller).to_owned(), listed.len());
+                        let has_opportunity = best_seller
+                            .catalog_product
+                            .as_ref()
+                            .is_some_and(|product| matched.contains(product));
+                        listed.push(RankedBestSeller {
+                            best_seller,
+                            rankings: vec![rank],
+                            has_opportunity,
+                        });
+                    }
+                }
             }
-            listed.push(CategoryBestSellers {
-                category,
-                best_sellers,
-            });
         }
+        listed.sort_by_key(|ranked| {
+            (
+                ranked.best_seller.position,
+                std::cmp::Reverse(ranked.rankings.len()),
+            )
+        });
         Ok(listed)
     }
 
@@ -909,6 +953,15 @@ pub fn score(margin: &Margin, best_seller: Option<u32>, competitors: u32) -> Dec
     let bonus = best_seller.map_or(0, |position| BEST_SELLER_POINTS.saturating_sub(position));
     let crowding = competitors.min(MAX_CROWDING_POINTS);
     margin.percent.unwrap_or_default() + Decimal::from(bonus) - Decimal::from(crowding)
+}
+
+/// What makes two best sellers the same product: the catalog product
+/// when there is one, else the Platform's id of the entry.
+fn product_key(best_seller: &BestSeller) -> &str {
+    best_seller
+        .catalog_product
+        .as_deref()
+        .unwrap_or(&best_seller.id)
 }
 
 fn best_seller_from(row: &Row) -> Result<BestSeller, CatalogError> {

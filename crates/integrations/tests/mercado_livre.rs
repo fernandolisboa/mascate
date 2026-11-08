@@ -5,7 +5,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
-use mascate_catalog::{DemandCategory, DemandSource};
+use mascate_catalog::{
+    DemandCategory, DemandSource, OfferOrder, OfferSearch, OfferSource, ProductSource,
+};
 use mascate_integrations::{MercadoLivre, SellerAuthorization};
 use mascate_kernel::testing::ManualClock;
 use mascate_kernel::{Currency, ListingType, Money, PlatformError};
@@ -486,6 +488,166 @@ fn searching_the_catalog_finds_products_by_title() {
             ("MLB19615318", "Fone de Ouvido Bluetooth TWS Pro"),
             ("MLB22345678", "Fone Bluetooth TWS com Estojo de Carga"),
         ]
+    );
+}
+
+const OFFERS_SEARCH: &str =
+    "/products/search?status=active&site_id=MLB&q=acessorios%20para%20cafe&limit=10&offset=0";
+
+fn coffee_search(page: u32) -> OfferSearch {
+    OfferSearch {
+        keyword: " acessorios para cafe ".into(),
+        order: OfferOrder::Relevance,
+        page,
+        ..OfferSearch::default()
+    }
+}
+
+#[test]
+fn ofertas_finds_catalog_products_at_their_cheapest_listing_with_its_seller() {
+    let fake = Fake::connected();
+    fake.serve(OFFERS_SEARCH, "products-search-offers.json");
+    fake.serve(
+        "/products/MLB19615318/items?limit=50",
+        "product-items-MLB19615318.json",
+    );
+    fake.serve(
+        "/products/MLB33445566/items?limit=50",
+        "product-items-MLB33445566.json",
+    );
+    fake.serve("/users/98765432", "user-98765432.json");
+
+    let found = fake.adapter.search_offers(&coffee_search(1)).unwrap();
+
+    assert_eq!(fake.adapter.source(), ProductSource::MercadoLivre);
+    assert!(found.more);
+    // The filter holder has no listing (404) and cannot be bought; an id
+    // out of Mercado Livre's shape is never asked for.
+    let items: Vec<_> = found
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.id.as_str(),
+                item.link.as_str(),
+                item.price,
+                item.shop.id.as_str(),
+                item.shop.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        items,
+        [
+            (
+                "MLB19615318",
+                "https://www.mercadolivre.com.br/p/MLB19615318",
+                Some(brl("89.9")),
+                "98765432",
+                "CAFE_E_CIA",
+            ),
+            (
+                "MLB33445566",
+                "https://www.mercadolivre.com.br/p/MLB33445566",
+                Some(brl("39.9")),
+                "55500011",
+                "Vendedor 55500011 do Mercado Livre",
+            ),
+        ]
+    );
+    let first = &found.items[0];
+    assert_eq!(
+        first.image.as_deref(),
+        Some("https://http2.mlstatic.com/D_613725-MLA45321230003_032021-F.jpg")
+    );
+    assert_eq!(
+        first.shop.link,
+        "https://perfil.mercadolivre.com.br/CAFE_E_CIA"
+    );
+    // An image over plain HTTP is not shown; a seller without a page links
+    // to the site.
+    assert_eq!(found.items[1].image, None);
+    assert_eq!(found.items[1].shop.link, "https://www.mercadolivre.com.br");
+    let asked_for_the_seller = fake
+        .server
+        .received()
+        .iter()
+        .filter(|request| request.path.starts_with("/users/98765432"))
+        .count();
+    assert_eq!(asked_for_the_seller, 1);
+    assert!(
+        fake.server
+            .received()
+            .iter()
+            .all(|request| !request.path.contains(".."))
+    );
+}
+
+#[test]
+fn ofertas_reads_the_next_page_from_where_the_last_ended() {
+    let fake = Fake::connected();
+    fake.serve(
+        "/products/search?status=active&site_id=MLB&q=acessorios%20para%20cafe&limit=10&offset=10",
+        "products-search-empty.json",
+    );
+
+    let found = fake.adapter.search_offers(&coffee_search(2)).unwrap();
+
+    assert!(found.items.is_empty());
+    assert!(!found.more);
+}
+
+#[test]
+fn ofertas_searches_by_word_and_relevance_only_and_never_without_a_login() {
+    let fake = Fake::connected();
+    let lowest_price = OfferSearch {
+        order: OfferOrder::LowestPrice,
+        ..coffee_search(1)
+    };
+    let blank = OfferSearch {
+        keyword: "  ".into(),
+        ..coffee_search(1)
+    };
+
+    assert!(matches!(
+        fake.adapter.search_offers(&lowest_price),
+        Err(PlatformError::Refused(_))
+    ));
+    assert!(matches!(
+        fake.adapter.search_offers(&blank),
+        Err(PlatformError::Refused(_))
+    ));
+    assert_eq!(fake.adapter.orders(), [OfferOrder::Relevance]);
+    assert!(!fake.adapter.finds_shops());
+    assert!(fake.server.received().is_empty());
+    assert_eq!(
+        Fake::not_connected()
+            .adapter
+            .search_offers(&coffee_search(1))
+            .map(|found| found.items.len()),
+        Err(PlatformError::NotConnected)
+    );
+}
+
+#[test]
+fn a_rate_limit_while_pricing_the_products_fails_the_search() {
+    let fake = Fake::connected();
+    fake.serve(OFFERS_SEARCH, "products-search-offers.json");
+    fake.serve(
+        "/products/MLB33445566/items?limit=50",
+        "product-items-MLB33445566.json",
+    );
+    fake.server.serve(
+        "/products/MLB19615318/items?limit=50",
+        429,
+        fixture("error-429.json"),
+    );
+
+    assert_eq!(
+        fake.adapter
+            .search_offers(&coffee_search(1))
+            .map(|found| found.items.len()),
+        Err(PlatformError::RateLimited)
     );
 }
 

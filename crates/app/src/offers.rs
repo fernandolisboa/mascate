@@ -14,7 +14,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Entity, EventEmitter, Subscription, Window, div, px};
 use mascate_catalog::{Catalog, CatalogError, NewSupplierOffer, OfferHistory, Product, Supplier};
-use mascate_kernel::{Currency, Money, RecordId, parse_amount};
+use mascate_kernel::{Currency, Money, RecordId, SalesChannelKind, parse_amount};
 
 use crate::appearance::look;
 use crate::catalog::{self, NO_DATABASE, day, failure, price_and_shipping, product_choice};
@@ -24,7 +24,10 @@ use crate::forms::{Choice, Outcome, Picker, input, notice, picker, refill};
 use crate::kit;
 use crate::layout;
 use crate::parts::ScreenParts;
+use crate::preferences;
+use crate::sales_channels;
 use crate::shopee_search::{OffersKept, ShopeeSearch};
+use crate::work_context::WorkContext;
 
 /// Asks the window to show a Product's sheet.
 pub struct OpenProduct(pub RecordId);
@@ -729,11 +732,25 @@ impl Render for OffersScreen {
                 .notices
                 .extend(self.outcome.as_ref().map(|outcome| notice(outcome, cx)));
         }
-        parts.content.push(self.shopee.clone().into_any_element());
+        let context = preferences::work_context(cx);
+        let selling_on = context.sales_channel();
+        parts.content.push(
+            div()
+                .text_sm()
+                .text_color(t.text2)
+                .child(suppliers_text(context))
+                .into_any_element(),
+        );
+        if selling_on != Some(SalesChannelKind::Shopee) {
+            parts.content.push(self.shopee.clone().into_any_element());
+        }
         parts.content.extend(
             self.crawlers
                 .iter()
-                .filter(|crawler| crawler.read(cx).is_on())
+                .filter(|crawler| {
+                    let crawler = crawler.read(cx);
+                    crawler.is_on() && Some(crawler.site().channel) != selling_on
+                })
                 .map(|crawler| crawler.clone().into_any_element()),
         );
         parts.content.push(self.render_form(cx));
@@ -743,8 +760,8 @@ impl Render for OffersScreen {
                 .child(kit::section_heading("Ofertas registradas"))
                 .when(self.histories.is_empty(), |list| {
                     list.child(div().text_sm().text_color(t.text2).child(
-                        "Nenhuma oferta ainda. Guarde uma da busca na Shopee ou cole o link de \
-                         um produto que você achou, com preço e frete; registrar o mesmo link de \
+                        "Nenhuma oferta ainda. Guarde uma das buscas acima ou cole o link de um \
+                         produto que você achou, com preço e frete; registrar o mesmo link de \
                          novo guarda o histórico de preço.",
                     ))
                 })
@@ -752,5 +769,47 @@ impl Render for OffersScreen {
                 .into_any_element(),
         );
         layout::screen(parts, cx)
+    }
+}
+
+/// What Ofertas is for in `context`: where to buy for resale. On a Sales
+/// Channel, the other Platforms are its suppliers, and its own search stays
+/// out, since there it is where the owner sells.
+fn suppliers_text(context: WorkContext) -> String {
+    let Some(kind) = context.sales_channel() else {
+        return "Ofertas é onde você acha onde comprar para revender: cada busca abaixo é um \
+                fornecedor, e a oferta guardada vira o custo da margem nos canais em que você \
+                vende."
+            .to_owned();
+    };
+    let competition = if kind == SalesChannelKind::MercadoLivre {
+        " Os mais vendidos e a concorrência dele estão em Oportunidades."
+    } else {
+        ""
+    };
+    format!(
+        "Ofertas é onde você acha onde comprar para vender {}: as buscas abaixo são \
+         fornecedores, e a oferta guardada vira o custo da margem. A busca {} fica fora deste \
+         contexto porque nele você vende.{competition}",
+        sales_channels::on(kind),
+        sales_channels::of_channel(kind),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_a_sales_channel_ofertas_says_the_others_supply_it() {
+        let mercado_livre = suppliers_text(WorkContext::MercadoLivre);
+        let shopee = suppliers_text(WorkContext::Shopee);
+
+        assert!(mercado_livre.contains("onde comprar para vender no Mercado Livre"));
+        assert!(mercado_livre.contains("A busca do Mercado Livre fica fora deste contexto"));
+        assert!(mercado_livre.ends_with("estão em Oportunidades."));
+        assert!(shopee.contains("A busca da Shopee fica fora"));
+        assert!(!shopee.contains("Oportunidades"));
+        assert!(suppliers_text(WorkContext::All).contains("cada busca abaixo é um fornecedor"));
     }
 }

@@ -72,6 +72,14 @@ pub fn notice(outcome: &Outcome, cx: &App) -> AnyElement {
     }
 }
 
+/// "1 venda", "3 vendas".
+pub(crate) fn count(count: usize, one: &str, many: &str) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        count => format!("{count} {many}"),
+    }
+}
+
 /// "14", "12,5": a rate as the owner types it.
 pub fn percent_text(rate: Percentage) -> String {
     rate.percent().normalize().to_string().replace('.', ",")

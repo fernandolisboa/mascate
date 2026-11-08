@@ -174,6 +174,8 @@ pub(super) struct ItemAnswer {
 #[derive(Deserialize)]
 pub(super) struct ProductSearch {
     #[serde(default)]
+    pub paging: Paging,
+    #[serde(default)]
     pub results: Vec<FoundProduct>,
 }
 
@@ -181,6 +183,20 @@ pub(super) struct ProductSearch {
 pub(super) struct FoundProduct {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub pictures: Vec<Picture>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct Picture {
+    pub url: Option<String>,
+}
+
+/// A user as anyone may read it: the seller behind a listing.
+#[derive(Deserialize)]
+pub(super) struct PublicUser {
+    pub nickname: Option<String>,
+    pub permalink: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -200,6 +216,7 @@ pub(super) struct Paging {
 #[derive(Deserialize)]
 pub(super) struct CompetingItem {
     pub category_id: Option<String>,
+    pub seller_id: Option<u64>,
     pub price: Option<Number>,
     pub currency_id: Option<String>,
 }

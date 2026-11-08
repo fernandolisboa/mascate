@@ -119,6 +119,6 @@ fn a_supplier_offer_becomes_an_opportunity_priced_from_mercado_livre() {
         // 103,233... - 13,99 fee - 20 shipping - 35 cost.
         assert_eq!(opportunity.margin.amount.rounded(), brl("34.24"));
         let best_sellers = catalog.best_sellers().await.unwrap();
-        assert!(best_sellers[0].best_sellers[0].has_opportunity);
+        assert!(best_sellers[0].has_opportunity);
     });
 }
