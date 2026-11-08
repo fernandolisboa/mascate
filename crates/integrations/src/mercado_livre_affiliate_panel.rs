@@ -30,7 +30,7 @@ pub const MERCADO_LIVRE_AFFILIATE_PANEL: Flag = Flag {
     phase: Phase::Three,
     reason: "O Mercado Livre não tem API para afiliados, e os termos do programa de afiliados \
              não foram lidos (a página só abre com login); os Termos e condições de uso para \
-             desenvolvedores (7.6) proíbem robôs. O app abre o painel no Edge ou no Chrome, num \
+             desenvolvedores (7.6) proíbem robôs. O app abre o painel no seu navegador, num \
              perfil só do Mascate em que você entrou à mão, e só lê: não clica, não digita senha \
              e não resolve captcha.",
     risk: "O Mercado Livre pode suspender ou encerrar a sua conta de afiliado, e com ela as \

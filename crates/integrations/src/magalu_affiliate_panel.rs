@@ -30,7 +30,7 @@ pub const MAGALU_AFFILIATE_PANEL: Flag = Flag {
     phase: Phase::Three,
     reason: "A Magalu não tem API para afiliados, e os termos do Parceiro Magalu não foram lidos \
              (o painel só abre com login, e o site pede uma verificação contra robôs a quem \
-             chega de um jeito diferente do comum). O app abre o painel no Edge ou no Chrome, \
+             chega de um jeito diferente do comum). O app abre o painel no seu navegador, \
              num perfil só do Mascate em que você entrou à mão, e só lê: não clica, não digita \
              senha e não resolve captcha; quando a Magalu pede a verificação, é você quem \
              responde, pela janela.",

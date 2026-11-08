@@ -18,7 +18,7 @@ use mascate_kernel::{Currency, Money, PlatformError, Timestamp, brasilia, fold, 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::browser::BrowserSession;
+use crate::browser::{BrowserSession, not_installed};
 use crate::crawler::asks_who_is_there;
 
 /// Reads every table on the page, by its `<table>` or ARIA roles, as the
@@ -92,7 +92,8 @@ fn folded(text: &str) -> String {
 /// Where a panel's reading stands, as its Connection shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelState {
-    /// Neither Edge nor Chrome is installed: nothing can open the panel.
+    /// No browser of the Chromium family is installed: nothing can open the
+    /// panel.
     NoBrowser,
     /// The browser's profile was never opened, so there is no login yet.
     NeverLoggedIn,
@@ -188,9 +189,7 @@ impl Panel {
     ) -> Result<Value, PlatformError> {
         match self.state() {
             PanelState::NoBrowser => {
-                return Err(PlatformError::Refused(
-                    "não há Edge nem Chrome instalado neste computador".into(),
-                ));
+                return Err(not_installed());
             }
             PanelState::NeverLoggedIn => return Err(PlatformError::NotConnected),
             PanelState::LoggedOut | PanelState::Ready => {}
