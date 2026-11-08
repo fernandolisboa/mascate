@@ -13,6 +13,7 @@ mod answers;
 mod availability;
 mod billing;
 mod copy;
+mod offers;
 mod orders;
 mod payments;
 mod promotions;

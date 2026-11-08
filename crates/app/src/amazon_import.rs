@@ -22,7 +22,7 @@ use rust_decimal::Decimal;
 
 use crate::affiliate::{affiliate, failure};
 use crate::appearance::look;
-use crate::forms::{Outcome, notice};
+use crate::forms::{Outcome, count, notice};
 use crate::kit;
 use crate::merge_import::file_name;
 
@@ -349,14 +349,6 @@ fn read_file(path: &Path) -> Result<EarningsReport, String> {
             format!("Não consegui ler a planilha ({why}). Nada foi gravado.")
         }
     })
-}
-
-/// "1 venda", "3 vendas".
-pub(crate) fn count(count: usize, one: &str, many: &str) -> String {
-    match count {
-        1 => format!("1 {one}"),
-        count => format!("{count} {many}"),
-    }
 }
 
 /// "2 novas, 1 atualizada e 5 já estavam no app".

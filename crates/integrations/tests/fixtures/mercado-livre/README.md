@@ -21,6 +21,7 @@ conta de vendedor do Fernando.
 | `items-multiget.json` | `GET /items?ids=...&attributes=...` | Produtos classificados por ID do vendedor |
 | `products-search.json` | `GET /products/search` | Buscador de produtos |
 | `product-items-MLB19615318.json` | `GET /products/{id}/items` | Concorrência em catálogo |
+| `products-search-offers.json`, `products-search-empty.json`, `product-items-MLB33445566.json`, `user-98765432.json` | a busca de Ofertas (#235): `GET /products/search` com `limit` e `offset` (e a página depois da última, vazia; um id fora do formato do Mercado Livre, que o app ignora) e `pictures`, os anúncios de um produto (o mais barato vira a oferta) e `GET /users/{id}` público (`nickname`, `permalink`) do vendedor | Buscador de produtos; Concorrência em catálogo; Consulta de usuários |
 | `listing-prices.json` | `GET /sites/MLB/listing_prices` com `listing_type_id` | Comissão por vender |
 | `listing-prices-fixed-fee.json` | o mesmo, abaixo de R$ 79, com `fixed_fee` | Comissão por vender |
 | `listing-prices-no-details.json` | o mesmo, sem `sale_fee_details` | Comissão por vender |

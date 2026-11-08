@@ -26,6 +26,9 @@ pub enum ProductSource {
     MagaluCrawler,
     /// The Hotmart marketplace's public pages, read by a crawler (ADR 0035).
     HotmartCrawler,
+    /// Mercado Livre's catalog search, through the official API with the
+    /// owner's seller login (#235).
+    MercadoLivre,
 }
 
 impl ProductSource {
@@ -37,6 +40,7 @@ impl ProductSource {
             ProductSource::AmazonCrawler => "amazon_crawler",
             ProductSource::MagaluCrawler => "magalu_crawler",
             ProductSource::HotmartCrawler => "hotmart_crawler",
+            ProductSource::MercadoLivre => "mercado_livre",
         }
     }
 
@@ -48,6 +52,7 @@ impl ProductSource {
             "amazon_crawler" => Some(ProductSource::AmazonCrawler),
             "magalu_crawler" => Some(ProductSource::MagaluCrawler),
             "hotmart_crawler" => Some(ProductSource::HotmartCrawler),
+            "mercado_livre" => Some(ProductSource::MercadoLivre),
             _ => None,
         }
     }

@@ -377,18 +377,78 @@ fn best_sellers_of_followed_categories_are_synced_and_raise_the_score() {
         let opportunity = listed(&f, percent("6")).await.remove(0);
 
         assert_eq!(report.best_sellers, 2);
-        let categories: Vec<_> = ranked.iter().map(|r| r.category.clone()).collect();
-        assert_eq!(categories, [casa(), eletronicos()]);
-        assert!(ranked[0].best_sellers.is_empty());
-        let electronics = &ranked[1].best_sellers;
-        assert_eq!(electronics[0].best_seller.id, "MLBU999");
-        assert!(!electronics[0].has_opportunity);
-        assert_eq!(electronics[1].best_seller.price, Some(brl("99.90")));
-        assert!(electronics[1].has_opportunity);
+        assert_eq!(report.categories, 2);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].best_seller.id, "MLBU999");
+        assert_eq!(ranked[0].position_in("MLB1000"), Some(1));
+        assert_eq!(ranked[0].position_in("MLB1574"), None);
+        assert!(!ranked[0].has_opportunity);
+        assert_eq!(ranked[1].best_seller.price, Some(brl("99.90")));
+        assert!(ranked[1].has_opportunity);
         assert_eq!(opportunity.best_seller, Some(2));
         // 25 points of margin + 19 for second place - 3 competitors.
         assert_eq!(opportunity.score, decimal("41"));
         assert!(f.catalog.last_demand_sync().await.unwrap().is_some());
+    });
+}
+
+#[test]
+fn a_product_two_categories_rank_shows_once_with_both_places() {
+    block_on(async {
+        let f = Fixture::new().await;
+        let channel = FakeChannel::new();
+        f.catalog
+            .follow_categories(&[eletronicos(), casa()])
+            .await
+            .unwrap();
+        channel.rank(
+            "MLB1000",
+            vec![
+                best_seller("MLB111", 1, Some("MLB111")),
+                best_seller("MLB222", 2, Some("MLB222")),
+                best_seller("MLBU7", 3, None),
+            ],
+        );
+        channel.rank(
+            "MLB1574",
+            vec![
+                best_seller("MLB333", 1, Some("MLB333")),
+                // A listing of the same catalog product the other ranks.
+                best_seller("MLB9001", 2, Some("MLB111")),
+                best_seller("MLBU7", 4, None),
+            ],
+        );
+
+        let report = f.catalog.sync_demand(&channel).await.unwrap();
+        let ranked = f.catalog.best_sellers().await.unwrap();
+
+        assert_eq!(report.categories, 2);
+        assert_eq!(report.best_sellers, 4);
+        let listed: Vec<String> = ranked
+            .iter()
+            .map(|ranked| {
+                let places: Vec<String> = ranked
+                    .rankings
+                    .iter()
+                    .map(|rank| format!("{}:{}", rank.category.id, rank.position))
+                    .collect();
+                format!(
+                    "{} at {} in {}",
+                    ranked.best_seller.id,
+                    ranked.best_seller.position,
+                    places.join(" ")
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                "MLB9001 at 1 in MLB1574:2 MLB1000:1",
+                "MLB333 at 1 in MLB1574:1",
+                "MLB222 at 2 in MLB1000:2",
+                "MLBU7 at 3 in MLB1574:4 MLB1000:3",
+            ]
+        );
     });
 }
 
@@ -413,7 +473,7 @@ fn a_category_no_longer_followed_stops_syncing_and_showing() {
             [eletronicos()]
         );
         let ranked = f.catalog.best_sellers().await.unwrap();
-        assert_eq!(ranked.len(), 1);
+        assert!(ranked.is_empty());
         assert_eq!(channel.calls(), ["best_sellers MLB1000"]);
     });
 }
@@ -440,8 +500,11 @@ fn syncing_again_replaces_the_ranking_and_keeps_the_same_records() {
 
         channel.rank("MLB1000", vec![best_seller("MLB333", 1, Some("MLB333"))]);
         f.catalog.sync_demand(&channel).await.unwrap();
-        let ids: Vec<_> = f.catalog.best_sellers().await.unwrap()[0]
-            .best_sellers
+        let ids: Vec<_> = f
+            .catalog
+            .best_sellers()
+            .await
+            .unwrap()
             .iter()
             .map(|ranked| (ranked.best_seller.id.clone(), ranked.best_seller.position))
             .collect();

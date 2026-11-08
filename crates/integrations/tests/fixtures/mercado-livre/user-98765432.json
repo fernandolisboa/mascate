@@ -1,0 +1,14 @@
+{
+  "id": 98765432,
+  "nickname": "CAFE_E_CIA",
+  "registration_date": "2019-03-11T10:21:44.000-04:00",
+  "country_id": "BR",
+  "user_type": "normal",
+  "tags": ["normal", "mshops"],
+  "logo": null,
+  "points": 1520,
+  "site_id": "MLB",
+  "permalink": "http://perfil.mercadolivre.com.br/CAFE_E_CIA",
+  "seller_reputation": {"level_id": "5_green", "power_seller_status": "gold"},
+  "status": {"site_status": "active"}
+}

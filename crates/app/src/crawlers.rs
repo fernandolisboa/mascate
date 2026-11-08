@@ -9,12 +9,13 @@ use chrono::Local;
 use gpui_kit::{App, Global};
 use mascate_affiliate::ProspectSource;
 use mascate_catalog::OfferSource;
+use mascate_integrations::Connection;
 use mascate_integrations::{
     AMAZON_CRAWLER, AMAZON_SEARCH_URL, AmazonCrawler, Crawler, HOTMART_CRAWLER,
     HOTMART_MARKETPLACE_URL, HotmartCrawler, MAGALU_CRAWLER, MAGALU_SEARCH_URL,
     MERCADO_LIVRE_CRAWLER, MERCADO_LIVRE_LISTING_URL, MagaluCrawler, MercadoLivreCrawler,
 };
-use mascate_kernel::{PlatformError, Timestamp};
+use mascate_kernel::{PlatformError, SalesChannelKind, Timestamp};
 use mascate_platform::{Build, Environment, Flag, FlagError, Flags};
 
 /// The engine every crawler shares, so turns, memory and breakers hold per
@@ -38,7 +39,13 @@ pub struct CrawledSite {
     pub name: &'static str,
     /// The article the name takes in Portuguese: "o" or "a".
     article: &'static str,
+    /// The Sales Channel the site is: in its own Work Context it is where
+    /// the owner sells, not a supplier, and Ofertas leaves it out.
+    pub channel: SalesChannelKind,
     pub flag: Flag,
+    /// The Platform's official search, used instead of the crawler while
+    /// its Connection is connected.
+    pub official: Option<OfficialSearch>,
     /// Where its pages start.
     pub listing: String,
     build: fn(&str, Arc<Crawler>) -> Arc<dyn OfferSource>,
@@ -61,7 +68,15 @@ impl CrawledSite {
         Self {
             name: "Mercado Livre",
             article: "o",
+            channel: SalesChannelKind::MercadoLivre,
             flag: MERCADO_LIVRE_CRAWLER,
+            official: Some(OfficialSearch {
+                connection: Connection::MercadoLivre,
+                adapter: |cx| {
+                    crate::mercado_livre::adapter(cx).map(|ml| ml as Arc<dyn OfferSource>)
+                },
+                failure: crate::mercado_livre::failure,
+            }),
             listing: local_or(
                 build,
                 environment,
@@ -77,7 +92,9 @@ impl CrawledSite {
         Self {
             name: "Amazon",
             article: "a",
+            channel: SalesChannelKind::Amazon,
             flag: AMAZON_CRAWLER,
+            official: None,
             listing: local_or(
                 build,
                 environment,
@@ -93,7 +110,9 @@ impl CrawledSite {
         Self {
             name: "Magalu",
             article: "a",
+            channel: SalesChannelKind::Magalu,
             flag: MAGALU_CRAWLER,
+            official: None,
             listing: local_or(
                 build,
                 environment,
@@ -123,6 +142,18 @@ impl CrawledSite {
     pub fn on(&self) -> String {
         format!("n{} {}", self.article, self.name)
     }
+}
+
+/// A Platform's own search through its API, with the owner's Connection:
+/// no crawler, no flag (#235).
+#[derive(Clone, Copy)]
+pub struct OfficialSearch {
+    pub connection: Connection,
+    /// The Platform's adapter as an offer source; absent before the
+    /// window's globals are set.
+    pub adapter: fn(&App) -> Option<Arc<dyn OfferSource>>,
+    /// How the API's failures read in Portuguese.
+    pub failure: fn(&PlatformError) -> String,
 }
 
 /// The Hotmart vitrine Garimpo reads, or, in a development build only,
