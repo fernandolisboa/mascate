@@ -153,6 +153,14 @@ pub enum CatalogError {
     UnknownOpportunity(RecordId),
     #[error("say why the Opportunity is discarded")]
     MissingReason,
+    #[error("the category needs a name")]
+    MissingCategoryName,
+    #[error("a category named {0} already exists")]
+    CategoryNameTaken(String),
+    #[error("the category needs at least one category of the Sales Channel")]
+    NoChannelCategory,
+    #[error("no Mascate Category {0}")]
+    UnknownMascateCategory(RecordId),
     #[error(transparent)]
     Platform(#[from] PlatformError),
     #[error(transparent)]

@@ -1,7 +1,7 @@
 //! Opportunities (#11): each Supplier Offer crossed with the catalog
 //! products that match it in the Sales Channel, with the Estimated Margin
 //! after the channel's Fees and a score to rank by. A Sync reads the best
-//! sellers of the categories the owner follows and the competition of each
+//! sellers of the owner's Mascate Categories and the competition of each
 //! match; margins are worked out when read, so a new price or tax rate
 //! shows at once.
 
@@ -12,7 +12,7 @@ use mascate_kernel::{
     Currency, ListingType, Margin, Money, Percentage, PlatformError, RecordId, Timestamp,
     shipping_paid_by_seller,
 };
-use mascate_platform::{Migration, StoredRow, load_single_row, save_single_row, stored};
+use mascate_platform::{Migration, StoredRow, load_single_row, save_single_row};
 use rust_decimal::Decimal;
 
 use crate::catalog::{OFFER_COLUMNS, offer_from, required};
@@ -154,7 +154,7 @@ pub struct Opportunity {
     /// What one unit costs delivered from the Supplier.
     pub cost: Money,
     pub margin: Margin,
-    /// Its place among the best sellers of a followed category.
+    /// Its place among the best sellers of the Mascate Categories.
     pub best_seller: Option<u32>,
     /// Higher ranks first: the margin's percentage, plus points for being a
     /// best seller, minus a point per competing listing (up to 20).
@@ -173,30 +173,41 @@ pub struct OpportunityFilter {
     pub max_price: Option<Decimal>,
 }
 
-/// A product among the best sellers of the followed categories, once
-/// however many of them rank it: Mercado Livre ranks per category, and a
-/// product often sits in two.
+/// A product among the best sellers of the Mascate Categories, once however
+/// many categories rank it: Mercado Livre ranks per category, and a product
+/// often sits in two.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankedBestSeller {
     /// As the first category that ranks it reports it, at its best position.
     pub best_seller: BestSeller,
-    /// Each followed category that ranks it, in the order they are listed.
+    /// Each channel category that ranks it, in the order they are listed.
     pub rankings: Vec<CategoryRank>,
+    /// Each Mascate Category it belongs to, by name.
+    pub categories: Vec<CategoryPlace>,
     /// Whether one of the owner's Supplier Offers matches it.
     pub has_opportunity: bool,
 }
 
 impl RankedBestSeller {
-    /// Its position in `category`, when that category ranks it.
-    pub fn position_in(&self, category: &str) -> Option<u32> {
-        self.rankings
+    /// Its best position in the Mascate Category `category`, when it
+    /// belongs there.
+    pub fn position_in(&self, category: RecordId) -> Option<u32> {
+        self.categories
             .iter()
-            .find(|rank| rank.category.id == category)
-            .map(|rank| rank.position)
+            .find(|place| place.category == category)
+            .map(|place| place.position)
     }
 }
 
-/// Where a category ranks a best seller.
+/// A Mascate Category a best seller belongs to, with its best position
+/// among that category's channel categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CategoryPlace {
+    pub category: RecordId,
+    pub position: u32,
+}
+
+/// Where a channel category ranks a best seller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CategoryRank {
     pub category: DemandCategory,
@@ -207,8 +218,10 @@ pub struct CategoryRank {
 /// What a Sync of demand read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DemandSync {
-    /// The followed categories read.
+    /// The Mascate Categories read.
     pub categories: usize,
+    /// The distinct channel categories they hold, each read once.
+    pub channel_categories: usize,
     /// Distinct products among their best sellers.
     pub best_sellers: usize,
     pub offers: usize,
@@ -272,106 +285,26 @@ impl Catalog {
         Ok(())
     }
 
-    /// The categories whose best sellers the owner follows, by name.
-    pub async fn demand_categories(&self) -> Result<Vec<DemandCategory>, CatalogError> {
-        let mut rows = self
-            .connection()
-            .query(
-                "SELECT ml_category_id, name FROM catalog_demand_categories
-                 WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE",
-                (),
-            )
-            .await?;
-        let mut categories = Vec::new();
-        while let Some(row) = rows.next().await? {
-            categories.push(DemandCategory {
-                id: row.get(0)?,
-                name: row.get(1)?,
-            });
-        }
-        Ok(categories)
-    }
-
-    /// Follows exactly `categories`. A category left out stops being synced
-    /// and its best sellers stop showing.
-    pub async fn follow_categories(
-        &self,
-        categories: &[DemandCategory],
-    ) -> Result<(), CatalogError> {
-        let connection = self.database().connect_for_transaction().await?;
-        let transaction = connection.transaction().await?;
-        let now = self.now();
-        let mut followed = HashSet::new();
-        for category in categories {
-            if !followed.insert(category.id.as_str()) {
-                continue;
-            }
-            let renamed = transaction
-                .execute(
-                    "UPDATE catalog_demand_categories SET name = ?1, updated_at = ?2
-                     WHERE ml_category_id = ?3 AND deleted_at IS NULL",
-                    params![category.name.clone(), now.clone(), category.id.clone()],
-                )
-                .await?;
-            if renamed == 0 {
-                let record = self.new_record();
-                transaction
-                    .execute(
-                        "INSERT INTO catalog_demand_categories
-                             (id, ml_category_id, name, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?4)",
-                        params![
-                            record.id.to_string(),
-                            category.id.clone(),
-                            category.name.clone(),
-                            stored(record.created_at)
-                        ],
-                    )
-                    .await?;
-            }
-        }
-        let mut rows = transaction
-            .query(
-                "SELECT ml_category_id FROM catalog_demand_categories WHERE deleted_at IS NULL",
-                (),
-            )
-            .await?;
-        let mut dropped = Vec::new();
-        while let Some(row) = rows.next().await? {
-            let id: String = row.get(0)?;
-            if !followed.contains(id.as_str()) {
-                dropped.push(id);
-            }
-        }
-        for id in dropped {
-            transaction
-                .execute(
-                    "UPDATE catalog_demand_categories SET deleted_at = ?1, updated_at = ?1
-                     WHERE ml_category_id = ?2 AND deleted_at IS NULL",
-                    params![now.clone(), id],
-                )
-                .await?;
-        }
-        transaction.commit().await?;
-        Ok(())
-    }
-
-    /// Reads the best sellers of every followed category and compares each
-    /// link's latest Supplier Offer with the catalog products that match its
-    /// title. Running it again with the same answers leaves the same state;
-    /// a discarded Opportunity stays discarded.
+    /// Reads the best sellers of every channel category the Mascate
+    /// Categories hold, each once, and compares each link's latest Supplier
+    /// Offer with the catalog products that match its title. Running it
+    /// again with the same answers leaves the same state; a discarded
+    /// Opportunity stays discarded.
     pub async fn sync_demand(&self, source: &dyn DemandSource) -> Result<DemandSync, CatalogError> {
         let settings = self.discovery_settings().await?;
         let currency = source.currency();
         let mut report = DemandSync::default();
-        let mut products = HashSet::new();
-        for category in self.demand_categories().await? {
-            let best_sellers = source.best_sellers(&category.id)?;
-            report.categories += 1;
-            products.extend(best_sellers.iter().map(|b| product_key(b).to_owned()));
-            self.store_best_sellers(&category.id, &best_sellers).await?;
+        let categories = self.mascate_categories().await?;
+        let mut read = HashSet::new();
+        for channel in categories.iter().flat_map(|c| &c.channel_categories) {
+            if read.insert(channel.id.as_str()) {
+                let best_sellers = source.best_sellers(&channel.id)?;
+                self.store_best_sellers(&channel.id, &best_sellers).await?;
+            }
         }
-        report.best_sellers = products.len();
+        report.categories = categories.len();
+        report.channel_categories = read.len();
+        report.best_sellers = self.best_sellers().await?.len();
         let mut roots: HashMap<String, Option<DemandCategory>> = HashMap::new();
         for (key, offer) in self.latest_offers().await? {
             report.offers += 1;
@@ -452,7 +385,7 @@ impl Catalog {
         }
     }
 
-    /// The best sellers of the followed categories as last synced, each
+    /// The best sellers of the Mascate Categories as last synced, each
     /// product once: best position first and, at the same position, the
     /// one more categories rank first.
     pub async fn best_sellers(&self) -> Result<Vec<RankedBestSeller>, CatalogError> {
@@ -471,43 +404,60 @@ impl Catalog {
             }
             matched
         };
+        let mut ranked_by: HashMap<String, Vec<BestSeller>> = HashMap::new();
         let mut listed: Vec<RankedBestSeller> = Vec::new();
         let mut seen: HashMap<String, usize> = HashMap::new();
-        for category in self.demand_categories().await? {
-            let mut rows = self
-                .connection()
-                .query(
-                    "SELECT ml_id, position, title, catalog_product_id, price, currency
-                     FROM catalog_best_sellers
-                     WHERE ml_category_id = ?1 AND deleted_at IS NULL ORDER BY position",
-                    params![category.id.clone()],
-                )
-                .await?;
-            while let Some(row) = rows.next().await? {
-                let best_seller = best_seller_from(&row)?;
-                let rank = CategoryRank {
-                    category: category.clone(),
-                    position: best_seller.position,
-                };
-                match seen.get(product_key(&best_seller)) {
-                    Some(&index) => {
-                        let known = &mut listed[index];
-                        known.best_seller.position = known.best_seller.position.min(rank.position);
-                        if known.position_in(&category.id).is_none() {
-                            known.rankings.push(rank);
-                        }
+        for category in self.mascate_categories().await? {
+            for channel in &category.channel_categories {
+                if !ranked_by.contains_key(&channel.id) {
+                    let stored = self.stored_best_sellers(&channel.id).await?;
+                    ranked_by.insert(channel.id.clone(), stored);
+                }
+                for best_seller in &ranked_by[&channel.id] {
+                    if !category.takes(&best_seller.title) {
+                        continue;
                     }
-                    None => {
-                        seen.insert(product_key(&best_seller).to_owned(), listed.len());
-                        let has_opportunity = best_seller
-                            .catalog_product
-                            .as_ref()
-                            .is_some_and(|product| matched.contains(product));
-                        listed.push(RankedBestSeller {
-                            best_seller,
-                            rankings: vec![rank],
-                            has_opportunity,
+                    let position = best_seller.position;
+                    let key = product_key(best_seller);
+                    let index = match seen.get(key) {
+                        Some(&index) => index,
+                        None => {
+                            seen.insert(key.to_owned(), listed.len());
+                            let has_opportunity = best_seller
+                                .catalog_product
+                                .as_ref()
+                                .is_some_and(|product| matched.contains(product));
+                            listed.push(RankedBestSeller {
+                                best_seller: best_seller.clone(),
+                                rankings: Vec::new(),
+                                categories: Vec::new(),
+                                has_opportunity,
+                            });
+                            listed.len() - 1
+                        }
+                    };
+                    let known = &mut listed[index];
+                    known.best_seller.position = known.best_seller.position.min(position);
+                    if !known
+                        .rankings
+                        .iter()
+                        .any(|rank| rank.category.id == channel.id)
+                    {
+                        known.rankings.push(CategoryRank {
+                            category: channel.clone(),
+                            position,
                         });
+                    }
+                    match known
+                        .categories
+                        .iter_mut()
+                        .find(|place| place.category == category.id)
+                    {
+                        Some(place) => place.position = place.position.min(position),
+                        None => known.categories.push(CategoryPlace {
+                            category: category.id,
+                            position,
+                        }),
                     }
                 }
             }
@@ -628,24 +578,36 @@ impl Catalog {
     }
 
     /// The best place each catalog product holds among the best sellers of
-    /// the followed categories.
+    /// the Mascate Categories.
     async fn best_seller_positions(&self) -> Result<HashMap<String, u32>, CatalogError> {
+        Ok(self
+            .best_sellers()
+            .await?
+            .into_iter()
+            .filter_map(|ranked| {
+                let product = ranked.best_seller.catalog_product?;
+                Some((product, ranked.best_seller.position))
+            })
+            .collect())
+    }
+
+    /// The best sellers of the channel category `category` as last synced,
+    /// best first.
+    async fn stored_best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, CatalogError> {
         let mut rows = self
             .connection()
             .query(
-                "SELECT b.catalog_product_id, MIN(b.position) FROM catalog_best_sellers b
-                 JOIN catalog_demand_categories c
-                   ON c.ml_category_id = b.ml_category_id AND c.deleted_at IS NULL
-                 WHERE b.deleted_at IS NULL AND b.catalog_product_id IS NOT NULL
-                 GROUP BY b.catalog_product_id",
-                (),
+                "SELECT ml_id, position, title, catalog_product_id, price, currency
+                 FROM catalog_best_sellers
+                 WHERE ml_category_id = ?1 AND deleted_at IS NULL ORDER BY position",
+                params![category],
             )
             .await?;
-        let mut positions = HashMap::new();
+        let mut stored = Vec::new();
         while let Some(row) = rows.next().await? {
-            positions.insert(row.get::<String>(0)?, row.get::<u32>(1)?);
+            stored.push(best_seller_from(&row)?);
         }
-        Ok(positions)
+        Ok(stored)
     }
 
     /// Replaces the stored best sellers of `category` with `best_sellers`.

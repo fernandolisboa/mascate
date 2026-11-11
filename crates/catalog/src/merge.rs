@@ -33,10 +33,23 @@ pub const MERGE: ModuleMerge = ModuleMerge {
             .platform_ids(&["source_id"])
             .label(&["title"]),
         TableMerge::new(
-            "catalog_demand_categories",
-            "Categoria seguida",
-            Keys(&[UniqueKey::live(&[Column("ml_category_id")])]),
+            "catalog_mascate_categories",
+            "Categoria sua",
+            Keys(&[UniqueKey::live(&[IgnoreCase("name")])]),
         )
+        .label(&["name"]),
+        TableMerge::new(
+            "catalog_demand_categories",
+            "Categoria do Mercado Livre numa categoria sua",
+            Keys(&[UniqueKey::live(&[
+                Column("mascate_category_id"),
+                Column("ml_category_id"),
+            ])]),
+        )
+        .references(&[Reference::to(
+            "mascate_category_id",
+            "catalog_mascate_categories",
+        )])
         .platform_ids(&["ml_category_id"])
         .label(&["name"]),
         TableMerge::new(

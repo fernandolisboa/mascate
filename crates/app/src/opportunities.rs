@@ -1,6 +1,6 @@
 //! Oportunidades (#11): Supplier Offers crossed with Mercado Livre demand,
 //! ranked by score, with the Estimated Margin after the channel's Fees; the
-//! best sellers of the categories the owner follows; the assumptions behind
+//! best sellers of the owner's Mascate Categories (#237); the assumptions behind
 //! the margins; and the steps from an Opportunity to a Product (the #9 flow)
 //! or to the bin, with a reason.
 
@@ -11,9 +11,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Entity, EventEmitter, SharedString, Window, div, px};
+use gpui_kit::{AnyElement, Entity, EventEmitter, SharedString, Subscription, Window, div, px};
 use mascate_catalog::{
-    Catalog, CatalogError, DemandCategory, DemandSource, DemandSync, DiscoverySettings,
+    Catalog, CatalogError, DemandCategory, DemandSync, DiscoverySettings, MascateCategory,
     Opportunity, OpportunityFilter, Product, RankedBestSeller, Sku,
 };
 use mascate_integrations::{Connection, ConnectionState};
@@ -25,6 +25,7 @@ use crate::connections::AppConnections;
 use crate::forms::{Outcome, amount_text, count, input, notice, percent_text};
 use crate::kit;
 use crate::layout;
+use crate::mascate_categories::{CategoriesChanged, MascateCategoriesSection};
 use crate::mercado_livre;
 use crate::offers::OpenProduct;
 use crate::parts::ScreenParts;
@@ -41,7 +42,7 @@ enum Step {
 struct Snapshot {
     settings: DiscoverySettings,
     tax: Percentage,
-    followed: Vec<DemandCategory>,
+    followed: Vec<MascateCategory>,
     opportunities: Vec<Opportunity>,
     best_sellers: Vec<RankedBestSeller>,
     offers: usize,
@@ -55,7 +56,6 @@ struct Snapshot {
 enum Changed {
     Nothing,
     Synced(DemandSync),
-    Categories(Vec<DemandCategory>),
     Product(Product),
     Sku(Sku),
     Saved(&'static str),
@@ -85,14 +85,13 @@ pub struct OpportunitiesScreen {
     max_price: Entity<InputState>,
     category: Option<String>,
     filter: OpportunityFilter,
-    followed: Vec<DemandCategory>,
-    /// The categories Mercado Livre offers, with the ones ticked, while the
-    /// owner picks which to follow.
-    picking: Option<(Vec<DemandCategory>, Vec<String>)>,
+    /// The owner's Mascate Categories, the chips over the best sellers.
+    followed: Vec<MascateCategory>,
+    categories: Entity<MascateCategoriesSection>,
     opportunities: Vec<Opportunity>,
     best_sellers: Vec<RankedBestSeller>,
     /// The category chip on over the best sellers; `None` lists them all.
-    best_seller_category: Option<String>,
+    best_seller_category: Option<RecordId>,
     /// How many Supplier Offers there are to compare.
     offers: usize,
     dismissed: u64,
@@ -112,12 +111,19 @@ pub struct OpportunitiesScreen {
     outcome: Option<Outcome>,
     /// The outcome of the last step on a row.
     row_outcome: Option<Outcome>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<OpenProduct> for OpportunitiesScreen {}
 
 impl OpportunitiesScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let categories = cx.new(|cx| MascateCategoriesSection::new(window, cx));
+        let subscriptions = vec![cx.subscribe_in(
+            &categories,
+            window,
+            |this, _, _: &CategoriesChanged, window, cx| this.read(window, cx),
+        )];
         let mut screen = Self {
             settings: DiscoverySettings::default(),
             listing_type: ListingType::default(),
@@ -130,7 +136,7 @@ impl OpportunitiesScreen {
             category: None,
             filter: OpportunityFilter::default(),
             followed: Vec::new(),
-            picking: None,
+            categories,
             opportunities: Vec::new(),
             best_sellers: Vec::new(),
             best_seller_category: None,
@@ -148,13 +154,21 @@ impl OpportunitiesScreen {
             reads: 0,
             outcome: None,
             row_outcome: None,
+            _subscriptions: subscriptions,
         };
-        screen.refresh(window, cx);
+        screen.read(window, cx);
         screen
     }
 
     /// Reads everything again, as when the screen comes into view.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.categories
+            .update(cx, |categories, cx| categories.refresh(window, cx));
+        self.read(window, cx);
+    }
+
+    /// Reads the screen's own data again.
+    fn read(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(
             window,
             cx,
@@ -192,7 +206,7 @@ impl OpportunitiesScreen {
                     .map_err(|error| Failure::Text(error.to_string()))?;
                 Ok::<_, Failure>(Snapshot {
                     settings: catalog.discovery_settings().await?,
-                    followed: catalog.demand_categories().await?,
+                    followed: catalog.mascate_categories().await?,
                     opportunities: catalog.opportunities(&filter, tax).await?,
                     best_sellers: catalog.best_sellers().await?,
                     offers: catalog.offers().await?.len(),
@@ -263,7 +277,7 @@ impl OpportunitiesScreen {
         if self
             .best_seller_category
             .as_ref()
-            .is_some_and(|chosen| !self.followed.iter().any(|category| &category.id == chosen))
+            .is_some_and(|chosen| !self.followed.iter().any(|category| category.id == *chosen))
         {
             self.best_seller_category = None;
         }
@@ -294,54 +308,6 @@ impl OpportunitiesScreen {
             |this, changed, _, _| {
                 if let Changed::Synced(report) = changed {
                     this.outcome = Some(Outcome::Done(synced(&report).into()));
-                }
-            },
-        );
-    }
-
-    fn pick_categories(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = mercado_livre::adapter(cx) else {
-            return;
-        };
-        self.outcome = None;
-        self.run(
-            window,
-            cx,
-            move |_| async move {
-                source
-                    .categories()
-                    .map(Changed::Categories)
-                    .map_err(|error| Failure::Catalog(error.into()))
-            },
-            |this, changed, _, _| {
-                if let Changed::Categories(offered) = changed {
-                    let ticked = this.followed.iter().map(|c| c.id.clone()).collect();
-                    this.picking = Some((offered, ticked));
-                }
-            },
-        );
-    }
-
-    fn save_categories(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((offered, ticked)) = self.picking.take() else {
-            return;
-        };
-        let chosen: Vec<DemandCategory> = offered
-            .into_iter()
-            .filter(|category| ticked.contains(&category.id))
-            .collect();
-        self.run(
-            window,
-            cx,
-            move |catalog| async move {
-                catalog.follow_categories(&chosen).await?;
-                Ok(Changed::Saved(
-                    "Categorias salvas. O próximo Sync lê os mais vendidos delas.",
-                ))
-            },
-            |this, changed, _, _| {
-                if let Changed::Saved(text) = changed {
-                    this.outcome = Some(Outcome::Done(text.into()));
                 }
             },
         );
@@ -411,7 +377,7 @@ impl OpportunitiesScreen {
             max_price,
         };
         self.outcome = None;
-        self.refresh(window, cx);
+        self.read(window, cx);
     }
 
     fn clear_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -420,7 +386,7 @@ impl OpportunitiesScreen {
         }
         self.category = None;
         self.filter = OpportunityFilter::default();
-        self.refresh(window, cx);
+        self.read(window, cx);
     }
 
     fn open_step(
@@ -606,97 +572,9 @@ impl OpportunitiesScreen {
             .into_any_element()
     }
 
-    fn render_categories(&self, cx: &mut Context<Self>) -> AnyElement {
-        let t = look(cx).tokens;
-        let body = match &self.picking {
-            Some((offered, ticked)) => v_flex()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .children(offered.iter().enumerate().map(|(index, category)| {
-                            let on = ticked.contains(&category.id);
-                            let id = category.id.clone();
-                            Button::new(("pick-category", index))
-                                .label(category.name.clone())
-                                .small()
-                                .map(|b| if on { b.primary() } else { b.outline() })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some((_, ticked)) = &mut this.picking {
-                                        match ticked.iter().position(|known| *known == id) {
-                                            Some(at) => {
-                                                ticked.remove(at);
-                                            }
-                                            None => ticked.push(id.clone()),
-                                        }
-                                    }
-                                    cx.notify();
-                                }))
-                        })),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("save-categories")
-                                .label("Salvar categorias")
-                                .primary()
-                                .small()
-                                .disabled(self.busy)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.save_categories(window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("cancel-categories")
-                                .label("Cancelar")
-                                .ghost()
-                                .small()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.picking = None;
-                                    cx.notify();
-                                })),
-                        ),
-                ),
-            None => v_flex().gap_2().child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .items_center()
-                    .when(self.followed.is_empty(), |row| {
-                        row.child(div().text_sm().text_color(t.text2).child(
-                            "Nenhuma categoria ainda. Escolha as categorias cujos mais vendidos \
-                             você quer acompanhar.",
-                        ))
-                    })
-                    .children(
-                        self.followed
-                            .iter()
-                            .map(|category| kit::tag(category.name.clone(), t.accent_text, cx)),
-                    )
-                    .child(
-                        Button::new("pick-categories")
-                            .label("Escolher categorias")
-                            .ghost()
-                            .small()
-                            .disabled(self.busy || !self.connected())
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.pick_categories(window, cx)),
-                            ),
-                    ),
-            ),
-        };
-        v_flex()
-            .gap_2()
-            .child(kit::section_heading("Categorias acompanhadas"))
-            .child(body)
-            .into_any_element()
-    }
-
     fn render_filters(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = look(cx).tokens;
-        let mut categories: Vec<DemandCategory> = self.followed.clone();
+        let mut categories: Vec<DemandCategory> = Vec::new();
         for opportunity in &self.opportunities {
             if let Some(category) = &opportunity.category
                 && !categories.iter().any(|known| known.id == category.id)
@@ -1025,7 +903,7 @@ impl OpportunitiesScreen {
                 .child(kit::section_heading("Mais vendidos no Mercado Livre"))
                 .when(!self.best_sellers.is_empty(), |heading| {
                     heading.child(div().text_xs().text_color(t.text2).child(format!(
-                        "{}, cada um uma vez só, dos rankings de {}",
+                        "{}, cada um uma vez só, das suas {}",
                         count(self.best_sellers.len(), "produto", "produtos"),
                         count(self.followed.len(), "categoria", "categorias")
                     )))
@@ -1037,15 +915,15 @@ impl OpportunitiesScreen {
                 .child(div().text_sm().text_color(t.text2).child(text))
                 .into_any_element();
         }
-        let chosen = self.best_seller_category.clone();
-        let chip = |index: usize, label: String, value: Option<String>| {
+        let chosen = self.best_seller_category;
+        let chip = |index: usize, label: String, value: Option<RecordId>| {
             let on = chosen == value;
             Button::new(("best-seller-category", index))
                 .label(label)
                 .small()
                 .map(|b| if on { b.primary() } else { b.outline() })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.best_seller_category = value.clone();
+                    this.best_seller_category = value;
                     cx.notify();
                 }))
         };
@@ -1062,16 +940,16 @@ impl OpportunitiesScreen {
                     let ranked = self
                         .best_sellers
                         .iter()
-                        .filter(|b| b.position_in(&category.id).is_some())
+                        .filter(|b| b.position_in(category.id).is_some())
                         .count();
                     chip(
                         index + 1,
                         format!("{} ({ranked})", category.name),
-                        Some(category.id.clone()),
+                        Some(category.id),
                     )
                 })),
         );
-        let rows = shown_best_sellers(&self.best_sellers, chosen.as_deref());
+        let rows = shown_best_sellers(&self.best_sellers, chosen);
         section
             .child(
                 v_flex()
@@ -1189,7 +1067,9 @@ impl Render for OpportunitiesScreen {
                 .into_any_element(),
         );
         parts.content.push(self.render_best_sellers(cx));
-        parts.content.push(self.render_categories(cx));
+        parts
+            .content
+            .push(self.categories.clone().into_any_element());
         parts.content.push(self.render_assumptions(cx));
         layout::screen(parts, cx)
     }
@@ -1205,14 +1085,15 @@ fn competitors_text(count: u32) -> String {
 /// What the Sync read and, when it found no Opportunity, why.
 fn synced(report: &DemandSync) -> String {
     let mut text = if report.categories == 0 {
-        "Sync concluído, mas nenhuma categoria é acompanhada: escolha categorias abaixo para \
-         ler os mais vendidos."
+        "Sync concluído, mas você ainda não tem categorias: crie uma em Suas categorias, \
+         abaixo, para ler os mais vendidos."
             .to_owned()
     } else {
         format!(
-            "Sync concluído: {} entre os mais vendidos de {}.",
+            "Sync concluído: {} entre os mais vendidos de {} ({} do Mercado Livre).",
             count(report.best_sellers, "produto", "produtos"),
-            count(report.categories, "categoria", "categorias")
+            count(report.categories, "categoria sua", "categorias suas"),
+            report.channel_categories
         )
     };
     if report.offers == 0 {
@@ -1275,18 +1156,19 @@ fn no_opportunities(offers: usize, synced: bool) -> String {
 /// `synced` once a Sync ran.
 fn best_sellers_missing(followed: usize, synced: bool) -> String {
     match (followed, synced) {
-        (0, _) => "Escolha abaixo as categorias que você quer acompanhar: o Sync traz os 20 mais \
-                   vendidos de cada uma, numa lista só, sem repetir produto."
+        (0, _) => "Crie abaixo, em Suas categorias, uma categoria para cada assunto que você \
+                   quer garimpar, como Café: o Sync traz os 20 mais vendidos de cada categoria \
+                   do Mercado Livre que entra nela, numa lista só, sem repetir produto."
             .to_owned(),
         (1, false) => {
-            "Clique em Sincronizar para ler os mais vendidos da categoria acompanhada.".to_owned()
+            "Clique em Sincronizar para ler os mais vendidos da sua categoria.".to_owned()
         }
         (followed, false) => format!(
-            "Clique em Sincronizar para ler os mais vendidos das {followed} categorias \
-             acompanhadas."
+            "Clique em Sincronizar para ler os mais vendidos das suas {followed} categorias."
         ),
         (_, true) => "O Mercado Livre não devolveu mais vendidos para essas categorias no \
-                      último Sync."
+                      último Sync, ou nenhum tem as palavras-chave delas no título. As de \
+                      último nível costumam ter ranking."
             .to_owned(),
     }
 }
@@ -1294,10 +1176,10 @@ fn best_sellers_missing(followed: usize, synced: bool) -> String {
 /// The best sellers a chip shows, each with the position to its left: all
 /// of them, best first, without one; with category `chosen`, the ones it
 /// ranks, in its order and with its positions.
-fn shown_best_sellers<'a>(
-    best_sellers: &'a [RankedBestSeller],
-    chosen: Option<&str>,
-) -> Vec<(Option<u32>, &'a RankedBestSeller)> {
+fn shown_best_sellers(
+    best_sellers: &[RankedBestSeller],
+    chosen: Option<RecordId>,
+) -> Vec<(Option<u32>, &RankedBestSeller)> {
     let Some(chosen) = chosen else {
         return best_sellers.iter().map(|ranked| (None, ranked)).collect();
     };
@@ -1322,26 +1204,27 @@ fn reading(error: &Failure) -> String {
 
 #[cfg(test)]
 mod tests {
-    use mascate_catalog::{BestSeller, CategoryRank};
+    use mascate_catalog::{BestSeller, CategoryPlace};
 
     use super::*;
 
-    fn ranked(id: &str, rankings: &[(&str, u32)]) -> RankedBestSeller {
+    const HEALTH: RecordId = RecordId::from_u128(1);
+    const SPORTS: RecordId = RecordId::from_u128(2);
+
+    fn ranked(id: &str, places: &[(RecordId, u32)]) -> RankedBestSeller {
         RankedBestSeller {
             best_seller: BestSeller {
                 id: id.into(),
-                position: rankings.iter().map(|(_, at)| *at).min().unwrap_or(0),
+                position: places.iter().map(|(_, at)| *at).min().unwrap_or(0),
                 title: id.into(),
                 catalog_product: Some(id.into()),
                 price: None,
             },
-            rankings: rankings
+            rankings: Vec::new(),
+            categories: places
                 .iter()
-                .map(|(category, position)| CategoryRank {
-                    category: DemandCategory {
-                        id: (*category).into(),
-                        name: (*category).into(),
-                    },
+                .map(|(category, position)| CategoryPlace {
+                    category: *category,
                     position: *position,
                 })
                 .collect(),
@@ -1350,18 +1233,18 @@ mod tests {
     }
 
     #[test]
-    fn a_category_chip_lists_what_it_ranks_in_its_own_order() {
+    fn a_category_chip_lists_what_falls_in_it_best_place_first() {
         let list = [
-            ranked("creatina", &[("saude", 2), ("esportes", 1)]),
-            ranked("balanca", &[("saude", 1)]),
-            ranked("whey", &[("esportes", 3)]),
+            ranked("creatina", &[(HEALTH, 2), (SPORTS, 1)]),
+            ranked("balanca", &[(HEALTH, 1)]),
+            ranked("whey", &[(SPORTS, 3)]),
         ];
 
         let all: Vec<_> = shown_best_sellers(&list, None)
             .into_iter()
             .map(|(at, r)| (at, r.best_seller.id.as_str()))
             .collect();
-        let health: Vec<_> = shown_best_sellers(&list, Some("saude"))
+        let health: Vec<_> = shown_best_sellers(&list, Some(HEALTH))
             .into_iter()
             .map(|(at, r)| (at, r.best_seller.id.as_str()))
             .collect();
@@ -1373,18 +1256,18 @@ mod tests {
     #[test]
     fn the_sync_says_why_there_is_no_opportunity_without_offers() {
         let report = DemandSync {
-            categories: 8,
+            categories: 3,
+            channel_categories: 8,
             best_sellers: 132,
             ..DemandSync::default()
         };
 
         let text = synced(&report);
 
-        assert!(
-            text.starts_with(
-                "Sync concluído: 132 produtos entre os mais vendidos de 8 categorias."
-            )
-        );
+        assert!(text.starts_with(
+            "Sync concluído: 132 produtos entre os mais vendidos de 3 categorias suas (8 do \
+             Mercado Livre)."
+        ));
         assert!(text.contains("você ainda não tem ofertas registradas"));
         assert!(text.contains("registre em Ofertas"));
     }
@@ -1393,6 +1276,7 @@ mod tests {
     fn the_sync_counts_the_offers_compared_and_what_they_left_out() {
         let report = DemandSync {
             categories: 1,
+            channel_categories: 2,
             best_sellers: 1,
             offers: 3,
             opportunities: 1,
@@ -1402,11 +1286,12 @@ mod tests {
 
         assert_eq!(
             synced(&report),
-            "Sync concluído: 1 produto entre os mais vendidos de 1 categoria. 3 ofertas \
+            "Sync concluído: 1 produto entre os mais vendidos de 1 categoria sua (2 do Mercado \
+             Livre). 3 ofertas \
              comparadas com o catálogo do Mercado Livre: 1 oportunidade. 2 sem produto \
              correspondente no catálogo do Mercado Livre."
         );
-        assert!(synced(&DemandSync::default()).contains("nenhuma categoria é acompanhada"));
+        assert!(synced(&DemandSync::default()).contains("você ainda não tem categorias"));
     }
 
     #[test]
@@ -1417,10 +1302,10 @@ mod tests {
             "Clique em Sincronizar para comparar a sua oferta com o catálogo do Mercado Livre."
         );
         assert!(no_opportunities(4, true).contains("combinou com as suas 4 ofertas"));
-        assert!(best_sellers_missing(0, false).starts_with("Escolha abaixo as categorias"));
+        assert!(best_sellers_missing(0, false).starts_with("Crie abaixo, em Suas categorias"));
         assert_eq!(
             best_sellers_missing(3, false),
-            "Clique em Sincronizar para ler os mais vendidos das 3 categorias acompanhadas."
+            "Clique em Sincronizar para ler os mais vendidos das suas 3 categorias."
         );
         assert!(best_sellers_missing(3, true).contains("não devolveu"));
     }

@@ -38,9 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install GPUI system libraries
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libvulkan-dev libfontconfig-dev
+        run: .github/scripts/install-gpui-system-libraries.sh
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2

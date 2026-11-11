@@ -162,6 +162,7 @@ Tudo que a lei ou os termos proíbem é construído e desligado por flag (ADR 00
 116. Como Fernando, quero ver as apostas, produtos novos e bons com poucos afiliados ainda, num filtro próprio, para entrar antes da concorrência.
 117. Como Fernando, quero cadastrar à mão um produto de qualquer Platform de afiliado e ter um link direto para o mercado e para a página de afiliação dela, para usar o garimpo onde o app não lê sozinho.
 118. Como Fernando, quero escolher um produto do garimpo e cair no Passo a passo com o Program já criado, ou descartá-lo com um motivo para ele não voltar, para ir da escolha à divulgação sem retrabalho.
+119. Como Fernando, quero criar as minhas próprias categorias para qualquer assunto, como Café, juntando categorias do Mercado Livre de qualquer nível (achadas navegando ou por uma palavra) e palavras-chave opcionais, para ver numa lista só os mais vendidos do que eu quero garimpar (ADR 0040).
 
 ## Implementation Decisions
 

@@ -37,6 +37,7 @@ mod listing_copy;
 mod listings;
 mod low_stock;
 mod magalu;
+mod mascate_categories;
 mod mercado_livre;
 mod merge_import;
 mod monetizze;

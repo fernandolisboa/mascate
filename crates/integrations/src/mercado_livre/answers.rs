@@ -76,7 +76,17 @@ pub(super) struct CategoryAnswer {
     #[serde(default)]
     pub path_from_root: Vec<CategoryRef>,
     #[serde(default)]
+    pub children_categories: Vec<CategoryRef>,
+    #[serde(default)]
     pub settings: CategorySettings,
+}
+
+/// One of `/sites/{site}/domain_discovery/search`: a category Mercado Livre
+/// predicts for some words, with its domain and attributes, which the app
+/// does not use.
+#[derive(Deserialize)]
+pub(super) struct PredictedCategory {
+    pub category_id: String,
 }
 
 /// A category's limits on a listing; any of them can be missing.

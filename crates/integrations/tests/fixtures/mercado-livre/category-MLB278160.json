@@ -1,0 +1,17 @@
+{
+  "id": "MLB278160",
+  "name": "Café, Chá e Infusões",
+  "picture": null,
+  "permalink": null,
+  "total_items_in_this_category": 98215,
+  "path_from_root": [
+    {"id": "MLB1403", "name": "Alimentos e Bebidas"},
+    {"id": "MLB278160", "name": "Café, Chá e Infusões"}
+  ],
+  "children_categories": [
+    {"id": "MLB278161", "name": "Café", "total_items_in_this_category": 61022},
+    {"id": "MLB278167", "name": "Chás", "total_items_in_this_category": 25411}
+  ],
+  "attribute_types": "attributes",
+  "settings": {"listing_allowed": false, "currencies": ["BRL"]}
+}

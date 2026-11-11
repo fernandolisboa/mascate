@@ -12,6 +12,29 @@ pub struct DemandCategory {
     pub name: String,
 }
 
+/// A category with where it sits in the Sales Channel's tree and what hangs
+/// below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryNode {
+    pub category: DemandCategory,
+    /// The categories above it, the top-level one first; empty for a
+    /// top-level category.
+    pub path: Vec<DemandCategory>,
+    pub children: Vec<DemandCategory>,
+}
+
+impl CategoryNode {
+    /// Its names from the top level down, as "Casa › Cozinha › Cafeteiras".
+    pub fn path_text(&self) -> String {
+        self.path
+            .iter()
+            .chain([&self.category])
+            .map(|category| category.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" › ")
+    }
+}
+
 /// One of the best sellers of a category.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BestSeller {
@@ -50,8 +73,15 @@ pub trait DemandSource: Send + Sync {
     /// The currency the Sales Channel sells in.
     fn currency(&self) -> Currency;
 
-    /// The categories the owner can follow.
+    /// The top-level categories.
     fn categories(&self) -> Result<Vec<DemandCategory>, PlatformError>;
+
+    /// `category` with its path from the top level and its subcategories.
+    fn category(&self, category: &str) -> Result<CategoryNode, PlatformError>;
+
+    /// The categories the Sales Channel suggests for `words`, likeliest
+    /// first, each once.
+    fn find_categories(&self, words: &str) -> Result<Vec<CategoryNode>, PlatformError>;
 
     /// The best sellers of `category`, best first.
     fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, PlatformError>;

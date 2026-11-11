@@ -5,8 +5,9 @@ use std::sync::Mutex;
 
 use futures::executor::block_on;
 use mascate_catalog::{
-    BestSeller, CatalogError, CatalogMatch, Competition, DemandCategory, DemandSource, Found,
-    FoundOffer, FoundShop, KeptOffers, OfferSearch, OfferSource, OpportunityFilter, ProductSource,
+    BestSeller, CatalogError, CatalogMatch, CategoryNode, Competition, DemandCategory,
+    DemandSource, Found, FoundOffer, FoundShop, KeptOffers, OfferSearch, OfferSource,
+    OpportunityFilter, ProductSource,
 };
 use mascate_kernel::{Clock as _, Currency, ListingType, Money, Percentage, PlatformError};
 use rust_decimal::Decimal;
@@ -405,6 +406,12 @@ impl DemandSource for OneMatch {
         Currency::Brl
     }
     fn categories(&self) -> Result<Vec<DemandCategory>, PlatformError> {
+        Ok(Vec::new())
+    }
+    fn category(&self, _: &str) -> Result<CategoryNode, PlatformError> {
+        Err(PlatformError::NotFound)
+    }
+    fn find_categories(&self, _: &str) -> Result<Vec<CategoryNode>, PlatformError> {
         Ok(Vec::new())
     }
     fn best_sellers(&self, _: &str) -> Result<Vec<BestSeller>, PlatformError> {

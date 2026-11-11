@@ -1,0 +1,17 @@
+{
+  "id": "MLB1403",
+  "name": "Alimentos e Bebidas",
+  "picture": "https://http2.mlstatic.com/storage/categories-api/images/alimentos.png",
+  "permalink": "https://www.mercadolivre.com.br/c/alimentos-e-bebidas",
+  "total_items_in_this_category": 1203877,
+  "path_from_root": [
+    {"id": "MLB1403", "name": "Alimentos e Bebidas"}
+  ],
+  "children_categories": [
+    {"id": "MLB1404", "name": "Bebidas", "total_items_in_this_category": 402331},
+    {"id": "MLB278160", "name": "Café, Chá e Infusões", "total_items_in_this_category": 98215},
+    {"id": "MLB1423", "name": "Doces e Chocolates", "total_items_in_this_category": 120974}
+  ],
+  "attribute_types": "none",
+  "settings": {"listing_allowed": false, "currencies": ["BRL"]}
+}

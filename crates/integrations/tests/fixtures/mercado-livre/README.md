@@ -13,6 +13,8 @@ conta de vendedor do Fernando.
 | `token-invalid-client.json` | o mesmo, com Client ID ou Secret que o Mercado Livre não conhece (401, `invalid_client`) | Autenticação e autorização |
 | `categories.json` | `GET /sites/MLB/categories` | Categorias e atributos |
 | `category-MLB3697.json` | `GET /categories/{id}` (`path_from_root`) | Categorias e atributos |
+| `category-MLB1403.json`, `category-MLB278160.json`, `category-MLB264903.json`, `error-404-category.json` | `GET /categories/{id}` de uma categoria de cima, de uma do meio e de uma folha, com `children_categories`, e uma que o Mercado Livre não conhece mais (404), para as categorias do Mascate (#237) | Categorias e atributos |
+| `domain-discovery-moedor-de-cafe.json` | `GET /sites/MLB/domain_discovery/search?q=...&limit=8`: o preditor de categorias, com a mesma categoria vinda de dois domínios (#237; documentação consultada em 11/11/2026) | Categorização de produtos (Preditor de categorias) |
 | `category-MLB196208.json` | `GET /categories/{id}` com `settings.max_title_length` e `settings.max_description_length` (Listing Copy, #17) | Categorias e atributos |
 | `trends-MLB196208.json`, `error-404-trends.json` | `GET /trends/MLB/{category_id}`: termos em alta (`keyword`, `url`) e uma categoria sem tendências (404) | Tendências |
 | `highlights-MLB1000.json` | `GET /highlights/MLB/category/{id}` | Mais vendidos no Mercado Livre |

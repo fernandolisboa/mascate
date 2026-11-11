@@ -5,6 +5,7 @@ mod demand;
 mod files;
 mod found_offers;
 mod link;
+mod mascate_categories;
 mod merge;
 mod offer_source;
 mod opportunities;
@@ -14,15 +15,18 @@ pub use catalog::{
     Catalog, CatalogError, NewSupplierOffer, OfferHistory, Product, ProductSource, Supplier,
     SupplierOffer,
 };
-pub use demand::{BestSeller, CatalogMatch, Competition, DemandCategory, DemandSource};
+pub use demand::{
+    BestSeller, CatalogMatch, CategoryNode, Competition, DemandCategory, DemandSource,
+};
 pub use files::{AddedFiles, NotCopied, ProductFile};
 pub use found_offers::{KeptOffers, SearchedOffer};
 pub use link::{InvalidLink, OfferLink};
+pub use mascate_categories::{MascateCategory, MascateCategoryDraft};
 pub use merge::MERGE;
 pub use offer_source::{Found, FoundOffer, FoundShop, OfferOrder, OfferSearch, OfferSource};
 pub use opportunities::{
-    CategoryRank, Charge, DemandSync, DiscoverySettings, MATCHES_PER_OFFER, Opportunity,
-    OpportunityFilter, RankedBestSeller, score,
+    CategoryPlace, CategoryRank, Charge, DemandSync, DiscoverySettings, MATCHES_PER_OFFER,
+    Opportunity, OpportunityFilter, RankedBestSeller, score,
 };
 pub use sku::{InvalidSku, Sku};
 
@@ -35,5 +39,6 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         catalog::CREATE_CATALOG,
         opportunities::CREATE_DEMAND,
         found_offers::ADD_SOURCE_IDS,
+        mascate_categories::CREATE_MASCATE_CATEGORIES,
     ],
 };

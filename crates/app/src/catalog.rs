@@ -56,10 +56,18 @@ pub fn failure(error: &CatalogError) -> String {
         CatalogError::MissingReason => "Diga por que a oportunidade não serve.".into(),
         CatalogError::Platform(error) => crate::mercado_livre::failure(error),
         CatalogError::SupplierExists(name) => format!("O fornecedor {name} já existe."),
+        CatalogError::MissingCategoryName => "Dê um nome à categoria, como Café.".into(),
+        CatalogError::CategoryNameTaken(name) => {
+            format!("Você já tem uma categoria chamada {name}; escolha outro nome.")
+        }
+        CatalogError::NoChannelCategory => {
+            "Escolha ao menos uma categoria do Mercado Livre para entrar nela.".into()
+        }
         CatalogError::UnknownSupplier(_)
         | CatalogError::UnknownOffer(_)
         | CatalogError::UnknownProduct(_)
-        | CatalogError::UnknownOpportunity(_) => {
+        | CatalogError::UnknownOpportunity(_)
+        | CatalogError::UnknownMascateCategory(_) => {
             "Esse item não existe mais; a lista foi atualizada.".into()
         }
         CatalogError::InvalidLink(InvalidLink::Empty) => "Cole o link da oferta.".into(),

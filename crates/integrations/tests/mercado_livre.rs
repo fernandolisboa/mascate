@@ -680,6 +680,87 @@ fn a_category_is_filed_under_its_top_level_category() {
     );
 }
 
+fn named(id: &str, name: &str) -> DemandCategory {
+    DemandCategory {
+        id: id.into(),
+        name: name.into(),
+    }
+}
+
+#[test]
+fn a_category_comes_with_its_path_from_the_top_level_and_its_subcategories() {
+    let fake = Fake::connected();
+    fake.serve("/categories/MLB1403", "category-MLB1403.json");
+    fake.serve("/categories/MLB278160", "category-MLB278160.json");
+
+    let top = fake.adapter.category("MLB1403").unwrap();
+    let coffee = fake.adapter.category("MLB278160").unwrap();
+
+    assert!(top.path.is_empty());
+    assert_eq!(
+        top.children,
+        [
+            named("MLB1404", "Bebidas"),
+            named("MLB278160", "Café, Chá e Infusões"),
+            named("MLB1423", "Doces e Chocolates"),
+        ]
+    );
+    assert_eq!(coffee.path, [named("MLB1403", "Alimentos e Bebidas")]);
+    assert_eq!(
+        coffee.path_text(),
+        "Alimentos e Bebidas › Café, Chá e Infusões"
+    );
+    assert_eq!(coffee.children[0], named("MLB278161", "Café"));
+}
+
+#[test]
+fn the_category_predictor_finds_categories_at_any_level_each_once_with_its_path() {
+    let fake = Fake::connected();
+    fake.serve(
+        "/sites/MLB/domain_discovery/search?q=moedor%20de%20caf%C3%A9&limit=8",
+        "domain-discovery-moedor-de-cafe.json",
+    );
+    fake.serve("/categories/MLB264903", "category-MLB264903.json");
+    fake.serve("/categories/MLB278160", "category-MLB278160.json");
+    fake.server.serve(
+        "/categories/MLB999001",
+        404,
+        fixture("error-404-category.json"),
+    );
+
+    let found = fake.adapter.find_categories("moedor de café").unwrap();
+
+    let paths: Vec<String> = found.iter().map(|node| node.path_text()).collect();
+    assert_eq!(
+        paths,
+        [
+            "Eletrodomésticos › Pequenos Eletrodomésticos › Moedores de Café",
+            "Alimentos e Bebidas › Café, Chá e Infusões",
+        ]
+    );
+    assert_eq!(found[0].category, named("MLB264903", "Moedores de Café"));
+}
+
+#[test]
+fn a_category_id_unlike_mercado_livres_is_never_requested() {
+    let fake = Fake::connected();
+
+    assert_eq!(
+        fake.adapter.category("../users/me"),
+        Err(PlatformError::NotFound)
+    );
+    assert_eq!(fake.adapter.category(""), Err(PlatformError::NotFound));
+    assert!(
+        !fake
+            .server
+            .requests()
+            .iter()
+            .any(|request| request.contains("categories")),
+        "{:?}",
+        fake.server.requests()
+    );
+}
+
 #[test]
 fn the_sale_fee_is_mercado_livres_for_the_category_price_and_listing_type() {
     let fake = Fake::connected();
