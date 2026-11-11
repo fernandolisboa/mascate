@@ -1,0 +1,32 @@
+[
+  {
+    "domain_id": "MLB-COFFEE_GRINDERS",
+    "domain_name": "Moedores de café",
+    "category_id": "MLB264903",
+    "category_name": "Moedores de Café",
+    "attributes": [
+      {"id": "GRINDER_TYPE", "value_id": "7425837", "value_name": "Manual"}
+    ]
+  },
+  {
+    "domain_id": "MLB-ELECTRIC_COFFEE_GRINDERS",
+    "domain_name": "Moedores de café elétricos",
+    "category_id": "MLB264903",
+    "category_name": "Moedores de Café",
+    "attributes": []
+  },
+  {
+    "domain_id": "MLB-COFFEE",
+    "domain_name": "Cafés",
+    "category_id": "MLB278160",
+    "category_name": "Café, Chá e Infusões",
+    "attributes": []
+  },
+  {
+    "domain_id": "MLB-COFFEE_ACCESSORIES",
+    "domain_name": "Acessórios para café",
+    "category_id": "MLB999001",
+    "category_name": "Acessórios para Café",
+    "attributes": []
+  }
+]

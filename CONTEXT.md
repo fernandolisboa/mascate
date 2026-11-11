@@ -39,8 +39,12 @@ Candidato a Product que cruza uma Supplier Offer com a demanda num Sales Channel
 _Avoid_: sugestão, lead, achado
 
 **Best Seller**:
-Um dos mais vendidos de uma categoria que o Fernando segue num Sales Channel, com a posição no ranking. É o sinal de demanda das Opportunities. O mesmo produto no ranking de duas categorias é um Best Seller só, com a posição em cada uma.
+Um dos mais vendidos de uma categoria de um Sales Channel que entra numa Mascate Category, com a posição no ranking. É o sinal de demanda das Opportunities. O mesmo produto no ranking de duas categorias é um Best Seller só, com a posição em cada uma.
 _Avoid_: destaque, top, campeão de vendas
+
+**Mascate Category**:
+Categoria criada pelo Fernando para um assunto que ele quer garimpar (Café, Pets), que junta categorias de um Sales Channel de qualquer nível da árvore dele (Café em grãos, Cafeteiras, Moedores) e, se ele quiser, palavras-chave: com elas, só ficam os Best Sellers com uma delas no título. Na tela é "categoria sua"; as do Sales Channel são "categorias do Mercado Livre".
+_Avoid_: nicho, grupo, categoria seguida
 
 ## Venda
 

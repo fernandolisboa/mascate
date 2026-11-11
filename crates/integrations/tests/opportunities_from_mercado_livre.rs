@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use futures::executor::block_on;
-use mascate_catalog::{Catalog, DemandCategory, NewSupplierOffer, OpportunityFilter};
+use mascate_catalog::{
+    Catalog, DemandCategory, MascateCategoryDraft, NewSupplierOffer, OpportunityFilter,
+};
 use mascate_integrations::MercadoLivre;
 use mascate_kernel::testing::{ManualClock, SequentialIds};
 use mascate_kernel::{Currency, Money, Percentage};
@@ -86,10 +88,14 @@ fn a_supplier_offer_becomes_an_opportunity_priced_from_mercado_livre() {
             .await
             .unwrap();
         catalog
-            .follow_categories(&[DemandCategory {
-                id: "MLB1000".into(),
-                name: "Eletrônicos, Áudio e Vídeo".into(),
-            }])
+            .create_mascate_category(MascateCategoryDraft {
+                name: "Eletrônicos".into(),
+                channel_categories: vec![DemandCategory {
+                    id: "MLB1000".into(),
+                    name: "Eletrônicos, Áudio e Vídeo".into(),
+                }],
+                keywords: Vec::new(),
+            })
             .await
             .unwrap();
 

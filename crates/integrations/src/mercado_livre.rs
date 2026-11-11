@@ -28,7 +28,9 @@ mod tokens;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mascate_catalog::{BestSeller, CatalogMatch, Competition, DemandCategory, DemandSource};
+use mascate_catalog::{
+    BestSeller, CatalogMatch, CategoryNode, Competition, DemandCategory, DemandSource,
+};
 use mascate_kernel::{Clock, Currency, ListingType, Money, PlatformError};
 use mascate_platform::{SecretStore, http_agent};
 use serde::de::DeserializeOwned;
@@ -36,8 +38,9 @@ use serde::de::DeserializeOwned;
 use crate::answers::MAX_DOCUMENT_BYTES;
 use crate::escaped::escaped;
 use answers::{
-    CategoryAnswer, HighlightKind, Highlights, ItemAnswer, ListingPrice, ListingPrices,
-    MultigetEntry, ProductAnswer, ProductItems, ProductSearch, UserProductAnswer, money,
+    CategoryAnswer, CategoryRef, HighlightKind, Highlights, ItemAnswer, ListingPrice,
+    ListingPrices, MultigetEntry, PredictedCategory, ProductAnswer, ProductItems, ProductSearch,
+    UserProductAnswer, money,
 };
 use tokens::Tokens;
 
@@ -65,6 +68,9 @@ const STATE: &str = "mascate";
 
 /// Catalog products read per search.
 const SEARCH_LIMIT: u32 = 5;
+
+/// Categories the predictor suggests per search: the most it gives.
+const PREDICTIONS: u32 = 8;
 
 /// Mercado Livre's seller API, as the owner's Connection sees it.
 pub struct MercadoLivre {
@@ -420,6 +426,57 @@ impl DemandSource for MercadoLivre {
             .collect())
     }
 
+    fn category(&self, category: &str) -> Result<CategoryNode, PlatformError> {
+        // Ids go into the path; one from an answer that is not like MLB1234
+        // never does.
+        if category.is_empty() || !category.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(PlatformError::NotFound);
+        }
+        let found: CategoryAnswer = self.get(&format!("/categories/{category}"), &[])?;
+        let named = |category: CategoryRef| DemandCategory {
+            id: category.id,
+            name: category.name,
+        };
+        let path = found
+            .path_from_root
+            .into_iter()
+            .filter(|step| step.id != found.id)
+            .map(named)
+            .collect();
+        Ok(CategoryNode {
+            category: DemandCategory {
+                id: found.id,
+                name: found.name,
+            },
+            path,
+            children: found.children_categories.into_iter().map(named).collect(),
+        })
+    }
+
+    /// Mercado Livre's category predictor, each suggestion looked up for its
+    /// path; a suggestion Mercado Livre no longer knows is left out.
+    fn find_categories(&self, words: &str) -> Result<Vec<CategoryNode>, PlatformError> {
+        let predicted: Vec<PredictedCategory> = self.get(
+            &format!("/sites/{SITE}/domain_discovery/search"),
+            &[("q", words), ("limit", &PREDICTIONS.to_string())],
+        )?;
+        let mut found: Vec<CategoryNode> = Vec::new();
+        for prediction in predicted {
+            if found
+                .iter()
+                .any(|node| node.category.id == prediction.category_id)
+            {
+                continue;
+            }
+            match self.category(&prediction.category_id) {
+                Ok(node) => found.push(node),
+                Err(PlatformError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(found)
+    }
+
     /// Resolves each of the top 20 into a title, its catalog product and a
     /// price. An entry Mercado Livre no longer shows is left out.
     fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, PlatformError> {
@@ -505,18 +562,8 @@ impl DemandSource for MercadoLivre {
     }
 
     fn root_category(&self, category: &str) -> Result<DemandCategory, PlatformError> {
-        let found: CategoryAnswer = self.get(&format!("/categories/{category}"), &[])?;
-        let root = found.path_from_root.into_iter().next();
-        Ok(match root {
-            Some(root) => DemandCategory {
-                id: root.id,
-                name: root.name,
-            },
-            None => DemandCategory {
-                id: found.id,
-                name: found.name,
-            },
-        })
+        let node = self.category(category)?;
+        Ok(node.path.into_iter().next().unwrap_or(node.category))
     }
 
     fn sale_fee(

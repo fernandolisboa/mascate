@@ -499,7 +499,10 @@ mod tests {
         PromotionRules, Shortened, SignalKind, SignalOrigin, Signals, Standing, Support,
         TagRefusal, prospect_key_of,
     };
-    use mascate_catalog::{DemandCategory, DiscoverySettings, NewSupplierOffer, OpportunityFilter};
+    use mascate_catalog::{
+        DemandCategory, DiscoverySettings, MascateCategoryDraft, NewSupplierOffer,
+        OpportunityFilter,
+    };
     use mascate_commerce::{
         Buyer, ChannelCategory, ChannelListing, ChannelOffer, ChannelOrder, ChannelOrderLine,
         ChannelOrders, ChannelPromotion, ChannelPromotions, ChannelStock, FeeBasis, Listing,
@@ -1204,6 +1207,16 @@ mod tests {
         }
     }
 
+    /// The Mascate Category of a sample. Samples written before #237 follow
+    /// the category instead, and the migration turns it into this.
+    fn sample_mascate_category() -> MascateCategoryDraft {
+        MascateCategoryDraft {
+            name: sample_category().name,
+            channel_categories: vec![sample_category()],
+            keywords: Vec::new(),
+        }
+    }
+
     /// One database per published version, written by the version itself
     /// with [`write_this_versions_sample_database`].
     fn released_databases() -> PathBuf {
@@ -1328,7 +1341,7 @@ mod tests {
                 .await
                 .unwrap();
             catalog
-                .follow_categories(&[sample_category()])
+                .create_mascate_category(sample_mascate_category())
                 .await
                 .unwrap();
             Taxes::new(database.clone(), clock.clone(), ids.clone())
@@ -1920,11 +1933,18 @@ mod tests {
                         sample_discovery_settings(),
                         "{name}"
                     );
-                    assert_eq!(
-                        catalog.demand_categories().await.unwrap(),
-                        [sample_category()],
-                        "{name}"
-                    );
+                    let categories: Vec<MascateCategoryDraft> = catalog
+                        .mascate_categories()
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|category| MascateCategoryDraft {
+                            name: category.name,
+                            channel_categories: category.channel_categories,
+                            keywords: category.keywords,
+                        })
+                        .collect();
+                    assert_eq!(categories, [sample_mascate_category()], "{name}");
                     assert_eq!(
                         taxes.rate().await.unwrap(),
                         Percentage::new(SAMPLE_TAX_PERCENT.into()).unwrap(),
@@ -2006,7 +2026,14 @@ mod tests {
                     .await
                     .unwrap();
                 catalog
-                    .follow_categories(&[sample_category()])
+                    .create_mascate_category(MascateCategoryDraft {
+                        name: "Café".into(),
+                        channel_categories: vec![DemandCategory {
+                            id: "MLB278161".into(),
+                            name: "Café".into(),
+                        }],
+                        keywords: vec!["moído".into()],
+                    })
                     .await
                     .unwrap();
                 // Listing Quality arrived after 0.2.0: older samples start

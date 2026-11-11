@@ -6,10 +6,11 @@ use std::sync::Mutex;
 
 use futures::executor::block_on;
 use mascate_catalog::{
-    BestSeller, CatalogError, CatalogMatch, Competition, DemandCategory, DemandSource,
-    DiscoverySettings, MATCHES_PER_OFFER, NewSupplierOffer, Opportunity, OpportunityFilter, score,
+    BestSeller, CatalogError, CatalogMatch, CategoryNode, Competition, DemandCategory,
+    DemandSource, DiscoverySettings, MATCHES_PER_OFFER, MascateCategoryDraft, NewSupplierOffer,
+    Opportunity, OpportunityFilter, score,
 };
-use mascate_kernel::{Currency, ListingType, Margin, Money, Percentage, PlatformError};
+use mascate_kernel::{Currency, ListingType, Margin, Money, Percentage, PlatformError, RecordId};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 
@@ -39,6 +40,19 @@ fn eletronicos() -> DemandCategory {
 
 fn casa() -> DemandCategory {
     category("MLB1574", "Casa, Móveis e Decoração")
+}
+
+/// A Mascate Category named after `channel` that holds only it.
+async fn follow(f: &Fixture, channel: DemandCategory) -> RecordId {
+    f.catalog
+        .create_mascate_category(MascateCategoryDraft {
+            name: channel.name.clone(),
+            channel_categories: vec![channel],
+            keywords: Vec::new(),
+        })
+        .await
+        .unwrap()
+        .id
 }
 
 /// A Sales Channel answering from memory, counting what it was asked.
@@ -128,6 +142,16 @@ impl DemandSource for FakeChannel {
     fn categories(&self) -> Result<Vec<DemandCategory>, PlatformError> {
         self.called("categories".into())?;
         Ok(vec![eletronicos(), casa()])
+    }
+
+    fn category(&self, category: &str) -> Result<CategoryNode, PlatformError> {
+        self.called(format!("category {category}"))?;
+        Err(PlatformError::NotFound)
+    }
+
+    fn find_categories(&self, words: &str) -> Result<Vec<CategoryNode>, PlatformError> {
+        self.called(format!("find_categories {words}"))?;
+        Ok(Vec::new())
     }
 
     fn best_sellers(&self, category: &str) -> Result<Vec<BestSeller>, PlatformError> {
@@ -355,15 +379,13 @@ fn a_new_price_at_the_offers_link_changes_the_margin_without_a_sync() {
 }
 
 #[test]
-fn best_sellers_of_followed_categories_are_synced_and_raise_the_score() {
+fn best_sellers_of_the_mascate_categories_are_synced_and_raise_the_score() {
     block_on(async {
         let f = Fixture::new().await;
         let channel = FakeChannel::new();
         fone(&f, &channel).await;
-        f.catalog
-            .follow_categories(&[eletronicos(), casa()])
-            .await
-            .unwrap();
+        let electronics = follow(&f, eletronicos()).await;
+        let home = follow(&f, casa()).await;
         channel.rank(
             "MLB1000",
             vec![
@@ -378,10 +400,11 @@ fn best_sellers_of_followed_categories_are_synced_and_raise_the_score() {
 
         assert_eq!(report.best_sellers, 2);
         assert_eq!(report.categories, 2);
+        assert_eq!(report.channel_categories, 2);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].best_seller.id, "MLBU999");
-        assert_eq!(ranked[0].position_in("MLB1000"), Some(1));
-        assert_eq!(ranked[0].position_in("MLB1574"), None);
+        assert_eq!(ranked[0].position_in(electronics), Some(1));
+        assert_eq!(ranked[0].position_in(home), None);
         assert!(!ranked[0].has_opportunity);
         assert_eq!(ranked[1].best_seller.price, Some(brl("99.90")));
         assert!(ranked[1].has_opportunity);
@@ -397,10 +420,8 @@ fn a_product_two_categories_rank_shows_once_with_both_places() {
     block_on(async {
         let f = Fixture::new().await;
         let channel = FakeChannel::new();
-        f.catalog
-            .follow_categories(&[eletronicos(), casa()])
-            .await
-            .unwrap();
+        follow(&f, eletronicos()).await;
+        follow(&f, casa()).await;
         channel.rank(
             "MLB1000",
             vec![
@@ -453,25 +474,28 @@ fn a_product_two_categories_rank_shows_once_with_both_places() {
 }
 
 #[test]
-fn a_category_no_longer_followed_stops_syncing_and_showing() {
+fn a_removed_mascate_category_stops_syncing_and_showing() {
     block_on(async {
         let f = Fixture::new().await;
         let channel = FakeChannel::new();
-        f.catalog
-            .follow_categories(&[eletronicos(), casa()])
-            .await
-            .unwrap();
+        follow(&f, eletronicos()).await;
+        let home = follow(&f, casa()).await;
         channel.rank("MLB1574", vec![best_seller("MLB222", 1, Some("MLB222"))]);
         f.catalog.sync_demand(&channel).await.unwrap();
 
-        f.catalog.follow_categories(&[eletronicos()]).await.unwrap();
+        f.catalog.remove_mascate_category(home).await.unwrap();
         channel.calls.lock().unwrap().clear();
         f.catalog.sync_demand(&channel).await.unwrap();
 
-        assert_eq!(
-            f.catalog.demand_categories().await.unwrap(),
-            [eletronicos()]
-        );
+        let left: Vec<String> = f
+            .catalog
+            .mascate_categories()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|category| category.name)
+            .collect();
+        assert_eq!(left, [eletronicos().name]);
         let ranked = f.catalog.best_sellers().await.unwrap();
         assert!(ranked.is_empty());
         assert_eq!(channel.calls(), ["best_sellers MLB1000"]);
@@ -484,7 +508,7 @@ fn syncing_again_replaces_the_ranking_and_keeps_the_same_records() {
         let f = Fixture::new().await;
         let channel = FakeChannel::new();
         fone(&f, &channel).await;
-        f.catalog.follow_categories(&[eletronicos()]).await.unwrap();
+        follow(&f, eletronicos()).await;
         channel.rank(
             "MLB1000",
             vec![
@@ -729,7 +753,7 @@ fn a_sync_stops_when_the_channel_no_longer_accepts_the_login() {
         let f = Fixture::new().await;
         let channel = FakeChannel::new();
         fone(&f, &channel).await;
-        f.catalog.follow_categories(&[eletronicos()]).await.unwrap();
+        follow(&f, eletronicos()).await;
         channel.fail_with(PlatformError::Expired);
 
         assert!(matches!(

@@ -1,0 +1,15 @@
+{
+  "id": "MLB264903",
+  "name": "Moedores de Café",
+  "picture": null,
+  "permalink": null,
+  "total_items_in_this_category": 8731,
+  "path_from_root": [
+    {"id": "MLB5726", "name": "Eletrodomésticos"},
+    {"id": "MLB438282", "name": "Pequenos Eletrodomésticos"},
+    {"id": "MLB264903", "name": "Moedores de Café"}
+  ],
+  "children_categories": [],
+  "attribute_types": "attributes",
+  "settings": {"listing_allowed": true, "currencies": ["BRL"]}
+}
